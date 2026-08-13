@@ -237,6 +237,9 @@
         env:
           TZ: "{{ timezone }}"
           QC_REVIEW_PORT: "{{ webhook_port | string }}"
+          # In-container bind must be 0.0.0.0 — the published port targets the
+          # container's eth0; host exposure stays 127.0.0.1-only above.
+          QC_BIND_HOST: "0.0.0.0"
 
     - name: Note — webhook path goes live only once the daemon (build slice B2) listens
       ansible.builtin.debug:

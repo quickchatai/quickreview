@@ -5,6 +5,15 @@ set -euo pipefail
 SANDBOX=/opt/quickreview/sandbox
 SECRETS=/opt/quickreview/secrets
 
+# The code roots all state at <sandbox>/state; point that at the dedicated
+# state volume (the status collector's host-side pickup surface). One-time
+# migration if a real dir already accumulated content.
+if [[ -d "$SANDBOX/state" && ! -L "$SANDBOX/state" ]]; then
+  cp -a "$SANDBOX/state/." /opt/quickreview/state/ 2>/dev/null || true
+  rm -rf "$SANDBOX/state"
+fi
+[[ -L "$SANDBOX/state" ]] || ln -sfn /opt/quickreview/state "$SANDBOX/state"
+
 # The code resolves secrets via config.toml [github].secrets_dir =
 # ~/.config/quickreview-bot — point that at the read-only secrets mount.
 mkdir -p "$HOME/.config"

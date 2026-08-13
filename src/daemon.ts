@@ -178,9 +178,12 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
       if (deps.listen !== false) {
         const secret = deps.webhookSecret ?? readWebhookSecret(cfg);
         server = createWebhookServer({ cfg, store, secret, onInterpretation, log });
-        // Loopback only: cloudflared on the host fronts the tunnel (spec §9).
-        await new Promise<void>((resolve) => server!.listen(cfg.server.port, "127.0.0.1", resolve));
-        log(`webhook listening on 127.0.0.1:${cfg.server.port}/webhook`);
+        // Loopback by default; in the container the daemon must bind 0.0.0.0
+        // (docker's published port targets the container's eth0, and the
+        // host-side binding is already 127.0.0.1-only — spec §9).
+        const bindHost = process.env.QC_BIND_HOST ?? "127.0.0.1";
+        await new Promise<void>((resolve) => server!.listen(cfg.server.port, bindHost, resolve));
+        log(`webhook listening on ${bindHost}:${cfg.server.port}/webhook`);
       }
 
       verdicts.start();
