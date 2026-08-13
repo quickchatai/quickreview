@@ -57,6 +57,45 @@ scripts/qcr compare <pr...>     # the 5-PR comparison reports (below)
 
 `attach` on the VM is `docker exec -it quickreview-sandbox tmux attach -t <s>`.
 
+### `qcr tui` — the live board
+
+The operator TUI on your PC, polling the VM over ssh (read-only against
+the VM except your own keystrokes in the embedded session and quick-message
+inject files). Every knob is in `config.toml [tui]` (ssh host, container,
+poll interval, message timeout).
+
+```sh
+scripts/qcr tui                 # board: live PR list, detail, events strip
+scripts/qcr tui 5012            # deep link straight into PR 5012's pi session
+scripts/qcr tui overseer        # deep link into the overseer session
+scripts/qcr tui --help          # usage + troubleshooting
+```
+
+- **Board** (`1`): PR list with lifecycle glyphs (`▶` reviewing · `●` queued ·
+  `⚑` escalated · `✎` awaiting author · `·` tracked · `↻` stale-recheck
+  prefix), detail pane (`qcr why --json` over ssh), events strip
+  (`qcr events --tail`), dry-run/heartbeat banner. `j/k` select, `w` full
+  detail, `e` scroll events, `r` refresh, `?` key map.
+- **Attach** (`⏎`, `o` overseer, `M` main): the pi session takes the whole
+  terminal except one status row; every byte reaches tmux verbatim.
+  **`Ctrl-q` detaches** — the single intercepted key; `Ctrl-q Ctrl-q` sends a
+  literal one. ssh drop shows `✖ lost — ⏎ retry`.
+- **Quick-message** (`m`): one-line box (`Alt-⏎` newline) → written verbatim
+  as an inject file the daemon's bridge delivers; the events strip shows
+  `→ pending…` then `✓ delivered` or `✖ undelivered` after the timeout —
+  never silent.
+- **Digest tab** (`2`): latest `digest/<date>.md` left (`[`/`]` page older,
+  `j/k` scroll; pre-18:00 you see yesterday's, tagged), awaiting-you right,
+  oldest first with age (`↓/↑` pick, `⏎`/`w`/`m` act).
+
+Troubleshooting: `✖ unreachable` = ssh failed (check `ssh my-vm true`,
+bastion/VPN, control socket); `▲ DATA STALE` = ssh fine but `status.json`
+stopped moving (container down or daemon hung — `sudo docker ps` / `logs` on
+the box); modified keys (Shift-⏎) dying in pi = the *outer* terminal or an
+outer tmux without csi-u/extended-keys passthrough — use kitty/ghostty/
+wezterm/iterm2, and the in-container tmux ships ≥3.5 with csi-u baked into
+the image.
+
 ### Deploy
 
 ```sh

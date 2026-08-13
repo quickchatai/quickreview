@@ -157,7 +157,7 @@ describe("renderBoard", () => {
 describe("key decoding", () => {
   it("decodes navigation and action keys", () => {
     expect(decodeKey(Buffer.from("j"))).toEqual({ kind: "down" });
-    expect(decodeKey(Buffer.from("\x1b[A"))).toEqual({ kind: "up" });
+    expect(decodeKey(Buffer.from("\x1b[A"))).toEqual({ kind: "up", arrow: true });
     expect(decodeKey(Buffer.from("\r"))).toEqual({ kind: "enter" });
     expect(decodeKey(Buffer.from("q"))).toEqual({ kind: "quit" });
     expect(decodeKey(Buffer.from("\x03"))).toEqual({ kind: "quit" });

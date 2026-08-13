@@ -5,7 +5,7 @@
 import type { WhyPayload } from "../cli.js";
 import type { TuiConfig } from "../config.js";
 import { renderBoard, type BoardView } from "./board.js";
-import { decodeKey } from "./keys.js";
+import { decodeInputKey, decodeKey } from "./keys.js";
 import { formatEvent, moveSelection, reselect, sortPrs, type EventLine } from "./model.js";
 import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR } from "./paint.js";
 import { Poller } from "./poll.js";
@@ -16,6 +16,8 @@ export interface AppHooks {
   attach?: (session: string, app: App) => Promise<void>;
   /**: open the quick-message box for the given session. */
   message?: (session: string, app: App) => void;
+  /**: deliver a submitted quick-message (inject write + confirmation). */
+  sendMessage?: (session: string, text: string, app: App) => void;
   /**: render the digest tab into a frame string; undefined = placeholder. */
   digestScreen?: (app: App, cols: number, rows: number) => string;
   /**: digest tab key handling; returns true when it consumed the key. */
@@ -147,6 +149,14 @@ export class App {
 
   // ---- input -------------------------------------------------------------
 
+  /** Point the board selection at a PR (digest-tab actions jump here). */
+  selectPr(pr: number): void {
+    this.selectedPr = pr;
+    const sorted = this.view.snapshot ? sortPrs(this.view.snapshot.prs) : [];
+    this.view.selected = reselect(sorted, pr, this.view.selected);
+    void this.refreshDetail();
+  }
+
   selectedSession(): string | undefined {
     const sorted = this.view.snapshot ? sortPrs(this.view.snapshot.prs) : [];
     const pr = sorted[this.view.selected];
@@ -158,10 +168,61 @@ export class App {
     this.repaint();
   }
 
+  /** The session the open input box targets; draft survives Esc. */
+  private msgSession: string | undefined;
+  private msgDraft = "";
+
+  openMessageBox(session: string): void {
+    this.msgSession = session;
+    const pr = /^pr-(\d+)$/.exec(session)?.[1];
+    this.view.inputBox = { target: pr ? `#${pr} (pi session ${session})` : session, text: this.msgDraft };
+    this.repaint();
+  }
+
+  private handleMessageBoxKey(buf: Buffer): void {
+    const box = this.view.inputBox!;
+    const key = decodeInputKey(buf);
+    switch (key.kind) {
+      case "char":
+        box.text += key.ch;
+        break;
+      case "backspace":
+        box.text = box.text.slice(0, -1);
+        break;
+      case "alt-enter":
+        box.text += "\n";
+        break;
+      case "escape":
+        this.msgDraft = box.text; // preserved until board navigation
+        this.view.inputBox = undefined;
+        break;
+      case "enter": {
+        const text = box.text.trim();
+        const session = this.msgSession;
+        this.view.inputBox = undefined;
+        this.msgDraft = "";
+        if (text.length > 0 && session) {
+          if (this.hooks.sendMessage) this.hooks.sendMessage(session, text, this);
+          else this.notice(`✖ msg ${session} undelivered (sender not wired)`);
+        }
+        break;
+      }
+      case "quit":
+        this.quit();
+        return;
+      default:
+        return;
+    }
+    this.repaint();
+  }
+
   private handleInput(buf: Buffer): void {
     if (this.suspended) return;
+    if (this.view.inputBox) {
+      this.handleMessageBoxKey(buf);
+      return;
+    }
     const key = decodeKey(buf);
-    if (this.view.inputBox) return; // routes input-box keys itself
 
     if (this.view.help) {
       this.view.help = false;
@@ -193,6 +254,7 @@ export class App {
         const sorted = this.view.snapshot ? sortPrs(this.view.snapshot.prs) : [];
         this.view.selected = moveSelection(this.view.selected, key.kind === "down" ? 1 : -1, sorted.length);
         this.selectedPr = sorted[this.view.selected]?.number;
+        this.msgDraft = ""; // board navigation drops a cancelled draft
         void this.refreshDetail();
         break;
       }
@@ -226,7 +288,7 @@ export class App {
         const session = this.selectedSession();
         if (!session) break;
         if (this.hooks.message) this.hooks.message(session, this);
-        else this.notice("quick-message lands in");
+        else this.openMessageBox(session);
         break;
       }
       default:

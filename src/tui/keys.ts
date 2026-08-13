@@ -2,8 +2,8 @@
 // attach mode is a raw passthrough with a single chord scan (attach.ts) —
 // nothing here runs while attached.
 export type BoardKey =
-  | { kind: "up" }
-  | { kind: "down" }
+  | { kind: "up"; arrow?: boolean }
+  | { kind: "down"; arrow?: boolean }
   | { kind: "enter" }
   | { kind: "alt-enter" }
   | { kind: "escape" }
@@ -27,8 +27,8 @@ export type BoardKey =
  * delivers one key per chunk; paste lands as a single `char` run. */
 export function decodeKey(buf: Buffer): BoardKey {
   const s = buf.toString("utf8");
-  if (s === "\x1b[A") return { kind: "up" };
-  if (s === "\x1b[B") return { kind: "down" };
+  if (s === "\x1b[A") return { kind: "up", arrow: true };
+  if (s === "\x1b[B") return { kind: "down", arrow: true };
   if (s === "\r" || s === "\n") return { kind: "enter" };
   if (s === "\x1b\r" || s === "\x1b\n") return { kind: "alt-enter" };
   if (s === "\x1b") return { kind: "escape" };

@@ -11,7 +11,34 @@ export function parseTarget(arg: string | undefined): { kind: "none" } | { kind:
   return { kind: "bad", reason: `unknown target '${arg}' — expected a PR number, 'overseer', or 'main'` };
 }
 
+export const TUI_HELP = `qcr tui — live board for the review daemon (over ssh, read-only)
+
+usage: qcr tui [<pr> | overseer | main]
+
+  qcr tui           open the board
+  qcr tui 5012      deep-link straight into PR 5012's pi session
+  qcr tui overseer  deep-link into the overseer session
+
+keys: 1/2 tabs · j/k select · ⏎ attach · Ctrl-q detach (twice = literal) ·
+      m quick-message · o overseer · M main · w detail · e events · r refresh ·
+      ? full key map · q quit
+
+troubleshooting:
+  ✖ unreachable      ssh to the VM failed — check the ssh control socket
+                     (ssh my-vm true) and your VPN/bastion session
+  ▲ DATA STALE       ssh works but status.json stopped updating — the
+                     container is down or the daemon hung (qcr-side:
+                     ssh my-vm sudo docker ps / docker logs)
+  keys lost in pi    the outer terminal must speak csi-u (kitty/ghostty/
+                     wezterm/iterm2); running inside an outer tmux needs
+                     extended-keys passthrough there too
+`;
+
 export async function runTui(targetArg?: string): Promise<void> {
+  if (targetArg === "--help" || targetArg === "-h") {
+    console.log(TUI_HELP);
+    return;
+  }
   const target = parseTarget(targetArg);
   if (target.kind === "bad") {
     console.error(`qcr tui: ${target.reason}`);
@@ -27,6 +54,10 @@ export async function runTui(targetArg?: string): Promise<void> {
   const app = new App(cfg, realSshRunner);
   const { installAttachHooks } = await import("./attach.js");
   await installAttachHooks(app);
+  const { installMessageHooks } = await import("./msg.js");
+  installMessageHooks(app);
+  const { installDigestHooks } = await import("./digesttab.js");
+  installDigestHooks(app);
 
   // Deep link: run() completes its synchronous setup (terminal modes, poller)
   // before awaiting quit, so the attach can start right after — the board
