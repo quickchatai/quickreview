@@ -184,6 +184,19 @@
         rsync_opts: ["--exclude=.git", "--exclude=node_modules", "--exclude=state", "--exclude=wt"]
       when: sandbox_src is defined
 
+    # rsync lands files with controller-side ownership; the container user
+    # (uid 1001) must own the tree to npm-ci/build on boot.
+    - name: Sandbox tree owned by the container user
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ container_uid }}"
+        group: "{{ container_uid }}"
+        recurse: true
+      loop:
+        - "{{ sandbox_root }}/sandbox"
+        - "{{ sandbox_root }}/state"
+
     - name: Build context — Dockerfile and entrypoint
       ansible.builtin.template:
         src: "templates/{{ item.src }}"
