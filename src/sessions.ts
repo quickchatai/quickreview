@@ -1,0 +1,447 @@
+// The daemon↔pi boundary (spec §4, brief B3 steps 2/6): birth, wake, adopt,
+// archive and kill of the per-PR pi sessions and the overseer session.
+//
+// Shape of a session: a detached tmux session named `pr-<n>` (or `overseer`)
+// running the pinned interactive pi TUI with cwd = the sandbox root, the
+// substituted system prompt passed by path, and the two sandbox extensions
+// loaded. The daemon never types into that TUI: it wakes the session by
+// dropping a Markdown file into inject/<session>/, which the inject-bridge
+// extension picks up (findings §3 option 2 — tmux send-keys is the fallback of
+// last resort and is not used here).
+//
+// pi is not installed in this repo; every assumption about its CLI surface is
+// tagged VERIFY-ON-PIN and confined to buildPiCommand().
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
+import type { Config } from "./config.js";
+import { Tmux } from "./tmux.js";
+import type { ExecFn } from "./tmux.js";
+import type { RoundOrder, SessionHooks } from "./types.js";
+import { renderConversationSystemPrompt, renderOverseerSystemPrompt } from "./templates.js";
+import { WorktreeManager } from "./worktrees.js";
+
+export const OVERSEER_SESSION = "overseer";
+
+export function prSessionName(pr: number): string {
+  return `pr-${pr}`;
+}
+
+export function isSandboxSession(name: string): boolean {
+  return name === OVERSEER_SESSION || /^pr-\d+$/.test(name);
+}
+
+export function prOfSession(name: string): number | undefined {
+  const m = /^pr-(\d+)$/.exec(name);
+  return m ? Number(m[1]) : undefined;
+}
+
+export interface PiCommandSpec {
+  piBin: string;
+  model: string;
+  sessionDir: string;
+  systemPromptPath: string;
+  extensionPaths: string[];
+  sessionName: string;
+}
+
+/**
+ * The pi argv for a session.
+ *
+ * VERIFY-ON-PIN, every flag:
+ * - `--model <provider/id>` — documented (findings §8).
+ * - `--session-dir <path>` — documented for RPC mode (findings §1); assumed to
+ *   apply to the interactive TUI as well. Per-session dir (not the shared
+ *   store) so archival can pick "the newest .jsonl" unambiguously — all PR
+ *   sessions share one cwd, so the cwd-keyed global store would mix them.
+ * - `--system-prompt <path>` — NOT documented. findings §7 document only the
+ *   `.pi/SYSTEM.md` / `~/.pi/agent/SYSTEM.md` override files. If no such flag
+ *   exists, fall back to writing the substituted prompt to
+ *   `<pi home>/.pi/SYSTEM.md` per session home (the substituted text is
+ *   already on disk at systemPromptPath either way).
+ * - `--extension <path>` — NOT documented; findings §5 document discovery dirs
+ *   and a settings.json "extensions" array. Fallback: emit the same paths into
+ *   the session's settings.json.
+ * - `--name <display name>` — documented (findings §1).
+ * There is deliberately no update/auto-update flag: the pi version is pinned by
+ * config.pi.version and the container image.
+ */
+export function buildPiCommand(spec: PiCommandSpec): string[] {
+  const argv = [
+    spec.piBin,
+    "--model",
+    spec.model,
+    "--session-dir",
+    spec.sessionDir,
+    "--system-prompt",
+    spec.systemPromptPath,
+  ];
+  for (const ext of spec.extensionPaths) argv.push("--extension", ext);
+  argv.push("--name", spec.sessionName);
+  return argv;
+}
+
+export interface PiSessionManagerOptions {
+  cfg: Config;
+  /** Sandbox root (cwd of every session). */
+  root: string;
+  tmux?: Tmux;
+  /** Used to build a Tmux when one is not supplied. */
+  exec?: ExecFn;
+  worktrees?: WorktreeManager;
+  piBin?: string;
+  /** HOME for the pi process — the container's pihome volume. */
+  piHome?: string;
+  now?: () => Date;
+}
+
+export interface AdoptionReport {
+  /** Live sandbox sessions found at daemon start — adopted, never killed. */
+  adopted: string[];
+  prs: number[];
+  overseer: boolean;
+}
+
+export class PiSessionManager implements SessionHooks {
+  readonly cfg: Config;
+  readonly root: string;
+  readonly tmux: Tmux;
+  readonly worktrees: WorktreeManager;
+  private readonly piBin: string;
+  private readonly piHome: string;
+  private readonly now: () => Date;
+  private injectSeq = 0;
+
+  constructor(opts: PiSessionManagerOptions) {
+    this.cfg = opts.cfg;
+    this.root = opts.root;
+    this.tmux = opts.tmux ?? new Tmux({ exec: opts.exec });
+    this.worktrees =
+      opts.worktrees ?? new WorktreeManager({ root: opts.root, repo: opts.cfg.github.repo, run: opts.exec });
+    this.piBin = opts.piBin ?? "pi";
+    this.piHome = opts.piHome ?? join(opts.root, "pihome");
+    this.now = opts.now ?? (() => new Date());
+  }
+
+  // ---- paths -------------------------------------------------------------
+
+  injectDir(session: string): string {
+    return join(this.root, "inject", session);
+  }
+
+  promptPath(session: string): string {
+    return join(this.root, "state", "session-prompts", `${session}.md`);
+  }
+
+  sessionDir(session: string): string {
+    return join(this.root, this.cfg.pi.session_dir, session);
+  }
+
+  ledgerPath(session: string): string {
+    return join(this.root, "state", "ledgers", `${session}.md`);
+  }
+
+  archiveDir(session: string): string {
+    return join(this.root, "archive", session);
+  }
+
+  extensionPaths(): string[] {
+    return [
+      join(this.root, "extensions", "inject-bridge.ts"),
+      join(this.root, "extensions", "ledger-pin.ts"),
+    ];
+  }
+
+  // ---- environment -------------------------------------------------------
+
+  /** Read a secret file from the app's secrets dir (never from process.env). */
+  private secret(name: string): string | undefined {
+    const p = join(this.cfg.github.secrets_dir, name);
+    try {
+      const v = readFileSync(p, "utf8").trim();
+      return v.length > 0 ? v : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * The environment a session runs in — built from scratch, never spread from
+   * process.env. Only the app credential path is reachable: the OpenAI key
+   * comes out of the app secrets dir, and GitHub auth is minted per command by
+   * scripts/mint-token.sh from the app PEM. No GH_TOKEN/GITHUB_TOKEN, no
+   * personal credential, is ever placed here (B3 hard rule).
+   */
+  buildEnv(session: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+    const env: NodeJS.ProcessEnv = {
+      PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+      HOME: this.piHome,
+      TERM: "xterm-256color",
+      LANG: "C.UTF-8",
+      QCR_SANDBOX_ROOT: this.root,
+      QCR_SESSION_NAME: session,
+      QCR_INJECT_DIR: this.injectDir(session),
+      QCR_LEDGER_FILE: this.ledgerPath(session),
+      QCR_SECRETS_DIR: this.cfg.github.secrets_dir,
+      QCR_PI_VERSION: this.cfg.pi.version,
+    };
+    const openai = this.secret("openai_api_key");
+    if (openai) env.OPENAI_API_KEY = openai;
+    return { ...env, ...extra };
+  }
+
+  // ---- birth / adoption --------------------------------------------------
+
+  private writeAtomic(path: string, body: string): void {
+    mkdirSync(dirname(path), { recursive: true });
+    const tmp = `${path}.tmp-${process.pid}-${this.injectSeq++}`;
+    writeFileSync(tmp, body);
+    renameSync(tmp, path);
+  }
+
+  /** Substituted system prompt on disk; pi gets it by path. */
+  writeSystemPrompt(session: string, body: string): string {
+    const path = this.promptPath(session);
+    this.writeAtomic(path, body);
+    return path;
+  }
+
+  /** Birth an arbitrary session (used by ensure* and by the smoke script). */
+  async spawnSession(
+    session: string,
+    systemPromptBody: string,
+    model: string,
+    extraEnv: NodeJS.ProcessEnv = {},
+  ): Promise<void> {
+    const promptPath = this.writeSystemPrompt(session, systemPromptBody);
+    mkdirSync(this.injectDir(session), { recursive: true });
+    mkdirSync(join(this.injectDir(session), ".done"), { recursive: true });
+    mkdirSync(this.sessionDir(session), { recursive: true });
+    const command = buildPiCommand({
+      piBin: this.piBin,
+      model,
+      sessionDir: this.sessionDir(session),
+      systemPromptPath: promptPath,
+      extensionPaths: this.extensionPaths(),
+      sessionName: session,
+    });
+    await this.tmux.newSession(session, command, {
+      cwd: this.root,
+      env: this.buildEnv(session, extraEnv),
+    });
+    this.recordBirth(session);
+  }
+
+  private birthFile(session: string): string {
+    return join(this.root, "state", "sessions", `${session}.json`);
+  }
+
+  private recordBirth(session: string): void {
+    this.writeAtomic(
+      this.birthFile(session),
+      `${JSON.stringify({ session, born_at: this.now().toISOString() }, null, 2)}\n`,
+    );
+  }
+
+  bornAt(session: string): Date | undefined {
+    try {
+      const raw = JSON.parse(readFileSync(this.birthFile(session), "utf8")) as { born_at?: string };
+      return raw.born_at ? new Date(raw.born_at) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Birth on first trigger; a live session is left strictly alone. */
+  async ensurePrSession(pr: number, title: string, worktree: string): Promise<string> {
+    const session = prSessionName(pr);
+    if (await this.tmux.hasSession(session)) return session;
+    const template = readFileSync(join(this.root, "prompts", "conversation-system.md"), "utf8");
+    const body = renderConversationSystemPrompt(template, { pr, title, worktree });
+    await this.spawnSession(session, body, this.cfg.models.conversation, {
+      QCR_PR: String(pr),
+      QCR_PR_META: `PR #${pr} — ${title} (worktree ${worktree})`,
+      QCR_WORKTREE: worktree,
+    });
+    return session;
+  }
+
+  async ensureOverseerSession(): Promise<string> {
+    if (await this.tmux.hasSession(OVERSEER_SESSION)) return OVERSEER_SESSION;
+    const template = readFileSync(join(this.root, "prompts", "overseer-system.md"), "utf8");
+    await this.spawnSession(OVERSEER_SESSION, renderOverseerSystemPrompt(template), this.cfg.models.overseer);
+    return OVERSEER_SESSION;
+  }
+
+  /**
+   * Daemon restart: find the sandbox's live tmux sessions and take them over.
+   * Purely observational — nothing is killed or restarted here.
+   */
+  async adopt(): Promise<AdoptionReport> {
+    const names = (await this.tmux.listSessions()).filter(isSandboxSession);
+    const prs = names.map(prOfSession).filter((n): n is number => n !== undefined);
+    return { adopted: names, prs, overseer: names.includes(OVERSEER_SESSION) };
+  }
+
+  // ---- injection ---------------------------------------------------------
+
+  private injectFileName(): string {
+    const ts = this.now().toISOString().replace(/[:.]/g, "-");
+    return `${ts}-${String(this.injectSeq++).padStart(4, "0")}.md`;
+  }
+
+  /** Drop a wake file the inject-bridge extension will deliver. */
+  injectFile(session: string, message: string): string {
+    const dir = this.injectDir(session);
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, this.injectFileName());
+    this.writeAtomic(path, message.endsWith("\n") ? message : `${message}\n`);
+    return path;
+  }
+
+  /** SessionHooks: ensure worktree + session, then inject the round prompt. */
+  async dispatchRound(order: RoundOrder, renderedPrompt: string): Promise<void> {
+    await this.worktrees.ensureWorktree(order.pr);
+    await this.ensurePrSession(order.pr, order.title, order.worktree);
+    this.injectFile(prSessionName(order.pr), renderedPrompt);
+  }
+
+  /** SessionHooks: wake a PR session outside a round (ping-pong, follow-ups). */
+  async inject(pr: number, message: string): Promise<void> {
+    const session = prSessionName(pr);
+    if (!(await this.tmux.hasSession(session))) {
+      throw new Error(`no live session ${session} — dispatch a round to birth it first`);
+    }
+    this.injectFile(session, message);
+  }
+
+  /** SessionHooks: wake the overseer (anomalies, EOD sweep). */
+  async injectOverseer(message: string): Promise<void> {
+    await this.ensureOverseerSession();
+    this.injectFile(OVERSEER_SESSION, message);
+  }
+
+  // ---- archival / death --------------------------------------------------
+
+  /** Newest *.jsonl anywhere under a session's --session-dir. Ties break on the
+   * filename — pi names sessions `<timestamp>_<uuid>.jsonl` (findings §1). */
+  newestSessionFile(session: string): string | undefined {
+    const root = this.sessionDir(session);
+    let newest: { path: string; mtime: number; name: string } | undefined;
+    const walk = (dir: string): void => {
+      let entries;
+      try {
+        entries = readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const e of entries) {
+        const full = join(dir, e.name);
+        if (e.isDirectory()) walk(full);
+        else if (e.name.endsWith(".jsonl")) {
+          const mtime = statSync(full).mtimeMs;
+          const better =
+            !newest || mtime > newest.mtime || (mtime === newest.mtime && e.name > newest.name);
+          if (better) newest = { path: full, mtime, name: e.name };
+        }
+      }
+    };
+    walk(root);
+    return newest?.path;
+  }
+
+  /** Copy JSONL + ledger (+ verdicts) into an archive dir. Returns what landed. */
+  archiveSession(session: string, dest: string): string[] {
+    mkdirSync(dest, { recursive: true });
+    const written: string[] = [];
+    const jsonl = this.newestSessionFile(session);
+    if (jsonl) {
+      const target = join(dest, "session.jsonl");
+      copyFileSync(jsonl, target);
+      written.push(target);
+    }
+    const ledger = this.ledgerPath(session);
+    if (existsSync(ledger)) {
+      const target = join(dest, "ledger.md");
+      copyFileSync(ledger, target);
+      written.push(target);
+    }
+    const pr = prOfSession(session);
+    if (pr !== undefined) {
+      const verdictDir = join(this.root, "verdict");
+      if (existsSync(verdictDir)) {
+        const prefix = `pr-${pr}-round-`;
+        for (const f of readdirSync(verdictDir)) {
+          if (!f.startsWith(prefix) || !f.endsWith(".json")) continue;
+          mkdirSync(join(dest, "verdicts"), { recursive: true });
+          const target = join(dest, "verdicts", f);
+          copyFileSync(join(verdictDir, f), target);
+          written.push(target);
+        }
+      }
+    }
+    this.writeAtomic(
+      join(dest, "meta.json"),
+      `${JSON.stringify(
+        { session, archived_at: this.now().toISOString(), session_file: jsonl ?? null, files: written },
+        null,
+        2,
+      )}\n`,
+    );
+    return written;
+  }
+
+  /** SessionHooks: PR merged/closed — archive, drop the worktree, kill tmux. */
+  async archiveAndClose(pr: number): Promise<void> {
+    const session = prSessionName(pr);
+    this.archiveSession(session, this.archiveDir(session));
+    await this.worktrees.remove(pr);
+    await this.tmux.killSession(session);
+  }
+
+  // ---- overseer rotation -------------------------------------------------
+
+  /** Weekly rotation on the daemon timer: archive the run, then respawn. */
+  async rotateOverseer(): Promise<string> {
+    const stamp = this.now().toISOString().slice(0, 10);
+    this.archiveSession(OVERSEER_SESSION, join(this.archiveDir(OVERSEER_SESSION), stamp));
+    await this.tmux.killSession(OVERSEER_SESSION);
+    await this.ensureOverseerSession();
+    return stamp;
+  }
+
+  /** True when the live overseer is older than config.daemon.overseer_rotation_days. */
+  overseerRotationDue(): boolean {
+    const born = this.bornAt(OVERSEER_SESSION);
+    if (!born) return false;
+    const ageDays = (this.now().getTime() - born.getTime()) / 86_400_000;
+    return ageDays >= this.cfg.daemon.overseer_rotation_days;
+  }
+
+  async rotateOverseerIfDue(): Promise<boolean> {
+    if (!this.overseerRotationDue()) return false;
+    await this.rotateOverseer();
+    return true;
+  }
+
+  // ---- daemon start ------------------------------------------------------
+
+  /**
+   * Daemon start: adopt live sessions and sweep worktrees whose PR is no
+   * longer active (ported preflight). Never touches a live session.
+   */
+  async preflight(activePrs: Iterable<number>): Promise<{ adoption: AdoptionReport; sweptWorktrees: number[] }> {
+    const adoption = await this.adopt();
+    const keep = new Set<number>([...activePrs, ...adoption.prs]);
+    const sweptWorktrees = await this.worktrees.sweepStale(keep);
+    return { adoption, sweptWorktrees };
+  }
+}
