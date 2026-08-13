@@ -79,7 +79,23 @@ ESCALATE, and the standard footer. **APPROVE always goes through
 
 ## 7. Return
 
-Write `verdict/pr-{{n}}-round-<k>.json`:
-`{verdict, ai_approved, rationale, review_url, human_requested, findings_posted,
-tokens_estimate}`. Update the ledger to the state at `{{head_sha}}`. The daemon
-owns labels and the escalation review request — never touch those yourself.
+Write `verdict/pr-{{n}}-round-{{round_no}}.json` with EXACTLY this JSON shape —
+the daemon rejects anything else (extra fields are fine, missing/renamed ones
+are not):
+
+```json
+{
+  "pr": {{n}},
+  "round_no": {{round_no}},
+  "verdict": "APPROVE" | "REQUEST_CHANGES" | "ESCALATE",
+  "ai_approved": true,
+  "head_sha": "{{head_sha}}",
+  "spend_usd": 1.25,
+  "finished_at": "<ISO-8601 UTC now>"
+}
+```
+
+`pr` and `round_no` are numbers. `ai_approved` (soundness marker, ESCALATE
+only) and `spend_usd` are optional. Update the ledger to the state at
+`{{head_sha}}`. The daemon owns labels and the escalation review request —
+never touch those yourself.
