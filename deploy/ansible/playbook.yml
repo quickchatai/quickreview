@@ -61,9 +61,23 @@
   tasks:
     - name: Base packages
       ansible.builtin.apt:
-        name: [docker.io, python3-docker, git, curl, ca-certificates, gnupg, rsync]
+        name: [python3-docker, git, curl, ca-certificates, gnupg, rsync]
         state: present
         update_cache: true
+
+    # The VM already runs Docker CE (containerd.io conflicts with
+    # docker.io's containerd) — only install a Docker at all when none exists.
+    - name: Is Docker already installed?
+      ansible.builtin.command: docker --version
+      register: docker_present
+      changed_when: false
+      failed_when: false
+
+    - name: Install docker.io when Docker is absent
+      ansible.builtin.apt:
+        name: docker.io
+        state: present
+      when: docker_present.rc != 0
 
     - name: Docker service enabled and running
       ansible.builtin.systemd:
