@@ -1,0 +1,196 @@
+import { describe, expect, it } from "vitest";
+import {
+  localWallClockToInstant,
+  nextEodFire,
+  renderEodPrompt,
+  startEodTimer,
+  zoneDateString,
+  zoneOffsetMs,
+  zonedParts,
+} from "../src/eod.js";
+
+const TZ = "Europe/Warsaw";
+
+function warsawWall(d: Date): string {
+  const p = zonedParts(d, TZ);
+  const pad = (n: number): string => String(n).padStart(2, "0");
+  return `${p.year}-${pad(p.month)}-${pad(p.day)} ${pad(p.hour)}:${pad(p.minute)}`;
+}
+
+describe("zone helpers", () => {
+  it("reads Warsaw wall clock and offsets on both sides of DST", () => {
+    // 2026-03-29 is the last Sunday of March; 2026-10-25 the last Sunday of October.
+    expect(zoneOffsetMs(new Date("2026-03-28T12:00:00Z"), TZ)).toBe(3_600_000); // CET
+    expect(zoneOffsetMs(new Date("2026-03-30T12:00:00Z"), TZ)).toBe(7_200_000); // CEST
+    expect(zoneOffsetMs(new Date("2026-10-26T12:00:00Z"), TZ)).toBe(3_600_000); // back to CET
+    expect(zoneDateString(new Date("2026-08-13T22:30:00Z"), TZ)).toBe("2026-08-14");
+  });
+});
+
+describe("nextEodFire — same day vs next day", () => {
+  it("fires today when now is before 18:00 Warsaw", () => {
+    const now = new Date("2026-08-13T09:00:00Z"); // 11:00 Warsaw (CEST)
+    const fire = nextEodFire(now, "18:00", TZ);
+    expect(fire.toISOString()).toBe("2026-08-13T16:00:00.000Z");
+    expect(warsawWall(fire)).toBe("2026-08-13 18:00");
+  });
+
+  it("rolls to tomorrow when now is after 18:00 Warsaw", () => {
+    const now = new Date("2026-08-13T16:00:01Z"); // one second past the fire
+    const fire = nextEodFire(now, "18:00", TZ);
+    expect(fire.toISOString()).toBe("2026-08-14T16:00:00.000Z");
+  });
+
+  it("rolls to tomorrow when now is exactly the fire instant", () => {
+    const now = new Date("2026-08-13T16:00:00Z");
+    expect(nextEodFire(now, "18:00", TZ).toISOString()).toBe("2026-08-14T16:00:00.000Z");
+  });
+});
+
+describe("DST: spring forward (last Sunday of March 2026 = 03-29)", () => {
+  it("fires exactly once per local day at 18:00 across the transition", () => {
+    const fires: Date[] = [];
+    let cursor = new Date("2026-03-27T00:00:00Z");
+    for (let i = 0; i < 4; i++) {
+      const fire = nextEodFire(cursor, "18:00", TZ);
+      fires.push(fire);
+      cursor = new Date(fire.getTime() + 1000);
+    }
+    expect(fires.map(warsawWall)).toEqual([
+      "2026-03-27 18:00",
+      "2026-03-28 18:00",
+      "2026-03-29 18:00",
+      "2026-03-30 18:00",
+    ]);
+    // CET 18:00 = 17:00Z; CEST 18:00 = 16:00Z. The flip happens on the 29th.
+    expect(fires.map((f) => f.toISOString())).toEqual([
+      "2026-03-27T17:00:00.000Z",
+      "2026-03-28T17:00:00.000Z",
+      "2026-03-29T16:00:00.000Z",
+      "2026-03-30T16:00:00.000Z",
+    ]);
+    // The transition day is 23h long between fires; the others 24h.
+    const gaps = fires.slice(1).map((f, i) => (f.getTime() - fires[i]!.getTime()) / 3_600_000);
+    expect(gaps).toEqual([24, 23, 24]);
+  });
+});
+
+describe("DST: fall back (last Sunday of October 2026 = 10-25)", () => {
+  it("fires exactly once per local day at 18:00 across the transition", () => {
+    const fires: Date[] = [];
+    let cursor = new Date("2026-10-23T00:00:00Z");
+    for (let i = 0; i < 4; i++) {
+      const fire = nextEodFire(cursor, "18:00", TZ);
+      fires.push(fire);
+      cursor = new Date(fire.getTime() + 1000);
+    }
+    expect(fires.map(warsawWall)).toEqual([
+      "2026-10-23 18:00",
+      "2026-10-24 18:00",
+      "2026-10-25 18:00",
+      "2026-10-26 18:00",
+    ]);
+    expect(fires.map((f) => f.toISOString())).toEqual([
+      "2026-10-23T16:00:00.000Z",
+      "2026-10-24T16:00:00.000Z",
+      "2026-10-25T17:00:00.000Z",
+      "2026-10-26T17:00:00.000Z",
+    ]);
+    const gaps = fires.slice(1).map((f, i) => (f.getTime() - fires[i]!.getTime()) / 3_600_000);
+    expect(gaps).toEqual([24, 25, 24]);
+  });
+
+  it("no local calendar day is skipped or doubled over a full year", () => {
+    const seen: string[] = [];
+    let cursor = new Date("2026-01-01T00:00:00Z");
+    for (let i = 0; i < 365; i++) {
+      const fire = nextEodFire(cursor, "18:00", TZ);
+      seen.push(zoneDateString(fire, TZ));
+      expect(warsawWall(fire).endsWith("18:00")).toBe(true);
+      cursor = new Date(fire.getTime() + 1000);
+    }
+    expect(new Set(seen).size).toBe(seen.length);
+  });
+});
+
+describe("ambiguous / nonexistent wall clocks", () => {
+  it("picks the first occurrence of a repeated hour (fall back, 02:30)", () => {
+    const fire = localWallClockToInstant(2026, 10, 25, 2, 30, TZ);
+    expect(fire.toISOString()).toBe("2026-10-25T00:30:00.000Z"); // still CEST
+    expect(warsawWall(fire)).toBe("2026-10-25 02:30");
+  });
+
+  it("shifts a nonexistent wall clock forward (spring gap, 02:30)", () => {
+    const fire = localWallClockToInstant(2026, 3, 29, 2, 30, TZ);
+    expect(warsawWall(fire)).toBe("2026-03-29 03:30");
+  });
+});
+
+describe("startEodTimer", () => {
+  it("renders the prompt with the local date and reschedules", async () => {
+    let clock = new Date("2026-03-29T10:00:00Z"); // 12:00 Warsaw, transition day
+    const timers: Array<{ cb: () => void; ms: number }> = [];
+    const injected: string[] = [];
+    const fired: string[] = [];
+
+    const timer = startEodTimer({
+      timeHHMM: "18:00",
+      timeZone: TZ,
+      now: () => clock,
+      readPrompt: () => "sweep for {{date}} — {{date}}",
+      injectOverseer: async (m) => {
+        injected.push(m);
+      },
+      setTimer: (cb, ms) => {
+        timers.push({ cb, ms });
+        return timers.length - 1;
+      },
+      clearTimer: () => {},
+      onFire: (d) => fired.push(d),
+    });
+
+    expect(timer.nextFire().toISOString()).toBe("2026-03-29T16:00:00.000Z");
+    expect(timers[0]!.ms).toBe(6 * 3_600_000);
+
+    clock = new Date("2026-03-29T16:00:00Z");
+    timers[0]!.cb();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(injected).toEqual(["sweep for 2026-03-29 — 2026-03-29"]);
+    expect(fired).toEqual(["2026-03-29"]);
+    expect(timer.nextFire().toISOString()).toBe("2026-03-30T16:00:00.000Z");
+    expect(timers).toHaveLength(2);
+    timer.stop();
+  });
+
+  it("re-arms without firing when woken early (chunked long waits)", async () => {
+    let clock = new Date("2026-08-13T09:00:00Z");
+    const timers: Array<{ cb: () => void; ms: number }> = [];
+    const injected: string[] = [];
+    const timer = startEodTimer({
+      timeHHMM: "18:00",
+      timeZone: TZ,
+      now: () => clock,
+      readPrompt: () => "x {{date}}",
+      injectOverseer: async (m) => {
+        injected.push(m);
+      },
+      setTimer: (cb, ms) => {
+        timers.push({ cb, ms });
+        return timers.length - 1;
+      },
+      clearTimer: () => {},
+    });
+    clock = new Date("2026-08-13T12:00:00Z");
+    timers[0]!.cb();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(injected).toEqual([]);
+    expect(timers).toHaveLength(2);
+    expect(timers[1]!.ms).toBe(4 * 3_600_000);
+    timer.stop();
+  });
+
+  it("renderEodPrompt substitutes every {{date}}", () => {
+    expect(renderEodPrompt("a {{date}} b {{date}}", "2026-08-13")).toBe("a 2026-08-13 b 2026-08-13");
+  });
+});
