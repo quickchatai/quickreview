@@ -92,8 +92,9 @@ describe("queue ordering and capacity", () => {
   });
 
   it("counts running rounds against max_concurrent_rounds", () => {
-    expect(capacity(store, baseCfg)).toBe(6);
-    for (let i = 0; i < 6; i++) store.startRound(100 + i, "first", ["pass-baseline"], 45);
+    const cap = baseCfg.daemon.max_concurrent_rounds;
+    expect(capacity(store, baseCfg)).toBe(cap);
+    for (let i = 0; i < cap; i++) store.startRound(100 + i, "first", ["pass-baseline"], 45);
     expect(capacity(store, baseCfg)).toBe(0);
   });
 });
