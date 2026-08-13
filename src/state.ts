@@ -209,6 +209,20 @@ export class StateStore {
       .run(this.ts(), kind, pr, payload === undefined ? null : JSON.stringify(payload));
   }
 
+  /** Head sha of the last applied verdict for a PR (from the event log). */
+  lastVerdictHead(pr: number): string | undefined {
+    const row = this.db
+      .prepare("SELECT payload FROM events WHERE kind = 'verdict_applied' AND pr = ? ORDER BY id DESC LIMIT 1")
+      .get(pr) as { payload: string | null } | undefined;
+    if (!row?.payload) return undefined;
+    try {
+      const head = (JSON.parse(row.payload) as { head_sha?: unknown }).head_sha;
+      return typeof head === "string" && head.length > 0 ? head : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   eventsOn(dateIso: string): Array<{ ts: string; kind: string; pr: number | null; payload: string | null }> {
     return this.db.prepare("SELECT ts, kind, pr, payload FROM events WHERE ts LIKE ? ORDER BY id").all(`${dateIso}%`) as any;
   }

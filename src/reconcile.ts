@@ -130,6 +130,12 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
         };
         report.triggered.push(item.number);
         if (local?.state === "queued" || local?.state === "reviewing") continue; // already handled
+        // Dry-run never consumes triggers on GitHub, so an already-reviewed
+        // head would re-queue forever; suppress until the head moves.
+        if (cfg.dry_run && meta.head_sha && store.lastVerdictHead(item.number) === meta.head_sha) {
+          deps.log?.(`dry-run: suppressing re-trigger of #${item.number} at reviewed head ${meta.head_sha.slice(0, 10)}`);
+          continue;
+        }
         correction(deps, item.number, "triggered-not-queued", { local: local?.state ?? null, source }, report);
         applyEvent(store, item.number, { type: "trigger", source: "reconcile" }, meta, { botLogin, now, reason: `reconcile:${source}` });
       }

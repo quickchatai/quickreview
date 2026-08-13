@@ -50,6 +50,12 @@ export function validateVerdict(raw: unknown): ParsedVerdict {
   if (typeof raw !== "object" || raw === null) return { ok: false, error: "not an object" };
   const v = raw as Record<string, unknown>;
   const bad = (m: string): ParsedVerdict => ({ ok: false, error: m });
+  // LLM-written files: coerce unambiguous digit-strings ("5263" → 5263) before
+  // shape-checking — the first live rounds tripped exactly this.
+  for (const k of ["pr", "round_no"] as const) {
+    const val = v[k];
+    if (typeof val === "string" && /^\d+$/.test(val)) v[k] = Number(val);
+  }
   if (typeof v.pr !== "number" || !Number.isInteger(v.pr)) return bad("pr must be an integer");
   if (typeof v.round_no !== "number" || !Number.isInteger(v.round_no)) return bad("round_no must be an integer");
   if (v.verdict !== "APPROVE" && v.verdict !== "REQUEST_CHANGES" && v.verdict !== "ESCALATE")
@@ -196,6 +202,7 @@ export class VerdictWatcher {
       file: name,
       round_id: round?.id ?? null,
       round_no: v.round_no,
+      head_sha: v.head_sha,
       verdict: v.verdict,
       ai_approved: v.ai_approved ?? null,
       spend_usd: v.spend_usd ?? null,

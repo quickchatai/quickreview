@@ -115,7 +115,8 @@ describe("validateVerdict", () => {
   it("rejects bad shapes", () => {
     expect(validateVerdict(null).ok).toBe(false);
     expect(validateVerdict({ ...verdictFile(), verdict: "APPROVE_ANYWAY" }).ok).toBe(false);
-    expect(validateVerdict({ ...verdictFile(), pr: "100" }).ok).toBe(false);
+    expect(validateVerdict({ ...verdictFile(), pr: "100" }).ok).toBe(true); // digit-strings coerce (live-round regression)
+    expect(validateVerdict({ ...verdictFile(), pr: "100x" }).ok).toBe(false);
     expect(validateVerdict({ ...verdictFile(), head_sha: "" }).ok).toBe(false);
     expect(validateVerdict({ ...verdictFile(), spend_usd: "2.25" }).ok).toBe(false);
     const { finished_at, ...missing } = verdictFile();
@@ -259,5 +260,26 @@ describe("structural invariant: no review-retraction path", () => {
     for (const f of ["verdicts.ts", "statemachine.ts", "webhook.ts", "dispatch.ts", "reconcile.ts", "daemon.ts", "stubs.ts"]) {
       expect(forbidden.test(readFileSync(resolve(process.cwd(), "src", f), "utf8"))).toBe(false);
     }
+  });
+});
+
+describe("digit-string coercion (live-round regression)", () => {
+  it("accepts pr and round_no as digit-strings", async () => {
+    const { validateVerdict } = await import("../src/verdicts.js");
+    const parsed = validateVerdict({
+      pr: "5263",
+      round_no: "1",
+      verdict: "APPROVE",
+      head_sha: "abc123",
+      finished_at: "2026-08-13T21:00:00Z",
+    });
+    expect(parsed.ok).toBe(true);
+    expect(parsed.verdict?.pr).toBe(5263);
+    expect(parsed.verdict?.round_no).toBe(1);
+  });
+
+  it("still rejects non-numeric strings", async () => {
+    const { validateVerdict } = await import("../src/verdicts.js");
+    expect(validateVerdict({ pr: "abc", round_no: 1, verdict: "APPROVE", head_sha: "x", finished_at: "y" }).ok).toBe(false);
   });
 });

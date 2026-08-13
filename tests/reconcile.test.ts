@@ -261,3 +261,45 @@ describe("reconcileOnce", () => {
     expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'reconcile_pass'").get()).toMatchObject({ c: 1 });
   });
 });
+
+describe("dry-run re-trigger suppression", () => {
+  let store: StateStore;
+  let gh: FakeGitHub;
+
+  beforeEach(() => {
+    store = new StateStore(":memory:");
+    gh = new FakeGitHub();
+  });
+
+  const hooks: SessionHooks = {
+    dispatchRound: async () => {},
+    inject: async () => {},
+    injectOverseer: async () => {},
+    archiveAndClose: async () => {},
+  };
+
+  it("suppresses re-queue when the last applied verdict matches the head (dry-run)", async () => {
+    gh.open = [ref(9, { head_sha: "sha9" })];
+    gh.labelTriggered = [item(9)];
+    store.upsertPr({ number: 9, state: "tracked", head_sha: "sha9", title: "PR 9", author: "alice", trigger_ts: null, stale_recheck: 0, escalation_worthy: 0, migration_gate: 0 });
+    store.logEvent("verdict_applied", 9, { head_sha: "sha9", verdict: "APPROVE" });
+
+    await reconcileOnce({ cfg: { ...cfg, dry_run: true }, store, adapter: gh, hooks });
+    expect(store.getPr(9)!.state).toBe("tracked"); // not re-queued
+
+    // Head moved → re-queue is legitimate again.
+    gh.open = [ref(9, { head_sha: "sha9-new" })];
+    await reconcileOnce({ cfg: { ...cfg, dry_run: true }, store, adapter: gh, hooks });
+    expect(store.getPr(9)!.state).toBe("queued");
+  });
+
+  it("does not suppress when dry_run is off", async () => {
+    gh.open = [ref(9, { head_sha: "sha9" })];
+    gh.labelTriggered = [item(9)];
+    store.upsertPr({ number: 9, state: "tracked", head_sha: "sha9", title: "PR 9", author: "alice", trigger_ts: null, stale_recheck: 0, escalation_worthy: 0, migration_gate: 0 });
+    store.logEvent("verdict_applied", 9, { head_sha: "sha9", verdict: "APPROVE" });
+
+    await reconcileOnce({ cfg: { ...cfg, dry_run: false }, store, adapter: gh, hooks });
+    expect(store.getPr(9)!.state).toBe("queued");
+  });
+});
