@@ -1,0 +1,260 @@
+// SQLite state store (state/state.db) + the atomic status.json snapshot.
+// Tables: pr_state, rounds, bot_comments (registry), deliveries
+// (webhook dedupe), events (append log).
+import Database from "better-sqlite3";
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+
+export type PrLifecycleState =
+  | "tracked"
+  | "queued"
+  | "reviewing"
+  | "awaiting_author"
+  | "awaiting_human"
+  | "closed";
+
+export interface PrStateRow {
+  number: number;
+  state: PrLifecycleState;
+  head_sha: string;
+  title: string;
+  author: string;
+  trigger_ts: string | null;
+  stale_recheck: number;
+  escalation_worthy: number;
+  migration_gate: number;
+  updated_at: string;
+}
+
+export interface RoundRow {
+  id: number;
+  pr: number;
+  round_no: number;
+  round_type: string;
+  lenses: string;
+  verdict: string | null;
+  spend_usd: number | null;
+  duration_s: number | null;
+  started_at: string;
+  deadline_at: string;
+  finished_at: string | null;
+  status: string;
+}
+
+const SCHEMA = `
+CREATE TABLE IF NOT EXISTS pr_state (
+  number INTEGER PRIMARY KEY,
+  state TEXT NOT NULL,
+  head_sha TEXT NOT NULL DEFAULT '',
+  title TEXT NOT NULL DEFAULT '',
+  author TEXT NOT NULL DEFAULT '',
+  trigger_ts TEXT,
+  stale_recheck INTEGER NOT NULL DEFAULT 0,
+  escalation_worthy INTEGER NOT NULL DEFAULT 0,
+  migration_gate INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS rounds (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  pr INTEGER NOT NULL,
+  round_no INTEGER NOT NULL,
+  round_type TEXT NOT NULL,
+  lenses TEXT NOT NULL,
+  verdict TEXT,
+  spend_usd REAL,
+  duration_s REAL,
+  started_at TEXT NOT NULL,
+  deadline_at TEXT NOT NULL,
+  finished_at TEXT,
+  status TEXT NOT NULL DEFAULT 'running'
+);
+CREATE TABLE IF NOT EXISTS bot_comments (
+  comment_id INTEGER PRIMARY KEY,
+  pr INTEGER NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'review_comment',
+  posted_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS deliveries (
+  guid TEXT PRIMARY KEY,
+  event TEXT NOT NULL,
+  action TEXT,
+  received_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  pr INTEGER,
+  payload TEXT
+);
+CREATE TABLE IF NOT EXISTS filed_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL,           -- 'improvement_pr' | 'issue'
+  title TEXT NOT NULL,
+  ref TEXT,
+  filed_at TEXT NOT NULL
+);
+`;
+
+export class StateStore {
+  readonly db: Database.Database;
+
+  constructor(path: string, private readonly now: () => Date = () => new Date()) {
+    if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
+    this.db = new Database(path);
+    this.db.pragma("journal_mode = WAL");
+    this.db.exec(SCHEMA);
+  }
+
+  close(): void {
+    this.db.close();
+  }
+
+  private ts(): string {
+    return this.now().toISOString();
+  }
+
+  // ---- pr_state ----------------------------------------------------------
+
+  getPr(n: number): PrStateRow | undefined {
+    return this.db.prepare("SELECT * FROM pr_state WHERE number = ?").get(n) as PrStateRow | undefined;
+  }
+
+  allPrs(): PrStateRow[] {
+    return this.db.prepare("SELECT * FROM pr_state ORDER BY number").all() as PrStateRow[];
+  }
+
+  upsertPr(row: Omit<PrStateRow, "updated_at">): void {
+    this.db
+      .prepare(
+        `INSERT INTO pr_state (number, state, head_sha, title, author, trigger_ts, stale_recheck, escalation_worthy, migration_gate, updated_at)
+         VALUES (@number, @state, @head_sha, @title, @author, @trigger_ts, @stale_recheck, @escalation_worthy, @migration_gate, @updated_at)
+         ON CONFLICT(number) DO UPDATE SET
+           state=@state, head_sha=@head_sha, title=@title, author=@author, trigger_ts=@trigger_ts,
+           stale_recheck=@stale_recheck, escalation_worthy=@escalation_worthy, migration_gate=@migration_gate, updated_at=@updated_at`,
+      )
+      .run({ ...row, updated_at: this.ts() });
+  }
+
+  setPrState(n: number, state: PrLifecycleState): void {
+    this.db.prepare("UPDATE pr_state SET state = ?, updated_at = ? WHERE number = ?").run(state, this.ts(), n);
+  }
+
+  // ---- rounds ------------------------------------------------------------
+
+  startRound(pr: number, roundType: string, lenses: string[], deadlineMin: number): number {
+    const started = this.now();
+    const deadline = new Date(started.getTime() + deadlineMin * 60_000);
+    const nextNo = ((this.db.prepare("SELECT MAX(round_no) AS m FROM rounds WHERE pr = ?").get(pr) as { m: number | null }).m ?? 0) + 1;
+    const info = this.db
+      .prepare(
+        `INSERT INTO rounds (pr, round_no, round_type, lenses, started_at, deadline_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, 'running')`,
+      )
+      .run(pr, nextNo, roundType, lenses.join(","), started.toISOString(), deadline.toISOString());
+    return Number(info.lastInsertRowid);
+  }
+
+  finishRound(id: number, verdict: string, spendUsd: number | null): void {
+    const row = this.db.prepare("SELECT started_at FROM rounds WHERE id = ?").get(id) as { started_at: string } | undefined;
+    const duration = row ? (this.now().getTime() - Date.parse(row.started_at)) / 1000 : null;
+    this.db
+      .prepare("UPDATE rounds SET verdict = ?, spend_usd = ?, duration_s = ?, finished_at = ?, status = 'done' WHERE id = ?")
+      .run(verdict, spendUsd, duration, this.ts(), id);
+  }
+
+  markRoundOverdue(id: number): void {
+    this.db.prepare("UPDATE rounds SET status = 'overdue' WHERE id = ?").run(id);
+  }
+
+  runningRounds(): RoundRow[] {
+    return this.db.prepare("SELECT * FROM rounds WHERE status = 'running' ORDER BY started_at").all() as RoundRow[];
+  }
+
+  roundsOn(dateIso: string): RoundRow[] {
+    return this.db.prepare("SELECT * FROM rounds WHERE started_at LIKE ? ORDER BY started_at").all(`${dateIso}%`) as RoundRow[];
+  }
+
+  totalSpend(): number {
+    return (this.db.prepare("SELECT COALESCE(SUM(spend_usd), 0) AS s FROM rounds").get() as { s: number }).s;
+  }
+
+  // ---- bot-comment registry ---------------------------------------------
+
+  registerBotComment(commentId: number, pr: number, kind = "review_comment"): void {
+    this.db
+      .prepare("INSERT OR IGNORE INTO bot_comments (comment_id, pr, kind, posted_at) VALUES (?, ?, ?, ?)")
+      .run(commentId, pr, kind, this.ts());
+  }
+
+  isBotComment(commentId: number): boolean {
+    return this.db.prepare("SELECT 1 FROM bot_comments WHERE comment_id = ?").get(commentId) !== undefined;
+  }
+
+  // ---- webhook delivery dedupe ------------------------------------------
+
+  /** Returns false when the guid was already seen (duplicate delivery). */
+  recordDelivery(guid: string, event: string, action: string | null): boolean {
+    const info = this.db
+      .prepare("INSERT OR IGNORE INTO deliveries (guid, event, action, received_at) VALUES (?, ?, ?, ?)")
+      .run(guid, event, action, this.ts());
+    return info.changes === 1;
+  }
+
+  // ---- event log ---------------------------------------------------------
+
+  logEvent(kind: string, pr: number | null, payload?: unknown): void {
+    this.db
+      .prepare("INSERT INTO events (ts, kind, pr, payload) VALUES (?, ?, ?, ?)")
+      .run(this.ts(), kind, pr, payload === undefined ? null : JSON.stringify(payload));
+  }
+
+  eventsOn(dateIso: string): Array<{ ts: string; kind: string; pr: number | null; payload: string | null }> {
+    return this.db.prepare("SELECT ts, kind, pr, payload FROM events WHERE ts LIKE ? ORDER BY id").all(`${dateIso}%`) as any;
+  }
+
+  // ---- filed items (improvement PRs / issues, cap accounting) -----------
+
+  recordFiledItem(kind: "improvement_pr" | "issue", title: string, ref: string | null): void {
+    this.db.prepare("INSERT INTO filed_items (kind, title, ref, filed_at) VALUES (?, ?, ?, ?)").run(kind, title, ref, this.ts());
+  }
+
+  filedSince(kind: "improvement_pr" | "issue", sinceIso: string): number {
+    return (
+      this.db.prepare("SELECT COUNT(*) AS c FROM filed_items WHERE kind = ? AND filed_at >= ?").get(kind, sinceIso) as { c: number }
+    ).c;
+  }
+}
+
+// ---- status.json ---------------------------------------------------------
+
+export interface StatusSnapshot {
+  written_at: string;
+  dry_run: boolean;
+  prs: Array<Pick<PrStateRow, "number" | "state" | "title" | "head_sha" | "stale_recheck">>;
+  running_rounds: number;
+  total_spend_usd: number;
+  digest_headline?: string;
+  heartbeat: string;
+}
+
+/** Write status.json atomically (temp + rename) — readers may hit it mid-write. */
+export function writeStatusJson(stateDir: string, snapshot: StatusSnapshot): void {
+  mkdirSync(stateDir, { recursive: true });
+  const target = join(stateDir, "status.json");
+  const tmp = `${target}.tmp`;
+  writeFileSync(tmp, JSON.stringify(snapshot, null, 2));
+  renameSync(tmp, target);
+}
+
+export function buildStatusSnapshot(store: StateStore, dryRun: boolean, digestHeadline?: string, now: () => Date = () => new Date()): StatusSnapshot {
+  return {
+    written_at: now().toISOString(),
+    dry_run: dryRun,
+    prs: store.allPrs().map((p) => ({ number: p.number, state: p.state, title: p.title, head_sha: p.head_sha, stale_recheck: p.stale_recheck })),
+    running_rounds: store.runningRounds().length,
+    total_spend_usd: store.totalSpend(),
+    ...(digestHeadline ? { digest_headline: digestHeadline } : {}),
+    heartbeat: now().toISOString(),
+  };
+}

@@ -1,0 +1,35 @@
+{
+  "name": "quickreview-sandbox",
+  "version": "0.1.0",
+  "private": true,
+  "description": "review sandbox — quickreviewd daemon, qcr CLI, pi extensions",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "daemon": "npm run build && node dist/src/wire.js",
+    "smoke:session": "npm run build && node dist/src/smoke-session.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "13.0.3",
+    "smol-toml": "1.8.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "22.20.1",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  },
+  "pi": {
+    "//": "pi is NOT a build dependency — it runs only inside the VM container. Pins per assets/findings.md + ansible group_vars. VERIFY-ON-PIN: package name and exact version against the registry at provisioning time.",
+    "package": "@earendil-works/pi-coding-agent",
+    "version": "0.84.1",
+    "extensions": {
+      "pi-subagents": "github:amosblomqvist/pi-subagents",
+      "pi-memory": "github:jayzeng/pi-memory#v0.4.2"
+    }
+  }
+}

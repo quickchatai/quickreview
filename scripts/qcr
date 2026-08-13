@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# qcr — thin wrapper around the compiled CLI (src/cli.ts → dist/src/cli.js).
+# Builds once if dist is missing so a fresh checkout still works.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CLI="$ROOT/dist/src/cli.js"
+
+if [[ ! -f "$CLI" ]]; then
+  echo "qcr: dist missing, building…" >&2
+  (cd "$ROOT" && npm run --silent build >&2)
+fi
+
+exec node "$CLI" "$@"

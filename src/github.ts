@@ -1,0 +1,403 @@
+// The GitHub adapter. Reads run directly on the installation token; every
+// mutation is expressed as a MutationIntent and pushed through the gate
+// (dry-run writes it to state/dryrun/ instead of executing). There is no
+// review-dismissal function in this adapter, by design — never add one.
+import type { Config } from "./config.js";
+import { MutationGate, type MutationIntent, type GateResult } from "./gate.js";
+import { TokenMinter, type FetchFn } from "./githubAuth.js";
+
+export interface PrRef {
+  number: number;
+  title: string;
+  author: string;
+  head_sha: string;
+  updated_at: string;
+  state: "open" | "closed";
+  draft: boolean;
+  merged: boolean;
+  labels: string[];
+}
+
+export interface RequestedReviewers {
+  users: string[];
+  teams: string[];
+}
+
+export interface StalePr {
+  number: number;
+  head_sha: string;
+  approved_sha: string;
+  approved_at: string;
+}
+
+export interface PrFileEntry {
+  filename: string;
+  additions: number;
+  deletions: number;
+  status: string;
+  /** Unified diff for the file when GitHub returns one (absent for binaries). */
+  patch?: string;
+}
+
+export interface ReviewFull {
+  id: number;
+  user: string;
+  state: string;
+  body: string;
+  commit_id: string;
+  submitted_at: string | null;
+}
+
+export interface ReviewCommentFull {
+  id: number;
+  user: string;
+  body: string;
+  path: string;
+  line: number | null;
+  pull_request_review_id: number | null;
+  in_reply_to_id: number | null;
+}
+
+interface SearchIssueItem {
+  number: number;
+  title: string;
+  user: { login: string; type: string };
+  updated_at: string;
+  created_at: string;
+}
+
+export class GitHubAdapter {
+  readonly owner: string;
+  readonly repo: string;
+
+  constructor(
+    private readonly cfg: Config,
+    private readonly minter: TokenMinter,
+    readonly gate: MutationGate,
+    private readonly fetchFn: FetchFn = fetch,
+    private readonly apiBase = "https://api.github.com",
+  ) {
+    const [owner, repo] = cfg.github.repo.split("/");
+    if (!owner || !repo) throw new Error(`bad repo: ${cfg.github.repo}`);
+    this.owner = owner;
+    this.repo = repo;
+  }
+
+  // ---- plumbing ----------------------------------------------------------
+
+  private async request<T>(method: string, path: string, body?: unknown, auth: "installation" | "jwt" = "installation", retried = false): Promise<T> {
+    const token = auth === "jwt" ? this.minter.appJwt() : await this.minter.installationToken();
+    const res = await this.fetchFn(`${this.apiBase}${path}`, {
+      method,
+      headers: {
+        authorization: `Bearer ${token}`,
+        accept: "application/vnd.github+json",
+        "x-github-api-version": "2022-11-28",
+        ...(body !== undefined ? { "content-type": "application/json" } : {}),
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    if (res.status === 401 && auth === "installation" && !retried) {
+      this.minter.invalidate();
+      return this.request(method, path, body, auth, true);
+    }
+    if (!res.ok) throw new Error(`${method} ${path} → ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    if (res.status === 204) return undefined as T;
+    return (await res.json()) as T;
+  }
+
+  private async graphql<T>(query: string, variables: Record<string, unknown>): Promise<T> {
+    const token = await this.minter.installationToken();
+    const res = await this.fetchFn(`${this.apiBase}/graphql`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ query, variables }),
+    });
+    if (!res.ok) throw new Error(`graphql → ${res.status}`);
+    const payload = (await res.json()) as { data?: T; errors?: unknown[] };
+    if (payload.errors?.length) throw new Error(`graphql errors: ${JSON.stringify(payload.errors).slice(0, 300)}`);
+    return payload.data as T;
+  }
+
+  /** The mutation executor wired into the gate when dry_run is off. */
+  executeMutation = async (intent: MutationIntent): Promise<unknown> => {
+    if (intent.method === "git") throw new Error("git pushes are executed by the caller, not the REST executor");
+    return this.request(intent.method, intent.path, intent.body);
+  };
+
+  // ---- triggered-set queries (reads) -------------------------------------
+
+  private async searchIssues(q: string): Promise<SearchIssueItem[]> {
+    const res = await this.request<{ items: SearchIssueItem[] }>(
+      "GET",
+      `/search/issues?q=${encodeURIComponent(q)}&per_page=100`,
+    );
+    return res.items;
+  }
+
+  /** PRs carrying the trigger label. Bot-authored PRs are excluded — the app
+   * can never approve its own PRs (§2). */
+  async searchLabelTriggered(): Promise<SearchIssueItem[]> {
+    const q = `repo:${this.cfg.github.repo} is:open is:pr label:"${this.cfg.github.trigger_label}" -author:app/${this.cfg.github.app_slug}`;
+    return this.searchIssues(q);
+  }
+
+  /** PRs with a pending review-team request. */
+  async searchTeamTriggered(): Promise<SearchIssueItem[]> {
+    const q = `repo:${this.cfg.github.repo} is:open is:pr team-review-requested:${this.cfg.github.review_team} -author:app/${this.cfg.github.app_slug}`;
+    return this.searchIssues(q);
+  }
+
+  /** Open PRs where the escalation reviewer is awaited (replaces `@me`). */
+  async searchAwaitingEscalationReviewer(): Promise<SearchIssueItem[]> {
+    const q = `repo:${this.cfg.github.repo} is:open is:pr review-requested:${this.cfg.github.escalation_reviewer}`;
+    return this.searchIssues(q);
+  }
+
+  // ---- authoritative per-PR reads ----------------------------------------
+
+  async getPr(n: number): Promise<PrRef> {
+    const pr = await this.request<any>("GET", `/repos/${this.owner}/${this.repo}/pulls/${n}`);
+    return {
+      number: pr.number,
+      title: pr.title,
+      author: pr.user.login,
+      head_sha: pr.head.sha,
+      updated_at: pr.updated_at,
+      state: pr.state,
+      draft: pr.draft,
+      merged: Boolean(pr.merged),
+      labels: (pr.labels ?? []).map((l: { name: string }) => l.name),
+    };
+  }
+
+  async listOpenPrs(): Promise<PrRef[]> {
+    const prs = await this.request<any[]>("GET", `/repos/${this.owner}/${this.repo}/pulls?state=open&per_page=100`);
+    return prs.map((pr) => ({
+      number: pr.number,
+      title: pr.title,
+      author: pr.user.login,
+      head_sha: pr.head.sha,
+      updated_at: pr.updated_at,
+      state: pr.state,
+      draft: pr.draft,
+      merged: false,
+      labels: (pr.labels ?? []).map((l: { name: string }) => l.name),
+    }));
+  }
+
+  async getRequestedReviewers(n: number): Promise<RequestedReviewers> {
+    const res = await this.request<{ users: Array<{ login: string }>; teams: Array<{ slug: string }> }>(
+      "GET",
+      `/repos/${this.owner}/${this.repo}/pulls/${n}/requested_reviewers`,
+    );
+    return { users: res.users.map((u) => u.login), teams: res.teams.map((t) => t.slug) };
+  }
+
+  async listPrFiles(n: number): Promise<PrFileEntry[]> {
+    const out: PrFileEntry[] = [];
+    for (let page = 1; page <= 10; page++) {
+      const batch = await this.request<any[]>(
+        "GET",
+        `/repos/${this.owner}/${this.repo}/pulls/${n}/files?per_page=100&page=${page}`,
+      );
+      out.push(...batch.map((f) => ({ filename: f.filename, additions: f.additions, deletions: f.deletions, status: f.status, ...(typeof f.patch === "string" ? { patch: f.patch } : {}) })));
+      if (batch.length < 100) break;
+    }
+    return out;
+  }
+
+  async listReviews(n: number): Promise<Array<{ id: number; user: string; state: string; commit_id: string }>> {
+    const res = await this.request<any[]>("GET", `/repos/${this.owner}/${this.repo}/pulls/${n}/reviews?per_page=100`);
+    return res.map((r) => ({ id: r.id, user: r.user?.login ?? "", state: r.state, commit_id: r.commit_id }));
+  }
+
+  /** Full review rows (bodies included) — read-only, for the compare harness. */
+  async listReviewsFull(n: number): Promise<ReviewFull[]> {
+    const res = await this.request<any[]>("GET", `/repos/${this.owner}/${this.repo}/pulls/${n}/reviews?per_page=100`);
+    return res.map((r) => ({
+      id: r.id,
+      user: r.user?.login ?? "",
+      state: r.state,
+      body: r.body ?? "",
+      commit_id: r.commit_id,
+      submitted_at: r.submitted_at ?? null,
+    }));
+  }
+
+  /** Full inline review comments — read-only, for the compare harness. */
+  async listReviewCommentsFull(n: number): Promise<ReviewCommentFull[]> {
+    const res = await this.request<any[]>("GET", `/repos/${this.owner}/${this.repo}/pulls/${n}/comments?per_page=100`);
+    return res.map((c) => ({
+      id: c.id,
+      user: c.user?.login ?? "",
+      body: c.body ?? "",
+      path: c.path ?? "",
+      line: c.line ?? c.original_line ?? null,
+      pull_request_review_id: c.pull_request_review_id ?? null,
+      in_reply_to_id: c.in_reply_to_id ?? null,
+    }));
+  }
+
+  /** Review comments the bot authored on a PR — the registry backfill source. */
+  async listBotReviewComments(n: number): Promise<number[]> {
+    const res = await this.request<any[]>(
+      "GET",
+      `/repos/${this.owner}/${this.repo}/pulls/${n}/comments?per_page=100`,
+    );
+    return res.filter((c) => c.user?.login === this.cfg.github.bot_login).map((c) => c.id);
+  }
+
+  // ---- staleness scan (GraphQL, ported query) ----------------------------
+
+  /** Open PRs whose latest bot APPROVED review no longer matches the head.
+   * Ported from the old flow: `first: 100`, `UPDATED_AT DESC`, review author
+   * `example-review[bot]`. */
+  async stalenessScan(): Promise<StalePr[]> {
+    const q = `repo:${this.cfg.github.repo} is:pr is:open sort:updated-desc`;
+    const data = await this.graphql<{
+      search: { nodes: Array<{ number?: number; headRefOid?: string; reviews?: { nodes: Array<{ state: string; submittedAt: string; commit: { oid: string } | null }> } }> };
+    }>(
+      `query ($q: String!, $author: String!) {
+        search(query: $q, type: ISSUE, first: 100) {
+          nodes {
+            ... on PullRequest {
+              number
+              headRefOid
+              reviews(author: $author, states: [APPROVED], last: 1) {
+                nodes { state submittedAt commit { oid } }
+              }
+            }
+          }
+        }
+      }`,
+      { q, author: this.cfg.github.bot_login },
+    );
+    const stale: StalePr[] = [];
+    for (const node of data.search.nodes) {
+      if (!node.number || !node.headRefOid) continue;
+      const review = node.reviews?.nodes?.[0];
+      if (!review?.commit) continue;
+      if (review.commit.oid !== node.headRefOid) {
+        stale.push({ number: node.number, head_sha: node.headRefOid, approved_sha: review.commit.oid, approved_at: review.submittedAt });
+      }
+    }
+    return stale;
+  }
+
+  // ---- webhook redeliveries (JWT) ----------------------------------------
+
+  async listWebhookDeliveries(perPage = 100): Promise<Array<{ id: number; guid: string; status: string; delivered_at: string }>> {
+    return this.request("GET", `/app/hook/deliveries?per_page=${perPage}`, undefined, "jwt");
+  }
+
+  // ---- mutations (all through the gate) ----------------------------------
+
+  async addLabel(n: number, label: string): Promise<GateResult> {
+    return this.gate.execute({
+      kind: "add_label",
+      method: "POST",
+      path: `/repos/${this.owner}/${this.repo}/issues/${n}/labels`,
+      body: { labels: [label] },
+      note: `add label "${label}" to #${n}`,
+      pr: n,
+    });
+  }
+
+  async removeLabel(n: number, label: string): Promise<GateResult> {
+    return this.gate.execute({
+      kind: "remove_label",
+      method: "DELETE",
+      path: `/repos/${this.owner}/${this.repo}/issues/${n}/labels/${encodeURIComponent(label)}`,
+      note: `remove label "${label}" from #${n}`,
+      pr: n,
+    });
+  }
+
+  /** Consume the team trigger: DELETE with the JSON body, then verify. */
+  async deleteTeamReviewRequest(n: number): Promise<GateResult> {
+    const teamSlug = this.cfg.github.review_team.split("/")[1] ?? this.cfg.github.review_team;
+    const result = await this.gate.execute({
+      kind: "delete_team_review_request",
+      method: "DELETE",
+      path: `/repos/${this.owner}/${this.repo}/pulls/${n}/requested_reviewers`,
+      body: { reviewers: [], team_reviewers: [teamSlug] },
+      note: `clear team review request (${teamSlug}) on #${n}`,
+      pr: n,
+    });
+    if (result.executed) {
+      const after = await this.getRequestedReviewers(n);
+      if (after.teams.includes(teamSlug)) throw new Error(`team request on #${n} survived DELETE`);
+    }
+    return result;
+  }
+
+  /** Escalation: request the human reviewer, honoring the ported redundancy
+   * skips — author is the reviewer / standing review exists / already
+   * requested. Returns null when skipped. */
+  async requestEscalationReview(n: number): Promise<{ skipped: string | null; result?: GateResult }> {
+    const reviewer = this.cfg.github.escalation_reviewer;
+    const pr = await this.getPr(n);
+    if (pr.author === reviewer) return { skipped: "author-is-reviewer" };
+    const requested = await this.getRequestedReviewers(n);
+    if (requested.users.includes(reviewer)) return { skipped: "already-requested" };
+    const reviews = await this.listReviews(n);
+    if (reviews.some((r) => r.user === reviewer)) return { skipped: "standing-review" };
+    const result = await this.gate.execute({
+      kind: "request_reviewer",
+      method: "POST",
+      path: `/repos/${this.owner}/${this.repo}/pulls/${n}/requested_reviewers`,
+      body: { reviewers: [reviewer] },
+      note: `request ${reviewer} review on #${n} (escalation)`,
+      pr: n,
+    });
+    return { skipped: null, result };
+  }
+
+  async createReview(n: number, payload: { commit_id: string; event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT"; body: string; comments?: unknown[] }): Promise<GateResult> {
+    return this.gate.execute({
+      kind: "create_review",
+      method: "POST",
+      path: `/repos/${this.owner}/${this.repo}/pulls/${n}/reviews`,
+      body: payload,
+      note: `post ${payload.event} review on #${n}`,
+      pr: n,
+    });
+  }
+
+  async createReviewCommentReply(n: number, commentId: number, body: string): Promise<GateResult> {
+    return this.gate.execute({
+      kind: "create_review_comment_reply",
+      method: "POST",
+      path: `/repos/${this.owner}/${this.repo}/pulls/${n}/comments/${commentId}/replies`,
+      body: { body },
+      note: `reply in thread ${commentId} on #${n}`,
+      pr: n,
+    });
+  }
+
+  async createIssue(title: string, body: string, labels: string[]): Promise<GateResult> {
+    return this.gate.execute({
+      kind: "create_issue",
+      method: "POST",
+      path: `/repos/${this.owner}/${this.repo}/issues`,
+      body: { title, body, labels },
+      note: `file issue "${title}"`,
+    });
+  }
+
+  async listOpenBotIssues(): Promise<Array<{ number: number; title: string }>> {
+    const q = `repo:${this.cfg.github.repo} is:open is:issue label:"${this.cfg.github.issue_label}"`;
+    return (await this.searchIssues(q)).map((i) => ({ number: i.number, title: i.title }));
+  }
+
+  async createPull(head: string, base: string, title: string, body: string): Promise<GateResult> {
+    return this.gate.execute({
+      kind: "create_pull",
+      method: "POST",
+      path: `/repos/${this.owner}/${this.repo}/pulls`,
+      body: { head, base, title, body },
+      note: `open PR ${head} → ${base}: "${title}"`,
+    });
+  }
+}
