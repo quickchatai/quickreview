@@ -1,0 +1,38 @@
+---
+# Review-sandbox provisioning knobs — vendored working copy (the
+# tracker asset is the historical record). Target: the EXISTING shared `VM`
+# VM in your-dev-project (e2-standard-4); the container is capped, the VM is not
+# ours to resize.
+
+sandbox_root: /opt/quickreview          # on the VM
+webhook_port: 8787
+
+image_name: quickreview-sandbox
+image_tag: v1
+
+node_major: "22"
+# pi CLI npm package + exact version pin (findings; registry-verified
+# 2026-08-13). The image never floats — bumping is a deliberate edit +
+# `-e rebuild_image=true`.
+pi_npm_package: "@earendil-works/pi-coding-agent"
+pi_version: "0.84.1"
+
+timezone: Europe/Warsaw
+container_uid: 1001                   # the in-container 'review' user (Dockerfile)
+
+# Hard Docker limits — the VM is shared (the owner, 2026-08-13).
+container_cpus: "2"
+container_memory: "8g"
+
+# Preflight refusal threshold on the shared box.
+min_free_disk_gb: 15
+
+# Controller-side sources
+secrets_src: "{{ lookup('env', 'HOME') }}/.config/quickreview-bot"
+# Expected files there: app_id, app.pem, openai_api_key, webhook_secret, tunnel_token
+
+# The prompt/agent artifact set (seeded into the container volume).
+seed_src: "/path/to/seed-assets"
+
+# The local sandbox working copy (daemon, extensions, prompts).
+sandbox_src: "/path/to/quickreview"

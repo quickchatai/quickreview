@@ -1,0 +1,36 @@
+# Review sandbox runtime — single container, plain Ubuntu base.
+# Built by the ansible; managed by ansible/docker, never hand-edited on the VM.
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    TZ={{ timezone }}
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl git tmux jq openssh-client gnupg tzdata sqlite3 \
+      build-essential python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Node {{ node_major }} (NodeSource)
+RUN curl -fsSL https://deb.nodesource.com/setup_{{ node_major }}.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# GitHub CLI
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update && apt-get install -y --no-install-recommends gh \
+    && rm -rf /var/lib/apt/lists/*
+
+# pi — pinned, never floating
+RUN npm install -g {{ pi_npm_package }}@{{ pi_version }}
+
+RUN useradd --create-home --uid 1001 review
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+
+USER review
+WORKDIR /opt/quickreview/sandbox
+EXPOSE {{ webhook_port }}
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

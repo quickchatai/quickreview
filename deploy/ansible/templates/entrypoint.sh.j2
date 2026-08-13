@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Review-sandbox container entrypoint (deploy-era: runs the built quickreviewd).
+set -euo pipefail
+
+SANDBOX=/opt/quickreview/sandbox
+SECRETS=/opt/quickreview/secrets
+
+# The code resolves secrets via config.toml [github].secrets_dir =
+# ~/.config/quickreview-bot — point that at the read-only secrets mount.
+mkdir -p "$HOME/.config"
+[[ -L "$HOME/.config/quickreview-bot" ]] || ln -sfn "$SECRETS" "$HOME/.config/quickreview-bot"
+
+# OpenAI auth for pi — native, two routes (findings):
+#   1. API key: exported here so the tmux server and every pi process inherit it.
+#   2. ChatGPT-subscription OAuth: run `/login` once in any pi session; tokens
+#      persist in /home/review/.pi/agent/auth.json (a mounted volume) and take
+#      precedence over the env var (pi resolution: flag -> auth.json -> env).
+if [[ -r "$SECRETS/openai_api_key" ]]; then
+  OPENAI_API_KEY="$(< "$SECRETS/openai_api_key")"
+  export OPENAI_API_KEY
+fi
+
+# Private-repo git auth (example-app clone + per-PR fetches): the app
+# installation token over HTTPS — never a personal credential (§2).
+git config --global credential.helper \
+  "!f() { echo username=x-access-token; echo \"password=\$(\"$SANDBOX/scripts/mint-token.sh\")\"; }; f"
+
+# Build on boot when needed (fresh volume or bumped dependencies). The lockfile
+# hash marker keeps steady-state restarts instant.
+cd "$SANDBOX"
+marker=/opt/quickreview/state/.build-lock-hash
+current="$(sha256sum package-lock.json | cut -d' ' -f1)"
+if [[ ! -d dist || ! -f "$marker" || "$(cat "$marker")" != "$current" ]]; then
+  npm ci
+  npm run build
+  echo "$current" > "$marker"
+fi
+
+# tmux server = the jump-in surface (qcr attach / docker exec ... tmux attach).
+tmux start-server
+tmux has-session -t main 2>/dev/null || tmux new-session -d -s main
+
+exec node "$SANDBOX/dist/src/wire.js"

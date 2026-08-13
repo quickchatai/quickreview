@@ -38,7 +38,7 @@
 set -euo pipefail
 
 SELF="$(basename "${BASH_SOURCE[0]}")"
-DEFAULT_ANSIBLE_DIR="/path/to/ansible"
+DEFAULT_ANSIBLE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/deploy/ansible"
 
 SANDBOX_DIR="${QC_SANDBOX_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 ANSIBLE_DIR="${QC_ANSIBLE_DIR:-$DEFAULT_ANSIBLE_DIR}"
