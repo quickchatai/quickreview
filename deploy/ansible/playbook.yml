@@ -129,8 +129,20 @@
         mode: "0400"
         owner: "{{ container_uid }}"
         group: "{{ container_uid }}"
-      loop: [app_id, app.pem, openai_api_key, webhook_secret]
+      loop: [app_id, app.pem, webhook_secret]
       no_log: true
+
+    # Optional — the owner chose the ChatGPT-OAuth route (2026-08-13): pi auths
+    # via `/login` inside the container; the key file ships only if present.
+    - name: OpenAI API key (optional under the OAuth route)
+      ansible.builtin.copy:
+        src: "{{ secrets_src }}/openai_api_key"
+        dest: "{{ sandbox_root }}/secrets/openai_api_key"
+        mode: "0400"
+        owner: "{{ container_uid }}"
+        group: "{{ container_uid }}"
+      no_log: true
+      when: lookup('ansible.builtin.fileglob', secrets_src + '/openai_api_key') | length > 0
 
     - name: Seed prompts (from the artifact set)
       ansible.builtin.copy:
