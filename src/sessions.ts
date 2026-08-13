@@ -233,7 +233,14 @@ export class PiSessionManager implements SessionHooks {
       extensionPaths: this.extensionPaths(),
       sessionName: session,
     });
-    await this.tmux.newSession(session, command, {
+    // tmux panes inherit the tmux SERVER's environment, not the client's, so
+    // per-session vars must ride the command line itself. Only the QCR_*
+    // routing vars are prefixed — HOME/PATH/OPENAI_API_KEY stay whatever the
+    // container (or dev box) provides, which is where pi's auth actually lives.
+    const qcrPrefix = Object.entries(this.buildEnv(session, extraEnv))
+      .filter(([k, v]) => k.startsWith("QCR_") && v !== undefined)
+      .map(([k, v]) => `${k}=${v}`);
+    await this.tmux.newSession(session, ["env", ...qcrPrefix, ...command], {
       cwd: this.root,
       env: this.buildEnv(session, extraEnv),
     });
