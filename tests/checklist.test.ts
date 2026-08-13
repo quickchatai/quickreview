@@ -1,0 +1,351 @@
+// qcr checklist — every automated probe against local fixtures. All I/O is
+// injected (no sockets, no processes, no GitHub); the filesystem probes run in
+// throwaway temp dirs.
+import { afterEach, describe, expect, it } from "vitest";
+import { createHmac } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  MANUAL_ITEMS,
+  diffQueues,
+  exitCodeFor,
+  probeDigest,
+  probePingPong,
+  probeQueueDiff,
+  probeRestartRecovery,
+  probeStalenessWake,
+  probeTmux,
+  probeTunnelHmac,
+  renderManualItems,
+  renderTable,
+  runChecklist,
+  safeProbe,
+  signBody,
+  type ChecklistDeps,
+  type HttpPost,
+  type ProbeResult,
+} from "../src/checklist.js";
+
+const tmpDirs: string[] = [];
+function scratch(): string {
+  const d = mkdtempSync(join(tmpdir(), "qcr-checklist-"));
+  tmpDirs.push(d);
+  return d;
+}
+afterEach(() => {
+  while (tmpDirs.length) rmSync(tmpDirs.pop()!, { recursive: true, force: true });
+});
+
+const SECRET = "s3cret-webhook";
+
+/** A fixture receiver: verifies the HMAC exactly as the daemon must. */
+const fakeReceiver: HttpPost = async (_url, headers, body) => {
+  const sig = headers["x-hub-signature-256"] ?? "";
+  const want = `sha256=${createHmac("sha256", SECRET).update(body).digest("hex")}`;
+  return { status: sig === want ? 200 : 403 };
+};
+
+describe("① tunnel + HMAC probe", () => {
+  it("passes when a signed delivery is accepted and a forged one rejected", async () => {
+    const seen: Array<Record<string, string>> = [];
+    const post: HttpPost = async (u, h, b) => {
+      seen.push(h);
+      return fakeReceiver(u, h, b);
+    };
+    const r = await probeTunnelHmac({ url: "http://127.0.0.1:8787/webhook", webhookSecret: SECRET, post, hostname: "review.example.com" });
+    expect(r.pass).toBe(true);
+    expect(r.detail).toContain("signed -> 200");
+    expect(r.detail).toContain("forged -> 403");
+    expect(seen).toHaveLength(2);
+    expect(seen[0]!["x-github-event"]).toBe("ping");
+    expect(seen[0]!["x-github-delivery"]).not.toBe(seen[1]!["x-github-delivery"]);
+  });
+
+  it("fails when a forged signature is accepted", async () => {
+    const r = await probeTunnelHmac({ url: "u", webhookSecret: SECRET, post: async () => ({ status: 200 }) });
+    expect(r.pass).toBe(false);
+    expect(r.detail).toContain("forged -> 200");
+  });
+
+  it("fails when the signed delivery does not reach the daemon (502 through the tunnel)", async () => {
+    const r = await probeTunnelHmac({ url: "u", webhookSecret: SECRET, post: async (_u, h) => ({ status: h["x-hub-signature-256"]!.endsWith("0".repeat(8)) ? 403 : 502 }) });
+    expect(r.pass).toBe(false);
+    expect(r.detail).toContain("signed -> 502");
+  });
+
+  it("signBody matches GitHub's sha256= scheme", () => {
+    expect(signBody("k", "body")).toBe(`sha256=${createHmac("sha256", "k").update("body").digest("hex")}`);
+  });
+});
+
+describe("② reconcile queue diff", () => {
+  it("diffs the union of both trigger searches against the derived queue", () => {
+    const d = diffQueues([1, 2, 2, 3], [3, 1, 4]);
+    expect(d.manual).toEqual([1, 2, 3]);
+    expect(d.derived).toEqual([1, 3, 4]);
+    expect(d.missing).toEqual([2]);
+    expect(d.extra).toEqual([4]);
+  });
+
+  it("passes on an exact match", async () => {
+    const r = await probeQueueDiff({
+      labelTriggered: async () => [11, 12],
+      teamTriggered: async () => [13],
+      derivedQueue: () => [13, 12, 11],
+    });
+    expect(r.pass).toBe(true);
+  });
+
+  it("fails and names the divergence", async () => {
+    const r = await probeQueueDiff({ labelTriggered: async () => [11], teamTriggered: async () => [12], derivedQueue: () => [11, 99] });
+    expect(r.pass).toBe(false);
+    expect(r.detail).toContain("missing=[12]");
+    expect(r.detail).toContain("extra=[99]");
+  });
+});
+
+describe("④ staleness wake", () => {
+  const fixture = { number: 4242, head_sha: "beef0000", approved_sha: "cafe1111" };
+
+  it("passes when the reconcile step issues a staleness round", async () => {
+    const injected: unknown[] = [];
+    const orders: Array<{ pr: number; round_type: string }> = [];
+    const r = await probeStalenessWake({
+      fixture,
+      injectStalePr: (p) => void injected.push(p),
+      runStalenessReconcile: async () => void orders.push({ pr: fixture.number, round_type: "staleness" }),
+      issuedOrders: () => orders,
+    });
+    expect(injected).toHaveLength(1);
+    expect(r.pass).toBe(true);
+    expect(r.detail).toContain("staleness round issued");
+  });
+
+  it("fails when only a first-round order lands", async () => {
+    const r = await probeStalenessWake({
+      fixture,
+      injectStalePr: () => {},
+      runStalenessReconcile: async () => {},
+      issuedOrders: () => [{ pr: fixture.number, round_type: "first" }],
+    });
+    expect(r.pass).toBe(false);
+    expect(r.detail).toContain("no staleness round");
+  });
+});
+
+describe("⑤ ping-pong", () => {
+  it("passes when the interpreter drops an inject file", async () => {
+    const dir = scratch();
+    const r = await probePingPong({
+      injectDir: dir,
+      event: { action: "created", comment: { in_reply_to_id: 7, user: { login: "author" } } },
+      interpret: async () => writeFileSync(join(dir, "pr-77-reply.md"), "wake up"),
+    });
+    expect(r.pass).toBe(true);
+    expect(r.detail).toContain("pr-77-reply.md");
+  });
+
+  it("fails when nothing is injected", async () => {
+    const dir = scratch();
+    writeFileSync(join(dir, "pre-existing.md"), "old");
+    const r = await probePingPong({ injectDir: dir, event: {}, interpret: async () => {} });
+    expect(r.pass).toBe(false);
+    expect(r.detail).toContain("no new inject file");
+  });
+});
+
+describe("⑦ digest presence", () => {
+  function digestFixture(opts: { digest?: string; headline?: string | null }): { digestDir: string; statusPath: string; today: string } {
+    const dir = scratch();
+    const digestDir = join(dir, "digest");
+    mkdirSync(digestDir);
+    const today = "2026-08-13";
+    if (opts.digest !== undefined) writeFileSync(join(digestDir, `${today}.md`), opts.digest);
+    const statusPath = join(dir, "status.json");
+    writeFileSync(statusPath, JSON.stringify({ heartbeat: new Date().toISOString(), ...(opts.headline ? { digest_headline: opts.headline } : {}) }));
+    return { digestDir, statusPath, today };
+  }
+
+  it("passes with the file and a headline in status.json", () => {
+    const r = probeDigest(digestFixture({ digest: "# EOD\n\n3 rounds, $1.20", headline: "3 rounds, $1.20" }));
+    expect(r.pass).toBe(true);
+    expect(r.detail).toContain("3 rounds");
+  });
+
+  it("fails without today's digest", () => {
+    const r = probeDigest(digestFixture({ headline: "x" }));
+    expect(r.pass).toBe(false);
+    expect(r.detail).toContain("missing");
+  });
+
+  it("fails when the digest exists but the headline never reached status.json", () => {
+    const r = probeDigest(digestFixture({ digest: "# EOD", headline: null }));
+    expect(r.pass).toBe(false);
+    expect(r.detail).toContain("no digest_headline");
+  });
+
+  it("fails on an empty digest", () => {
+    const r = probeDigest(digestFixture({ digest: "   \n", headline: "x" }));
+    expect(r.pass).toBe(false);
+    expect(r.detail).toContain("empty");
+  });
+});
+
+describe("⑧ tmux attach", () => {
+  it("passes with an overseer and at least one pr- session", async () => {
+    const r = await probeTmux({ listSessions: () => ["overseer", "pr-123", "main"] });
+    expect(r.pass).toBe(true);
+  });
+
+  it("fails when the overseer is missing", async () => {
+    const r = await probeTmux({ listSessions: () => ["pr-123"] });
+    expect(r.pass).toBe(false);
+    expect(r.detail).toContain("overseer=NO");
+  });
+
+  it("reports a missing tmux server as a failure (the correct result off-VM)", async () => {
+    const r = await probeTmux({
+      listSessions: () => {
+        throw new Error("no server running on /tmp/tmux-1000/default");
+      },
+    });
+    expect(r.pass).toBe(false);
+    expect(r.detail).toContain("no tmux server");
+  });
+});
+
+describe("⑨ restart recovery", () => {
+  function statusFixture(heartbeatIso: string | null): string {
+    const dir = scratch();
+    const p = join(dir, "status.json");
+    writeFileSync(p, JSON.stringify(heartbeatIso === null ? {} : { heartbeat: heartbeatIso }));
+    return p;
+  }
+  const now = () => new Date("2026-08-13T18:00:00Z");
+
+  it("passes on a fresh heartbeat and a clean adopt pass", async () => {
+    const r = await probeRestartRecovery({
+      statusPath: statusFixture("2026-08-13T17:59:00Z"),
+      adoptExistingSessions: () => ["pr-123", "overseer"],
+      now,
+    });
+    expect(r.pass).toBe(true);
+    expect(r.detail).toContain("pr-123");
+  });
+
+  it("fails on a stale heartbeat", async () => {
+    const r = await probeRestartRecovery({ statusPath: statusFixture("2026-08-13T17:00:00Z"), adoptExistingSessions: () => [], now });
+    expect(r.pass).toBe(false);
+    expect(r.detail).toContain("3600s old");
+  });
+
+  it("fails when the adopt pass throws", async () => {
+    const r = await probeRestartRecovery({
+      statusPath: statusFixture("2026-08-13T17:59:30Z"),
+      adoptExistingSessions: () => {
+        throw new Error("session pr-9 has no worktree");
+      },
+      now,
+    });
+    expect(r.pass).toBe(false);
+    expect(r.detail).toContain("adopt pass threw");
+  });
+
+  it("fails when there is no status.json at all", async () => {
+    const r = await probeRestartRecovery({ statusPath: join(scratch(), "nope.json"), adoptExistingSessions: () => [], now });
+    expect(r.pass).toBe(false);
+    expect(r.detail).toContain("never wrote a heartbeat");
+  });
+});
+
+describe("table + exit code + manual items", () => {
+  const results: ProbeResult[] = [
+    { item: "①", name: "tunnel + HMAC", pass: true, detail: "ok" },
+    { item: "⑧", name: "tmux attach", pass: false, detail: "no tmux server" },
+  ];
+
+  it("renders an aligned pass/fail table with a summary line", () => {
+    const t = renderTable(results);
+    expect(t).toContain("PASS");
+    expect(t).toContain("FAIL");
+    expect(t).toContain("1/2 automated items FAILED: ⑧");
+  });
+
+  it("exit code is 0 only when every automated item passes", () => {
+    expect(exitCodeFor(results)).toBe(1);
+    expect(exitCodeFor([results[0]!])).toBe(0);
+    expect(exitCodeFor([{ item: "③", name: "live test PR", pass: false, detail: "manual", manual: true }])).toBe(0);
+  });
+
+  it("guided-manual items are text only — ③ and ⑥, never automated", () => {
+    expect(MANUAL_ITEMS.map((m) => m.item)).toEqual(["③", "⑥"]);
+    const text = renderManualItems();
+    expect(text).toContain("never automated");
+    expect(text).toContain("Restore dry_run = true afterwards");
+  });
+
+  it("safeProbe turns a throwing probe into a failed item", async () => {
+    const r = await safeProbe("②", "x", async () => {
+      throw new Error("boom");
+    });
+    expect(r).toMatchObject({ item: "②", pass: false });
+    expect(r.detail).toContain("boom");
+  });
+});
+
+describe("runChecklist", () => {
+  function deps(overrides: Partial<ChecklistDeps> = {}): ChecklistDeps {
+    const dir = scratch();
+    const digestDir = join(dir, "digest");
+    const injectDir = join(dir, "inject");
+    mkdirSync(digestDir);
+    mkdirSync(injectDir);
+    const today = "2026-08-13";
+    writeFileSync(join(digestDir, `${today}.md`), "# EOD\n2 rounds");
+    const statusPath = join(dir, "status.json");
+    writeFileSync(statusPath, JSON.stringify({ heartbeat: "2026-08-13T17:59:00Z", digest_headline: "2 rounds, $0.80" }));
+    return {
+      tunnel: { url: "http://127.0.0.1:8787/webhook", webhookSecret: SECRET, post: fakeReceiver },
+      queue: { labelTriggered: async () => [1], teamTriggered: async () => [2], derivedQueue: () => [1, 2] },
+      staleness: {
+        fixture: { number: 5, head_sha: "aaa", approved_sha: "bbb" },
+        injectStalePr: () => {},
+        runStalenessReconcile: async () => {},
+        issuedOrders: () => [{ pr: 5, round_type: "staleness" }],
+      },
+      pingPong: { injectDir, event: {}, interpret: async () => writeFileSync(join(injectDir, "pr-5.md"), "x") },
+      digest: { digestDir, statusPath, today },
+      tmux: { listSessions: () => ["overseer", "pr-5"] },
+      restart: { statusPath, adoptExistingSessions: () => ["pr-5"], now: () => new Date("2026-08-13T18:00:00Z") },
+      ...overrides,
+    };
+  }
+
+  it("runs the seven automated items in checklist order and exits 0 when all pass", async () => {
+    const out: string[] = [];
+    const run = await runChecklist(deps(), (s) => out.push(s));
+    expect(run.results.map((r) => r.item)).toEqual(["①", "②", "④", "⑤", "⑦", "⑧", "⑨"]);
+    expect(run.results.every((r) => r.pass)).toBe(true);
+    expect(run.exitCode).toBe(0);
+    expect(out.join("\n")).toContain("all 7 automated items PASS");
+    expect(out.join("\n")).toContain("Guided-manual items");
+  });
+
+  it("exits 1 when any automated item fails, and keeps running the rest", async () => {
+    const run = await runChecklist(
+      deps({
+        tmux: {
+          listSessions: () => {
+            throw new Error("no server running");
+          },
+        },
+      }),
+      () => {},
+    );
+    expect(run.exitCode).toBe(1);
+    expect(run.results).toHaveLength(7);
+    expect(run.results.find((r) => r.item === "⑧")!.pass).toBe(false);
+    expect(run.results.find((r) => r.item === "⑨")!.pass).toBe(true);
+  });
+});
