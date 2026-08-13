@@ -17,6 +17,10 @@ node_major: "22"
 pi_npm_package: "@earendil-works/pi-coding-agent"
 pi_version: "0.84.1"
 
+# tmux ≥3.5 for csi-u extended keys end-to-end (§3E):
+# Ubuntu 24.04 apt ships 3.4, so the image builds this release from source.
+tmux_version: "3.5a"
+
 timezone: Europe/Warsaw
 container_uid: 1001                   # the in-container 'review' user (Dockerfile)
 

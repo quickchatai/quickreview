@@ -6,9 +6,19 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TZ={{ timezone }}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl git tmux jq openssh-client gnupg tzdata sqlite3 \
+      ca-certificates curl git jq openssh-client gnupg tzdata sqlite3 \
       build-essential python3 \
     && rm -rf /var/lib/apt/lists/*
+
+# tmux {{ tmux_version }} from source — 24.04's apt tmux is 3.4, below the
+# ≥3.5 needed for `extended-keys-format csi-u` (modified keys reaching pi).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libevent-dev libncurses-dev bison pkg-config \
+    && curl -fsSL https://github.com/tmux/tmux/releases/download/{{ tmux_version }}/tmux-{{ tmux_version }}.tar.gz \
+      | tar xz -C /tmp \
+    && cd /tmp/tmux-{{ tmux_version }} && ./configure && make -j"$(nproc)" && make install \
+    && rm -rf /tmp/tmux-{{ tmux_version }} \
+    && apt-get purge -y bison && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 
 # Node {{ node_major }} (NodeSource)
 RUN curl -fsSL https://deb.nodesource.com/setup_{{ node_major }}.x | bash - \

@@ -14,7 +14,9 @@
     "smoke:session": "npm run build && node dist/src/smoke-session.js"
   },
   "dependencies": {
+    "@xterm/headless": "6.0.0",
     "better-sqlite3": "13.0.3",
+    "node-pty": "1.1.0",
     "smol-toml": "1.8.0"
   },
   "devDependencies": {

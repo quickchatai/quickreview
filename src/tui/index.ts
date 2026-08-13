@@ -25,5 +25,14 @@ export async function runTui(targetArg?: string): Promise<void> {
   }
   const cfg = loadConfig().tui;
   const app = new App(cfg, realSshRunner);
-  await app.run(target.kind === "pr" ? target.pr : undefined);
+  const { installAttachHooks } = await import("./attach.js");
+  await installAttachHooks(app);
+
+  // Deep link: run() completes its synchronous setup (terminal modes, poller)
+  // before awaiting quit, so the attach can start right after — the board
+  // loads behind it and is one Ctrl-q away.
+  const running = app.run(target.kind === "pr" ? target.pr : undefined);
+  if (target.kind === "pr") void app.hooks.attach?.(`pr-${target.pr}`, app);
+  else if (target.kind === "session") void app.hooks.attach?.(target.session, app);
+  await running;
 }

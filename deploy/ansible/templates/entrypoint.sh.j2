@@ -45,7 +45,15 @@ if [[ ! -d dist || ! -f "$marker" || "$(cat "$marker")" != "$current" ]]; then
   echo "$current" > "$marker"
 fi
 
-# tmux server = the jump-in surface (qcr attach / docker exec ... tmux attach).
+# tmux server = the jump-in surface (qcr attach / docker exec ... tmux attach
+# / the qcr tui embedded pane). The csi-u lines must exist before the server
+# starts or modified keys (Shift-Enter etc.) collapse before reaching pi.
+cat > "$HOME/.tmux.conf" <<'TMUXCONF'
+# csi-u extended keys end-to-end (§3E /) — do not remove.
+set -g extended-keys on
+set -g extended-keys-format csi-u
+set -as terminal-features 'xterm*:extkeys'
+TMUXCONF
 tmux start-server
 tmux has-session -t main 2>/dev/null || tmux new-session -d -s main
 
