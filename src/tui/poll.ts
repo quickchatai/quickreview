@@ -1,0 +1,106 @@
+// Poller: one `ssh … cat status.json` every poll interval, with backoff on
+// failure and an honest health classification — the TUI never silently shows
+// old truth (main-screen contract).
+import type { StatusSnapshot } from "../state.js";
+import type { TuiConfig } from "../config.js";
+import { statusArgv, type SshRunner } from "./remote.js";
+
+export type Health =
+  | { kind: "ok"; heartbeatAgeS: number }
+  | { kind: "stale"; dataAgeS: number }
+  | { kind: "unreachable"; sinceS: number };
+
+/**
+ * Health rules, in precedence order:
+ *  - no successful fetch yet, or the last fetch failed → unreachable;
+ *  - `written_at` older than 3× the poll interval → DATA STALE;
+ *  - otherwise ok, reporting the daemon heartbeat age.
+ * Snapshot ages are judged against wall clock, so a dead daemon behind a
+ * healthy ssh path still degrades to stale.
+ */
+export function classifyHealth(
+  now: Date,
+  pollIntervalS: number,
+  lastSnapshot: StatusSnapshot | undefined,
+  lastFetchOk: boolean,
+  lastOkAt: Date | undefined,
+): Health {
+  if (!lastFetchOk || !lastSnapshot || !lastOkAt) {
+    const sinceS = lastOkAt ? Math.floor((now.getTime() - lastOkAt.getTime()) / 1000) : Number.POSITIVE_INFINITY;
+    return { kind: "unreachable", sinceS };
+  }
+  const dataAgeS = Math.floor((now.getTime() - new Date(lastSnapshot.written_at).getTime()) / 1000);
+  if (dataAgeS > 3 * pollIntervalS) return { kind: "stale", dataAgeS };
+  const heartbeatAgeS = Math.floor((now.getTime() - new Date(lastSnapshot.heartbeat).getTime()) / 1000);
+  return { kind: "ok", heartbeatAgeS };
+}
+
+export function parseSnapshot(text: string): StatusSnapshot | undefined {
+  try {
+    const parsed = JSON.parse(text) as StatusSnapshot;
+    if (typeof parsed.written_at !== "string" || !Array.isArray(parsed.prs)) return undefined;
+    return parsed;
+  } catch {
+    return undefined;
+  }
+}
+
+export interface PollerState {
+  snapshot?: StatusSnapshot;
+  lastFetchOk: boolean;
+  lastOkAt?: Date;
+  consecutiveFailures: number;
+}
+
+/** Interval poller with linear backoff (interval × failures, capped ×5). */
+export class Poller {
+  readonly state: PollerState = { lastFetchOk: false, consecutiveFailures: 0 };
+  private timer: NodeJS.Timeout | undefined;
+  private stopped = false;
+
+  constructor(
+    private readonly cfg: TuiConfig,
+    private readonly ssh: SshRunner,
+    private readonly onUpdate: () => void,
+    private readonly now: () => Date = () => new Date(),
+  ) {}
+
+  health(): Health {
+    return classifyHealth(this.now(), this.cfg.poll_interval_s, this.state.snapshot, this.state.lastFetchOk, this.state.lastOkAt);
+  }
+
+  async tick(): Promise<void> {
+    const res = await this.ssh(this.cfg.ssh_host, statusArgv(this.cfg));
+    const snapshot = res.ok ? parseSnapshot(res.stdout) : undefined;
+    if (snapshot) {
+      this.state.snapshot = snapshot;
+      this.state.lastFetchOk = true;
+      this.state.lastOkAt = this.now();
+      this.state.consecutiveFailures = 0;
+    } else {
+      this.state.lastFetchOk = false;
+      this.state.consecutiveFailures += 1;
+    }
+    this.onUpdate();
+  }
+
+  nextDelayMs(): number {
+    const backoff = Math.min(Math.max(this.state.consecutiveFailures, 1), 5);
+    return this.cfg.poll_interval_s * 1000 * backoff;
+  }
+
+  start(): void {
+    const loop = async () => {
+      if (this.stopped) return;
+      await this.tick();
+      if (this.stopped) return;
+      this.timer = setTimeout(loop, this.nextDelayMs());
+    };
+    void loop();
+  }
+
+  stop(): void {
+    this.stopped = true;
+    if (this.timer) clearTimeout(this.timer);
+  }
+}

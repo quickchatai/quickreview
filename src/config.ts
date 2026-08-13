@@ -19,6 +19,16 @@ export interface GithubConfig {
   secrets_dir: string;
 }
 
+export interface TuiConfig {
+  ssh_host: string;
+  container: string;
+  remote_state_dir: string;
+  remote_sandbox_root: string;
+  sudo_docker: boolean;
+  poll_interval_s: number;
+  msg_timeout_s: number;
+}
+
 export interface Config {
   dry_run: boolean;
   github: GithubConfig;
@@ -39,7 +49,20 @@ export interface Config {
   };
   models: { default: string; conversation: string; overseer: string; passes: Record<string, string> };
   pi: { package: string; version: string; session_dir: string };
+  tui: TuiConfig;
 }
+
+/** [tui] is optional in config.toml — the TUI is an operator convenience and
+ * older configs must keep parsing. */
+export const TUI_DEFAULTS: TuiConfig = {
+  ssh_host: "my-vm",
+  container: "quickreview-sandbox",
+  remote_state_dir: "/opt/quickreview/state",
+  remote_sandbox_root: "/opt/quickreview/sandbox",
+  sudo_docker: true,
+  poll_interval_s: 3,
+  msg_timeout_s: 30,
+};
 
 export function sandboxRoot(): string {
   // Robust under both dist/src (built) and src (vitest): walk up to package.json.
@@ -72,6 +95,7 @@ export function parseConfig(toml: string): Config {
     caps: { ...(req(raw, "caps") as Config["caps"]) },
     models: { ...(req(raw, "models") as Omit<Config["models"], "passes">), passes: (raw.models?.passes ?? {}) as Record<string, string> },
     pi: { ...(req(raw, "pi") as Config["pi"]) },
+    tui: { ...TUI_DEFAULTS, ...((raw.tui ?? {}) as Partial<TuiConfig>) },
   };
   for (const k of [
     "repo", "app_slug", "bot_login", "review_team", "escalation_reviewer",

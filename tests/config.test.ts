@@ -67,9 +67,11 @@ describe("loadConfig / modelForPass", () => {
 
   it("falls back to the default model when no per-pass override exists", () => {
     const cfg = loadConfig(configPath);
+    // Every real pass carries an override in config.toml now, so probe the
+    // fallback with a pass name that has none.
+    delete cfg.models.passes["pass-baseline"];
     expect(modelForPass(cfg, "pass-baseline")).toBe(cfg.models.default);
     cfg.models.passes["pass-security"] = "openai/gpt-5.6-terra";
     expect(modelForPass(cfg, "pass-security")).toBe("openai/gpt-5.6-terra");
-    expect(modelForPass(cfg, "pass-ui")).toBe(cfg.models.default);
   });
 });

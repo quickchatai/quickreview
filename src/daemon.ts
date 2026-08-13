@@ -153,7 +153,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
 
   const writeStatus = (): void => {
     try {
-      writeStatusJson(stateDir, buildStatusSnapshot(store, cfg.dry_run, deps.digestHeadline?.()));
+      writeStatusJson(stateDir, buildStatusSnapshot(store, cfg.dry_run, deps.digestHeadline?.(), undefined, cfg.daemon.max_concurrent_rounds));
     } catch (err) {
       log("status.json write failed", err);
     }

@@ -76,6 +76,76 @@ function cmdToday(): void {
   }
 }
 
+// ---- machine-readable payloads (the TUI's detail-on-demand surface) -------
+
+export interface WhyPayload {
+  pr: number;
+  known: boolean;
+  state?: string;
+  title?: string;
+  head_sha?: string;
+  author?: string;
+  trigger_ts?: string | null;
+  stale_recheck?: boolean;
+  escalation_worthy?: boolean;
+  updated_at?: string;
+  spend_usd: number;
+  rounds: Array<{ round_no: number; round_type: string; status: string; verdict: string | null; started_at: string; finished_at: string | null; spend_usd: number | null; lenses: string }>;
+  threads: { open: number; total: number };
+  ledger?: string;
+  archive?: string[];
+}
+
+export function whyJson(store: StateStore, n: number, archiveDir: string): WhyPayload {
+  const pr = store.getPr(n);
+  const rounds = store.db.prepare("SELECT * FROM rounds WHERE pr = ? ORDER BY round_no").all(n) as any[];
+  const threadTotal = store.db.prepare("SELECT COUNT(*) AS c FROM bot_comments WHERE pr = ?").get(n) as { c: number };
+  const payload: WhyPayload = {
+    pr: n,
+    known: pr !== undefined || rounds.length > 0,
+    spend_usd: rounds.reduce((s, r) => s + (r.spend_usd ?? 0), 0),
+    rounds: rounds.map((r) => ({
+      round_no: r.round_no,
+      round_type: r.round_type,
+      status: r.status,
+      verdict: r.verdict ?? null,
+      started_at: r.started_at,
+      finished_at: r.finished_at ?? null,
+      spend_usd: r.spend_usd ?? null,
+      lenses: r.lenses,
+    })),
+    // The registry knows every bot thread; "open" needs GitHub truth the
+    // daemon doesn't mirror, so it is reported as total until archived.
+    threads: { open: threadTotal.c, total: threadTotal.c },
+  };
+  if (pr) {
+    payload.state = pr.state;
+    payload.title = pr.title;
+    payload.head_sha = pr.head_sha;
+    payload.author = pr.author;
+    payload.trigger_ts = pr.trigger_ts;
+    payload.stale_recheck = Boolean(pr.stale_recheck);
+    payload.escalation_worthy = Boolean(pr.escalation_worthy);
+    payload.updated_at = pr.updated_at;
+  }
+  if (existsSync(archiveDir)) {
+    payload.archive = readdirSync(archiveDir);
+    const ledger = join(archiveDir, "ledger.md");
+    if (existsSync(ledger)) payload.ledger = readFileSync(ledger, "utf8");
+  }
+  return payload;
+}
+
+export function todayJson(store: StateStore, today: string): { date: string; rounds: unknown[]; spend_usd: number; events: unknown[] } {
+  const rounds = store.roundsOn(today);
+  return {
+    date: today,
+    rounds,
+    spend_usd: rounds.reduce((n, r) => n + (r.spend_usd ?? 0), 0),
+    events: store.eventsOn(today),
+  };
+}
+
 function cmdWhy(n: number): void {
   const archiveDir = join(sandboxRoot(), "archive", `pr-${n}`);
   const store = openStore();
@@ -109,7 +179,23 @@ function cmdAttach(target: string): void {
   console.log(`(on the VM: docker exec -it quickreview-sandbox tmux attach -t ${session})`);
 }
 
+function cmdEvents(tail: number, json: boolean): void {
+  const store = openStore();
+  try {
+    const events = store.recentEvents(tail);
+    if (json) {
+      console.log(JSON.stringify({ events }));
+      return;
+    }
+    for (const e of events) console.log(`${e.ts} ${e.kind}${e.pr ? ` #${e.pr}` : ""}`);
+  } finally {
+    store.close();
+  }
+}
+
 export async function main(argv: string[]): Promise<void> {
+  const json = argv.includes("--json");
+  argv = argv.filter((a) => a !== "--json");
   const [cmd, ...rest] = argv;
   switch (cmd) {
     case "checklist": {
@@ -128,19 +214,48 @@ export async function main(argv: string[]): Promise<void> {
       return cmdStatus();
     case "spend":
       return cmdSpend();
-    case "today":
+    case "today": {
+      if (json) {
+        const store = openStore();
+        try {
+          console.log(JSON.stringify(todayJson(store, new Date().toISOString().slice(0, 10))));
+        } finally {
+          store.close();
+        }
+        return;
+      }
       return cmdToday();
+    }
     case "why": {
       const n = Number(rest[0]);
-      if (!Number.isInteger(n)) throw new Error("usage: qcr why <pr-number>");
+      if (!Number.isInteger(n)) throw new Error("usage: qcr why <pr-number> [--json]");
+      if (json) {
+        const store = openStore();
+        try {
+          console.log(JSON.stringify(whyJson(store, n, join(sandboxRoot(), "archive", `pr-${n}`))));
+        } finally {
+          store.close();
+        }
+        return;
+      }
       return cmdWhy(n);
+    }
+    case "events": {
+      const tailIdx = rest.indexOf("--tail");
+      const tail = tailIdx >= 0 ? Number(rest[tailIdx + 1]) : 40;
+      if (!Number.isInteger(tail) || tail <= 0) throw new Error("usage: qcr events [--tail <k>] [--json]");
+      return cmdEvents(tail, json);
+    }
+    case "tui": {
+      const { runTui } = await import("./tui/index.js");
+      return runTui(rest[0]);
     }
     case "attach": {
       if (!rest[0]) throw new Error("usage: qcr attach <pr-number|session>");
       return cmdAttach(rest[0]);
     }
     default:
-      console.log("usage: qcr <status|spend|today|why <n>|attach <n>|checklist|compare <pr...>>");
+      console.log("usage: qcr <status|spend|today|why <n>|events|attach <n>|tui [pr|overseer]|checklist|compare <pr...>>");
       loadConfig(); // surface config errors early even on bad usage
   }
 }

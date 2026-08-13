@@ -181,7 +181,18 @@ describe("status.json", () => {
       written_at: T0.toISOString(),
       heartbeat: T0.toISOString(),
     });
-    expect(snap.prs).toEqual([{ number: 7, state: "reviewing", title: "PR 7", head_sha: "abc1234567", stale_recheck: 1 }]);
+    expect(snap.prs).toEqual([
+      {
+        number: 7,
+        state: "reviewing",
+        title: "PR 7",
+        head_sha: "abc1234567",
+        stale_recheck: 1,
+        escalation_worthy: 0,
+        trigger_ts: null,
+        updated_at: expect.any(String),
+      },
+    ]);
 
     const noHeadline = buildStatusSnapshot(store, false, undefined, now);
     expect("digest_headline" in noHeadline).toBe(false);

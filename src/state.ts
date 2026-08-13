@@ -227,6 +227,13 @@ export class StateStore {
     return this.db.prepare("SELECT ts, kind, pr, payload FROM events WHERE ts LIKE ? ORDER BY id").all(`${dateIso}%`) as any;
   }
 
+  /** Newest-last tail of the event log — the TUI events strip. */
+  recentEvents(limit: number): Array<{ ts: string; kind: string; pr: number | null; payload: string | null }> {
+    return this.db
+      .prepare("SELECT ts, kind, pr, payload FROM (SELECT id, ts, kind, pr, payload FROM events ORDER BY id DESC LIMIT ?) ORDER BY id")
+      .all(limit) as any;
+  }
+
   // ---- filed items (improvement PRs / issues, cap accounting) -----------
 
   recordFiledItem(kind: "improvement_pr" | "issue", title: string, ref: string | null): void {
@@ -245,9 +252,15 @@ export class StateStore {
 export interface StatusSnapshot {
   written_at: string;
   dry_run: boolean;
-  prs: Array<Pick<PrStateRow, "number" | "state" | "title" | "head_sha" | "stale_recheck">>;
+  prs: Array<
+    Pick<PrStateRow, "number" | "state" | "title" | "head_sha" | "stale_recheck"> &
+      Partial<Pick<PrStateRow, "escalation_worthy" | "trigger_ts" | "updated_at">>
+  >;
   running_rounds: number;
+  /** Absent in snapshots written before the TUI additions — readers default. */
+  max_concurrent_rounds?: number;
   total_spend_usd: number;
+  today_spend_usd?: number;
   digest_headline?: string;
   heartbeat: string;
 }
@@ -261,13 +274,31 @@ export function writeStatusJson(stateDir: string, snapshot: StatusSnapshot): voi
   renameSync(tmp, target);
 }
 
-export function buildStatusSnapshot(store: StateStore, dryRun: boolean, digestHeadline?: string, now: () => Date = () => new Date()): StatusSnapshot {
+export function buildStatusSnapshot(
+  store: StateStore,
+  dryRun: boolean,
+  digestHeadline?: string,
+  now: () => Date = () => new Date(),
+  maxConcurrentRounds?: number,
+): StatusSnapshot {
+  const today = now().toISOString().slice(0, 10);
   return {
     written_at: now().toISOString(),
     dry_run: dryRun,
-    prs: store.allPrs().map((p) => ({ number: p.number, state: p.state, title: p.title, head_sha: p.head_sha, stale_recheck: p.stale_recheck })),
+    prs: store.allPrs().map((p) => ({
+      number: p.number,
+      state: p.state,
+      title: p.title,
+      head_sha: p.head_sha,
+      stale_recheck: p.stale_recheck,
+      escalation_worthy: p.escalation_worthy,
+      trigger_ts: p.trigger_ts,
+      updated_at: p.updated_at,
+    })),
     running_rounds: store.runningRounds().length,
+    ...(maxConcurrentRounds !== undefined ? { max_concurrent_rounds: maxConcurrentRounds } : {}),
     total_spend_usd: store.totalSpend(),
+    today_spend_usd: store.roundsOn(today).reduce((n, r) => n + (r.spend_usd ?? 0), 0),
     ...(digestHeadline ? { digest_headline: digestHeadline } : {}),
     heartbeat: now().toISOString(),
   };
