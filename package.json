@@ -11,7 +11,9 @@
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "daemon": "npm run build && node dist/src/wire.js",
-    "smoke:session": "npm run build && node dist/src/smoke-session.js"
+    "smoke:session": "npm run build && node dist/src/smoke-session.js",
+    "smoke:companion": "bash scripts/smoke-companion.sh",
+    "e2e:companion": "bash scripts/companion-e2e.sh"
   },
   "dependencies": {
     "@xterm/headless": "6.0.0",

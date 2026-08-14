@@ -116,6 +116,13 @@ export class CompanionLifecycle {
       // flag sessions.ts uses; fallback is the settings.json "extensions" array
       // the entrypoint already writes).
       `${CONTAINER.workspace}/extensions/companion-wake.ts`,
+      "--extension",
+      // day-open channel: the daemon's inject bridge, unmodified. It
+      // drains its directory on session_start before it starts watching, so
+      // the rollover can queue the opening message BEFORE pi is spawned and
+      // the delivery is race-free. QCR_INJECT_DIR (below) points it at the
+      // companion's own dir. VERIFY-ON-PIN: `--extension <path>` again.
+      `${CONTAINER.workspace}/extensions/inject-bridge.ts`,
       "--model",
       this.cfg.model,
       "--session-dir",
@@ -134,6 +141,8 @@ export class CompanionLifecycle {
       "env",
       `QCR_ROOT=${CONTAINER.workspace}`,
       `QCR_SESSION=${this.cfg.session}`,
+      // inject-bridge resolves its session name from this one.
+      `QCR_SESSION_NAME=${this.cfg.session}`,
       `QCR_INJECT_DIR=${CONTAINER.workspace}/inject/${this.cfg.session}`,
       `QCR_FEED_DIR=${CONTAINER.feed}`,
       `QCR_ALERTS_DIR=${CONTAINER.alerts}`,
@@ -160,6 +169,12 @@ export class CompanionLifecycle {
    * container). Returned argv is everything after the `docker` binary. */
   attachArgv(): string[] {
     return ["exec", "-it", this.cfg.container_name, "tmux", "attach", "-t", this.cfg.session];
+  }
+
+  /** Host side of `/workspace/inject/<session>` — where the rollover drops the
+   * day-open message (the repo is bind-mounted, so no docker exec needed). */
+  hostInjectDir(): string {
+    return `${this.cfg.repo_dir}/inject/${this.cfg.session}`;
   }
 
   // ---- state --------------------------------------------------------------

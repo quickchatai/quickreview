@@ -96,6 +96,51 @@ outer tmux without csi-u/extended-keys passthrough — use kitty/ghostty/
 wezterm/iterm2, and the in-container tmux ships ≥3.5 with csi-u baked into
 the image.
 
+### Companion — the local pi that watches with you (C1–C3)
+
+A second pi (`openai-codex/gpt-5.6-sol`) in a **local** Docker container on your
+PC — not on the VM, not in the review loop. It reads an ambient feed the TUI
+writes, the VM over ssh, and the issue tracker (rw, as actor `companion`);
+it can raise alerts and message the overseer, and it never touches GitHub.
+Knobs live in `config.toml [companion]`.
+
+```sh
+docker build -t qcr-companion --build-arg COMPANION_UID="$(id -u)" docker/companion
+                                # once (tmux 3.5a + pinned pi; the uid arg is
+                                # what lets it write the bind mounts)
+scripts/qcr tui                 # starts/adopts the container, tab 3 (or `c`)
+scripts/qcr companion up|down|status
+scripts/qcr tui --no-companion  # board only: no container, feed, alerts or tab
+```
+
+- **One-time `/login`**: `docker exec -it qcr-companion tmux attach -t companion`
+  and run `/login` (ChatGPT OAuth). Tokens persist on the `companion-pihome`
+  volume, so this is done once, ever. Provider prefix is `openai-codex/`.
+- **Companion tab** (`3` / `c`): the pi session embedded, same key rules as the
+  board's attach (`Ctrl-q` detaches).
+- **Alerts**: the companion writes `<alerts_dir>/<ts>-<slug>.json`; the TUI
+  routes `notice` → status line, `alert` → status line + `notify-send` + an
+  overseer inject. One notification per cause per `cooldown_min`, repeats fold
+  into a counter, and the memory persists across TUI restarts within the day
+  (Europe/Warsaw).
+- **Daily rollover**: on the first `qcr tui` of a new Warsaw day the
+  conversation is archived date-stamped on the volume, the session respawns
+  fresh, and the first message it reads is the assembled opening context —
+  yesterday's digest, a deterministic compacted summary of yesterday, the
+  conversation tail, unresolved alerts, the live board snapshot and the alert
+  knobs in force (`prompts/companion-day-open.md`). pi-memory carries over; the
+  transcript does not.
+- **Boundaries**: overseer *inject* is its only channel to the daemon, its
+  commits are prefixed `[companion]`, and it never runs `deploy.sh`.
+
+```sh
+npm run e2e:companion           # throwaway container: alert routing, wake gate,
+                                # rollover — needs docker, not pi auth
+npm run smoke:companion         # the real companion checklist (up/adopt/down,
+                                # login, ssh read, rollover on a faked date)
+npm run smoke:companion -- --live   # ... and actually inject into the overseer
+```
+
 ### Deploy
 
 ```sh

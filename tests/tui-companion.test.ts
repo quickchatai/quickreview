@@ -128,12 +128,18 @@ describe("CompanionLifecycle argv", () => {
     expect(argv).toContain(`QCR_ALERTS_DIR=${CONTAINER.alerts}`);
     expect(argv).toContain(`QCR_FEED_DIR=${CONTAINER.feed}`);
     expect(argv).toContain("QCR_SESSION=companion");
+    // inject-bridge resolves its session name from this one.
+    expect(argv).toContain("QCR_SESSION_NAME=companion");
+    expect(argv).toContain(`QCR_INJECT_DIR=${CONTAINER.workspace}/inject/companion`);
     const pi = argv.slice(argv.indexOf("pi"));
     expect(pi).toEqual([
       "pi",
       // the wake extension ships with the mounted repo.
       "--extension",
       `${CONTAINER.workspace}/extensions/companion-wake.ts`,
+      // the inject bridge delivers the day-open message.
+      "--extension",
+      `${CONTAINER.workspace}/extensions/inject-bridge.ts`,
       "--model",
       COMPANION_DEFAULTS.model,
       "--session-dir",
@@ -264,7 +270,15 @@ describe("companion image", () => {
 
   it("installs pi-memory — the gap the VM image leaves open", () => {
     expect(dockerfile).toContain(`PI_MEMORY_SPEC=${pkg.pi.extensions["pi-memory"]}`);
-    expect(dockerfile).toMatch(/npm install -g \$\{PI_MEMORY_SPEC\}/);
+    // --ignore-scripts: npm otherwise dies on this git dep.
+    expect(dockerfile).toMatch(/npm install -g --ignore-scripts \$\{PI_MEMORY_SPEC\}/);
+  });
+
+  it("takes its uid from the host user — bind mounts are written, not just read", () => {
+    // the first real container run failed "Permission denied" writing
+    // /alerts because the image baked uid 1001.
+    expect(dockerfile).toContain("ARG COMPANION_UID=");
+    expect(dockerfile).toMatch(/useradd .*--non-unique --uid \$\{COMPANION_UID\} companion/);
   });
 
   it("writes the csi-u tmux config before starting the server", () => {

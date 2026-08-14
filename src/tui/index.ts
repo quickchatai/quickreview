@@ -109,9 +109,28 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
   const companion = new CompanionLifecycle(full.companion, realDockerRunner);
   const companionOn = args.companion && full.companion.enabled;
   let companionUp = false;
+  const companionStateDir = join(sandboxRoot(), "state", "companion");
+  const policyStatePath = join(companionStateDir, "alert-policy.json");
   if (companionOn) {
     try {
       await companion.ensureUp();
+      // daily rollover — strictly between "container is up" and
+      // "pi is spawned": on the first start of a new Warsaw day it archives
+      // yesterday, kills the session and queues the opening context, so the
+      // spawnPi below births the fresh conversation that reads it.
+      const { CompanionRollover } = await import("./rollover.js");
+      const { latestDigestHeadline } = await import("../digest.js");
+      const rollover = new CompanionRollover(full.companion, realDockerRunner, {
+        statePath: join(companionStateDir, "rollover.json"),
+        policyStatePath,
+        templatePath: join(sandboxRoot(), "prompts", "companion-day-open.md"),
+        injectDir: companion.hostInjectDir(),
+        localDigestHeadline: () => latestDigestHeadline(),
+      });
+      const report = await rollover.run();
+      if (report.verdict.kind === "rollover") {
+        app.notice(`companion: new day ${report.verdict.today} — fresh conversation (${report.steps.length} steps)`);
+      }
       await companion.spawnPi();
       companionUp = true;
     } catch (err) {
@@ -158,10 +177,13 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
       }
     };
 
-    const { AlertConsumer, AlertPolicy, notifySendRunner } = await import("./alerts.js");
+    const { AlertConsumer, AlertPolicy, filePolicyStore, notifySendRunner } = await import("./alerts.js");
     const { InjectSender } = await import("./msg.js");
     const overseer = new InjectSender(cfg, realSshRunner);
-    const consumer = new AlertConsumer(full.companion.alerts_dir, new AlertPolicy(full.companion.cooldown_min), {
+    // Persisted per-cause memory: "already told you" survives a TUI restart
+    // inside the same Warsaw day, and resets with the day.
+    const policy = new AlertPolicy(full.companion.cooldown_min, () => new Date(), filePolicyStore(policyStatePath));
+    const consumer = new AlertConsumer(full.companion.alerts_dir, policy, {
       notice: (text) => app.notice(text),
       badge: (badge) => app.setAlertBadge(badge),
       notify: notifySendRunner,

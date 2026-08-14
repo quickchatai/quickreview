@@ -3,7 +3,7 @@
 # Unlike the VM runtime image (deploy/ansible/templates/Dockerfile.j2, built by
 # ansible) this one is a plain `docker build` on the owner's PC:
 #
-#   docker build -t qcr-companion docker/companion
+#   docker build -t qcr-companion --build-arg COMPANION_UID="$(id -u)" docker/companion
 #
 # Deltas from the VM image, per assets/findings.md §Q4:
 #   - node:22 base instead of ubuntu + NodeSource (same major, less plumbing).
@@ -53,11 +53,25 @@ RUN npm install -g ${PI_PACKAGE}@${PI_VERSION}
 # against the real package. If the array route is wrong, the fallback is a
 # symlink into the discovery dir — no image rebuild needed.
 ARG PI_MEMORY_SPEC=github:jayzeng/pi-memory#v0.4.2
-RUN npm install -g ${PI_MEMORY_SPEC}
+# --ignore-scripts: without it npm 10 dies installing this git dep
+# ("enoent spawn sh" while running a transitive dep's lifecycle script inside a
+# node_modules dir it has already moved — found this with the first
+# real `docker build`). pi-memory ships plain JS/TS and needs no build step, so
+# skipping lifecycle scripts costs nothing here. VERIFY-ON-PIN: that the
+# extension still loads with its scripts skipped (the e2e's pi step and the
+# first real /login exercise it).
+RUN npm install -g --ignore-scripts ${PI_MEMORY_SPEC}
 
-# Non-root: uid 1001 mirrors the VM image's `review` user so bind-mounted host
-# dirs (repo, tracker) keep the same ownership story on both sides.
-RUN useradd --create-home --uid 1001 companion \
+# Non-root, and the uid MUST match the invoking host user: every interesting
+# mount here is a host bind mount the companion writes (/alerts, /feed,
+# /workspace, /tracker), so a mismatched uid means "Permission denied" on the
+# very first alert file (found this the first time the e2e ran the real
+# container — the VM image's 1001 does not transfer to a laptop). Both
+# scripts/companion-e2e.sh and scripts/smoke-companion.sh build with
+# `--build-arg COMPANION_UID="$(id -u)"`; the default is the usual desktop
+# 1000. --non-unique because node:22 already ships a uid-1000 `node` user.
+ARG COMPANION_UID=1000
+RUN useradd --create-home --non-unique --uid ${COMPANION_UID} companion \
     && mkdir -p /home/companion/.pi /workspace /tracker /feed /alerts \
     && chown -R companion:companion /home/companion /feed /alerts
 

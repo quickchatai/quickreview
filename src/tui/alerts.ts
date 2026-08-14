@@ -14,8 +14,9 @@
 //   (notice → alert) of a folded cause may break the cooldown exactly once a
 //   day. Spend is never an alert — that exclusion lives in the prompt.
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { zoneDateString } from "../eod.js";
 
 export type AlertTier = "notice" | "alert";
 
@@ -74,7 +75,7 @@ export type AlertDecision =
   /** Inside the cooldown: no notification, just a bigger counter. */
   | { action: "fold"; count: number };
 
-interface CauseMemory {
+export interface CauseMemory {
   day: string;
   lastAt: number;
   lastTier: AlertTier;
@@ -83,19 +84,88 @@ interface CauseMemory {
   bypassed: boolean;
 }
 
-function dayKey(d: Date): string {
-  return d.toISOString().slice(0, 10);
+/** The whole "already told you" memory, as it survives a TUI restart. */
+export interface PolicyState {
+  /** Warsaw day the state belongs to; a different day loads as empty. */
+  day: string;
+  causes: Record<string, CauseMemory>;
 }
 
-/** Per-cause cooldown + daily fold memory. Pure w.r.t. I/O; the consumer owns
- * the side effects. */
+/** Where the memory lives between TUI runs. Injectable — tests use a temp
+ * file or none at all. */
+export interface PolicyStore {
+  load(): PolicyState | undefined;
+  save(state: PolicyState): void;
+}
+
+export function readPolicyState(path: string): PolicyState | undefined {
+  try {
+    const raw = JSON.parse(readFileSync(path, "utf8")) as Partial<PolicyState>;
+    if (typeof raw.day !== "string" || typeof raw.causes !== "object" || raw.causes === null) return undefined;
+    return { day: raw.day, causes: raw.causes as Record<string, CauseMemory> };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Atomic (tmp+rename) file store — the same discipline as every other state
+ * file the TUI writes. A failed write is never fatal: the worst case is that
+ * one restart re-notifies a cause it had already folded. */
+export function filePolicyStore(path: string): PolicyStore {
+  return {
+    load: () => readPolicyState(path),
+    save: (state) => {
+      try {
+        mkdirSync(dirname(path), { recursive: true });
+        const tmp = `${path}.tmp`;
+        writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`);
+        renameSync(tmp, path);
+      } catch {
+        /* the cooldown is a courtesy, not a correctness property */
+      }
+    },
+  };
+}
+
+/**
+ * Per-cause cooldown + daily fold memory, persisted across TUI restarts.
+ *
+ * The day boundary is **Europe/Warsaw** (C2 shipped it as UTC and
+ * flagged the deferral): "already told you today" has to flip when the owner's
+ * day flips, and the daily escalation bypass has to reset with it — an hour or
+ * two of drift either side of midnight is exactly when a night's worth of
+ * folded causes should start speaking again.
+ */
 export class AlertPolicy {
-  private readonly memory = new Map<string, CauseMemory>();
+  private memory = new Map<string, CauseMemory>();
 
   constructor(
     private readonly cooldownMin: number,
     private readonly now: () => Date = () => new Date(),
-  ) {}
+    private readonly store?: PolicyStore,
+    private readonly timeZone: string = "Europe/Warsaw",
+  ) {
+    const loaded = store?.load();
+    // A state file from an earlier day is discarded wholesale, which IS the
+    // day reset: nothing from yesterday can suppress a notification today.
+    if (loaded && loaded.day === this.dayKey(this.now())) {
+      this.memory = new Map(Object.entries(loaded.causes));
+    }
+  }
+
+  private dayKey(d: Date): string {
+    return zoneDateString(d, this.timeZone);
+  }
+
+  /** Drop every cause not belonging to `today` — called on each decision, so a
+   * TUI left running across midnight resets without a restart. */
+  private reapStaleDays(today: string): void {
+    for (const [cause, mem] of this.memory) if (mem.day !== today) this.memory.delete(cause);
+  }
+
+  private persist(today: string): void {
+    this.store?.save({ day: today, causes: Object.fromEntries(this.memory) });
+  }
 
   /** Folded repeats for a cause today (0 when it is fresh). */
   folds(cause: string): number {
@@ -104,7 +174,7 @@ export class AlertPolicy {
 
   /** Total folded repeats across all causes today — the status-line counter. */
   totalFolds(): number {
-    const today = dayKey(this.now());
+    const today = this.dayKey(this.now());
     let total = 0;
     for (const m of this.memory.values()) if (m.day === today) total += m.folds;
     return total;
@@ -112,25 +182,30 @@ export class AlertPolicy {
 
   decide(alert: AlertRecord): AlertDecision {
     const now = this.now();
-    const today = dayKey(now);
+    const today = this.dayKey(now);
     const prev = this.memory.get(alert.cause);
+    this.reapStaleDays(today);
     if (!prev || prev.day !== today) {
       // "Already told you" memory is per day: a new day starts clean.
       this.memory.set(alert.cause, { day: today, lastAt: now.getTime(), lastTier: alert.tier, folds: 0, bypassed: false });
+      this.persist(today);
       return { action: "route", bypass: false };
     }
     const elapsedMin = (now.getTime() - prev.lastAt) / 60_000;
     if (elapsedMin >= this.cooldownMin) {
       this.memory.set(alert.cause, { ...prev, lastAt: now.getTime(), lastTier: alert.tier, folds: 0, bypassed: prev.bypassed });
+      this.persist(today);
       return { action: "route", bypass: false };
     }
     if (prev.lastTier === "notice" && alert.tier === "alert" && !prev.bypassed) {
       // Genuine escalation of a live cause — breaks the cooldown once a day.
       this.memory.set(alert.cause, { ...prev, lastAt: now.getTime(), lastTier: "alert", folds: 0, bypassed: true });
+      this.persist(today);
       return { action: "route", bypass: true };
     }
     const folds = prev.folds + 1;
     this.memory.set(alert.cause, { ...prev, folds, lastTier: alert.tier });
+    this.persist(today);
     return { action: "fold", count: folds };
   }
 }
