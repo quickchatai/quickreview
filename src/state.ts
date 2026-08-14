@@ -318,6 +318,55 @@ export class StateStore {
     return (this.db.prepare("SELECT COALESCE(SUM(spend_usd), 0) AS s FROM rounds").get() as { s: number }).s;
   }
 
+  // ---- backfilled rounds (M2 importer writes; nothing live reads them) ----
+
+  /** Every GitHub review id already imported — the idempotence key set. */
+  importedReviewIds(): Set<number> {
+    const rows = this.db.prepare("SELECT gh_review_id AS id FROM rounds WHERE gh_review_id IS NOT NULL").all() as Array<{ id: number }>;
+    return new Set(rows.map((r) => r.id));
+  }
+
+  /** Lowest round_no on a PR (null when it has no rounds) — the importer
+   * numbers historical rounds *below* it so live numbering is never disturbed. */
+  minRoundNo(pr: number): number | null {
+    return (this.db.prepare("SELECT MIN(round_no) AS m FROM rounds WHERE pr = ?").get(pr) as { m: number | null }).m;
+  }
+
+  /** Start of the daemon era: the oldest natively-run round. Reviews submitted
+   * at or after it are already recorded, so the importer stops there. */
+  daemonEpoch(): string | null {
+    return (
+      this.db.prepare("SELECT MIN(started_at) AS m FROM rounds WHERE backfilled = 0").get() as { m: string | null }
+    ).m;
+  }
+
+  /** Insert one imported historical round. Returns false when the review was
+   * already imported (INSERT ... WHERE NOT EXISTS on gh_review_id). */
+  insertBackfilledRound(row: {
+    pr: number;
+    round_no: number;
+    verdict: string | null;
+    started_at: string;
+    finished_at: string;
+    gh_review_id: number;
+    gh_commit_id: string | null;
+    trigger_ts: string | null;
+    summary?: string | null;
+  }): boolean {
+    const info = this.db
+      .prepare(
+        `INSERT INTO rounds (pr, round_no, round_type, lenses, verdict, spend_usd, duration_s, summary,
+                             started_at, deadline_at, finished_at, status, backfilled,
+                             gh_review_id, gh_commit_id, trigger_ts)
+         SELECT @pr, @round_no, 'backfill', '', @verdict, NULL, NULL, @summary,
+                @started_at, @finished_at, @finished_at, 'done', 1,
+                @gh_review_id, @gh_commit_id, @trigger_ts
+         WHERE NOT EXISTS (SELECT 1 FROM rounds WHERE gh_review_id = @gh_review_id)`,
+      )
+      .run({ ...row, summary: row.summary ?? null });
+    return info.changes === 1;
+  }
+
   // ---- backfill PR metadata (M2 writes, metrics reads) -------------------
 
   upsertBackfillPrMeta(row: Omit<BackfillPrMetaRow, "imported_at"> & { imported_at?: string }): void {

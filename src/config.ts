@@ -67,6 +67,28 @@ export interface CompanionConfig {
   cooldown_min: number;
 }
 
+/** [backfill] — knobs for the one-shot GitHub history importer.
+ * Every default is derived from [github] at parse time; the section exists so
+ * a re-run against a renamed label/identity needs no code change. */
+export interface BackfillConfig {
+  /** Review author to import (GraphQL `reviews(author:)`, with the [bot] suffix). */
+  bot_login: string;
+  /** The same identity as a timeline *actor* — GraphQL drops the [bot] suffix. */
+  bot_actor: string;
+  /** Label whose presence marks a PR as part of the bot-review era. */
+  reviewed_label: string;
+  /** Label a human adds to request a review — a trigger candidate. */
+  trigger_label: string;
+  /** Label the bot adds when a round starts — the fallback trigger candidate. */
+  in_progress_label: string;
+  /** Team slug whose review request is a trigger (bare slug, no org prefix). */
+  review_team_slug: string;
+  /** Per-PR detail queries in flight at once (kept small on purpose). */
+  concurrency: number;
+  /** Search pages per enumeration query (100 hits each; search caps at 1,000). */
+  max_search_pages: number;
+}
+
 export interface Config {
   dry_run: boolean;
   github: GithubConfig;
@@ -89,6 +111,21 @@ export interface Config {
   pi: { package: string; version: string; session_dir: string };
   tui: TuiConfig;
   companion: CompanionConfig;
+  backfill: BackfillConfig;
+}
+
+/** Defaults for [backfill], derived from the already-parsed [github] block. */
+export function backfillDefaults(github: GithubConfig): BackfillConfig {
+  return {
+    bot_login: github.bot_login,
+    bot_actor: github.app_slug,
+    reviewed_label: github.reviewed_label,
+    trigger_label: github.trigger_label,
+    in_progress_label: github.in_progress_label,
+    review_team_slug: github.review_team.split("/")[1] ?? github.review_team,
+    concurrency: 2,
+    max_search_pages: 10,
+  };
 }
 
 /** [tui] is optional in config.toml — the TUI is an operator convenience and
@@ -159,9 +196,10 @@ function req(obj: Record<string, unknown>, key: string): unknown {
 
 export function parseConfig(toml: string): Config {
   const raw = parse(toml) as Record<string, any>;
+  const github: GithubConfig = { ...(req(raw, "github") as GithubConfig) };
   const cfg: Config = {
     dry_run: Boolean(req(raw, "dry_run")),
-    github: { ...(req(raw, "github") as GithubConfig) },
+    github,
     server: { ...(req(raw, "server") as Config["server"]) },
     daemon: { ...(req(raw, "daemon") as Config["daemon"]) },
     eod: { ...(req(raw, "eod") as Config["eod"]) },
@@ -170,6 +208,7 @@ export function parseConfig(toml: string): Config {
     pi: { ...(req(raw, "pi") as Config["pi"]) },
     tui: { ...TUI_DEFAULTS, ...((raw.tui ?? {}) as Partial<TuiConfig>) },
     companion: resolveCompanionPaths({ ...COMPANION_DEFAULTS, ...((raw.companion ?? {}) as Partial<CompanionConfig>) }),
+    backfill: { ...backfillDefaults(github), ...((raw.backfill ?? {}) as Partial<BackfillConfig>) },
   };
   for (const k of [
     "repo", "app_slug", "bot_login", "review_team", "escalation_reviewer",

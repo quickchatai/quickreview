@@ -211,6 +211,34 @@ function cmdMetrics(pr: number | null, json: boolean): void {
   }
 }
 
+/** `qcr backfill [--dry-run] [--limit N]` — the one-shot pre-daemon history
+ * import. Read-only against GitHub: it opens the adapter purely for
+ * its search/GraphQL reads and never reaches a mutation surface. */
+export async function cmdBackfill(dryRun: boolean, limit: number | undefined, json: boolean): Promise<void> {
+  const { TokenMinter } = await import("./githubAuth.js");
+  const { MutationGate } = await import("./gate.js");
+  const { GitHubAdapter } = await import("./github.js");
+  const { runBackfill } = await import("./backfill.js");
+  const cfg = loadConfig();
+  // A gate that can only ever record: the importer performs no mutations, and
+  // this keeps that structural rather than prompted.
+  const gate = new MutationGate(true, join(stateDir(), "dryrun"), async () => {
+    throw new Error("qcr backfill performs no mutations");
+  });
+  const adapter = new GitHubAdapter(cfg, new TokenMinter(cfg.github.secrets_dir), gate);
+  const store = openStore();
+  try {
+    const stats = await runBackfill(store, adapter, cfg, {
+      dryRun,
+      ...(limit !== undefined ? { limit } : {}),
+      log: (line) => process.stderr.write(`${line}\n`),
+    });
+    if (json) console.log(JSON.stringify(stats));
+  } finally {
+    store.close();
+  }
+}
+
 function cmdAttach(target: string): void {
   // Live sessions run inside the quickreview container on the VM; locally the
   // tmux server is direct. Print the right invocation and exec it when local
@@ -288,6 +316,14 @@ export async function main(argv: string[]): Promise<void> {
       if (pr !== null && !Number.isInteger(pr)) throw new Error("usage: qcr metrics [--pr <pr-number>] [--json]");
       return cmdMetrics(pr, json);
     }
+    case "backfill": {
+      const limitIdx = rest.indexOf("--limit");
+      const limit = limitIdx >= 0 ? Number(rest[limitIdx + 1]) : undefined;
+      if (limit !== undefined && (!Number.isInteger(limit) || limit < 0)) {
+        throw new Error("usage: qcr backfill [--dry-run] [--limit <n>] [--json]");
+      }
+      return cmdBackfill(rest.includes("--dry-run"), limit, json);
+    }
     case "status":
       return cmdStatus();
     case "spend":
@@ -337,7 +373,8 @@ export async function main(argv: string[]): Promise<void> {
     }
     default:
       console.log(
-        "usage: qcr <status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|tui [pr|overseer]|companion <up|down|status>|checklist|compare <pr...>>",
+        "usage: qcr <status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|tui [pr|overseer]|" +
+          "companion <up|down|status>|backfill [--dry-run] [--limit <n>]|checklist|compare <pr...>>",
       );
       loadConfig(); // surface config errors early even on bad usage
   }

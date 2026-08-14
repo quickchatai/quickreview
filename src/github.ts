@@ -64,7 +64,66 @@ export interface ReviewCommentFull {
   in_reply_to_id: number | null;
 }
 
-interface SearchIssueItem {
+/** One past review by the bot identity, as the importer sees it. */
+export interface PrReviewRecord {
+  database_id: number;
+  state: string;
+  submitted_at: string | null;
+  body: string;
+  commit_oid: string | null;
+}
+
+/** A timeline item relevant to trigger reconstruction. */
+export interface PrTimelineRecord {
+  type: string;
+  created_at: string;
+  label: string | null;
+  actor: string | null;
+  requested_team: string | null;
+  requested_user: string | null;
+}
+
+export interface PrReviewHistory {
+  number: number;
+  title: string;
+  author: string;
+  created_at: string;
+  closed_at: string | null;
+  merged_at: string | null;
+  merged: boolean;
+  reviews: PrReviewRecord[];
+  timeline: PrTimelineRecord[];
+}
+
+interface RawReviewNode {
+  databaseId?: number;
+  state?: string;
+  submittedAt?: string | null;
+  body?: string;
+  commit?: { oid?: string } | null;
+}
+
+interface RawTimelineNode {
+  __typename?: string;
+  createdAt?: string;
+  label?: { name?: string } | null;
+  actor?: { login?: string } | null;
+  requestedReviewer?: { slug?: string; login?: string } | null;
+}
+
+interface RawPrHistory {
+  number?: number;
+  title?: string;
+  createdAt?: string;
+  closedAt?: string | null;
+  mergedAt?: string | null;
+  merged?: boolean;
+  author?: { login?: string } | null;
+  reviews?: { nodes?: Array<RawReviewNode | null> } | null;
+  timelineItems?: { nodes?: Array<RawTimelineNode | null> } | null;
+}
+
+export interface SearchIssueItem {
   number: number;
   title: string;
   user: { login: string; type: string };
@@ -146,6 +205,76 @@ export class GitHubAdapter {
       `/search/issues?q=${encodeURIComponent(q)}&per_page=100`,
     );
     return res.items;
+  }
+
+  /** Paginated issue search — read-only, used by the history importer (M2).
+   * Stops on a short page or after `maxPages` (search caps at 1,000 hits). */
+  async searchIssuesPaged(q: string, maxPages = 10): Promise<SearchIssueItem[]> {
+    const out: SearchIssueItem[] = [];
+    for (let page = 1; page <= maxPages; page++) {
+      const res = await this.request<{ items: SearchIssueItem[] }>(
+        "GET",
+        `/search/issues?q=${encodeURIComponent(q)}&per_page=100&page=${page}`,
+      );
+      const items = res.items ?? [];
+      out.push(...items);
+      if (items.length < 100) break;
+    }
+    return out;
+  }
+
+  /** One read-only GraphQL query per PR: the reviews `author` submitted plus
+   * the timeline items the backfill importer reconstructs triggers from
+   * (§1.1). Returns null when the PR is gone. */
+  async prReviewHistory(n: number, author: string): Promise<PrReviewHistory | null> {
+    const data = await this.graphql<{ repository?: { pullRequest?: RawPrHistory | null } | null }>(
+      `query ($owner: String!, $repo: String!, $number: Int!, $author: String!) {
+        repository(owner: $owner, name: $repo) {
+          pullRequest(number: $number) {
+            number title createdAt closedAt mergedAt merged
+            author { login }
+            reviews(author: $author, first: 100) {
+              nodes { databaseId state submittedAt body commit { oid } }
+            }
+            timelineItems(itemTypes: [LABELED_EVENT, REVIEW_REQUESTED_EVENT, HEAD_REF_FORCE_PUSHED_EVENT], first: 100) {
+              nodes {
+                __typename
+                ... on LabeledEvent { createdAt label { name } actor { login } }
+                ... on ReviewRequestedEvent { createdAt requestedReviewer { ... on Team { slug } ... on User { login } } }
+                ... on HeadRefForcePushedEvent { createdAt }
+              }
+            }
+          }
+        }
+      }`,
+      { owner: this.owner, repo: this.repo, number: n, author },
+    );
+    const pr = data.repository?.pullRequest;
+    if (!pr) return null;
+    return {
+      number: pr.number ?? n,
+      title: pr.title ?? "",
+      author: pr.author?.login ?? "",
+      created_at: pr.createdAt ?? "",
+      closed_at: pr.closedAt ?? null,
+      merged_at: pr.mergedAt ?? null,
+      merged: Boolean(pr.merged),
+      reviews: (pr.reviews?.nodes ?? []).filter((r): r is RawReviewNode => Boolean(r)).map((r) => ({
+        database_id: r.databaseId ?? 0,
+        state: r.state ?? "",
+        submitted_at: r.submittedAt ?? null,
+        body: r.body ?? "",
+        commit_oid: r.commit?.oid ?? null,
+      })),
+      timeline: (pr.timelineItems?.nodes ?? []).filter((t): t is RawTimelineNode => Boolean(t?.createdAt)).map((t) => ({
+        type: t.__typename ?? "",
+        created_at: t.createdAt!,
+        label: t.label?.name ?? null,
+        actor: t.actor?.login ?? null,
+        requested_team: t.requestedReviewer?.slug ?? null,
+        requested_user: t.requestedReviewer?.login ?? null,
+      })),
+    };
   }
 
   /** PRs carrying the trigger label. Bot-authored PRs are excluded — the app
