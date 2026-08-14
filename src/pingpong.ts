@@ -77,6 +77,12 @@ export interface ReplyDiscipline {
 export class PingPongLedger {
   constructor(private readonly db: Database.Database, private readonly now: () => Date = () => new Date()) {
     this.db.exec(SCHEMA);
+    // Additive: cap hits per thread (ping-pong depth metric).
+    try {
+      this.db.exec("ALTER TABLE pingpong_threads ADD COLUMN cap_hits INTEGER NOT NULL DEFAULT 0");
+    } catch {
+      /* column already present */
+    }
   }
 
   private ts(): string {
@@ -129,6 +135,26 @@ export class PingPongLedger {
       return { allowed: false, exchanges, final: true, reason: "exchange-cap-reached" };
     }
     return { allowed: true, exchanges, final: exchanges === MAX_EXCHANGES_PER_FINDING - 1 };
+  }
+
+  /** Record that the exchange cap blocked a reply in this thread. The row is
+   * created if the cap was reached without any reply ever being counted here
+   * (defensive — the counter is the same row `recordExchange` maintains). */
+  recordCapHit(threadId: number, pr: number): number {
+    this.db
+      .prepare(
+        `INSERT INTO pingpong_threads (thread_id, pr, exchanges, cap_hits, updated_at) VALUES (?, ?, 0, 1, ?)
+         ON CONFLICT(thread_id) DO UPDATE SET cap_hits = cap_hits + 1, updated_at = excluded.updated_at`,
+      )
+      .run(threadId, pr, this.ts());
+    return this.capHits(threadId);
+  }
+
+  capHits(threadId: number): number {
+    const row = this.db.prepare("SELECT cap_hits FROM pingpong_threads WHERE thread_id = ?").get(threadId) as
+      | { cap_hits: number }
+      | undefined;
+    return row?.cap_hits ?? 0;
   }
 
   /** Count a posted reply. Returns the new exchange count. */
@@ -243,7 +269,12 @@ export async function postReply(
 ): Promise<ReplyResult> {
   const discipline = deps.ledger.discipline(input.thread_id);
   if (!discipline.allowed) {
-    deps.store.logEvent("pingpong_reply_suppressed", input.pr, { thread_id: input.thread_id, reason: discipline.reason });
+    const capHits = deps.ledger.recordCapHit(input.thread_id, input.pr);
+    deps.store.logEvent("pingpong_reply_suppressed", input.pr, {
+      thread_id: input.thread_id,
+      reason: discipline.reason,
+      cap_hits: capHits,
+    });
     return { posted: false, exchanges: discipline.exchanges, ...(discipline.reason ? { reason: discipline.reason } : {}) };
   }
   const result = await deps.adapter.createReviewCommentReply(input.pr, input.thread_id, input.body);

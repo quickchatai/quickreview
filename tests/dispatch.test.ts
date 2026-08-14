@@ -120,6 +120,48 @@ describe("roundTypeFor", () => {
   });
 });
 
+describe("recording at round start", () => {
+  it("stamps the diffstat off the files list and the pr_state trigger_ts", async () => {
+    queue(21, "2026-08-13T09:00:00Z");
+    adapter.files.set(21, [file("a.ts", 12, 3), file("b.ts", 4, 40)]);
+    const { hooks } = recordingHooks();
+
+    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+
+    const round = store.roundsFor(21)[0]!;
+    expect(round).toMatchObject({ additions: 16, deletions: 43, changed_files: 2, backfilled: 0 });
+    // trigger_ts survives even though the dispatch transition clears pr_state's.
+    expect(round.trigger_ts).toBe("2026-08-13T09:00:00Z");
+    expect(store.getPr(21)!.trigger_ts).toBeNull();
+    // No extra GitHub call: the diffstat comes off the one files fetch.
+    expect(adapter.calls.filter((c) => c.fn === "listPrFiles")).toHaveLength(1);
+  });
+
+  it("counts only daemon-run rounds when choosing first vs re-review", async () => {
+    // A backfilled (imported) round must not flip the next live round to
+    // "re-review" — its template references a settled digest that never existed.
+    store.db
+      .prepare(
+        `INSERT INTO rounds (pr, round_no, round_type, lenses, verdict, started_at, deadline_at, finished_at, status, backfilled)
+         VALUES (?, 0, 'backfill', '', 'REQUEST_CHANGES', '2026-07-01T10:00:00Z', '2026-07-01T10:00:00Z', '2026-07-01T10:00:00Z', 'done', 1)`,
+      )
+      .run(22);
+    expect(store.priorRoundCount(22)).toBe(0);
+
+    queue(22, "2026-08-13T09:00:00Z");
+    const { hooks, orders } = recordingHooks();
+    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+
+    expect(orders[0]!.order.round_type).toBe("first");
+    // …and a real prior round still yields a re-review.
+    store.finishRound(store.runningRounds()[0]!.id, "REQUEST_CHANGES", 1);
+    expect(store.priorRoundCount(22)).toBe(1);
+    queue(22, "2026-08-13T11:00:00Z");
+    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+    expect(orders[1]!.order.round_type).toBe("re-review");
+  });
+});
+
 describe("dispatchOnce", () => {
   it("dispatches in FIFO order and stops at the concurrency cap", async () => {
     const cfg = { ...baseCfg, daemon: { ...baseCfg.daemon, max_concurrent_rounds: 2 } };

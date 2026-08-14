@@ -40,6 +40,15 @@ export function defaultWorktree(pr: number): string {
   return `wt/pr-${pr}`;
 }
 
+/** PR size at the reviewed head, summed over the files API response. */
+export function diffstatOf(files: PrFileEntry[]): { additions: number; deletions: number; changed_files: number } {
+  return {
+    additions: files.reduce((n, f) => n + (f.additions ?? 0), 0),
+    deletions: files.reduce((n, f) => n + (f.deletions ?? 0), 0),
+    changed_files: files.length,
+  };
+}
+
 /** Round type: first ever round → "first"; a staleness recheck → "staleness";
  * anything else → "re-review". */
 export function roundTypeFor(row: PrStateRow, priorRounds: number): RoundType {
@@ -188,9 +197,10 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
     }
     let provisionalRoundId: number | undefined;
     try {
-      const priorRounds = (
-        store.db.prepare("SELECT COUNT(*) AS c FROM rounds WHERE pr = ?").get(row.number) as { c: number }
-      ).c;
+      // Backfilled (imported) rounds are excluded: a historical review must
+      // never flip a still-open PR's next live round to "re-review", whose
+      // template references a settled digest that never existed (§2.1).
+      const priorRounds = store.priorRoundCount(row.number);
       const roundType = roundTypeFor(row, priorRounds);
       const consumed = await consumeTriggers(deps, row.number);
 
@@ -199,7 +209,13 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       const gate = migrationGate(files);
       const lenses = [...selectLenses(files), "pass-validate"];
 
-      const roundId = store.startRound(row.number, roundType, lenses, cfg.daemon.round_deadline_min);
+      // Diffstat comes free off the files list dispatch already fetched — no
+      // extra GitHub call in the hot path. trigger_ts is copied off pr_state
+      // here because the `dispatched` transition clears it moments later.
+      const roundId = store.startRound(row.number, roundType, lenses, cfg.daemon.round_deadline_min, {
+        ...diffstatOf(files),
+        trigger_ts: row.trigger_ts,
+      });
       provisionalRoundId = roundId;
       const roundNo = (store.db.prepare("SELECT round_no FROM rounds WHERE id = ?").get(roundId) as { round_no: number })
         .round_no;

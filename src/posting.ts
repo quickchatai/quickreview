@@ -240,7 +240,13 @@ export interface SubmitResult {
  * bot-comment registry (author-reply detection depends on it).
  * In dry-run nothing is posted and no ids exist — the intent is recorded.
  */
-export async function submitReview(deps: SubmitDeps, review: AssembledReview): Promise<SubmitResult> {
+export async function submitReview(
+  deps: SubmitDeps,
+  review: AssembledReview,
+  /** Round this review belongs to — linked onto every registered comment so
+   * review depth (comments per round) is measurable. */
+  roundNo?: number | null,
+): Promise<SubmitResult> {
   const { pr, payload } = review;
   const result = await deps.adapter.createReview(pr, payload);
   const registered: number[] = [];
@@ -257,11 +263,11 @@ export async function submitReview(deps: SubmitDeps, review: AssembledReview): P
 
   const res = result.response as { id?: number; comments?: Array<{ id?: number }> } | undefined;
   if (typeof res?.id === "number") {
-    deps.store.registerBotComment(res.id, pr, "review");
+    deps.store.registerBotComment(res.id, pr, "review", roundNo ?? null);
   }
   for (const c of res?.comments ?? []) {
     if (typeof c?.id === "number") {
-      deps.store.registerBotComment(c.id, pr, "review_comment");
+      deps.store.registerBotComment(c.id, pr, "review_comment", roundNo ?? null);
       registered.push(c.id);
     }
   }

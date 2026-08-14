@@ -43,9 +43,15 @@ export interface AppHooks {
   deployScreen?: (app: App, cols: number, rows: number) => string;
   /** Deploy tab key handling; returns true when it consumed the key. */
   deployKey?: (app: App, key: ReturnType<typeof decodeKey>) => boolean;
+  /**: metrics dashboard / per-PR timeline screen. */
+  metricsScreen?: (app: App, cols: number, rows: number) => string;
+  /** Metrics tab key handling; returns true when it consumed the key. */
+  metricsKey?: (app: App, key: ReturnType<typeof decodeKey>) => boolean;
+  /** Metrics tab click routing (window switcher zones); true = consumed. */
+  metricsClick?: (app: App, x: number, y: number) => boolean;
 }
 
-export type Tab = "board" | "digest" | "companion" | "deploy";
+export type Tab = "board" | "digest" | "companion" | "deploy" | "metrics";
 
 export class App {
   readonly view: BoardView = {
@@ -309,6 +315,11 @@ export class App {
       if (ev.kind !== "click") this.hooks.deployKey?.(this, { kind: ev.kind === "wheel-down" ? "down" : "up" });
       return;
     }
+    if (this.tab === "metrics") {
+      if (ev.kind === "click") this.hooks.metricsClick?.(this, ev.x, ev.y);
+      else this.hooks.metricsKey?.(this, { kind: ev.kind === "wheel-down" ? "down" : "up" });
+      return;
+    }
     if (ev.kind === "wheel-up" || ev.kind === "wheel-down") {
       const delta = ev.kind === "wheel-down" ? 1 : -1;
       const stripTop = (this.lastFrame?.meta["stripTop"] ?? Number.MAX_SAFE_INTEGER) + 1;
@@ -374,6 +385,7 @@ export class App {
     }
     if (this.tab === "digest" && this.hooks.digestKey?.(this, key)) return;
     if (this.tab === "deploy" && this.hooks.deployKey?.(this, key)) return;
+    if (this.tab === "metrics" && this.hooks.metricsKey?.(this, key)) return;
     if (this.tab === "companion") {
       // The tab is the conversation: ⏎ re-attaches, tab/quit keys still work,
       // everything else would silently act on the board — so it doesn't.
@@ -385,6 +397,7 @@ export class App {
         case "tab-board":
         case "tab-digest":
         case "tab-deploy":
+        case "tab-metrics":
         case "quit":
         case "help":
           break;
@@ -408,6 +421,9 @@ export class App {
         break;
       case "tab-deploy":
         this.tab = "deploy";
+        break;
+      case "tab-metrics":
+        this.tab = "metrics";
         break;
       case "tab-companion":
         this.openCompanion();
@@ -527,6 +543,12 @@ export class App {
       const screen = this.hooks.deployScreen?.(this, cols, rows);
       this.lastFrame = undefined;
       this.out.write(screen ?? `${CLEAR}deploy tab not wired — [1] back to board`);
+      return;
+    }
+    if (this.tab === "metrics") {
+      const screen = this.hooks.metricsScreen?.(this, cols, rows);
+      this.lastFrame = undefined;
+      this.out.write(screen ?? `${CLEAR}metrics tab not wired — [1] back to board`);
       return;
     }
     this.view.now = this.now();

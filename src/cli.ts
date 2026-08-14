@@ -5,6 +5,7 @@ import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig, sandboxRoot } from "./config.js";
 import { StateStore, type StatusSnapshot } from "./state.js";
+import { computeMetrics, computeTimeline, renderMetrics, renderTimeline } from "./metrics.js";
 
 function stateDir(): string {
   return join(sandboxRoot(), "state");
@@ -193,6 +194,23 @@ function cmdWhy(n: number): void {
   }
 }
 
+/** `qcr metrics [--pr <n>] [--json]` — the aggregation engine over the live
+ * sqlite (read-only, container-safe: same store/config opening as `why`). */
+function cmdMetrics(pr: number | null, json: boolean): void {
+  const store = openStore();
+  try {
+    if (pr !== null) {
+      const payload = computeTimeline(store, pr);
+      console.log(json ? JSON.stringify(payload) : renderTimeline(payload));
+      return;
+    }
+    const payload = computeMetrics(store);
+    console.log(json ? JSON.stringify(payload) : renderMetrics(payload));
+  } finally {
+    store.close();
+  }
+}
+
 function cmdAttach(target: string): void {
   // Live sessions run inside the quickreview container on the VM; locally the
   // tmux server is direct. Print the right invocation and exec it when local
@@ -264,6 +282,12 @@ export async function main(argv: string[]): Promise<void> {
       process.exitCode = await cmdCompare(prs);
       return;
     }
+    case "metrics": {
+      const prIdx = rest.indexOf("--pr");
+      const pr = prIdx >= 0 ? Number(rest[prIdx + 1]) : null;
+      if (pr !== null && !Number.isInteger(pr)) throw new Error("usage: qcr metrics [--pr <pr-number>] [--json]");
+      return cmdMetrics(pr, json);
+    }
     case "status":
       return cmdStatus();
     case "spend":
@@ -313,7 +337,7 @@ export async function main(argv: string[]): Promise<void> {
     }
     default:
       console.log(
-        "usage: qcr <status|spend|today|why <n>|events|attach <n>|tui [pr|overseer]|companion <up|down|status>|checklist|compare <pr...>>",
+        "usage: qcr <status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|tui [pr|overseer]|companion <up|down|status>|checklist|compare <pr...>>",
       );
       loadConfig(); // surface config errors early even on bad usage
   }

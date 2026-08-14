@@ -211,9 +211,20 @@ describe("submitReview", () => {
     const out = await submitReview({ adapter, store }, review());
 
     expect(out.registered).toEqual([901]);
-    expect(store.registerBotComment).toHaveBeenCalledWith(900, 11, "review");
-    expect(store.registerBotComment).toHaveBeenCalledWith(901, 11, "review_comment");
+    expect(store.registerBotComment).toHaveBeenCalledWith(900, 11, "review", null);
+    expect(store.registerBotComment).toHaveBeenCalledWith(901, 11, "review_comment", null);
     expect(out.needs_backfill).toBe(false);
+  });
+
+  it("links registered comments to the round that posted them (review depth)", async () => {
+    const store = fakeStore();
+    const adapter = {
+      createReview: vi.fn().mockResolvedValue({ executed: true, response: { id: 900, comments: [{ id: 901 }] } }),
+    };
+    await submitReview({ adapter, store }, review(), 3);
+
+    expect(store.registerBotComment).toHaveBeenCalledWith(900, 11, "review", 3);
+    expect(store.registerBotComment).toHaveBeenCalledWith(901, 11, "review_comment", 3);
   });
 
   it("records the intent only in dry-run and asks for a registry backfill", async () => {

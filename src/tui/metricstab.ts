@@ -1,0 +1,597 @@
+// Metrics tab (key 5) — the aggregate dashboard: a Pulse-style stat
+// strip for the selected window, then width-adaptive cards of block-glyph
+// charts (sparklines, histograms, horizontal bars) over the MetricsPayload
+// `qcr metrics --json` produces, plus a per-PR timeline drill-down from
+// `qcr metrics --pr <n> --json`.
+//
+// Read-only like every other tab: the only VM touch is the two qcr reads
+// through the shared ssh runner, cached stale-while-revalidate.
+import type { Dist, DailyRow, MetricsPayload, MetricsWindow, TimelinePayload } from "../metrics.js";
+import type { TuiConfig } from "../config.js";
+import type { App } from "./app.js";
+import type { BoardKey } from "./keys.js";
+import { Frame, SGR, displayWidth, fit, rule, sanitizeText, truncate } from "./paint.js";
+import { metricsArgv, metricsPrArgv, type SshRunner } from "./remote.js";
+import { FG, RESET, fmtAge, verdictColor } from "./theme.js";
+
+// ---- chart primitives -------------------------------------------------------
+
+const SPARK = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"] as const;
+
+/**
+ * One-line trend. Longer series than `width` are bucket-averaged (oldest
+ * first is the caller's contract); an all-zero series renders as the floor
+ * glyph rather than pretending to a shape.
+ */
+export function sparkline(values: number[], width: number): string {
+  const w = Math.max(0, Math.floor(width));
+  if (w === 0 || values.length === 0) return "";
+  const buckets: number[] = [];
+  if (values.length <= w) {
+    buckets.push(...values);
+  } else {
+    const per = values.length / w;
+    for (let i = 0; i < w; i++) {
+      const slice = values.slice(Math.floor(i * per), Math.max(Math.floor((i + 1) * per), Math.floor(i * per) + 1));
+      buckets.push(slice.reduce((a, b) => a + b, 0) / slice.length);
+    }
+  }
+  const max = Math.max(...buckets);
+  if (max <= 0) return SPARK[0]!.repeat(buckets.length);
+  return buckets.map((v) => SPARK[Math.min(SPARK.length - 1, Math.max(0, Math.round((v / max) * (SPARK.length - 1))))]!).join("");
+}
+
+/** Label column width for a bar row — a third of the card, clamped. */
+function labelWidth(width: number): number {
+  return Math.min(18, Math.max(6, Math.floor(width * 0.34)));
+}
+
+/**
+ * `label  ####....  value` in exactly `width` cells (or fewer). `max <= 0`
+ * renders an empty trough — a zero row is still a row worth seeing.
+ */
+export function hbar(label: string, value: number, max: number, width: number, valueText?: string): string {
+  const w = Math.max(8, Math.floor(width));
+  const lw = labelWidth(w);
+  const vt = valueText ?? String(value);
+  const vw = Math.min(displayWidth(vt), Math.max(0, w - lw - 4));
+  const barW = Math.max(1, w - lw - 1 - vw - 1);
+  const filled = max > 0 ? Math.min(barW, Math.max(value > 0 ? 1 : 0, Math.round((value / max) * barW))) : 0;
+  const bar = `${"█".repeat(filled)}${"░".repeat(Math.max(0, barW - filled))}`;
+  return `${fit(label, lw)} ${bar} ${truncate(vt, vw)}`;
+}
+
+/** Distribution card body: median/p90/n line plus one bar per fixed bucket. */
+export function histogramLines(dist: Dist, width: number, fmt: (v: number) => string = String): string[] {
+  if (dist.n === 0) return [`${FG.dim}no data yet${RESET}`];
+  const max = dist.histogram.reduce((m, b) => Math.max(m, b.count), 0);
+  const lines = [`${FG.dim}median${RESET} ${fmt(dist.median ?? 0)}  ${FG.dim}p90${RESET} ${fmt(dist.p90 ?? 0)}  ${FG.dim}n=${dist.n}${RESET}`];
+  for (const b of dist.histogram) lines.push(hbar(b.label, b.count, max, width));
+  return lines;
+}
+
+/** 45s / 12m / 3h / 2d from a second count — fmtAge's vocabulary, no clock. */
+export function fmtDur(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined) return "—";
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.round(s / 60)}m`;
+  if (s < 86_400) return `${(s / 3600).toFixed(1)}h`;
+  return `${(s / 86_400).toFixed(1)}d`;
+}
+
+function usd(v: number | null | undefined): string {
+  return v === null || v === undefined ? "—" : `$${v.toFixed(2)}`;
+}
+
+function pct(v: number | null | undefined): string {
+  return v === null || v === undefined ? "—" : `${Math.round(v * 100)}%`;
+}
+
+// ---- view state -------------------------------------------------------------
+
+export type MetricsWindowKey = "d7" | "d30" | "all";
+
+export const WINDOW_LABELS: Array<{ key: MetricsWindowKey; label: string; hotkey: string }> = [
+  { key: "d7", label: "7d", hotkey: "7" },
+  { key: "d30", label: "30d", hotkey: "0" },
+  { key: "all", label: "all", hotkey: "a" },
+];
+
+export type MetricsAction = { t: "window"; window: MetricsWindowKey } | { t: "back" };
+
+export interface MetricsView {
+  window: MetricsWindowKey;
+  payload?: MetricsPayload;
+  error?: string;
+  loading: boolean;
+  /** Per-PR drill-down; set means the timeline replaces the dashboard. */
+  drill?: { pr: number; payload?: TimelinePayload; error?: string; loading: boolean };
+  /** Digits typed towards a drill-down (`#` opens the prompt). */
+  prEntry?: string;
+  scroll: number;
+  dryRun: boolean;
+  now?: Date;
+}
+
+// ---- cards ------------------------------------------------------------------
+
+function section(title: string, subtitle: string): string {
+  return `${FG.accent}${SGR.bold}${title}${RESET} ${FG.dim}${subtitle}${RESET}`;
+}
+
+export interface MetricsCard {
+  title: string;
+  subtitle: string;
+  body: (width: number) => string[];
+}
+
+function barsFromRecord(rec: Record<string, number>, width: number, fmt: (v: number) => string): string[] {
+  const rows = Object.entries(rec).sort((a, b) => b[1] - a[1]);
+  if (rows.length === 0) return [`${FG.dim}no data yet${RESET}`];
+  const max = rows.reduce((m, r) => Math.max(m, r[1]), 0);
+  return rows.map(([k, v]) => hbar(k, v, max, width, fmt(v)));
+}
+
+export function metricsCards(win: MetricsWindow, daily: DailyRow[]): MetricsCard[] {
+  return [
+    {
+      title: "ACTIVITY",
+      subtitle: "per Warsaw day, oldest → newest",
+      body: (w) => {
+        if (daily.length === 0) return [`${FG.dim}no data yet${RESET}`];
+        const sparkW = Math.max(8, w - 14);
+        const rounds = daily.map((d) => d.rounds);
+        const prs = daily.map((d) => d.prs);
+        const spend = daily.map((d) => d.spend_usd);
+        return [
+          `${fit("rounds", 8)}${FG.reviewing}${sparkline(rounds, sparkW)}${RESET} ${Math.max(...rounds)}`,
+          `${fit("prs", 8)}${FG.accent}${sparkline(prs, sparkW)}${RESET} ${Math.max(...prs)}`,
+          `${fit("spend", 8)}${FG.awaiting_author}${sparkline(spend, sparkW)}${RESET} ${usd(Math.max(...spend))}`,
+          `${FG.dim}${daily[0]?.day ?? ""} → ${daily[daily.length - 1]?.day ?? ""}${RESET}`,
+        ];
+      },
+    },
+    {
+      title: "TIME TO FIRST VERDICT",
+      subtitle: "trigger → first verdict",
+      body: (w) => [
+        `${FG.dim}queue${RESET} ${fmtDur(win.ttfv.queue_median_s)}  ${FG.dim}review${RESET} ${fmtDur(win.ttfv.review_median_s)}`,
+        ...histogramLines(win.ttfv, w, (v) => fmtDur(v)),
+      ],
+    },
+    {
+      title: "TIME IN STATE",
+      subtitle: "median dwell per state",
+      body: (w) => {
+        const rows = win.time_in_state.filter((r) => r.total_s > 0 || r.median_s !== null);
+        if (rows.length === 0) return [`${FG.dim}no data yet${RESET}`];
+        const max = rows.reduce((m, r) => Math.max(m, r.median_s ?? 0), 0);
+        return rows.map((r) => hbar(r.state, r.median_s ?? 0, max, w, fmtDur(r.median_s)));
+      },
+    },
+    {
+      title: "VERDICT MIX",
+      subtitle: "rounds by verdict",
+      body: (w) => {
+        if (win.verdict_mix.length === 0) return [`${FG.dim}no data yet${RESET}`];
+        const max = win.verdict_mix.reduce((m, r) => Math.max(m, r.count), 0);
+        return win.verdict_mix.map((r) => `${verdictColor(r.verdict)}${hbar(r.verdict, r.count, max, w)}${RESET}`);
+      },
+    },
+    {
+      title: "SPEND",
+      subtitle: "usd by round type and lens",
+      body: (w) => [
+        `${FG.dim}per-PR median${RESET} ${usd(win.spend.per_pr_median)}  ${FG.dim}p90${RESET} ${usd(win.spend.per_pr_p90)}`,
+        `${FG.dim}by round type${RESET}`,
+        ...barsFromRecord(win.spend.by_round_type, w, usd),
+        `${FG.dim}by lens${RESET}`,
+        ...barsFromRecord(win.spend.by_lens, w, usd),
+      ],
+    },
+    {
+      title: "ROUNDS UNTIL RESOLUTION",
+      subtitle: "rounds per resolved PR",
+      body: (w) => histogramLines(win.rounds_until_resolution, w),
+    },
+    {
+      title: "ROUND DURATION",
+      subtitle: "start → finish, vs deadline",
+      body: (w) => [
+        `${FG.dim}overrun rate${RESET} ${win.duration.overrun_rate !== null && win.duration.overrun_rate > 0.1 ? FG.anomaly : FG.approve}${pct(win.duration.overrun_rate)}${RESET}`,
+        ...histogramLines(win.duration, w, (v) => fmtDur(v)),
+      ],
+    },
+    {
+      title: "AUTHOR RESPONSE",
+      subtitle: "verdict → next push",
+      body: (w) => histogramLines(win.author_response, w, (v) => fmtDur(v)),
+    },
+    {
+      title: "REVIEW DEPTH",
+      subtitle: "bot comments per round",
+      body: (w) => histogramLines(win.review_depth, w),
+    },
+    {
+      title: "PR SIZE",
+      subtitle: "lines changed vs time to verdict",
+      body: (w) => {
+        const rows = win.size.filter((r) => r.prs > 0);
+        if (rows.length === 0) return [`${FG.dim}no data yet${RESET}`];
+        const max = rows.reduce((m, r) => Math.max(m, r.prs), 0);
+        return rows.map((r) => hbar(r.bucket, r.prs, max, w, `${r.prs} · ${fmtDur(r.median_ttfv_s)}`));
+      },
+    },
+    {
+      title: "PING-PONG",
+      subtitle: `exchanges per thread · cap hits ${win.pingpong.cap_hits}`,
+      body: (w) => histogramLines(win.pingpong, w),
+    },
+  ];
+}
+
+/** Column count and per-column widths — the board's adaptive-layout idea. */
+export function columnWidths(cols: number): number[] {
+  const inner = cols - 2;
+  const n = cols >= 150 ? 3 : cols >= 100 ? 2 : 1;
+  const usable = inner - (n - 1); // the dividers boxRow inserts between cells
+  const base = Math.floor(usable / n);
+  const widths = new Array<number>(n).fill(base);
+  widths[n - 1] = usable - base * (n - 1);
+  return widths;
+}
+
+/** Greedy shortest-column packing so a tall card doesn't strand a column. */
+export function packColumns(cards: MetricsCard[], widths: number[]): string[][] {
+  const columns: string[][] = widths.map(() => []);
+  const heights = widths.map(() => 0);
+  for (const card of cards) {
+    let target = 0;
+    for (let i = 1; i < heights.length; i++) if (heights[i]! < heights[target]!) target = i;
+    const w = Math.max(8, widths[target]! - 1); // one leading space per cell
+    const col = columns[target]!;
+    if (col.length > 0) col.push("");
+    col.push(truncate(section(card.title, card.subtitle), w));
+    for (const line of card.body(w)) col.push(truncate(line, w));
+    heights[target] = col.length;
+  }
+  return columns;
+}
+
+// ---- header -----------------------------------------------------------------
+
+export function statStrip(win: MetricsWindow, width: number): string {
+  const h = win.header;
+  const bits = [
+    `${FG.dim}triggered${RESET} ${SGR.bold}${h.prs_triggered}${SGR.reset}`,
+    `${FG.dim}reviewed${RESET} ${SGR.bold}${h.prs_reviewed}${SGR.reset}`,
+    `${FG.approve}✓${h.approvals}${RESET} ${FG.request_changes}✗${h.request_changes}${RESET}`,
+    `${FG.dim}rounds${RESET} ${SGR.bold}${h.rounds}${SGR.reset}`,
+    `${FG.accent}$${h.spend_usd.toFixed(2)}${RESET}`,
+    `${h.overruns > 0 ? FG.anomaly : FG.dim}overruns ${h.overruns}${RESET}`,
+    `${FG.awaiting_human}⚑ ${h.awaiting_you} awaiting you${RESET}`,
+  ];
+  return truncate(bits.join(`${FG.dim} · ${RESET}`), width);
+}
+
+/** Window switcher, with the 1-based x-ranges of each button for zoning. */
+export function windowSwitcher(
+  selected: MetricsWindowKey,
+  startX: number,
+): { text: string; zones: Array<{ x1: number; x2: number; window: MetricsWindowKey }> } {
+  let x = startX;
+  const parts: string[] = [];
+  const zones: Array<{ x1: number; x2: number; window: MetricsWindowKey }> = [];
+  for (const w of WINDOW_LABELS) {
+    const plain = `[ ${w.label} ]`;
+    zones.push({ x1: x, x2: x + plain.length - 1, window: w.key });
+    parts.push(w.key === selected ? `${SGR.inverse}${FG.accent}${plain}${RESET}${SGR.reset}` : `${FG.dim}[${RESET} ${w.label} ${FG.dim}]${RESET}`);
+    x += plain.length + 1;
+  }
+  return { text: parts.join(" "), zones };
+}
+
+// ---- timeline drill-down ----------------------------------------------------
+
+const KIND_GLYPHS: Array<[RegExp, string]> = [
+  [/trigger/i, "▸"],
+  [/round_start|round-start|started/i, "▶"],
+  [/verdict|round_finish|round-finish|finished/i, "■"],
+  [/push|synchron/i, "↑"],
+  [/merge/i, "⇢"],
+  [/close/i, "✖"],
+  [/state|transition/i, "→"],
+];
+
+export function kindGlyph(kind: string): string {
+  for (const [re, glyph] of KIND_GLYPHS) if (re.test(kind)) return glyph;
+  return "·";
+}
+
+export function timelineLines(tl: TimelinePayload, width: number, now: Date): string[] {
+  const lines: string[] = [];
+  const title = tl.title ? sanitizeText(tl.title) : "(unknown PR)";
+  lines.push(truncate(`${FG.accent}${SGR.bold}#${tl.pr}${RESET} ${SGR.bold}${title}${SGR.reset}${tl.author ? ` ${FG.author}${tl.author}${RESET}` : ""}`, width));
+  if (!tl.known) {
+    lines.push(`${FG.dim}the daemon has no record of this PR${RESET}`);
+    return lines;
+  }
+  lines.push(truncate(section("TIMELINE", `${tl.items.length} events, oldest first`), width));
+  for (const item of tl.items) {
+    lines.push(truncate(`${fit(fmtAge(item.ts, now), 5)} ${kindGlyph(item.kind)} ${item.label}`, width));
+    if (item.detail) lines.push(truncate(`      ${FG.dim}${sanitizeText(item.detail)}${RESET}`, width));
+  }
+  if (tl.backfilled_rounds.length > 0) {
+    lines.push("");
+    lines.push(truncate(section("BACKFILLED ROUNDS", "reconstructed from GitHub"), width));
+    for (const r of tl.backfilled_rounds) {
+      lines.push(truncate(`  r${r.round_no} ${verdictColor(r.verdict)}${r.verdict ?? "—"}${RESET} ${FG.dim}${r.submitted_at}${RESET}`, width));
+    }
+  }
+  return lines;
+}
+
+// ---- render -----------------------------------------------------------------
+
+export function renderMetrics(view: MetricsView, cols: number, rows: number): Frame {
+  const frame = new Frame(cols, rows);
+  const now = view.now ?? new Date();
+  const drill = view.drill;
+  frame.set(
+    0,
+    rule(cols, "┌", "┐", [
+      "quickreview",
+      view.dryRun ? "DRY-RUN" : `${SGR.bgRed}${SGR.bold} LIVE ${SGR.reset}`,
+      drill ? `metrics · #${drill.pr}` : "metrics",
+    ]),
+  );
+
+  if (drill) {
+    const lines = drill.payload
+      ? timelineLines(drill.payload, cols - 4, now)
+      : [drill.error ? `${FG.dim}metrics unavailable: ${drill.error}${RESET}` : `${FG.dim}loading timeline for #${drill.pr}…${RESET}`];
+    for (let r = 0; r < rows - 3; r++) frame.boxRow(1 + r, [{ text: ` ${lines[view.scroll + r] ?? ""}`, width: cols - 2 }]);
+    frame.boxRow(rows - 2, [{ text: ` ${FG.dim}Esc back to the dashboard · j/k scroll · 1 board · q quit${RESET}`, width: cols - 2 }]);
+    frame.set(rows - 1, rule(cols, "└", "┘", []));
+    return frame;
+  }
+
+  // Window switcher (row 1) + its click zones.
+  const sw = windowSwitcher(view.window, 3);
+  const entry = view.prEntry !== undefined ? `   ${FG.accent}#${view.prEntry}▁${RESET} ${FG.dim}⏎ open timeline · Esc cancel${RESET}` : "";
+  const generated = view.payload ? `${FG.dim}generated ${fmtAge(view.payload.generated_at, now)} ago${RESET}` : "";
+  frame.boxRow(1, [{ text: ` ${sw.text}${entry}   ${generated}`, width: cols - 2 }]);
+  for (const z of sw.zones) {
+    frame.zones.push({ x1: z.x1, y1: 2, x2: z.x2, y2: 2, action: { t: "window", window: z.window } satisfies MetricsAction });
+  }
+
+  const bodyRows = rows - 5; // top bar + switcher + stat strip + hints + bottom
+  if (!view.payload) {
+    const msg = view.error ? `${FG.dim}metrics unavailable: ${view.error}${RESET}` : `${FG.dim}loading metrics…${RESET}`;
+    for (let r = 2; r <= rows - 3; r++) frame.boxRow(r, [{ text: r === 2 ? ` ${msg}` : "", width: cols - 2 }]);
+    frame.boxRow(rows - 2, [{ text: ` ${FG.dim}[1]board [5]metrics  7/0/a window  r refresh  q quit${RESET}`, width: cols - 2 }]);
+    frame.set(rows - 1, rule(cols, "└", "┘", []));
+    return frame;
+  }
+
+  const win = view.payload.windows[view.window];
+  frame.boxRow(2, [{ text: ` ${statStrip(win, cols - 3)}`, width: cols - 2 }]);
+
+  const widths = columnWidths(cols);
+  const columns = packColumns(metricsCards(win, view.payload.daily), widths);
+  for (let r = 0; r < bodyRows; r++) {
+    frame.boxRow(
+      3 + r,
+      widths.map((w, i) => ({ text: ` ${columns[i]?.[view.scroll + r] ?? ""}`, width: w })),
+    );
+  }
+  const bf = view.payload.backfill;
+  frame.boxRow(rows - 2, [
+    {
+      text: ` ${FG.dim}[1]board [5]metrics  7/0/a window  # PR timeline  j/k scroll  r refresh  q quit  ·  backfill ${bf.rounds} rounds / ${bf.prs} PRs${bf.oldest ? ` since ${bf.oldest}` : ""}${RESET}`,
+      width: cols - 2,
+    },
+  ]);
+  frame.set(rows - 1, rule(cols, "└", "┘", []));
+  return frame;
+}
+
+// ---- fetching ---------------------------------------------------------------
+
+export interface MetricsFetchResult<T> {
+  payload?: T;
+  error?: string;
+}
+
+export interface MetricsFetcher {
+  overall(): Promise<MetricsFetchResult<MetricsPayload>>;
+  timeline(pr: number): Promise<MetricsFetchResult<TimelinePayload>>;
+}
+
+/** Both reads are `qcr … --json` in the container — nothing writes. */
+export class SshMetricsFetcher implements MetricsFetcher {
+  constructor(
+    private readonly cfg: TuiConfig,
+    private readonly ssh: SshRunner,
+  ) {}
+
+  private async read<T>(argv: string[]): Promise<MetricsFetchResult<T>> {
+    const res = await this.ssh(this.cfg.ssh_host, argv);
+    if (!res.ok) return { error: res.stderr.trim().split("\n")[0] || `qcr exited ${res.code ?? "?"}` };
+    try {
+      return { payload: JSON.parse(res.stdout) as T };
+    } catch {
+      return { error: "unparseable JSON from qcr metrics" };
+    }
+  }
+
+  overall(): Promise<MetricsFetchResult<MetricsPayload>> {
+    return this.read<MetricsPayload>(metricsArgv(this.cfg));
+  }
+
+  timeline(pr: number): Promise<MetricsFetchResult<TimelinePayload>> {
+    return this.read<TimelinePayload>(metricsPrArgv(this.cfg, pr));
+  }
+}
+
+// ---- hooks ------------------------------------------------------------------
+
+export const METRICS_TTL_MS = 60_000;
+
+/** Digits survive the tab-key mapping: 1/2/4 decode as tab switches, so PR
+ * entry has to read them back off the key kind. */
+export function keyChar(key: BoardKey): string | undefined {
+  switch (key.kind) {
+    case "char":
+      return key.ch;
+    case "tab-board":
+      return "1";
+    case "tab-digest":
+      return "2";
+    case "tab-companion":
+      return "3"; // `c` decodes to the same key — a wart PR entry can live with
+    case "tab-deploy":
+      return "4";
+    case "tab-metrics":
+      return "5";
+    default:
+      return undefined;
+  }
+}
+
+export function installMetricsHooks(app: App, fetcher?: MetricsFetcher): MetricsView {
+  const f = fetcher ?? new SshMetricsFetcher(app.cfg, app.ssh);
+  const view: MetricsView = { window: "d7", loading: false, scroll: 0, dryRun: app.view.dryRun };
+  let fetchedAt = 0;
+  let lastFrame: Frame | undefined;
+  const timelineCache = new Map<number, { payload: TimelinePayload; fetched_at: number }>();
+
+  const load = async (force = false): Promise<void> => {
+    if (view.loading) return;
+    if (!force && view.payload && Date.now() - fetchedAt < METRICS_TTL_MS) return;
+    view.loading = true;
+    try {
+      const res = await f.overall();
+      if (res.payload) {
+        view.payload = res.payload;
+        view.error = undefined;
+        fetchedAt = Date.now();
+      } else {
+        view.error = res.error ?? "unknown error";
+      }
+    } finally {
+      view.loading = false;
+    }
+    app.repaint();
+  };
+
+  const drillTo = (pr: number): void => {
+    const cached = timelineCache.get(pr);
+    view.drill = { pr, payload: cached?.payload, loading: true };
+    view.scroll = 0;
+    if (cached && Date.now() - cached.fetched_at < METRICS_TTL_MS) {
+      view.drill.loading = false;
+      app.repaint();
+      return;
+    }
+    void (async () => {
+      const res = await f.timeline(pr);
+      if (view.drill?.pr !== pr) return;
+      if (res.payload) {
+        timelineCache.set(pr, { payload: res.payload, fetched_at: Date.now() });
+        view.drill = { pr, payload: res.payload, loading: false };
+      } else {
+        view.drill = { pr, payload: cached?.payload, error: res.error, loading: false };
+      }
+      app.repaint();
+    })();
+    app.repaint();
+  };
+
+  app.hooks.metricsScreen = (theApp, cols, rows) => {
+    view.dryRun = theApp.view.dryRun;
+    void load(); // TTL-gated: a repaint inside the window costs nothing
+    const frame = renderMetrics(view, cols, rows);
+    lastFrame = frame;
+    return frame.render();
+  };
+
+  app.hooks.metricsClick = (theApp, x, y) => {
+    if (!lastFrame) return false;
+    for (let i = lastFrame.zones.length - 1; i >= 0; i--) {
+      const z = lastFrame.zones[i]!;
+      if (x >= z.x1 && x <= z.x2 && y >= z.y1 && y <= z.y2) {
+        const action = z.action as MetricsAction;
+        if (action.t === "window") {
+          view.window = action.window;
+          view.scroll = 0;
+          theApp.repaint();
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  app.hooks.metricsKey = (theApp, key: BoardKey): boolean => {
+    // PR-entry mode owns every printable key until enter or Esc.
+    if (view.prEntry !== undefined) {
+      const ch = keyChar(key);
+      if (key.kind === "escape") view.prEntry = undefined;
+      else if (key.kind === "backspace") view.prEntry = view.prEntry.slice(0, -1);
+      else if (key.kind === "enter") {
+        const pr = Number(view.prEntry);
+        view.prEntry = undefined;
+        if (Number.isFinite(pr) && pr > 0) drillTo(pr);
+      } else if (ch !== undefined && /^\d$/.test(ch)) view.prEntry += ch;
+      else if (key.kind === "quit") return false;
+      theApp.repaint();
+      return true;
+    }
+    switch (key.kind) {
+      case "escape":
+        if (view.drill) {
+          view.drill = undefined;
+          view.scroll = 0;
+          theApp.repaint();
+          return true;
+        }
+        return false;
+      case "down":
+      case "up":
+        view.scroll = key.kind === "down" ? view.scroll + 1 : Math.max(0, view.scroll - 1);
+        theApp.repaint();
+        return true;
+      case "enter": {
+        const pr = theApp.currentPr();
+        if (pr !== undefined) drillTo(pr);
+        return true;
+      }
+      case "refresh":
+        if (view.drill) drillTo(view.drill.pr);
+        else void load(true);
+        theApp.repaint();
+        return true;
+      case "char": {
+        const w = WINDOW_LABELS.find((x) => x.hotkey === key.ch);
+        if (w) {
+          view.window = w.key;
+          view.scroll = 0;
+          theApp.repaint();
+          return true;
+        }
+        if (key.ch === "#") {
+          view.prEntry = "";
+          theApp.repaint();
+          return true;
+        }
+        return false;
+      }
+      default:
+        return false; // tabs/quit/help fall through to the app
+    }
+  };
+
+  return view;
+}

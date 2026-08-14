@@ -338,9 +338,13 @@ export async function applyInterpretation(
     case "synchronize":
       // Metadata refresh only: pushes never start or pump a review.
       applyEventFor(store, i.pr, { type: "synchronize" }, i.meta, opts);
+      // The author-response metric needs the push instant; no transition is
+      // logged for a synchronize (the state does not change), so log it here.
+      store.logEvent("head_push", i.pr, { head_sha: i.meta.head_sha ?? null, source: "webhook" });
       return;
     case "closed":
       applyEventFor(store, i.pr, { type: "closed" }, i.meta, opts);
+      store.logEvent("pr_closed", i.pr, { merged: i.merged, source: "webhook" });
       await deps.onClosed?.(i.pr);
       return;
     case "author_reply":

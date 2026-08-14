@@ -40,6 +40,16 @@ export function todayArgv(cfg: TuiConfig): string[] {
   return [...dockerPrefix(cfg), cfg.container, "node", "dist/src/cli.js", "today", "--json"];
 }
 
+/** In-container `qcr metrics --json` (the metrics tab's aggregate source). */
+export function metricsArgv(cfg: TuiConfig): string[] {
+  return [...dockerPrefix(cfg), cfg.container, "node", "dist/src/cli.js", "metrics", "--json"];
+}
+
+/** In-container `qcr metrics --pr <n> --json` (the per-PR timeline). */
+export function metricsPrArgv(cfg: TuiConfig, pr: number): string[] {
+  return [...dockerPrefix(cfg), cfg.container, "node", "dist/src/cli.js", "metrics", "--pr", String(pr), "--json"];
+}
+
 /** The interactive attach argv — the whole remote command after `ssh`. */
 export function attachArgv(cfg: TuiConfig, session: string): string[] {
   return ["-tt", cfg.ssh_host, ...dockerPrefix(cfg), "-it", cfg.container, "tmux", "attach", "-t", session];

@@ -95,6 +95,11 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
       const local = store.getPr(pr.number);
       if (!local) continue; // untriggered PRs are not tracked (no sweeps, spec §8)
       if (local.head_sha !== pr.head_sha || local.title !== pr.title) {
+        if (local.head_sha !== pr.head_sha) {
+          // Push instant as GitHub-derived truth (webhooks may have been missed)
+          // — the author-response metric reads these.
+          store.logEvent("head_push", pr.number, { head_sha: pr.head_sha, source: "reconcile" });
+        }
         applyEvent(store, pr.number, { type: "track" }, { title: pr.title, head_sha: pr.head_sha, author: pr.author }, { botLogin, now });
       }
       if (local.state === "closed") {
@@ -158,6 +163,7 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
       if (ref.state !== "closed") continue; // listing lag — leave it alone
       correction(deps, local.number, "pr-closed", { merged: ref.merged, local: local.state }, report);
       applyEvent(store, local.number, { type: "closed" }, { title: ref.title, head_sha: ref.head_sha, author: ref.author }, { botLogin, now });
+      store.logEvent("pr_closed", local.number, { merged: ref.merged, source: "reconcile" });
       report.closed.push(local.number);
       try {
         await deps.hooks.archiveAndClose(local.number);

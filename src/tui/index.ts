@@ -25,7 +25,8 @@ usage: qcr tui [<pr> | overseer | main] [--no-companion] [--no-reload]
                     feed, alert pipeline and the companion tab)
   --no-reload       do not re-exec when a new dist/ build lands
 
-keys: 1/2/3/4 tabs (3 = companion, also c; 4 = deploy plan, read-only) ·
+keys: 1/2/3/4/5 tabs (3 = companion, also c; 4 = deploy plan, read-only;
+      5 = metrics — 7/0/a window, # <pr> ⏎ for a PR timeline) ·
       j/k select · ⏎ attach ·
       Ctrl-q detach (twice = literal) ·
       m quick-message · o overseer · M main · w detail · e events · r refresh ·
@@ -105,6 +106,8 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
   installDigestHooks(app);
   const { RealDeployFetcher, installDeployHooks, realLocalRunner } = await import("./deploytab.js");
   installDeployHooks(app, new RealDeployFetcher(cfg, realSshRunner, realLocalRunner(sandboxRoot())));
+  const { installMetricsHooks } = await import("./metricstab.js");
+  installMetricsHooks(app);
 
   // Companion container: adopt-or-start before the board comes up. A failure
   // here is a degraded mode, never a reason not to open the TUI.
@@ -208,6 +211,7 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
   if (resumed) {
     if (resumed.tab === "digest") app.tab = "digest";
     else if (resumed.tab === "deploy") app.tab = "deploy";
+    else if (resumed.tab === "metrics") app.tab = "metrics";
     app.view.eventsScroll = resumed.eventsScroll;
     app.view.eventsFocus = resumed.eventsFocus;
     app.view.detailFull = resumed.detailFull;

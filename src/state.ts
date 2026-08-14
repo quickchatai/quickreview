@@ -43,6 +43,33 @@ export interface RoundRow {
   deadline_at: string;
   finished_at: string | null;
   status: string;
+  // ---- metrics / backfill columns (additive, nullable) ----
+  /** Diffstat of the head this round reviewed (summed over the files API). */
+  additions: number | null;
+  deletions: number | null;
+  changed_files: number | null;
+  /** 1 for rows imported from GitHub history — never live behaviour. */
+  backfilled: number;
+  /** GitHub review databaseId — the backfill idempotence key. */
+  gh_review_id: number | null;
+  gh_commit_id: string | null;
+  /** The trigger instant this round answered, copied off pr_state at start so
+   * time-to-first-verdict survives the `trigger_ts = null` reset at dispatch. */
+  trigger_ts: string | null;
+}
+
+/** PR lifecycle facts for PRs the daemon never tracked (M2 backfill fills it).
+ * Deliberately a separate table: no live query reads it, so importing hundreds
+ * of historical PRs cannot leak into the board, status.json or dispatch. */
+export interface BackfillPrMetaRow {
+  pr: number;
+  title: string;
+  author: string;
+  created_at: string;
+  merged_at: string | null;
+  closed_at: string | null;
+  merged: number;
+  imported_at: string;
 }
 
 const SCHEMA = `
@@ -78,6 +105,16 @@ CREATE TABLE IF NOT EXISTS bot_comments (
   kind TEXT NOT NULL DEFAULT 'review_comment',
   posted_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS backfill_pr_meta (
+  pr INTEGER PRIMARY KEY,
+  title TEXT NOT NULL DEFAULT '',
+  author TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  merged_at TEXT,
+  closed_at TEXT,
+  merged INTEGER NOT NULL DEFAULT 0,
+  imported_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS deliveries (
   guid TEXT PRIMARY KEY,
   event TEXT NOT NULL,
@@ -100,6 +137,14 @@ CREATE TABLE IF NOT EXISTS filed_items (
 );
 `;
 
+/** Optional per-round facts recorded at (or just after) round start. */
+export interface RoundStartMeta {
+  additions?: number | null;
+  deletions?: number | null;
+  changed_files?: number | null;
+  trigger_ts?: string | null;
+}
+
 export class StateStore {
   readonly db: Database.Database;
 
@@ -118,6 +163,24 @@ export class StateStore {
       this.db.exec("ALTER TABLE rounds ADD COLUMN summary TEXT");
     } catch {
       /* column already present */
+    }
+    // Metrics + backfill columns. Each ALTER is independent so a
+    // partially-migrated store converges; re-running is a no-op.
+    for (const ddl of [
+      "ALTER TABLE rounds ADD COLUMN additions INTEGER",
+      "ALTER TABLE rounds ADD COLUMN deletions INTEGER",
+      "ALTER TABLE rounds ADD COLUMN changed_files INTEGER",
+      "ALTER TABLE rounds ADD COLUMN backfilled INTEGER NOT NULL DEFAULT 0",
+      "ALTER TABLE rounds ADD COLUMN gh_review_id INTEGER",
+      "ALTER TABLE rounds ADD COLUMN gh_commit_id TEXT",
+      "ALTER TABLE rounds ADD COLUMN trigger_ts TEXT",
+      "ALTER TABLE bot_comments ADD COLUMN round_no INTEGER",
+    ]) {
+      try {
+        this.db.exec(ddl);
+      } catch {
+        /* column already present */
+      }
     }
   }
 
@@ -163,17 +226,65 @@ export class StateStore {
 
   // ---- rounds ------------------------------------------------------------
 
-  startRound(pr: number, roundType: string, lenses: string[], deadlineMin: number): number {
+  startRound(
+    pr: number,
+    roundType: string,
+    lenses: string[],
+    deadlineMin: number,
+    meta: RoundStartMeta = {},
+  ): number {
     const started = this.now();
     const deadline = new Date(started.getTime() + deadlineMin * 60_000);
     const nextNo = ((this.db.prepare("SELECT MAX(round_no) AS m FROM rounds WHERE pr = ?").get(pr) as { m: number | null }).m ?? 0) + 1;
     const info = this.db
       .prepare(
-        `INSERT INTO rounds (pr, round_no, round_type, lenses, started_at, deadline_at, status)
-         VALUES (?, ?, ?, ?, ?, ?, 'running')`,
+        `INSERT INTO rounds (pr, round_no, round_type, lenses, started_at, deadline_at, status,
+                             additions, deletions, changed_files, trigger_ts)
+         VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?)`,
       )
-      .run(pr, nextNo, roundType, lenses.join(","), started.toISOString(), deadline.toISOString());
+      .run(
+        pr,
+        nextNo,
+        roundType,
+        lenses.join(","),
+        started.toISOString(),
+        deadline.toISOString(),
+        meta.additions ?? null,
+        meta.deletions ?? null,
+        meta.changed_files ?? null,
+        meta.trigger_ts ?? null,
+      );
     return Number(info.lastInsertRowid);
+  }
+
+  /** Diffstat/trigger stamp for a round that already exists (late arrival). */
+  setRoundMeta(id: number, meta: RoundStartMeta): void {
+    const sets: string[] = [];
+    const args: Array<number | string | null> = [];
+    for (const key of ["additions", "deletions", "changed_files", "trigger_ts"] as const) {
+      if (meta[key] !== undefined) {
+        sets.push(`${key} = ?`);
+        args.push(meta[key] as number | string | null);
+      }
+    }
+    if (sets.length === 0) return;
+    this.db.prepare(`UPDATE rounds SET ${sets.join(", ")} WHERE id = ?`).run(...args, id);
+  }
+
+  /** Rounds the daemon actually ran for a PR — backfilled history excluded.
+   * Dispatch's first-review-vs-re-review choice keys on this (§2.1). */
+  priorRoundCount(pr: number): number {
+    return (
+      this.db.prepare("SELECT COUNT(*) AS c FROM rounds WHERE pr = ? AND backfilled = 0").get(pr) as { c: number }
+    ).c;
+  }
+
+  roundsFor(pr: number): RoundRow[] {
+    return this.db.prepare("SELECT * FROM rounds WHERE pr = ? ORDER BY round_no").all(pr) as RoundRow[];
+  }
+
+  allRounds(): RoundRow[] {
+    return this.db.prepare("SELECT * FROM rounds ORDER BY started_at, id").all() as RoundRow[];
   }
 
   finishRound(id: number, verdict: string, spendUsd: number | null, summary: string | null = null): void {
@@ -207,12 +318,45 @@ export class StateStore {
     return (this.db.prepare("SELECT COALESCE(SUM(spend_usd), 0) AS s FROM rounds").get() as { s: number }).s;
   }
 
+  // ---- backfill PR metadata (M2 writes, metrics reads) -------------------
+
+  upsertBackfillPrMeta(row: Omit<BackfillPrMetaRow, "imported_at"> & { imported_at?: string }): void {
+    this.db
+      .prepare(
+        `INSERT INTO backfill_pr_meta (pr, title, author, created_at, merged_at, closed_at, merged, imported_at)
+         VALUES (@pr, @title, @author, @created_at, @merged_at, @closed_at, @merged, @imported_at)
+         ON CONFLICT(pr) DO UPDATE SET
+           title=@title, author=@author, created_at=@created_at, merged_at=@merged_at,
+           closed_at=@closed_at, merged=@merged, imported_at=@imported_at`,
+      )
+      .run({ ...row, imported_at: row.imported_at ?? this.ts() });
+  }
+
+  backfillPrMeta(pr: number): BackfillPrMetaRow | undefined {
+    return this.db.prepare("SELECT * FROM backfill_pr_meta WHERE pr = ?").get(pr) as BackfillPrMetaRow | undefined;
+  }
+
+  allBackfillPrMeta(): BackfillPrMetaRow[] {
+    return this.db.prepare("SELECT * FROM backfill_pr_meta ORDER BY pr").all() as BackfillPrMetaRow[];
+  }
+
   // ---- bot-comment registry ---------------------------------------------
 
-  registerBotComment(commentId: number, pr: number, kind = "review_comment"): void {
+  /** `roundNo` links the comment to the round that produced it (review-depth
+   * metric). When omitted it defaults to the PR's latest daemon-run round —
+   * the only defensible attribution for comments discovered after the fact. */
+  registerBotComment(commentId: number, pr: number, kind = "review_comment", roundNo?: number | null): void {
+    const linked =
+      roundNo ??
+      (
+        this.db
+          .prepare("SELECT round_no FROM rounds WHERE pr = ? AND backfilled = 0 ORDER BY id DESC LIMIT 1")
+          .get(pr) as { round_no: number } | undefined
+      )?.round_no ??
+      null;
     this.db
-      .prepare("INSERT OR IGNORE INTO bot_comments (comment_id, pr, kind, posted_at) VALUES (?, ?, ?, ?)")
-      .run(commentId, pr, kind, this.ts());
+      .prepare("INSERT OR IGNORE INTO bot_comments (comment_id, pr, kind, posted_at, round_no) VALUES (?, ?, ?, ?, ?)")
+      .run(commentId, pr, kind, this.ts(), linked);
   }
 
   botCommentPr(commentId: number): number | undefined {
