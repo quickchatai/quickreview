@@ -7,12 +7,19 @@ import { describe, expect, it } from "vitest";
 import { TUI_DEFAULTS } from "../src/config.js";
 import { App } from "../src/tui/app.js";
 import {
+  ACCENTS,
+  activityChartHeight,
+  columnChart,
   columnWidths,
+  dayAxis,
+  distStats,
   fmtDur,
   hbar,
   histogramLines,
   installMetricsHooks,
   kindGlyph,
+  metricsCards,
+  packColumns,
   renderMetrics,
   sparkline,
   statStrip,
@@ -149,12 +156,16 @@ describe("chart primitives", () => {
     expect(sparkline(daily.map((d) => d.rounds), 10)).toHaveLength(4);
   });
 
-  it("hbar fills proportionally and never exceeds its width", () => {
+  it("hbar is a THIN bar on a dim track, value outside the bar", () => {
     const bar = hbar("queued", 5, 10, 30);
     expect(displayWidth(bar)).toBe(30);
-    expect(bar.startsWith("queued")).toBe(true);
+    expect(stripAnsi(bar).startsWith("queued")).toBe(true);
     expect(bar).toContain("█");
     expect(bar).toContain("░");
+    // the bar never eats more than ~60% of the row, and the value is last
+    const plain = stripAnsi(hbar("queued", 5, 10, 60, "5"));
+    expect(plain.replace(/[^█░]/g, "").length).toBeLessThanOrEqual(Math.round(60 * 0.6));
+    expect(plain.trimEnd().endsWith("5")).toBe(true);
     const full = hbar("queued", 10, 10, 30);
     expect(full).not.toContain("░");
     const zero = hbar("queued", 0, 0, 30);
@@ -162,8 +173,9 @@ describe("chart primitives", () => {
     expect(displayWidth(zero)).toBe(30);
   });
 
-  it("hbar renders a custom value label (durations, usd)", () => {
-    expect(hbar("reviewing", 780, 780, 40, fmtDur(780))).toContain("13m");
+  it("hbar renders a custom value label (durations, usd) and a bar color", () => {
+    expect(stripAnsi(hbar("reviewing", 780, 780, 40, fmtDur(780)))).toContain("13m");
+    expect(hbar("reviewing", 780, 780, 40, fmtDur(780), ACCENTS.blue)).toContain(ACCENTS.blue);
   });
 
   it("fmtDur speaks the board's age vocabulary", () => {
@@ -174,13 +186,60 @@ describe("chart primitives", () => {
     expect(fmtDur(null)).toBe("—");
   });
 
-  it("histogramLines summarises a distribution and says 'no data yet' at n=0", () => {
-    const text = stripAnsi(histogramLines(fullWindow.rounds_until_resolution, 40).join("\n"));
-    expect(text).toContain("median 2");
-    expect(text).toContain("p90 4");
-    expect(text).toContain("n=6");
-    expect(text).toContain("1");
+  it("distStats belongs in the title row, not in the chart", () => {
+    expect(distStats(fullWindow.rounds_until_resolution)).toBe("median 2 · p90 4 · n=6");
+    expect(distStats(fullWindow.ttfv, fmtDur)).toBe("median 15m · p90 1.0h · n=9");
+    expect(distStats(emptyDist)).toBe("no data yet");
+  });
+
+  it("histogramLines is ONE chart row plus ONE dim label row", () => {
+    const lines = histogramLines(fullWindow.ttfv, 40, ACCENTS.blue);
+    expect(lines).toHaveLength(2);
+    const chart = stripAnsi(lines[0]!);
+    const axis = stripAnsi(lines[1]!);
+    // four buckets: 2, 4, 3, 0 → scaled glyph runs, the zero one a single dot
+    expect(chart).toBe("▄▄▄ ███ ▆▆▆ ·  ");
+    expect(axis).toBe("5m  15m 1h  1h+");
+    expect(lines[0]).toContain(ACCENTS.blue); // marks carry the card accent
+    expect(chart).not.toContain("median"); // stats moved to the title
+  });
+
+  it("histogramLines scales buckets to the max count and says so at n=0", () => {
+    const one = stripAnsi(histogramLines(dist(3, 1, 1, [{ label: "a", count: 3 }, { label: "b", count: 0 }]), 20)[0]!);
+    expect(one.startsWith("███")).toBe(true);
+    expect(one).toContain("·");
     expect(stripAnsi(histogramLines(emptyDist, 40).join("\n"))).toBe("no data yet");
+  });
+
+  it("columnChart stacks block glyphs into a multi-row chart", () => {
+    const rows = columnChart([0, 4, 8], 3, 4, ACCENTS.blue);
+    expect(rows).toHaveLength(4);
+    const plain = rows.map(stripAnsi);
+    expect(plain[0]).toBe("  █"); // the max column reaches the top row
+    expect(plain[3]!.startsWith("·")).toBe(true); // zero day keeps a dim baseline
+    expect(plain[0]![1]).toBe(" "); // the half-height column starts lower
+    expect(stripAnsi(columnChart([1, 1], 2, 3, ACCENTS.blue)[0]!)).toBe("██");
+    expect(columnChart([], 10, 4, ACCENTS.blue)).toEqual([]);
+    for (const line of columnChart(daily.map((d) => d.rounds), 12, 6, ACCENTS.blue)) {
+      expect(displayWidth(line)).toBeLessThanOrEqual(12);
+    }
+  });
+
+  it("dayAxis labels first, last and weekly ticks without collisions", () => {
+    const days = Array.from({ length: 15 }, (_, i) => `2026-07-${String(i + 1).padStart(2, "0")}`);
+    const axis = stripAnsi(dayAxis(days, 40, 2));
+    expect(axis.startsWith("07-01")).toBe(true);
+    expect(axis).toContain("07-08");
+    expect(axis.trimEnd().endsWith("07-15")).toBe(true);
+    expect(displayWidth(axis)).toBeLessThanOrEqual(40);
+    expect(dayAxis([], 40, 2)).toBe("");
+  });
+
+  it("activityChartHeight only grows the card on a tall terminal", () => {
+    expect(activityChartHeight(24)).toBe(0);
+    expect(activityChartHeight(30)).toBe(0);
+    expect(activityChartHeight(40)).toBe(6);
+    expect(activityChartHeight(125)).toBe(10);
   });
 });
 
@@ -199,14 +258,15 @@ describe("metrics dashboard", () => {
     expect(text).toContain("⚑ 3 awaiting you");
   });
 
-  it("renders every chart card at a wide terminal", () => {
-    const text = renderMetrics(mkView(), 160, 44).lines.map(stripAnsi).join("\n");
+  it("renders every chart card at a wide terminal, stats in the titles", () => {
+    const text = renderMetrics(mkView(), 200, 44).lines.map(stripAnsi).join("\n");
     for (const title of [
       "ACTIVITY",
       "TIME TO FIRST VERDICT",
       "TIME IN STATE",
       "VERDICT MIX",
       "SPEND",
+      "SPEND BY LENS",
       "ROUNDS UNTIL RESOLUTION",
       "ROUND DURATION",
       "AUTHOR RESPONSE",
@@ -216,21 +276,88 @@ describe("metrics dashboard", () => {
     ]) {
       expect(text).toContain(title);
     }
-    expect(text).toContain("queue 2m");
-    expect(text).toContain("review 13m");
-    expect(text).toContain("overrun rate 10%");
+    expect(text).toContain("queue 2m · review 13m · median 15m");
+    expect(text).toContain("overrun 10%");
+    expect(text).toContain("median 2 · p90 4 · n=6");
     expect(text).toContain("backfill 302 rounds / 140 PRs since 2026-06-01");
   });
 
-  it("goes multi-column when wide and single-column when narrow", () => {
-    expect(columnWidths(160)).toHaveLength(3);
-    expect(columnWidths(120)).toHaveLength(2);
+  it("gives every distribution card exactly title + chart + labels", () => {
+    const cards = metricsCards(fullWindow as never, daily, 24);
+    for (const title of ["TIME TO FIRST VERDICT", "ROUND DURATION", "ROUNDS UNTIL RESOLUTION", "AUTHOR RESPONSE", "PING-PONG"]) {
+      const card = cards.find((c) => c.title === title)!;
+      expect(card.body(60).length).toBeLessThanOrEqual(2);
+    }
+    // ...and no card row is a solid block of filled cells with text inside it
+    for (const card of cards) {
+      for (const line of card.body(60)) {
+        const plain = stripAnsi(line);
+        expect(/[█▇▆▅▄▃▂▁░]\s*\S*[A-Za-z]/.test(plain.replace(/^[^█▇▆▅▄▃▂▁░]*/, "").replace(/\s+\S+$/, ""))).toBe(false);
+      }
+    }
+  });
+
+  it("assigns a fixed accent per card, never the same hue twice in a row", () => {
+    const cards = metricsCards(fullWindow as never, daily, 24);
+    const hues = new Set(cards.map((c) => c.accent));
+    expect(hues.size).toBe(5);
+    for (let i = 1; i < cards.length; i++) expect(cards[i]!.accent).not.toBe(cards[i - 1]!.accent);
+    expect(cards[0]!.title).toBe("ACTIVITY");
+    expect(cards[0]!.accent).toBe(ACCENTS.cyan);
+  });
+
+  it("caps the lens list at six rows plus a dim overflow row", () => {
+    const many = { ...fullWindow, spend: { ...fullWindow.spend, by_lens: Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`lens${i}`, 9 - i])) } };
+    const card = metricsCards(many as never, daily, 24).find((c) => c.title === "SPEND BY LENS")!;
+    const body = card.body(50).map(stripAnsi);
+    expect(body).toHaveLength(7);
+    expect(body[6]).toBe("…+3 more");
+  });
+
+  it("balances the columns by rendered height", () => {
+    for (const [cols, rows] of [
+      [200, 44],
+      [200, 130],
+      [120, 40],
+    ] as const) {
+      const widths = columnWidths(cols);
+      const cards = metricsCards(fullWindow as never, daily, rows - 5);
+      // packing proper: columns end within a card of each other
+      const packed = packColumns(cards, widths).map((c) => c.length);
+      expect(Math.max(...packed) - Math.min(...packed)).toBeLessThanOrEqual(6);
+      // and the slack of a tall terminal is spread over the gaps, never overflowed
+      const spread = packColumns(cards, widths, rows - 5).map((c) => c.length);
+      for (let i = 0; i < spread.length; i++) {
+        expect(spread[i]!).toBeGreaterThanOrEqual(packed[i]!);
+        expect(spread[i]!).toBeLessThanOrEqual(rows - 5);
+      }
+    }
+  });
+
+  it("grows the ACTIVITY card into stacked column charts on a tall terminal", () => {
+    const short = renderMetrics(mkView(), 120, 30).lines.map(stripAnsi).join("\n");
+    expect(short).toMatch(/rounds\s+[▁▂▃▄▅▆▇█]/); // 1-row sparkline degradation
+    expect(short).not.toContain("rounds/day");
+
+    const tall = renderMetrics(mkView(), 120, 130).lines.map(stripAnsi).join("\n");
+    expect(tall).toContain("rounds/day · max 9");
+    expect(tall).toContain("spend/day · max $13.25"); // two single-hue charts, never one dual axis
+    expect(tall).toContain("2026-08-11"); // sparse day axis
+    const chartRows = tall.split("\n").filter((l) => /[█▇▆▅▄▃▂▁]/.test(l));
+    expect(chartRows.length).toBeGreaterThan(10);
+  });
+
+  it("goes 1 / 2 / 3 columns by width", () => {
     expect(columnWidths(80)).toHaveLength(1);
-    expect(columnWidths(160).reduce((a, b) => a + b, 0)).toBe(160 - 2 - 2);
+    expect(columnWidths(99)).toHaveLength(1);
+    expect(columnWidths(100)).toHaveLength(2);
+    expect(columnWidths(169)).toHaveLength(2);
+    expect(columnWidths(170)).toHaveLength(3);
+    expect(columnWidths(200).reduce((a, b) => a + b, 0)).toBe(200 - 2 - 2);
   });
 
   it("renders sparse distributions as 'no data yet' rather than empty charts", () => {
-    const text = renderMetrics(mkView(), 160, 44).lines.map(stripAnsi).join("\n");
+    const text = renderMetrics(mkView(), 200, 44).lines.map(stripAnsi).join("\n");
     expect(text).toContain("no data yet"); // review_depth + pingpong are n=0
     expect(text).not.toContain("XL"); // zero-PR size buckets drop out
   });
@@ -264,11 +391,13 @@ describe("metrics dashboard", () => {
     expect(failed).toContain("metrics unavailable: ssh: connect timed out");
   });
 
-  it("never overflows the pane at any width (the width-30 lesson)", () => {
-    for (const cols of [30, 40, 60, 80, 100, 120, 160, 200]) {
-      for (const view of [mkView(), mkView({ payload: undefined }), mkView({ drill: { pr: 5265, payload: timeline, loading: false } as never })]) {
-        for (const line of renderMetrics(view, cols, 24).lines) {
-          expect(displayWidth(line)).toBeLessThanOrEqual(cols);
+  it("never overflows the pane at any width or height (the width-30 lesson)", () => {
+    for (const cols of [30, 40, 60, 80, 100, 120, 160, 170, 200, 220]) {
+      for (const rows of [24, 30, 44, 130]) {
+        for (const view of [mkView(), mkView({ payload: undefined }), mkView({ drill: { pr: 5265, payload: timeline, loading: false } as never })]) {
+          const frame = renderMetrics(view, cols, rows);
+          expect(frame.lines).toHaveLength(rows);
+          for (const line of frame.lines) expect(displayWidth(line)).toBeLessThanOrEqual(cols);
         }
       }
     }

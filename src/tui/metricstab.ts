@@ -1,8 +1,17 @@
 // Metrics tab (key 5) — the aggregate dashboard: a Pulse-style stat
-// strip for the selected window, then width-adaptive cards of block-glyph
-// charts (sparklines, histograms, horizontal bars) over the MetricsPayload
-// `qcr metrics --json` produces, plus a per-PR timeline drill-down from
-// `qcr metrics --pr <n> --json`.
+// strip for the selected window, then width-adaptive cards over the
+// MetricsPayload `qcr metrics --json` produces, plus a per-PR timeline
+// drill-down from `qcr metrics --pr <n> --json`.
+//
+// Presentation rules (2026-08-14 design review — "single row would work much
+// better"): a distribution is ONE chart row of per-bucket glyph columns with a
+// dim boundary row under it and its stats inline in the title, so a card is at
+// most title+chart+labels; bar lists keep one thin `█` bar per entity on a dim
+// `░` track with the value outside the bar in normal ink; text is never set
+// inside a filled block; every card owns a FIXED accent hue (five in rotation,
+// never adjacent) while entity bars keep their semantic colors; cards are
+// packed into 1/2/3 columns balanced by real rendered height, and a tall
+// terminal grows ACTIVITY into stacked multi-row column charts.
 //
 // Read-only like every other tab: the only VM touch is the two qcr reads
 // through the shared ssh runner, cached stale-while-revalidate.
@@ -12,11 +21,37 @@ import type { App } from "./app.js";
 import type { BoardKey } from "./keys.js";
 import { Frame, SGR, displayWidth, fit, rule, sanitizeText, truncate } from "./paint.js";
 import { metricsArgv, metricsPrArgv, type SshRunner } from "./remote.js";
-import { FG, RESET, fmtAge, verdictColor } from "./theme.js";
+import { FG, RESET, fmtAge, stateColor, verdictColor } from "./theme.js";
 
 // ---- chart primitives -------------------------------------------------------
 
 const SPARK = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"] as const;
+
+/** Fixed card accents — five hues, assigned per card, never cycled. */
+export const ACCENTS = {
+  cyan: FG.accent,
+  blue: FG.reviewing,
+  green: FG.approve,
+  magenta: FG.awaiting_human,
+  yellow: FG.awaiting_author,
+} as const;
+
+function dim(s: string): string {
+  return `${FG.dim}${s}${RESET}`;
+}
+
+/** Average `values` down to exactly `n` buckets (oldest first is the contract). */
+function bucketize(values: number[], n: number): number[] {
+  if (n <= 0 || values.length === 0) return [];
+  if (values.length <= n) return [...values];
+  const per = values.length / n;
+  const out: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const slice = values.slice(Math.floor(i * per), Math.max(Math.floor((i + 1) * per), Math.floor(i * per) + 1));
+    out.push(slice.reduce((a, b) => a + b, 0) / slice.length);
+  }
+  return out;
+}
 
 /**
  * One-line trend. Longer series than `width` are bucket-averaged (oldest
@@ -26,48 +61,111 @@ const SPARK = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"] as const;
 export function sparkline(values: number[], width: number): string {
   const w = Math.max(0, Math.floor(width));
   if (w === 0 || values.length === 0) return "";
-  const buckets: number[] = [];
-  if (values.length <= w) {
-    buckets.push(...values);
-  } else {
-    const per = values.length / w;
-    for (let i = 0; i < w; i++) {
-      const slice = values.slice(Math.floor(i * per), Math.max(Math.floor((i + 1) * per), Math.floor(i * per) + 1));
-      buckets.push(slice.reduce((a, b) => a + b, 0) / slice.length);
-    }
-  }
+  const buckets = bucketize(values, Math.min(values.length, w));
   const max = Math.max(...buckets);
   if (max <= 0) return SPARK[0]!.repeat(buckets.length);
   return buckets.map((v) => SPARK[Math.min(SPARK.length - 1, Math.max(0, Math.floor((v / max) * (SPARK.length - 1))))]!).join("");
 }
 
-/** Label column width for a bar row — a third of the card, clamped. */
+/** Label column width for a bar row — under a third of the card, clamped. */
 function labelWidth(width: number): number {
-  return Math.min(18, Math.max(6, Math.floor(width * 0.34)));
+  return Math.min(16, Math.max(6, Math.floor(width * 0.3)));
 }
 
 /**
- * `label  ####....  value` in exactly `width` cells (or fewer). `max <= 0`
- * renders an empty trough — a zero row is still a row worth seeing.
+ * `label ███░░░░      value` in exactly `width` cells. The bar is THIN — it
+ * never eats more than 60% of the row — the unfilled remainder is a dim `░`
+ * track so a bar end is readable, and the value sits outside the bar in
+ * normal ink. `max <= 0` renders an empty track: a zero row is still a row.
  */
-export function hbar(label: string, value: number, max: number, width: number, valueText?: string): string {
+export function hbar(label: string, value: number, max: number, width: number, valueText?: string, color?: string): string {
   const w = Math.max(8, Math.floor(width));
   const lw = labelWidth(w);
   const vt = valueText ?? String(value);
   const vw = Math.min(displayWidth(vt), Math.max(0, w - lw - 4));
-  const barW = Math.max(1, w - lw - 1 - vw - 1);
+  const avail = w - lw - 2 - vw; // the two single-space gutters
+  if (avail < 3) return fit(`${label} ${vt}`, w);
+  const barW = Math.max(1, Math.min(Math.round(w * 0.6), 28, avail));
   const filled = max > 0 ? Math.min(barW, Math.max(value > 0 ? 1 : 0, Math.round((value / max) * barW))) : 0;
-  const bar = `${"█".repeat(filled)}${"░".repeat(Math.max(0, barW - filled))}`;
-  return `${fit(label, lw)} ${bar} ${truncate(vt, vw)}`;
+  const track = barW - filled;
+  const bar = `${filled > 0 ? `${color ?? ""}${"█".repeat(filled)}${color ? RESET : ""}` : ""}${track > 0 ? dim("░".repeat(track)) : ""}`;
+  return `${fit(label, lw)} ${bar} ${" ".repeat(Math.max(0, avail - barW))}${truncate(vt, vw)}`;
 }
 
-/** Distribution card body: median/p90/n line plus one bar per fixed bucket. */
-export function histogramLines(dist: Dist, width: number, fmt: (v: number) => string = String): string[] {
-  if (dist.n === 0) return [`${FG.dim}no data yet${RESET}`];
-  const max = dist.histogram.reduce((m, b) => Math.max(m, b.count), 0);
-  const lines = [`${FG.dim}median${RESET} ${fmt(dist.median ?? 0)}  ${FG.dim}p90${RESET} ${fmt(dist.p90 ?? 0)}  ${FG.dim}n=${dist.n}${RESET}`];
-  for (const b of dist.histogram) lines.push(hbar(b.label, b.count, max, width));
-  return lines;
+/** `median 5m · p90 16m · n=56` — the distribution's stats, for a card title. */
+export function distStats(dist: Dist, fmt: (v: number) => string = String): string {
+  if (dist.n === 0) return "no data yet";
+  return `median ${fmt(dist.median ?? 0)} · p90 ${fmt(dist.p90 ?? 0)} · n=${dist.n}`;
+}
+
+/**
+ * A whole distribution in TWO rows: one chart row of per-bucket glyph columns
+ * (2–3 cells each, scaled to the max count, in the card's accent; an empty
+ * bucket is a single dim `·`), and one dim row of bucket boundaries under it.
+ * Stats live in the card title — see `distStats`.
+ */
+export function histogramLines(dist: Dist, width: number, color: string = FG.accent): string[] {
+  if (dist.n === 0 || dist.histogram.length === 0) return [dim("no data yet")];
+  const w = Math.max(4, Math.floor(width));
+  const buckets = dist.histogram;
+  const slot = Math.max(2, Math.min(4, Math.floor((w + 1) / buckets.length)));
+  const cell = slot - 1;
+  const max = buckets.reduce((m, b) => Math.max(m, b.count), 0);
+  const chart = buckets
+    .map((b) => {
+      if (b.count <= 0) return `${dim("·")}${" ".repeat(cell - 1)}`;
+      const level = max > 0 ? Math.min(SPARK.length, Math.max(1, Math.ceil((b.count / max) * SPARK.length))) : 1;
+      return `${color}${SPARK[level - 1]!.repeat(cell)}${RESET}`;
+    })
+    .join(" ");
+  const axis = buckets.map((b) => fit(b.label.replace(/^</, ""), slot)).join("").trimEnd();
+  return [truncate(chart, w), truncate(dim(axis), w)];
+}
+
+/**
+ * Multi-row column chart (tall terminals): block glyphs stacked per column,
+ * full `█` rows plus a fractional top glyph, single hue, dim `·` baseline for
+ * a zero day. Series longer than the width are bucket-averaged.
+ */
+export function columnChart(values: number[], width: number, height: number, color: string): string[] {
+  const w = Math.max(1, Math.floor(width));
+  const h = Math.max(1, Math.floor(height));
+  if (values.length === 0) return [];
+  const slot = w >= values.length * 2 ? 2 : 1;
+  const n = Math.min(values.length, Math.max(1, Math.floor(w / slot)));
+  const vals = bucketize(values, n);
+  const max = Math.max(...vals, 0);
+  const gap = slot === 2 ? " " : "";
+  const rows: string[] = [];
+  for (let r = 0; r < h; r++) {
+    const cells = vals.map((v) => {
+      const eighths = max > 0 ? Math.round((v / max) * h * 8) : 0;
+      const cellE = eighths - (h - 1 - r) * 8;
+      if (cellE >= 8) return `${color}█${RESET}${gap}`;
+      if (cellE > 0) return `${color}${SPARK[cellE - 1]!}${RESET}${gap}`;
+      return (r === h - 1 ? dim("·") : " ") + gap;
+    });
+    rows.push(truncate(cells.join(""), w));
+  }
+  return rows;
+}
+
+/** Sparse day axis under a column chart: first, last, and weekly ticks. */
+export function dayAxis(days: string[], width: number, slot: number): string {
+  const w = Math.max(0, Math.floor(width));
+  const buf = new Array<string>(w).fill(" ");
+  const put = (idx: number, text: string): void => {
+    const start = Math.min(Math.max(0, idx * slot), w - text.length);
+    if (start < 0) return;
+    for (let i = start - 1; i <= start + text.length; i++) if (i >= 0 && i < w && buf[i] !== " ") return;
+    for (let i = 0; i < text.length; i++) buf[start + i] = text[i]!;
+  };
+  const short = (d: string): string => (d.length >= 10 ? d.slice(5) : d);
+  if (days.length === 0) return "";
+  put(0, short(days[0]!));
+  if (days.length > 1) put(days.length - 1, short(days[days.length - 1]!));
+  for (let i = 7; i < days.length - 1; i += 7) put(i, short(days[i]!));
+  return dim(buf.join("").trimEnd());
 }
 
 /** 45s / 12m / 3h / 2d from a second count — fmtAge's vocabulary, no clock. */
@@ -116,117 +214,163 @@ export interface MetricsView {
 
 // ---- cards ------------------------------------------------------------------
 
-function section(title: string, subtitle: string): string {
-  return `${FG.accent}${SGR.bold}${title}${RESET} ${FG.dim}${subtitle}${RESET}`;
+/** Card title: accent name, then the stats/subtitle in dim ink beside it. */
+function section(title: string, subtitle: string, accent: string = FG.accent): string {
+  return subtitle.length > 0 ? `${accent}${SGR.bold}${title}${RESET} ${FG.dim}${subtitle}${RESET}` : `${accent}${SGR.bold}${title}${RESET}`;
 }
 
 export interface MetricsCard {
   title: string;
+  /** Stats/meaning, rendered dim on the title row — the card's whole legend. */
   subtitle: string;
+  /** Fixed hue for this card's marks (never cycled, never reused adjacently). */
+  accent: string;
   body: (width: number) => string[];
 }
 
-function barsFromRecord(rec: Record<string, number>, width: number, fmt: (v: number) => string): string[] {
-  const rows = Object.entries(rec).sort((a, b) => b[1] - a[1]);
-  if (rows.length === 0) return [`${FG.dim}no data yet${RESET}`];
-  const max = rows.reduce((m, r) => Math.max(m, r[1]), 0);
-  return rows.map(([k, v]) => hbar(k, v, max, width, fmt(v)));
+/** Single-hue bar list: identity is the row label, not the color. Capped. */
+function barList(
+  rows: Array<{ label: string; value: number; text: string; color?: string }>,
+  width: number,
+  accent: string,
+  cap = 6,
+): string[] {
+  if (rows.length === 0) return [dim("no data yet")];
+  const max = rows.reduce((m, r) => Math.max(m, r.value), 0);
+  const shown = rows.slice(0, cap);
+  const lines = shown.map((r) => hbar(r.label, r.value, max, width, r.text, r.color ?? accent));
+  if (rows.length > cap) lines.push(dim(`…+${rows.length - cap} more`));
+  return lines;
 }
 
-export function metricsCards(win: MetricsWindow, daily: DailyRow[]): MetricsCard[] {
+function barsFromRecord(rec: Record<string, number>, width: number, accent: string, fmt: (v: number) => string): string[] {
+  const rows = Object.entries(rec)
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => ({ label: k, value: v, text: fmt(v) }));
+  return barList(rows, width, accent);
+}
+
+/** Tall terminals earn a real column chart in the ACTIVITY card. */
+export function activityChartHeight(rows: number): number {
+  if (rows < 34) return 0; // short: the 1-row sparkline degradation
+  return Math.max(6, Math.min(10, Math.floor((rows - 18) / 4)));
+}
+
+export function metricsCards(win: MetricsWindow, daily: DailyRow[], rows = 24): MetricsCard[] {
+  const chartH = activityChartHeight(rows);
   return [
     {
       title: "ACTIVITY",
-      subtitle: "per Warsaw day, oldest → newest",
+      subtitle: daily.length > 0 ? `${daily[0]!.day} → ${daily[daily.length - 1]!.day}` : "per Warsaw day",
+      accent: ACCENTS.cyan,
       body: (w) => {
-        if (daily.length === 0) return [`${FG.dim}no data yet${RESET}`];
-        const sparkW = Math.max(8, w - 14);
+        if (daily.length === 0) return [dim("no data yet")];
         const rounds = daily.map((d) => d.rounds);
         const prs = daily.map((d) => d.prs);
         const spend = daily.map((d) => d.spend_usd);
+        const days = daily.map((d) => d.day);
+        if (chartH > 0) {
+          const slot = w >= days.length * 2 ? 2 : 1;
+          return [
+            dim(`rounds/day · max ${Math.max(...rounds)}`),
+            ...columnChart(rounds, w, chartH, ACCENTS.blue),
+            dayAxis(days, w, slot),
+            "",
+            dim(`spend/day · max ${usd(Math.max(...spend))}`),
+            ...columnChart(spend, w, chartH, ACCENTS.yellow),
+            dayAxis(days, w, slot),
+          ];
+        }
+        const sparkW = Math.max(8, w - 14);
         return [
-          `${fit("rounds", 8)}${FG.reviewing}${sparkline(rounds, sparkW)}${RESET} ${Math.max(...rounds)}`,
-          `${fit("prs", 8)}${FG.accent}${sparkline(prs, sparkW)}${RESET} ${Math.max(...prs)}`,
-          `${fit("spend", 8)}${FG.awaiting_author}${sparkline(spend, sparkW)}${RESET} ${usd(Math.max(...spend))}`,
-          `${FG.dim}${daily[0]?.day ?? ""} → ${daily[daily.length - 1]?.day ?? ""}${RESET}`,
+          `${fit("rounds", 7)}${ACCENTS.blue}${sparkline(rounds, sparkW)}${RESET} ${Math.max(...rounds)}`,
+          `${fit("prs", 7)}${ACCENTS.cyan}${sparkline(prs, sparkW)}${RESET} ${Math.max(...prs)}`,
+          `${fit("spend", 7)}${ACCENTS.yellow}${sparkline(spend, sparkW)}${RESET} ${usd(Math.max(...spend))}`,
         ];
       },
     },
     {
       title: "TIME TO FIRST VERDICT",
-      subtitle: "trigger → first verdict",
-      body: (w) => [
-        `${FG.dim}queue${RESET} ${fmtDur(win.ttfv.queue_median_s)}  ${FG.dim}review${RESET} ${fmtDur(win.ttfv.review_median_s)}`,
-        ...histogramLines(win.ttfv, w, (v) => fmtDur(v)),
-      ],
-    },
-    {
-      title: "TIME IN STATE",
-      subtitle: "median dwell per state",
-      body: (w) => {
-        const rows = win.time_in_state.filter((r) => r.total_s > 0 || r.median_s !== null);
-        if (rows.length === 0) return [`${FG.dim}no data yet${RESET}`];
-        const max = rows.reduce((m, r) => Math.max(m, r.median_s ?? 0), 0);
-        return rows.map((r) => hbar(r.state, r.median_s ?? 0, max, w, fmtDur(r.median_s)));
-      },
+      subtitle: `queue ${fmtDur(win.ttfv.queue_median_s)} · review ${fmtDur(win.ttfv.review_median_s)} · ${distStats(win.ttfv, fmtDur)}`,
+      accent: ACCENTS.blue,
+      body: (w) => histogramLines(win.ttfv, w, ACCENTS.blue),
     },
     {
       title: "VERDICT MIX",
       subtitle: "rounds by verdict",
-      body: (w) => {
-        if (win.verdict_mix.length === 0) return [`${FG.dim}no data yet${RESET}`];
-        const max = win.verdict_mix.reduce((m, r) => Math.max(m, r.count), 0);
-        return win.verdict_mix.map((r) => `${verdictColor(r.verdict)}${hbar(r.verdict, r.count, max, w)}${RESET}`);
-      },
+      accent: ACCENTS.green,
+      body: (w) =>
+        barList(
+          win.verdict_mix.map((r) => ({ label: r.verdict, value: r.count, text: String(r.count), color: verdictColor(r.verdict) })),
+          w,
+          ACCENTS.green,
+        ),
     },
     {
-      title: "SPEND",
-      subtitle: "usd by round type and lens",
-      body: (w) => [
-        `${FG.dim}per-PR median${RESET} ${usd(win.spend.per_pr_median)}  ${FG.dim}p90${RESET} ${usd(win.spend.per_pr_p90)}`,
-        `${FG.dim}by round type${RESET}`,
-        ...barsFromRecord(win.spend.by_round_type, w, usd),
-        `${FG.dim}by lens${RESET}`,
-        ...barsFromRecord(win.spend.by_lens, w, usd),
-      ],
-    },
-    {
-      title: "ROUNDS UNTIL RESOLUTION",
-      subtitle: "rounds per resolved PR",
-      body: (w) => histogramLines(win.rounds_until_resolution, w),
+      title: "TIME IN STATE",
+      subtitle: "median dwell per state",
+      accent: ACCENTS.magenta,
+      body: (w) =>
+        barList(
+          win.time_in_state
+            .filter((r) => r.total_s > 0 || r.median_s !== null)
+            .map((r) => ({ label: r.state, value: r.median_s ?? 0, text: fmtDur(r.median_s), color: stateColor(r.state) })),
+          w,
+          ACCENTS.magenta,
+        ),
     },
     {
       title: "ROUND DURATION",
-      subtitle: "start → finish, vs deadline",
-      body: (w) => [
-        `${FG.dim}overrun rate${RESET} ${win.duration.overrun_rate !== null && win.duration.overrun_rate > 0.1 ? FG.anomaly : FG.approve}${pct(win.duration.overrun_rate)}${RESET}`,
-        ...histogramLines(win.duration, w, (v) => fmtDur(v)),
-      ],
+      subtitle: `overrun ${pct(win.duration.overrun_rate)} · ${distStats(win.duration, fmtDur)}`,
+      accent: ACCENTS.yellow,
+      body: (w) => histogramLines(win.duration, w, ACCENTS.yellow),
+    },
+    {
+      title: "ROUNDS UNTIL RESOLUTION",
+      subtitle: distStats(win.rounds_until_resolution),
+      accent: ACCENTS.green,
+      body: (w) => histogramLines(win.rounds_until_resolution, w, ACCENTS.green),
+    },
+    {
+      title: "SPEND",
+      subtitle: `per-PR median ${usd(win.spend.per_pr_median)} · p90 ${usd(win.spend.per_pr_p90)}`,
+      accent: ACCENTS.cyan,
+      body: (w) => barsFromRecord(win.spend.by_round_type, w, ACCENTS.cyan, usd),
+    },
+    {
+      title: "SPEND BY LENS",
+      subtitle: "usd per lens",
+      accent: ACCENTS.blue,
+      body: (w) => barsFromRecord(win.spend.by_lens, w, ACCENTS.blue, usd),
     },
     {
       title: "AUTHOR RESPONSE",
-      subtitle: "verdict → next push",
-      body: (w) => histogramLines(win.author_response, w, (v) => fmtDur(v)),
+      subtitle: distStats(win.author_response, fmtDur),
+      accent: ACCENTS.yellow,
+      body: (w) => histogramLines(win.author_response, w, ACCENTS.yellow),
     },
     {
       title: "REVIEW DEPTH",
-      subtitle: "bot comments per round",
-      body: (w) => histogramLines(win.review_depth, w),
+      subtitle: `bot comments per round · ${distStats(win.review_depth)}`,
+      accent: ACCENTS.magenta,
+      body: (w) => histogramLines(win.review_depth, w, ACCENTS.magenta),
     },
     {
       title: "PR SIZE",
-      subtitle: "lines changed vs time to verdict",
-      body: (w) => {
-        const rows = win.size.filter((r) => r.prs > 0);
-        if (rows.length === 0) return [`${FG.dim}no data yet${RESET}`];
-        const max = rows.reduce((m, r) => Math.max(m, r.prs), 0);
-        return rows.map((r) => hbar(r.bucket, r.prs, max, w, `${r.prs} · ${fmtDur(r.median_ttfv_s)}`));
-      },
+      subtitle: "prs · median ttfv per size bucket",
+      accent: ACCENTS.green,
+      body: (w) =>
+        barList(
+          win.size.filter((r) => r.prs > 0).map((r) => ({ label: r.bucket, value: r.prs, text: `${r.prs} · ${fmtDur(r.median_ttfv_s)}` })),
+          w,
+          ACCENTS.green,
+        ),
     },
     {
       title: "PING-PONG",
-      subtitle: `exchanges per thread · cap hits ${win.pingpong.cap_hits}`,
-      body: (w) => histogramLines(win.pingpong, w),
+      subtitle: `cap hits ${win.pingpong.cap_hits} · ${distStats(win.pingpong)}`,
+      accent: ACCENTS.cyan,
+      body: (w) => histogramLines(win.pingpong, w, ACCENTS.cyan),
     },
   ];
 }
@@ -234,7 +378,7 @@ export function metricsCards(win: MetricsWindow, daily: DailyRow[]): MetricsCard
 /** Column count and per-column widths — the board's adaptive-layout idea. */
 export function columnWidths(cols: number): number[] {
   const inner = cols - 2;
-  const n = cols >= 150 ? 3 : cols >= 100 ? 2 : 1;
+  const n = cols >= 170 ? 3 : cols >= 100 ? 2 : 1;
   const usable = inner - (n - 1); // the dividers boxRow inserts between cells
   const base = Math.floor(usable / n);
   const widths = new Array<number>(n).fill(base);
@@ -242,21 +386,52 @@ export function columnWidths(cols: number): number[] {
   return widths;
 }
 
-/** Greedy shortest-column packing so a tall card doesn't strand a column. */
-export function packColumns(cards: MetricsCard[], widths: number[]): string[][] {
-  const columns: string[][] = widths.map(() => []);
-  const heights = widths.map(() => 0);
-  for (const card of cards) {
+/**
+ * Balance the cards across columns by their ACTUAL rendered height
+ * (longest-first bin packing, then original order restored inside each
+ * column) so no column strands a screenful of dead rows.
+ */
+export function packColumns(cards: MetricsCard[], widths: number[], targetRows = 0): string[][] {
+  const n = widths.length;
+  const measureW = Math.max(8, Math.min(...widths) - 1);
+  const heights = new Array<number>(n).fill(0);
+  const assign = new Array<number>(cards.length).fill(0);
+  const sized = cards.map((card, i) => ({ i, h: card.body(measureW).length + 1 }));
+  // The first card is the headline — it stays top-left; the rest are packed
+  // longest-first so every column ends within a card of the others.
+  const order = sized.slice(1).sort((a, b) => b.h - a.h || a.i - b.i);
+  if (sized.length > 0) heights[0] = sized[0]!.h + 1;
+  for (const it of order) {
     let target = 0;
-    for (let i = 1; i < heights.length; i++) if (heights[i]! < heights[target]!) target = i;
-    const w = Math.max(8, widths[target]! - 1); // one leading space per cell
-    const col = columns[target]!;
-    if (col.length > 0) col.push("");
-    col.push(truncate(section(card.title, card.subtitle), w));
-    for (const line of card.body(w)) col.push(truncate(line, w));
-    heights[target] = col.length;
+    for (let k = 1; k < n; k++) if (heights[k]! < heights[target]!) target = k;
+    assign[it.i] = target;
+    heights[target]! += it.h + 1; // + the blank separator row
   }
-  return columns;
+  const blocks: string[][][] = widths.map(() => []);
+  cards.forEach((card, i) => {
+    const target = assign[i]!;
+    const w = Math.max(8, widths[target]! - 1); // one leading space per cell
+    const block = [truncate(section(card.title, card.subtitle, card.accent), w)];
+    for (const line of card.body(w)) block.push(truncate(line, w));
+    blocks[target]!.push(block);
+  });
+  // Join with one blank row; on a terminal taller than the content, spread the
+  // slack over the gaps (≤3 extra rows each) instead of stranding it at the
+  // bottom — the cards breathe rather than huddling under the stat strip.
+  return blocks.map((column) => {
+    const content = column.reduce((a, b) => a + b.length, 0);
+    const gaps = Math.max(0, column.length - 1);
+    const slack = gaps > 0 ? Math.max(0, Math.min(gaps * 3, targetRows - content - gaps)) : 0;
+    const out: string[] = [];
+    column.forEach((block, i) => {
+      if (i > 0) {
+        const extra = Math.floor(slack / gaps) + (i <= slack % gaps ? 1 : 0);
+        for (let k = 0; k < 1 + extra; k++) out.push("");
+      }
+      out.push(...block);
+    });
+    return out;
+  });
 }
 
 // ---- header -----------------------------------------------------------------
@@ -294,19 +469,25 @@ export function windowSwitcher(
 
 // ---- timeline drill-down ----------------------------------------------------
 
-const KIND_GLYPHS: Array<[RegExp, string]> = [
-  [/trigger/i, "▸"],
-  [/round_start|round-start|started/i, "▶"],
-  [/verdict|round_finish|round-finish|finished/i, "■"],
-  [/push|synchron/i, "↑"],
-  [/merge/i, "⇢"],
-  [/close/i, "✖"],
-  [/state|transition/i, "→"],
+const KIND_GLYPHS: Array<[RegExp, string, string]> = [
+  [/trigger/i, "▸", FG.accent],
+  [/round_start|round-start|started/i, "▶", FG.reviewing],
+  [/verdict|round_finish|round-finish|finished/i, "■", FG.approve],
+  [/push|synchron/i, "↑", FG.awaiting_author],
+  [/merge/i, "⇢", FG.approve],
+  [/close/i, "✖", FG.closed],
+  [/state|transition/i, "→", FG.awaiting_human],
 ];
 
 export function kindGlyph(kind: string): string {
   for (const [re, glyph] of KIND_GLYPHS) if (re.test(kind)) return glyph;
   return "·";
+}
+
+/** Only the glyph carries color in the timeline — the text stays in ink. */
+export function kindColor(kind: string): string {
+  for (const [re, , color] of KIND_GLYPHS) if (re.test(kind)) return color;
+  return FG.dim;
 }
 
 export function timelineLines(tl: TimelinePayload, width: number, now: Date): string[] {
@@ -319,7 +500,7 @@ export function timelineLines(tl: TimelinePayload, width: number, now: Date): st
   }
   lines.push(truncate(section("TIMELINE", `${tl.items.length} events, oldest first`), width));
   for (const item of tl.items) {
-    lines.push(truncate(`${fit(fmtAge(item.ts, now), 5)} ${kindGlyph(item.kind)} ${item.label}`, width));
+    lines.push(truncate(`${FG.dim}${fit(fmtAge(item.ts, now), 5)}${RESET} ${kindColor(item.kind)}${kindGlyph(item.kind)}${RESET} ${item.label}`, width));
     if (item.detail) lines.push(truncate(`      ${FG.dim}${sanitizeText(item.detail)}${RESET}`, width));
   }
   if (tl.backfilled_rounds.length > 0) {
@@ -379,7 +560,7 @@ export function renderMetrics(view: MetricsView, cols: number, rows: number): Fr
   frame.boxRow(2, [{ text: ` ${statStrip(win, cols - 3)}`, width: cols - 2 }]);
 
   const widths = columnWidths(cols);
-  const columns = packColumns(metricsCards(win, view.payload.daily), widths);
+  const columns = packColumns(metricsCards(win, view.payload.daily, bodyRows), widths, bodyRows);
   for (let r = 0; r < bodyRows; r++) {
     frame.boxRow(
       3 + r,
