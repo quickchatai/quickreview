@@ -44,7 +44,7 @@ export const CONTAINER = {
   agentSock: "/ssh-agent",
 } as const;
 
-export type EnsureOutcome = "adopted" | "started" | "created";
+export type EnsureOutcome = "adopted" | "started" | "created" | "recreated";
 
 export class CompanionLifecycle {
   constructor(
@@ -222,15 +222,23 @@ export class CompanionLifecycle {
     if (st.running) return "adopted";
     if (st.exists) {
       const started = await this.docker(["start", this.cfg.container_name]);
-      if (!started.ok) throw new Error(`docker start ${this.cfg.container_name} failed: ${errText(started)}`);
-      return "started";
+      if (started.ok) return "started";
+      // A stopped container can be permanently unstartable: bind-mount
+      // sources are recorded at creation, and the ssh-agent socket path is
+      // random per boot — after a reboot `docker start` fails forever
+      // (observed live, 2026-08-14 crash). Remove the husk and recreate with
+      // the CURRENT environment; named volumes (pihome auth, conversation)
+      // survive the rm.
+      onProgress?.(`companion container unstartable (${firstLine(errText(started))}) — recreating`);
+      const removed = await this.docker(["rm", "-f", this.cfg.container_name]);
+      if (!removed.ok) throw new Error(`docker rm ${this.cfg.container_name} failed: ${errText(removed)}`);
     }
     // Self-healing first run: build the image rather than failing on its absence.
     if (!(await this.imageExists())) await this.buildImage(onProgress);
     this.ensureDirs([this.cfg.feed_dir, this.cfg.alerts_dir]);
     const created = await this.docker(this.runArgv(), { timeoutMs: 120_000 });
     if (!created.ok) throw new Error(`docker run ${this.cfg.image} failed: ${errText(created)}`);
-    return "created";
+    return st.exists ? "recreated" : "created";
   }
 
   /** Idempotent: a live companion session is left strictly alone (a second
@@ -253,6 +261,10 @@ export class CompanionLifecycle {
 
 function errText(r: DockerResult): string {
   return (r.stderr.trim() || r.stdout.trim() || `exit ${r.code}`).split("\n").slice(-1)[0]!;
+}
+
+function firstLine(s: string): string {
+  return s.split("\n", 1)[0] ?? "";
 }
 
 export const realDockerRunner: DockerRunner = (argv, opts) =>
