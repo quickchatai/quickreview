@@ -18,7 +18,9 @@ import {
   histogramLines,
   installMetricsHooks,
   kindGlyph,
+  localHeadProbe,
   metricsCards,
+  opsLines,
   packColumns,
   renderMetrics,
   sparkline,
@@ -79,6 +81,20 @@ const fullWindow = {
     { bucket: "XL", prs: 0, median_ttfv_s: null },
   ],
   pingpong: { ...emptyDist, cap_hits: 0 },
+  events_by_kind: [
+    { kind: "pr_transition", count: 42 },
+    { kind: "verdict_applied", count: 21 },
+    { kind: "head_push", count: 12 },
+    { kind: "round_finished", count: 9 },
+  ],
+};
+
+const ops = {
+  heartbeat: "2026-08-14T11:59:30Z",
+  dry_run: true,
+  running_rounds: 1,
+  max_concurrent_rounds: 3,
+  build: { sha: "abc1234", at: "2026-08-13T12:00:00Z", mode: "sync" },
 };
 
 const allWindow = { ...fullWindow, header: { ...fullWindow.header, prs_triggered: 140, rounds: 302, spend_usd: 410.25 } };
@@ -95,6 +111,7 @@ const payload = {
   windows: { d7: fullWindow, d30: fullWindow, all: allWindow },
   daily,
   backfill: { rounds: 302, prs: 140, oldest: "2026-06-01" },
+  ops,
 };
 
 const timeline = {
@@ -111,7 +128,17 @@ const timeline = {
   backfilled_rounds: [{ round_no: 1, submitted_at: "2026-08-14T09:30:00Z", verdict: "REQUEST_CHANGES", trigger_ts: "2026-08-14T09:00:00Z" }],
 };
 
-const mkView = (over: { payload?: typeof payload; window?: "d7" | "d30" | "all"; error?: string; drill?: unknown; scroll?: number } = {}) => ({
+const mkView = (
+  over: {
+    payload?: typeof payload;
+    window?: "d7" | "d30" | "all";
+    error?: string;
+    drill?: unknown;
+    scroll?: number;
+    local?: { head?: string; ahead?: number };
+  } = {},
+) => ({
+  local: over.local,
   window: over.window ?? ("d7" as const),
   payload: "payload" in over ? over.payload : payload,
   error: over.error,
@@ -262,11 +289,12 @@ describe("metrics dashboard", () => {
   });
 
   it("renders every chart card in the single-column stack (scrolling the fold into view)", () => {
-    const text = [0, 40, 80]
+    const text = [0, 40, 80, 120]
       .map((scroll) => renderMetrics(mkView({ scroll }), 200, 44).lines.map(stripAnsi).join("\n"))
       .join("\n");
     for (const title of [
       "ACTIVITY",
+      "OPERATIONS",
       "TIME TO FIRST VERDICT",
       "TIME IN STATE",
       "VERDICT MIX",
@@ -406,13 +434,172 @@ describe("metrics dashboard", () => {
   it("never overflows the pane at any width or height (the width-30 lesson)", () => {
     for (const cols of [30, 40, 60, 80, 100, 120, 160, 170, 200, 220]) {
       for (const rows of [24, 30, 44, 130]) {
-        for (const view of [mkView(), mkView({ payload: undefined }), mkView({ drill: { pr: 5265, payload: timeline, loading: false } as never })]) {
+        for (const view of [
+          mkView(),
+          mkView({ local: { head: "deadbee", ahead: 4 } }),
+          mkView({ payload: undefined }),
+          mkView({ drill: { pr: 5265, payload: timeline, loading: false } as never }),
+        ]) {
           const frame = renderMetrics(view, cols, rows);
           expect(frame.lines).toHaveLength(rows);
           for (const line of frame.lines) expect(displayWidth(line)).toBeLessThanOrEqual(cols);
         }
       }
     }
+  });
+});
+
+// ---- the OPERATIONS card ----------------------------------------------------
+
+describe("OPERATIONS card", () => {
+  const lines = (over: { ops?: unknown; local?: { head?: string; ahead?: number }; win?: unknown } = {}) =>
+    opsLines(
+      ("ops" in over ? over.ops : ops) as never,
+      over.local,
+      (over.win ?? fullWindow) as never,
+      60,
+      NOW,
+    ).map(stripAnsi);
+
+  it("sorts right after ACTIVITY with its own accent", () => {
+    const cards = metricsCards(fullWindow as never, daily, 24, { ops: ops as never, now: NOW });
+    expect(cards.map((c) => c.title).slice(0, 3)).toEqual(["ACTIVITY", "OPERATIONS", "TIME TO FIRST VERDICT"]);
+    const [activity, operations, ttfv] = cards;
+    expect(operations!.accent).not.toBe(activity!.accent);
+    expect(operations!.accent).not.toBe(ttfv!.accent);
+    expect(operations!.subtitle).toContain("dry-run");
+    expect(operations!.subtitle).toContain("abc1234");
+  });
+
+  it("line 1 is the daemon: mode, heartbeat age and round concurrency", () => {
+    const l = lines()[0]!;
+    expect(l).toContain("DRY-RUN");
+    expect(l).toContain("30s ago");
+    expect(l).toContain("1/3 rounds running");
+    const live = lines({ ops: { ...ops, dry_run: false, running_rounds: 3 } })[0]!;
+    expect(live).toContain("LIVE");
+    expect(live).toContain("3/3 rounds running");
+    const noBeat = lines({ ops: { ...ops, heartbeat: null } })[0]!;
+    expect(noBeat).toContain("no heartbeat");
+    expect(noBeat).toContain("mode unknown"); // no snapshot → never claim LIVE
+    expect(noBeat).not.toContain("DRY-RUN");
+  });
+
+  it("line 2 is the version the VM runs, with its deploy age and mode", () => {
+    expect(lines()[1]!).toBe("running abc1234 · deployed 1d ago · sync");
+    expect(lines({ ops: { ...ops, build: null } })[1]!).toContain("no BUILD_SHA on the VM yet");
+  });
+
+  it("calls out a needed deploy when local HEAD has moved past the deployed sha", () => {
+    const ahead = lines({ local: { head: "deadbee", ahead: 4 } });
+    expect(ahead[2]!).toContain("deploy needed");
+    expect(ahead[2]!).toContain("4 commits ahead (deadbee)");
+    expect(lines({ local: { head: "deadbee" } })[2]!).toContain("local deadbee differs");
+    expect(lines({ local: { head: "deadbee", ahead: 1 } })[2]!).toContain("1 commit ahead");
+    // the accent is on the words, not just implied
+    const colored = opsLines(ops as never, { head: "deadbee", ahead: 4 }, fullWindow as never, 60, NOW);
+    expect(colored[2]!).toContain(ACCENTS.magenta);
+  });
+
+  it("says nothing to do when the checkout matches the deployed sha", () => {
+    const same = lines({ local: { head: "abc1234", ahead: 0 } });
+    expect(same[2]!).toContain("is what the VM runs");
+    expect(same.join("\n")).not.toContain("deploy needed");
+  });
+
+  it("degrades without the local-git dep, and without ops entirely", () => {
+    const noLocal = lines();
+    expect(noLocal.join("\n")).not.toContain("deploy needed");
+    expect(noLocal[2]).toBe(""); // straight on to the EVENTS block
+    const noOps = lines({ ops: undefined });
+    expect(noOps[0]).toContain("no ops data");
+    expect(noOps.join("\n")).toContain("pr_transition"); // events still render
+  });
+
+  it("renders the window's event kinds as thin bars, capped at 8", () => {
+    const body = lines().join("\n");
+    expect(body).toContain("EVENTS");
+    expect(body).toContain("pr_transition");
+    expect(body).toContain("42");
+    expect(body).toContain("█");
+    const many = Array.from({ length: 12 }, (_, i) => ({ kind: `kind_${i}`, count: 12 - i }));
+    const capped = lines({ win: { ...fullWindow, events_by_kind: many } });
+    expect(capped.filter((l) => /^kind_/.test(l))).toHaveLength(8);
+    expect(capped.join("\n")).toContain("…+4 more kinds");
+    expect(lines({ win: { ...fullWindow, events_by_kind: [] } }).join("\n")).toContain("no events in this window");
+  });
+
+  it("re-renders from the selected window's events (window-responsive)", () => {
+    const other = { ...fullWindow, events_by_kind: [{ kind: "eod_sweep", count: 7 }] };
+    const body = lines({ win: other }).join("\n");
+    expect(body).toContain("eod_sweep");
+    expect(body).not.toContain("pr_transition");
+  });
+});
+
+describe("local-head probe", () => {
+  it("reads HEAD and the pending count through the deploy tab's own argvs", async () => {
+    const calls: string[][] = [];
+    const probe = localHeadProbe(async (argv) => {
+      calls.push(argv);
+      return argv.includes("log")
+        ? ok("aaa one\nbbb two\n")
+        : ok("deadbee\n");
+    });
+    expect(await probe.read("abc1234")).toEqual({ head: "deadbee", ahead: 2 });
+    expect(calls[0]).toEqual(["git", "rev-parse", "--short", "HEAD"]);
+    expect(calls[1]).toEqual(["git", "log", "--oneline", "abc1234..HEAD"]);
+  });
+
+  it("degrades when git is unavailable or the sha is unknown", async () => {
+    const failing = localHeadProbe(async () => ({ ok: false, stdout: "", stderr: "not a git repo", code: 128 }));
+    expect(await failing.read("abc1234")).toEqual({});
+    const noSha = localHeadProbe(async () => ok("deadbee\n"));
+    expect(await noSha.read(null)).toEqual({ head: "deadbee" });
+  });
+
+  it("the hook feeds the probe the deployed sha and paints the deploy-needed line", async () => {
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    const asked: Array<string | null> = [];
+    const view = installMetricsHooks(
+      app,
+      { overall: async () => ({ payload: payload as never }), timeline: async () => ({ payload: timeline as never }) },
+      { read: async (sha) => (asked.push(sha), { head: "deadbee", ahead: 4 }) },
+    );
+    const run = app.run();
+    streams.type("5");
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(asked).toEqual(["abc1234"]);
+    expect(view.local).toEqual({ head: "deadbee", ahead: 4 });
+    const text = stripAnsi(streams.written());
+    expect(text).toContain("OPERATIONS");
+    expect(text).toContain("deploy needed");
+    app.quit();
+    await run;
+  });
+
+  it("a throwing probe leaves the card on its shorter form", async () => {
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    const view = installMetricsHooks(
+      app,
+      { overall: async () => ({ payload: payload as never }), timeline: async () => ({ payload: timeline as never }) },
+      {
+        read: async () => {
+          throw new Error("git exploded");
+        },
+      },
+    );
+    const run = app.run();
+    streams.type("5");
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(view.local).toBeUndefined();
+    expect(stripAnsi(streams.written())).not.toContain("deploy needed");
+    app.quit();
+    await run;
   });
 });
 

@@ -15,9 +15,10 @@
 //
 // Read-only like every other tab: the only VM touch is the two qcr reads
 // through the shared ssh runner, cached stale-while-revalidate.
-import type { Dist, DailyRow, MetricsPayload, MetricsWindow, TimelinePayload } from "../metrics.js";
+import type { Dist, DailyRow, MetricsPayload, MetricsWindow, OpsInfo, TimelinePayload } from "../metrics.js";
 import type { TuiConfig } from "../config.js";
 import type { App } from "./app.js";
+import { HEAD_ARGV, logArgv, type LocalRunner } from "./deploytab.js";
 import type { BoardKey } from "./keys.js";
 import { Frame, SGR, displayWidth, fit, rule, sanitizeText, truncate } from "./paint.js";
 import { metricsArgv, metricsPrArgv, type SshRunner } from "./remote.js";
@@ -207,6 +208,37 @@ function pct(v: number | null | undefined): string {
   return v === null || v === undefined ? "—" : `${Math.round(v * 100)}%`;
 }
 
+// ---- the deploy-needed seam ---------------------------------------------------
+
+/** What the laptop's git says about the commit the VM reports running. */
+export interface LocalHeadState {
+  head?: string;
+  /** Commits in `deployed..HEAD`; undefined when the sha is unknown to git. */
+  ahead?: number;
+}
+
+/** Injectable so tests (and machines without the repo) never spawn git. */
+export interface LocalHeadProbe {
+  read(deployedSha: string | null): Promise<LocalHeadState>;
+}
+
+/** The real probe: deploytab's own read-only argvs through its LocalRunner —
+ * one implementation of "what is local HEAD / how far ahead is it". */
+export function localHeadProbe(local: LocalRunner): LocalHeadProbe {
+  return {
+    async read(deployedSha) {
+      const head = await local(HEAD_ARGV);
+      const out: LocalHeadState = {};
+      if (head.ok && head.stdout.trim()) out.head = head.stdout.trim();
+      if (deployedSha) {
+        const log = await local(logArgv(deployedSha));
+        if (log.ok) out.ahead = log.stdout.split("\n").filter((l) => l.trim() !== "").length;
+      }
+      return out;
+    },
+  };
+}
+
 // ---- view state -------------------------------------------------------------
 
 export type MetricsWindowKey = "d7" | "d30" | "all";
@@ -228,6 +260,8 @@ export interface MetricsView {
   drill?: { pr: number; payload?: TimelinePayload; error?: string; loading: boolean };
   /** Digits typed towards a drill-down (`#` opens the prompt). */
   prEntry?: string;
+  /** Local git's answer for the deploy-needed line; absent without a probe. */
+  local?: LocalHeadState;
   scroll: number;
   dryRun: boolean;
   now?: Date;
@@ -271,14 +305,93 @@ function barsFromRecord(rec: Record<string, number>, width: number, accent: stri
   return barList(rows, width, accent);
 }
 
+/** Heartbeats older than this read as a stalled daemon, not a slow tick. */
+export const HEARTBEAT_STALE_S = 300;
+
+/**
+ * The OPERATIONS card body: how the daemon is running (mode, heartbeat,
+ * concurrency), which commit it is running (BUILD_SHA marker) with an accented
+ * "deploy needed" when the operator's checkout has moved past it, and the
+ * window's aggregate event traffic as a thin bar list.
+ *
+ * `ops` absent (an older daemon's payload) or `local` absent (no git here —
+ * tests, or a laptop without the repo) both degrade to fewer lines, never to a
+ * throw or a fake answer.
+ */
+export function opsLines(
+  ops: OpsInfo | undefined,
+  local: LocalHeadState | undefined,
+  win: MetricsWindow,
+  width: number,
+  now: Date,
+): string[] {
+  const lines: string[] = [];
+  if (!ops) {
+    lines.push(dim("no ops data in this payload (older daemon?)"));
+  } else {
+    // No snapshot at all means we cannot claim a mode — "LIVE" is the one
+    // label that must never be guessed.
+    const mode =
+      ops.heartbeat === null
+        ? dim("mode unknown")
+        : ops.dry_run
+          ? `${ACCENTS.yellow}${SGR.bold}DRY-RUN${RESET}`
+          : `${SGR.bgRed}${SGR.bold} LIVE ${SGR.reset}`;
+    const beatS = ops.heartbeat ? Math.max(0, Math.floor((now.getTime() - new Date(ops.heartbeat).getTime()) / 1000)) : null;
+    const beat =
+      ops.heartbeat === null
+        ? `${FG.anomaly}no heartbeat${RESET}`
+        : `${beatS !== null && beatS > HEARTBEAT_STALE_S ? FG.anomaly : FG.approve}♥${RESET} ${fmtAge(ops.heartbeat, now)} ago`;
+    const rounds = `${SGR.bold}${ops.running_rounds}${SGR.reset}/${ops.max_concurrent_rounds} rounds running`;
+    lines.push(`${mode}  ${beat}  ${FG.dim}·${RESET}  ${rounds}`);
+
+    const b = ops.build;
+    lines.push(
+      b
+        ? `running ${SGR.bold}${b.sha}${SGR.reset}${b.at ? ` ${FG.dim}· deployed ${fmtAge(b.at, now)} ago${RESET}` : ""}${b.mode ? ` ${FG.dim}· ${b.mode}${RESET}` : ""}`
+        : dim("running an unknown commit — no BUILD_SHA on the VM yet"),
+    );
+    if (b && local?.head) {
+      lines.push(
+        local.head === b.sha
+          ? `${FG.approve}✓${RESET} ${FG.dim}your checkout (${local.head}) is what the VM runs${RESET}`
+          : `${ACCENTS.magenta}${SGR.bold}deploy needed${SGR.reset}${RESET} ${FG.dim}·${RESET} ` +
+            `${local.ahead === undefined ? `local ${local.head} differs` : `${local.ahead} commit${local.ahead === 1 ? "" : "s"} ahead (${local.head})`}`,
+      );
+    }
+  }
+
+  lines.push("");
+  lines.push(dim("EVENTS"));
+  const kinds = win.events_by_kind ?? [];
+  if (kinds.length === 0) {
+    lines.push(dim("no events in this window"));
+  } else {
+    const max = kinds.reduce((m, k) => Math.max(m, k.count), 0);
+    for (const k of kinds.slice(0, 8)) lines.push(hbar(k.kind, k.count, max, width, String(k.count), ACCENTS.magenta));
+    if (kinds.length > 8) lines.push(dim(`…+${kinds.length - 8} more kinds`));
+  }
+  return lines;
+}
+
 /** Tall terminals earn a real column chart in the ACTIVITY card. */
 export function activityChartHeight(rows: number): number {
   if (rows < 34) return 0; // short: the 1-row sparkline degradation
   return Math.max(6, Math.min(10, Math.floor((rows - 18) / 4)));
 }
 
-export function metricsCards(win: MetricsWindow, daily: DailyRow[], rows = 24): MetricsCard[] {
+export interface MetricsCardsExtra {
+  ops?: OpsInfo;
+  local?: LocalHeadState;
+  now?: Date;
+}
+
+export function metricsCards(win: MetricsWindow, daily: DailyRow[], rows = 24, extra: MetricsCardsExtra = {}): MetricsCard[] {
   const chartH = activityChartHeight(rows);
+  const now = extra.now ?? new Date();
+  const opsSubtitle = extra.ops
+    ? `${extra.ops.dry_run ? "dry-run" : "live"} · ${extra.ops.build ? extra.ops.build.sha : "build unknown"}`
+    : "daemon health · version · event traffic";
   return [
     {
       title: "ACTIVITY",
@@ -309,6 +422,12 @@ export function metricsCards(win: MetricsWindow, daily: DailyRow[], rows = 24): 
           `${fit("spend", 7)}${ACCENTS.yellow}${sparkline(spend, sparkW)}${RESET} ${usd(Math.max(...spend))}`,
         ];
       },
+    },
+    {
+      title: "OPERATIONS",
+      subtitle: opsSubtitle,
+      accent: ACCENTS.magenta,
+      body: (w) => opsLines(extra.ops, extra.local, win, w, now),
     },
     {
       title: "TIME TO FIRST VERDICT",
@@ -569,7 +688,12 @@ export function renderMetrics(view: MetricsView, cols: number, rows: number): Fr
   frame.boxRow(2, [{ text: ` ${statStrip(win, cols - 3)}`, width: cols - 2 }]);
 
   const widths = columnWidths(cols);
-  const columns = packColumns(metricsCards(win, view.payload.daily, bodyRows), widths, bodyRows);
+  const cards = metricsCards(win, view.payload.daily, bodyRows, {
+    ...(view.payload.ops ? { ops: view.payload.ops } : {}),
+    ...(view.local ? { local: view.local } : {}),
+    now,
+  });
+  const columns = packColumns(cards, widths, bodyRows);
   for (let r = 0; r < bodyRows; r++) {
     frame.boxRow(
       3 + r,
@@ -650,7 +774,7 @@ export function keyChar(key: BoardKey): string | undefined {
   }
 }
 
-export function installMetricsHooks(app: App, fetcher?: MetricsFetcher): MetricsView {
+export function installMetricsHooks(app: App, fetcher?: MetricsFetcher, probe?: LocalHeadProbe): MetricsView {
   const f = fetcher ?? new SshMetricsFetcher(app.cfg, app.ssh);
   const view: MetricsView = { window: "d7", loading: false, scroll: 0, dryRun: app.view.dryRun };
   let fetchedAt = 0;
@@ -669,6 +793,15 @@ export function installMetricsHooks(app: App, fetcher?: MetricsFetcher): Metrics
         view.payload = res.payload;
         view.error = undefined;
         fetchedAt = Date.now();
+        // Local git answers "is a deploy needed?" against the sha the VM
+        // reports. No probe (or a repo-less machine) simply omits the line.
+        if (probe) {
+          try {
+            view.local = await probe.read(res.payload.ops?.build?.sha ?? null);
+          } catch {
+            view.local = undefined;
+          }
+        }
       } else {
         view.error = res.error ?? "unknown error";
         fetchedAt = Date.now();

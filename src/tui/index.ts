@@ -187,9 +187,12 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
   const { installDigestHooks } = await import("./digesttab.js");
   installDigestHooks(app);
   const { RealDeployFetcher, installDeployHooks, realLocalRunner } = await import("./deploytab.js");
-  installDeployHooks(app, new RealDeployFetcher(cfg, realSshRunner, realLocalRunner(sandboxRoot())));
-  const { installMetricsHooks } = await import("./metricstab.js");
-  installMetricsHooks(app);
+  const localRunner = realLocalRunner(sandboxRoot());
+  installDeployHooks(app, new RealDeployFetcher(cfg, realSshRunner, localRunner));
+  const { installMetricsHooks, localHeadProbe } = await import("./metricstab.js");
+  // The metrics OPERATIONS card answers "deploy needed?" through the same
+  // read-only local-git seam the deploy tab uses.
+  installMetricsHooks(app, undefined, localHeadProbe(localRunner));
 
   // Companion container: adopt-or-start before the board comes up. A failure
   // here is a degraded mode, never a reason not to open the TUI.

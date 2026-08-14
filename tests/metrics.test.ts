@@ -4,10 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { StateStore } from "../src/state.js";
 import { PingPongLedger } from "../src/pingpong.js";
+import { parseBuildSha } from "../src/tui/deploytab.js";
 import {
+  EVENT_KIND_CAP,
   computeMetrics,
   computeTimeline,
   dist,
+  emptyOps,
+  readOps,
   histogram,
   percentile,
   renderMetrics,
@@ -432,5 +436,125 @@ describe("schema migrations", () => {
     store.registerBotComment(7779, 4242);
     expect((store.db.prepare("SELECT round_no FROM bot_comments WHERE comment_id = 7778").get() as any).round_no).toBe(1);
     expect((store.db.prepare("SELECT round_no FROM bot_comments WHERE comment_id = 7779").get() as any).round_no).toBeNull();
+  });
+});
+
+// ---- the operational half (OPERATIONS) -----------------------------
+
+describe("events_by_kind", () => {
+  it("counts EVERY event kind in the window, busiest first", () => {
+    insertEvent(store, "2026-08-14T11:00:00.000Z", "overseer_anomaly", null, { what: "malformed verdict" });
+    const w = computeMetrics(store, { now }).windows.d7;
+    expect(w.events_by_kind).toEqual([
+      { kind: "pr_transition", count: 7 },
+      { kind: "verdict_applied", count: 2 },
+      { kind: "head_push", count: 1 },
+      { kind: "overseer_anomaly", count: 1 },
+    ]);
+    // counts descend; ties fall back to the kind name
+    const counts = w.events_by_kind.map((e) => e.count);
+    expect([...counts].sort((a, b) => b - a)).toEqual(counts);
+  });
+
+  it("respects the window boundaries", () => {
+    insertEvent(store, "2026-07-01T09:00:00.000Z", "ancient_kind", null, {});
+    insertEvent(store, "2026-08-10T09:00:00.000Z", "recent_kind", null, {});
+    const m = computeMetrics(store, { now });
+    const kinds = (k: "d7" | "d30" | "all") => m.windows[k].events_by_kind.map((e) => e.kind);
+    expect(kinds("d7")).toContain("recent_kind");
+    expect(kinds("d7")).not.toContain("ancient_kind");
+    expect(kinds("d30")).not.toContain("ancient_kind"); // 2026-07-01 is >30d back
+    expect(kinds("all")).toContain("ancient_kind");
+  });
+
+  it("caps the list at 12 kinds, keeping the busiest", () => {
+    for (let i = 0; i < 15; i++) {
+      for (let n = 0; n <= i; n++) insertEvent(store, "2026-08-14T11:30:00.000Z", `k${String(i).padStart(2, "0")}`, null, {});
+    }
+    const w = computeMetrics(store, { now }).windows.d7;
+    expect(EVENT_KIND_CAP).toBe(12);
+    expect(w.events_by_kind).toHaveLength(12);
+    expect(w.events_by_kind[0]).toEqual({ kind: "k14", count: 15 });
+    expect(w.events_by_kind.map((e) => e.kind)).not.toContain("k00"); // 1 event — squeezed out
+  });
+
+  it("is an empty list when nothing happened in the window", () => {
+    const empty = new StateStore(":memory:", now);
+    try {
+      expect(computeMetrics(empty, { now }).windows.all.events_by_kind).toEqual([]);
+    } finally {
+      empty.close();
+    }
+  });
+});
+
+describe("ops", () => {
+  it("computeMetrics fills only what sqlite knows and never invents a build", () => {
+    const ops = computeMetrics(store, { now }).ops;
+    expect(ops).toEqual({ heartbeat: null, dry_run: false, running_rounds: 0, max_concurrent_rounds: 0, build: null });
+    expect(emptyOps()).toEqual(ops);
+  });
+
+  it("readOps decorates from status.json and the BUILD_SHA marker", () => {
+    const files: Record<string, string> = {
+      "/s/status.json": JSON.stringify({
+        written_at: "2026-08-14T11:59:00Z",
+        heartbeat: "2026-08-14T11:59:30Z",
+        dry_run: false,
+        running_rounds: 2,
+        max_concurrent_rounds: 3,
+      }),
+      "/r/BUILD_SHA": "abc1234 2026-08-13T12:00:00Z sync\n",
+    };
+    const io = {
+      readFile: (p: string) => {
+        const v = files[p];
+        if (v === undefined) throw new Error(`ENOENT: ${p}`);
+        return v;
+      },
+      parseBuildSha,
+    };
+    expect(readOps({ statusPath: "/s/status.json", buildShaPath: "/r/BUILD_SHA" }, io)).toEqual({
+      heartbeat: "2026-08-14T11:59:30Z",
+      dry_run: false,
+      running_rounds: 2,
+      max_concurrent_rounds: 3,
+      build: { sha: "abc1234", at: "2026-08-13T12:00:00Z", mode: "sync" },
+    });
+  });
+
+  it("degrades to nulls/zeros — a missing or corrupt file is never a throw", () => {
+    const throwing = { readFile: (p: string): string => { throw new Error(`ENOENT: ${p}`); }, parseBuildSha };
+    expect(readOps({ statusPath: "/nope", buildShaPath: "/nope" }, throwing)).toEqual(emptyOps());
+    // ...and the sqlite-derived base survives the missing files
+    const base = { ...emptyOps(), running_rounds: 4 };
+    expect(readOps({ statusPath: "/nope", buildShaPath: "/nope" }, throwing, base).running_rounds).toBe(4);
+
+    const junk = { readFile: () => "not json at all", parseBuildSha };
+    expect(readOps({ statusPath: "/s", buildShaPath: "/b" }, junk)).toEqual(emptyOps());
+
+    // a snapshot without a heartbeat field falls back to written_at; a marker
+    // without a timestamp still yields the sha
+    const partial = {
+      readFile: (p: string) => (p === "/s" ? JSON.stringify({ written_at: "2026-08-14T11:00:00Z", dry_run: true }) : "abc1234\n"),
+      parseBuildSha,
+    };
+    expect(readOps({ statusPath: "/s", buildShaPath: "/b" }, partial)).toEqual({
+      heartbeat: "2026-08-14T11:00:00Z",
+      dry_run: true,
+      running_rounds: 0,
+      max_concurrent_rounds: 0,
+      build: { sha: "abc1234", at: "", mode: "" },
+    });
+  });
+
+  it("renderMetrics surfaces the daemon line and the window's event traffic", () => {
+    const payload = computeMetrics(store, { now });
+    payload.ops = { heartbeat: "2026-08-14T11:59:30Z", dry_run: false, running_rounds: 1, max_concurrent_rounds: 3, build: { sha: "abc1234", at: "2026-08-13T12:00:00Z", mode: "sync" } };
+    const text = renderMetrics(payload);
+    expect(text).toContain("daemon: LIVE");
+    expect(text).toContain("rounds 1/3");
+    expect(text).toContain("build abc1234 (2026-08-13T12:00:00Z, sync)");
+    expect(text).toContain("events (7d): pr_transition 7");
   });
 });

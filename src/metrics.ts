@@ -49,7 +49,11 @@ export interface MetricsWindow {
   review_depth: Dist;    // bot comments per round (gap metric; fills as recorded)
   size: { bucket: string; prs: number; median_ttfv_s: number | null }[]; // XS<10, S<50, M<200, L<600, XL (added+deleted lines)
   pingpong: Dist & { cap_hits: number }; // exchanges per thread; cap = 3
+  /** Every event kind the daemon logged in this window, busiest first, cap 12. */
+  events_by_kind: { kind: string; count: number }[];
 }
+
+export const EVENT_KIND_CAP = 12;
 
 export interface DailyRow {
   day: string; // YYYY-MM-DD, Europe/Warsaw
@@ -60,11 +64,26 @@ export interface DailyRow {
   request_changes: number;
 }
 
+/** The operational half of the payload: how the daemon itself is doing, and
+ * which commit it is running. Everything here is read from files beside the
+ * sqlite (status.json, BUILD_SHA) — `computeMetrics` fills the sqlite-derivable
+ * bits and leaves the rest at their empty values; the CLI decorates. */
+export interface OpsInfo {
+  /** status.json heartbeat (ISO) — null when there is no snapshot yet. */
+  heartbeat: string | null;
+  dry_run: boolean;
+  running_rounds: number;
+  max_concurrent_rounds: number;
+  /** The BUILD_SHA marker deploy.sh drops in the sandbox root; null if absent. */
+  build: { sha: string; at: string; mode: string } | null;
+}
+
 export interface MetricsPayload {
   generated_at: string;
   windows: { d7: MetricsWindow; d30: MetricsWindow; all: MetricsWindow };
   daily: DailyRow[]; // last 30 Warsaw days, oldest first, gap days present with zeros
   backfill: { rounds: number; prs: number; oldest: string | null };
+  ops: OpsInfo;
 }
 
 // Per-PR drill-down: `qcr metrics --pr N --json`
@@ -185,6 +204,13 @@ function readEvents(store: StateStore): ParsedEvent[] {
   });
 }
 
+/** Every event, kind + timestamp only — the aggregate "what happened" list is
+ * deliberately NOT restricted to METRIC_EVENT_KINDS: an operator wants to see
+ * anomalies, injects and command traffic too. */
+function readEventKinds(store: StateStore): Array<{ ts: string; kind: string }> {
+  return store.db.prepare("SELECT ts, kind FROM events ORDER BY id").all() as Array<{ ts: string; kind: string }>;
+}
+
 function tableExists(store: StateStore, name: string): boolean {
   return store.db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) !== undefined;
 }
@@ -301,6 +327,8 @@ export interface WindowInput {
   intervals: StateInterval[];
   awaitingYou: number;
   resolvedPrs: Map<number, number>; // pr -> rounds until resolution
+  /** Every event kind/ts (all kinds, not just the metric ones). */
+  allEvents?: Array<{ ts: string; kind: string }>;
   /** Inclusive lower bound (ISO) or null for the "all" window. */
   since: string | null;
   nowIso: string;
@@ -442,6 +470,17 @@ export function computeWindow(input: WindowInput): MetricsWindow {
     cap_hits: threads.reduce((n, t) => n + (t.cap_hits ?? 0), 0),
   };
 
+  // ---- aggregate event traffic (every kind, busiest first) ----
+  const kinds = new Map<string, number>();
+  for (const e of input.allEvents ?? []) {
+    if (!within(e.ts, since)) continue;
+    kinds.set(e.kind, (kinds.get(e.kind) ?? 0) + 1);
+  }
+  const eventsByKind = [...kinds.entries()]
+    .map(([kind, count]) => ({ kind, count }))
+    .sort((a, b) => b.count - a.count || a.kind.localeCompare(b.kind))
+    .slice(0, EVENT_KIND_CAP);
+
   return {
     header: {
       prs_triggered: triggeredPrs.size,
@@ -472,6 +511,7 @@ export function computeWindow(input: WindowInput): MetricsWindow {
     review_depth: dist(depthValues, DEPTH_BUCKETS),
     size,
     pingpong,
+    events_by_kind: eventsByKind,
   };
 }
 
@@ -543,13 +583,14 @@ export function computeMetrics(store: StateStore, opts: MetricsOptions = {}): Me
 
   const rounds = store.allRounds();
   const events = readEvents(store);
+  const allEvents = readEventKinds(store);
   const comments = store.db.prepare("SELECT pr, round_no, posted_at FROM bot_comments").all() as CommentRow[];
   const threads = readThreads(store);
   const intervals = stateIntervals(events, nowIso);
   const awaitingYou = store.allPrs().filter((p) => p.state === "awaiting_human").length;
   const resolvedPrs = resolutionByPr(store, rounds, events);
 
-  const base = { rounds, events, comments, threads, intervals, awaitingYou, resolvedPrs, nowIso };
+  const base = { rounds, events, allEvents, comments, threads, intervals, awaitingYou, resolvedPrs, nowIso };
   const iso = (daysAgo: number): string => new Date(now.getTime() - daysAgo * 86_400_000).toISOString();
 
   const backfilled = rounds.filter(isBackfilled);
@@ -568,7 +609,58 @@ export function computeMetrics(store: StateStore, opts: MetricsOptions = {}): Me
       prs: new Set(backfilled.map((r) => r.pr)).size,
       oldest,
     },
+    // Everything sqlite knows about the daemon's operation; the file-derived
+    // half (heartbeat, dry-run, build marker) is decorated by `readOps`.
+    ops: { ...emptyOps(), running_rounds: store.runningRounds().length },
   };
+}
+
+// ---- ops: the file-derived half -------------------------------------------
+
+export function emptyOps(): OpsInfo {
+  return { heartbeat: null, dry_run: false, running_rounds: 0, max_concurrent_rounds: 0, build: null };
+}
+
+/**
+ * Read the operational facts that do not live in sqlite: the daemon's
+ * `status.json` snapshot and the `BUILD_SHA` marker deploy.sh rsyncs into the
+ * sandbox root. Both are optional — a missing/corrupt file degrades to the
+ * empty value for its fields and NEVER throws (a metrics read must not be able
+ * to fail because the daemon has not written a snapshot yet). Parsing of the
+ * marker is deploytab's `parseBuildSha`, injected so this module stays free of
+ * the TUI.
+ */
+export function readOps(
+  paths: { statusPath: string; buildShaPath: string },
+  io: {
+    readFile: (path: string) => string;
+    parseBuildSha: (text: string) => { sha: string; at?: string; mode?: string } | undefined;
+  },
+  base: OpsInfo = emptyOps(),
+): OpsInfo {
+  const ops: OpsInfo = { ...base };
+  try {
+    const snap = JSON.parse(io.readFile(paths.statusPath)) as Partial<{
+      heartbeat: string;
+      written_at: string;
+      dry_run: boolean;
+      running_rounds: number;
+      max_concurrent_rounds: number;
+    }>;
+    ops.heartbeat = typeof snap.heartbeat === "string" ? snap.heartbeat : typeof snap.written_at === "string" ? snap.written_at : null;
+    if (typeof snap.dry_run === "boolean") ops.dry_run = snap.dry_run;
+    if (typeof snap.running_rounds === "number") ops.running_rounds = snap.running_rounds;
+    if (typeof snap.max_concurrent_rounds === "number") ops.max_concurrent_rounds = snap.max_concurrent_rounds;
+  } catch {
+    /* no snapshot (or an unreadable one) — the nulls/zeros stand */
+  }
+  try {
+    const marker = io.parseBuildSha(io.readFile(paths.buildShaPath));
+    if (marker) ops.build = { sha: marker.sha, at: marker.at ?? "", mode: marker.mode ?? "" };
+  } catch {
+    /* no BUILD_SHA yet — `build` stays null and the TUI says "unknown" */
+  }
+  return ops;
 }
 
 export function computeTimeline(store: StateStore, pr: number): TimelinePayload {
@@ -650,6 +742,13 @@ export function renderMetrics(payload: MetricsPayload): string {
   const lines: string[] = [];
   const w = payload.windows.d7;
   lines.push(`quickreview metrics — generated ${payload.generated_at}`);
+  const ops = payload.ops;
+  lines.push(
+    // Without a snapshot the mode is unknown — never guess "LIVE".
+    `daemon: ${ops.heartbeat === null ? "mode unknown" : ops.dry_run ? "DRY-RUN" : "LIVE"} · heartbeat ${ops.heartbeat ?? "—"} · ` +
+      `rounds ${ops.running_rounds}/${ops.max_concurrent_rounds} · ` +
+      `build ${ops.build ? `${ops.build.sha}${ops.build.at ? ` (${ops.build.at}${ops.build.mode ? `, ${ops.build.mode}` : ""})` : ""}` : "unknown"}`,
+  );
   lines.push("");
   lines.push("window   PRs  rounds  appr  rc   spend    overruns");
   for (const [name, win] of [
@@ -675,6 +774,7 @@ export function renderMetrics(payload: MetricsPayload): string {
   );
   lines.push(`rounds until resolution (7d): median ${w.rounds_until_resolution.median ?? "—"} n=${w.rounds_until_resolution.n}`);
   lines.push(`verdict mix (7d): ${w.verdict_mix.map((v) => `${v.verdict} ${v.count}`).join("  ") || "—"}`);
+  lines.push(`events (7d): ${w.events_by_kind.map((e) => `${e.kind} ${e.count}`).join("  ") || "—"}`);
   lines.push("");
   lines.push("day          rounds  PRs  spend   appr  rc");
   for (const d of payload.daily.slice(-14)) {

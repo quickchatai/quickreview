@@ -5,7 +5,7 @@ import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig, sandboxRoot } from "./config.js";
 import { StateStore, type StatusSnapshot } from "./state.js";
-import { computeMetrics, computeTimeline, renderMetrics, renderTimeline } from "./metrics.js";
+import { computeMetrics, computeTimeline, readOps, renderMetrics, renderTimeline } from "./metrics.js";
 
 function stateDir(): string {
   return join(sandboxRoot(), "state");
@@ -196,7 +196,7 @@ function cmdWhy(n: number): void {
 
 /** `qcr metrics [--pr <n>] [--json]` — the aggregation engine over the live
  * sqlite (read-only, container-safe: same store/config opening as `why`). */
-function cmdMetrics(pr: number | null, json: boolean): void {
+async function cmdMetrics(pr: number | null, json: boolean): Promise<void> {
   const store = openStore();
   try {
     if (pr !== null) {
@@ -205,6 +205,15 @@ function cmdMetrics(pr: number | null, json: boolean): void {
       return;
     }
     const payload = computeMetrics(store);
+    // The operational half is file-derived: status.json (heartbeat/dry-run/
+    // concurrency) + the BUILD_SHA marker deploy.sh writes into the sandbox
+    // root. parseBuildSha is deploytab's — the marker format has one parser.
+    const { parseBuildSha } = await import("./tui/deploytab.js");
+    payload.ops = readOps(
+      { statusPath: join(stateDir(), "status.json"), buildShaPath: join(sandboxRoot(), "BUILD_SHA") },
+      { readFile: (p) => readFileSync(p, "utf8"), parseBuildSha },
+      payload.ops,
+    );
     console.log(json ? JSON.stringify(payload) : renderMetrics(payload));
   } finally {
     store.close();
