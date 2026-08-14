@@ -231,7 +231,9 @@ export const HINT_BUTTONS: Array<{ label: string; key: string }> = [
 
 export const HELP_LINES = [
   "1 / 2 / 3 / 4  board / digest / companion / deploy tab (c = companion too)",
-  "               deploy tab: what a deploy would ship (read-only — run scripts/deploy.sh yourself)",
+  "               deploy tab: what a deploy would ship · D D runs scripts/deploy.sh sync",
+  "s              reconnect VM ssh (the one ssh key-passphrase prompt, shared 4h)",
+  "Ctrl-c ×3      kill the TUI from anywhere (terminal restored) — the un-stuck hatch",
   "               an alert in the top bar: click it or ⏎ to open the companion",
   "j/k ↓/↑        select PR (mouse: click a row; click again to attach)",
   "⏎              attach selected PR (embedded pi session)",

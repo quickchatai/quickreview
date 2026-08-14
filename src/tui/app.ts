@@ -8,6 +8,7 @@ import type { AlertBadge } from "./alerts.js";
 import { renderBoard, type BoardAction, type BoardView } from "./board.js";
 import { decodeInputKey, decodeKey } from "./keys.js";
 import { formatEvent, moveSelection, reselect, sortPrs, type EventLine } from "./model.js";
+import { TripleCtrlC } from "./chord.js";
 import { MOUSE_OFF, MOUSE_ON, extractMouseEvents, hitTest, type MouseEvent, type Zone } from "./mouse.js";
 import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR, Frame } from "./paint.js";
 import { Poller } from "./poll.js";
@@ -43,6 +44,12 @@ export interface AppHooks {
   deployScreen?: (app: App, cols: number, rows: number) => string;
   /** Deploy tab key handling; returns true when it consumed the key. */
   deployKey?: (app: App, key: ReturnType<typeof decodeKey>) => boolean;
+  /** Run ./scripts/deploy.sh sync on the operator's terminal (D D on the
+   * deploy tab). The script's own guardrails are the only gate. */
+  deployRun?: (app: App) => void;
+  /** Re-establish the VM ssh master on the operator's terminal (key s) —
+   * the one native GCP-passphrase prompt. */
+  reconnect?: (app: App) => void;
 }
 
 export type Tab = "board" | "digest" | "companion" | "deploy";
@@ -114,6 +121,22 @@ export class App {
 
   quit(): void {
     this.quitResolve?.();
+  }
+
+  /** Injectable so tests never kill the runner. */
+  exiter: (code: number) => void = (code) => process.exit(code);
+
+  /** Triple-Ctrl-C hard kill: restore the terminal no matter what, then die.
+   * A hung ssh/pty must never trap the user in the alt screen — closing the
+   * terminal window cannot stay the only way out. */
+  die(): void {
+    try {
+      this.suspended = false; // teardown must run even mid-attach
+      this.teardown();
+    } catch {
+      /* a half-restored terminal still beats a trapped one */
+    }
+    this.exiter(130);
   }
 
   /** Attach mode owns the terminal: stop painting, swallow board keys, and
@@ -355,7 +378,13 @@ export class App {
     this.repaint();
   }
 
+  private readonly killChord = new TripleCtrlC();
+
   private handleInput(buf: Buffer): void {
+    if (this.killChord.feed(buf)) {
+      this.die();
+      return;
+    }
     if (this.suspended) return;
     const { events, rest } = extractMouseEvents(buf);
     for (const ev of events) this.handleMouse(ev);
@@ -440,6 +469,11 @@ export class App {
       case "refresh":
         void this.poller.tick();
         void this.refreshDetail();
+        break;
+      case "reconnect":
+        if (this.hooks.reconnect) this.hooks.reconnect(this);
+        else this.notice("reconnect not wired (test harness?)");
+        void this.poller.tick();
         break;
       case "enter": {
         // A live alert owns ⏎ until it is followed or dismissed — the point of

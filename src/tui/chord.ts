@@ -69,3 +69,27 @@ export class ChordScanner {
     return { detach: true };
   }
 }
+
+export const CTRL_C = 0x03;
+export const KILL_WINDOW_MS = 1200;
+
+/** Last-resort escape: three bare Ctrl-C presses inside the window mean
+ * "kill the TUI no matter what". Single/double Ctrl-C keeps flowing to the
+ * session (pi needs it), so only distinct one-byte 0x03 chunks — human
+ * keypresses — count. */
+export class TripleCtrlC {
+  private taps: number[] = [];
+
+  constructor(private readonly now: () => number = () => Date.now()) {}
+
+  /** Feed a raw stdin chunk; true = the user demanded a hard kill. */
+  feed(chunk: Buffer): boolean {
+    if (chunk.length !== 1 || chunk[0] !== CTRL_C) {
+      this.taps = [];
+      return false;
+    }
+    const t = this.now();
+    this.taps = [...this.taps.filter((x) => t - x <= KILL_WINDOW_MS), t];
+    return this.taps.length >= 3;
+  }
+}

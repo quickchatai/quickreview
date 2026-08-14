@@ -21,6 +21,7 @@ export type BoardKey =
   | { kind: "main-session" }
   | { kind: "events" }
   | { kind: "refresh" }
+  | { kind: "reconnect" }
   | { kind: "digest-older" }
   | { kind: "digest-newer" }
   | { kind: "char"; ch: string }
@@ -51,6 +52,7 @@ export function decodeKey(buf: Buffer): BoardKey {
   if (s === "M") return { kind: "main-session" };
   if (s === "e") return { kind: "events" };
   if (s === "r") return { kind: "refresh" };
+  if (s === "s") return { kind: "reconnect" };
   if (s === "[") return { kind: "digest-older" };
   if (s === "]") return { kind: "digest-newer" };
   if (s.length > 0 && !s.includes("\x1b") && s >= " ") return { kind: "char", ch: s };

@@ -7,7 +7,7 @@
 // CLI paths) never load the native module; AttachScreen itself takes an
 // injectable spawner.
 import type { App } from "./app.js";
-import { CHORD_GRACE_MS, ChordScanner } from "./chord.js";
+import { CHORD_GRACE_MS, ChordScanner, TripleCtrlC } from "./chord.js";
 import { rule, SGR, CLEAR } from "./paint.js";
 import { attachArgv } from "./remote.js";
 import { TermPane } from "./term.js";
@@ -35,8 +35,8 @@ export type ConnState = "live" | "lost";
 
 export function statusRow(session: string, prState: string | undefined, conn: ConnState, cols: number): string {
   const state = prState ? ` · ${prState}` : "";
-  const connSeg = conn === "live" ? `${SGR.green}▶ live${SGR.reset}` : `${SGR.red}✖ lost — ⏎ retry · Ctrl-q board${SGR.reset}`;
-  return rule(cols, "┌", "┐", [`${SGR.bold}${session}${SGR.reset}${state}`, connSeg, "Ctrl-q detach"]);
+  const connSeg = conn === "live" ? `${SGR.green}▶ live${SGR.reset}` : `${SGR.red}✖ lost — ⏎ retry · Ctrl-q/Ctrl-c board${SGR.reset}`;
+  return rule(cols, "┌", "┐", [`${SGR.bold}${session}${SGR.reset}${state}`, connSeg, "Ctrl-q detach · Ctrl-c×3 kill tui"]);
 }
 
 const PAINT_INTERVAL_MS = 16;
@@ -52,6 +52,7 @@ export class AttachScreen {
   private paintDirty = false;
   private chord = new ChordScanner();
   private chordTimer: NodeJS.Timeout | undefined;
+  private killChord = new TripleCtrlC();
   private readonly onKey = (buf: Buffer): void => this.handleKey(buf);
   private readonly onResize = (): void => this.propagateResize();
 
@@ -162,6 +163,13 @@ export class AttachScreen {
 
   private handleKey(buf: Buffer): void {
     if (this.done) return;
+    // The escape hatch outranks everything: a pty hung on a dead ssh (or an
+    // interactive passphrase prompt gone wrong) must never trap the user.
+    if (this.killChord.feed(buf)) {
+      this.teardown();
+      this.app.die();
+      return;
+    }
     if (this.conn === "lost") {
       const s = buf.toString("utf8");
       if (s === "\r" || s === "\n") {
@@ -169,8 +177,8 @@ export class AttachScreen {
         this.pane?.dispose();
         this.out.write(CLEAR);
         this.connect();
-      } else if (buf.length === 1 && buf[0] === 0x11) {
-        this.detach();
+      } else if (buf.length === 1 && (buf[0] === 0x11 || buf[0] === 0x03)) {
+        this.detach(); // Ctrl-q or Ctrl-c: a dead session needs no chord
       }
       return;
     }

@@ -1,8 +1,9 @@
-// Deploy tab (key 4) — read-only "what would a deploy ship?": the commit the
-// VM is running (the BUILD_SHA marker deploy.sh rsyncs along), local HEAD,
-// the pending commit list + diffstat between them, and deploy.sh's own
-// --dry-run plan verbatim. The tab NEVER deploys — running
-// `scripts/deploy.sh sync` stays a manual act on the operator's terminal.
+// Deploy tab (key 4) — "what would a deploy ship?" plus the deploy button:
+// the commit the VM is running (the BUILD_SHA marker deploy.sh rsyncs along),
+// local HEAD, the pending commit list + diffstat between them, and deploy.sh's
+// own --dry-run plan verbatim. D D (armed confirm) runs `scripts/deploy.sh
+// sync` on the operator's real terminal via hooks.deployRun — deploy.sh's own
+// guardrails (clean tree, pin agreement) stay the only gate.
 import { execFile } from "node:child_process";
 import type { TuiConfig } from "../config.js";
 import type { App } from "./app.js";
@@ -73,7 +74,11 @@ export interface DeployState {
   /** deploy.sh --dry-run output — a refusal (dirty tree, pin drift) shows verbatim. */
   plan: string[];
   scroll: number;
+  /** First D pressed at this ms timestamp; a second D inside the window deploys. */
+  armedAt?: number;
 }
+
+export const DEPLOY_CONFIRM_MS = 5000;
 
 export interface DeployFetcher {
   load(): Promise<Omit<DeployState, "loaded" | "loading" | "scroll">>;
@@ -152,7 +157,11 @@ export function deployLines(st: DeployState, width: number): string[] {
   lines.push(truncate(section("PLAN", "scripts/deploy.sh --dry-run sync, verbatim"), width));
   for (const p of st.plan) lines.push(truncate(`  ${p}`, width));
   lines.push("");
-  lines.push(truncate(`${SGR.bold}to deploy:${SGR.reset} run ${FG.accent}./scripts/deploy.sh sync${RESET} yourself — this tab never deploys`, width));
+  if (st.armedAt !== undefined) {
+    lines.push(truncate(`${SGR.bgRed}${SGR.bold} ARMED ${SGR.reset} press ${SGR.bold}D${SGR.reset} again to run ./scripts/deploy.sh sync (any other key cancels)`, width));
+  } else {
+    lines.push(truncate(`${SGR.bold}to deploy:${SGR.reset} press ${SGR.bold}D${SGR.reset} twice (runs ${FG.accent}./scripts/deploy.sh sync${RESET} in your terminal) — or run it yourself`, width));
+  }
   return lines;
 }
 
@@ -165,14 +174,14 @@ export function renderDeployTab(st: DeployState, dryRun: boolean, cols: number, 
     frame.boxRow(1 + r, [{ text: ` ${lines[st.scroll + r] ?? ""}`, width: cols - 2 }]);
   }
   const refreshing = st.loading ? "  refreshing…" : "";
-  frame.boxRow(rows - 2, [{ text: ` ${SGR.dim}[1]board [2]digest [4]deploy  j/k scroll  r refresh  q quit${refreshing}${SGR.reset}`, width: cols - 2 }]);
+  frame.boxRow(rows - 2, [{ text: ` ${SGR.dim}[1]board [2]digest [4]deploy  j/k scroll  r refresh  D D deploy  q quit${refreshing}${SGR.reset}`, width: cols - 2 }]);
   frame.set(rows - 1, rule(cols, "└", "┘", []));
   return frame;
 }
 
 // ---- hooks ------------------------------------------------------------------
 
-export function installDeployHooks(app: App, fetcher?: DeployFetcher): DeployState {
+export function installDeployHooks(app: App, fetcher?: DeployFetcher, now: () => number = () => Date.now()): DeployState {
   const f = fetcher ?? new RealDeployFetcher(app.cfg, app.ssh, realLocalRunner(process.cwd()));
   const st: DeployState = { loaded: false, loading: false, dirty: [], plan: [], scroll: 0 };
 
@@ -194,6 +203,24 @@ export function installDeployHooks(app: App, fetcher?: DeployFetcher): DeploySta
   };
 
   app.hooks.deployKey = (theApp, key: BoardKey): boolean => {
+    if (key.kind === "char" && key.ch === "D") {
+      const t = now();
+      if (st.armedAt !== undefined && t - st.armedAt < DEPLOY_CONFIRM_MS) {
+        st.armedAt = undefined;
+        if (theApp.hooks.deployRun) {
+          theApp.hooks.deployRun(theApp); // synchronous: TUI is suspended while deploy.sh runs
+          st.loaded = false;
+          void load(); // re-read BUILD_SHA + plan against the new reality
+        } else {
+          theApp.notice("✖ deploy runner not wired");
+        }
+      } else {
+        st.armedAt = t;
+      }
+      theApp.repaint();
+      return true;
+    }
+    if (st.armedAt !== undefined) st.armedAt = undefined; // any other key disarms
     switch (key.kind) {
       case "down":
       case "up":
