@@ -116,7 +116,7 @@ export class App {
   }
 
   private async refreshEvents(): Promise<void> {
-    const res = await this.ssh(this.cfg.ssh_host, eventsArgv(this.cfg, 20));
+    const res = await this.ssh(this.cfg.ssh_host, eventsArgv(this.cfg, 50));
     if (!res.ok) return;
     try {
       const parsed = JSON.parse(res.stdout) as { events: Array<{ ts: string; kind: string; pr: number | null; payload: string | null }> };
@@ -248,7 +248,7 @@ export class App {
       case "down": {
         if (this.view.eventsFocus) {
           const delta = key.kind === "down" ? 1 : -1;
-          this.view.eventsScroll = Math.max(0, Math.min(this.view.eventsScroll + delta, Math.max(0, this.view.events.length - 3)));
+          this.view.eventsScroll = Math.max(0, Math.min(this.view.eventsScroll + delta, Math.max(0, this.view.events.length - 1)));
           break;
         }
         const sorted = this.view.snapshot ? sortPrs(this.view.snapshot.prs) : [];

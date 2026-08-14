@@ -108,6 +108,32 @@ describe("detailLines", () => {
   });
 });
 
+describe("adaptive layout", () => {
+  it("sizes the list column to the longest PR row, clamped to 45% of the width", async () => {
+    const { listWidth } = await import("../src/tui/board.js");
+    const prs = snapshot.prs;
+    const w = listWidth(prs, 120);
+    // widest row: "▶ #5012 fix(crm): retry send_message" = 40 cells + 3
+    expect(w).toBe(43);
+    expect(listWidth(prs, 60)).toBe(27); // clamp: 45% of 60
+    expect(listWidth([], 120)).toBe(24); // floor
+  });
+
+  it("grows the events strip with terminal height", async () => {
+    const { eventsRows } = await import("../src/tui/board.js");
+    expect(eventsRows(24)).toBe(6); // floor: 3 visible lines
+    expect(eventsRows(40)).toBe(10);
+    expect(eventsRows(80)).toBe(13); // cap: 10 visible lines
+  });
+
+  it("shows full titles and more events on a tall wide terminal", () => {
+    const events = Array.from({ length: 8 }, (_, i) => ({ ts: `t${i}`, text: `10:00:0${i} event_${i}`, anomaly: false }));
+    const text = renderBoard(view({ events }), 140, 48).lines.map(stripAnsi).join("\n");
+    expect(text).toContain("▶ #5012 fix(crm): retry send_message"); // uncropped
+    expect(text).toContain("event_7"); // more than 3 event lines visible
+  });
+});
+
 describe("renderBoard", () => {
   it("renders the full frame with list, detail and events", () => {
     const frame = renderBoard(

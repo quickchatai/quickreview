@@ -4,11 +4,21 @@
 import type { WhyPayload } from "../cli.js";
 import type { StatusSnapshot } from "../state.js";
 import { awaitingRows, formatEvent, glyphFor, sortPrs, type EventLine, type SnapshotPr } from "./model.js";
-import { Frame, SGR, fit, rule, truncate } from "./paint.js";
+import { Frame, SGR, displayWidth, fit, rule, truncate } from "./paint.js";
 import type { Health } from "./poll.js";
 
-export const LIST_WIDTH = 30;
-export const EVENTS_ROWS = 6; // divider + EVENTS header + 3 lines + hints
+/** Left column sized to the longest PR row so titles aren't cropped while
+ * the detail pane sits empty — clamped to 45% of the terminal. */
+export function listWidth(prs: SnapshotPr[], cols: number): number {
+  const widest = prs.reduce((w, pr) => Math.max(w, displayWidth(`${glyphFor(pr)} #${pr.number} ${pr.title}`)), 0);
+  return Math.min(Math.max(24, widest + 3), Math.floor(cols * 0.45));
+}
+
+/** Events strip grows with terminal height: divider + header + lines +
+ * hints; ~a quarter of the screen, 3–10 visible event lines. */
+export function eventsRows(rows: number): number {
+  return Math.min(Math.max(6, Math.floor(rows * 0.25)), 13);
+}
 
 export interface BoardView {
   health: Health;
@@ -110,10 +120,11 @@ export const HELP_LINES = [
 export function renderBoard(view: BoardView, cols: number, rows: number): Frame {
   const frame = new Frame(cols, rows);
   frame.set(0, topBar(view, cols));
-  const bodyRows = rows - 2 - EVENTS_ROWS; // top bar + bottom border
-  const listW = Math.min(LIST_WIDTH, Math.max(16, Math.floor(cols / 3)));
-  const detailW = cols - 2 - listW - 1;
+  const evRows = eventsRows(rows);
+  const bodyRows = rows - 2 - evRows; // top bar + bottom border
   const sorted = view.snapshot ? sortPrs(view.snapshot.prs) : [];
+  const listW = listWidth(sorted, cols);
+  const detailW = cols - 2 - listW - 1;
   const selectedPr = sorted[view.selected];
 
   if (view.help) {
@@ -128,7 +139,7 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
 
   if (view.detailFull) {
     const lines = detailLines(view.detail, selectedPr, cols - 4);
-    for (let r = 0; r < bodyRows + EVENTS_ROWS; r++) {
+    for (let r = 0; r < bodyRows + evRows; r++) {
       frame.boxRow(1 + r, [{ text: ` ${lines[r] ?? ""}`, width: cols - 2 }]);
     }
     frame.set(rows - 1, rule(cols, "└", "┘", ["w back"]));
@@ -148,17 +159,18 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
 
   // Events strip (or the quick-message input box).
   const stripTop = 1 + bodyRows;
+  const stripLines = evRows - 3; // minus divider, header, hints
   frame.set(stripTop, `│${fit("─".repeat(listW), listW)}┴${"─".repeat(detailW)}│`);
   if (view.inputBox) {
     frame.boxRow(stripTop + 1, [{ text: ` ${SGR.bold}MSG → ${view.inputBox.target}${SGR.reset}`, width: cols - 2 }]);
     frame.boxRow(stripTop + 2, [{ text: ` > ${view.inputBox.text}▁`, width: cols - 2 }]);
     frame.boxRow(stripTop + 3, [{ text: ` ⏎ send · Esc cancel · Alt-⏎ newline`, width: cols - 2 }]);
-    frame.boxRow(stripTop + 4, [{ text: "", width: cols - 2 }]);
+    for (let i = 4; i <= stripLines + 1; i++) frame.boxRow(stripTop + i, [{ text: "", width: cols - 2 }]);
   } else {
     const header = view.eventsFocus ? `${SGR.inverse}EVENTS${SGR.reset} (j/k scroll · Esc back)` : `${SGR.bold}EVENTS${SGR.reset}`;
     frame.boxRow(stripTop + 1, [{ text: ` ${header}${view.noticeLine ? `   ${view.noticeLine}` : ""}`, width: cols - 2 }]);
-    const visible = view.events.slice(view.eventsScroll, view.eventsScroll + 3);
-    for (let i = 0; i < 3; i++) {
+    const visible = view.events.slice(view.eventsScroll, view.eventsScroll + stripLines);
+    for (let i = 0; i < stripLines; i++) {
       const e = visible[i];
       const text = e ? (e.anomaly ? `${SGR.red}${truncate(e.text, cols - 4)}${SGR.reset}` : truncate(e.text, cols - 4)) : "";
       frame.boxRow(stripTop + 2 + i, [{ text: ` ${text}`, width: cols - 2 }]);
