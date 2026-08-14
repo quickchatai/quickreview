@@ -129,6 +129,7 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
           trigger_ts: local?.trigger_ts ?? item.updated_at ?? now().toISOString(),
         };
         report.triggered.push(item.number);
+        if (local?.paused) continue; // overseer pause-pr: no re-trigger until resumed
         if (local?.state === "queued" || local?.state === "reviewing") continue; // already handled
         // Dry-run never consumes triggers on GitHub, so an already-reviewed
         // head would re-queue forever; suppress until the head moves.
@@ -149,8 +150,18 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
       if (ref && isBotAuthor(ref.author, botLogin)) continue;
       const local = store.getPr(stale.number);
       report.stale.push(stale.number);
+      if (local?.paused) continue; // overseer pause-pr
       if (local?.stale_recheck === 1 && (local.state === "queued" || local.state === "reviewing")) continue;
       if (local?.state === "reviewing" || local?.state === "awaiting_human") continue;
+      // Dry-run never posts the re-approval, so GitHub reports the same
+      // stale approved_sha forever; once we've verdicted this exact head,
+      // re-dispatching reviews an empty range — suppress until it moves
+      // (mirrors the trigger suppression above; live-fire 2026-08-14:
+      // same-head staleness rounds every poll, pure spend churn).
+      if (cfg.dry_run && store.lastVerdictHead(stale.number) === stale.head_sha) {
+        deps.log?.(`dry-run: suppressing staleness recheck of #${stale.number} at verdicted head ${stale.head_sha.slice(0, 10)}`);
+        continue;
+      }
       correction(deps, stale.number, "stale-approval", { approved_sha: stale.approved_sha, head_sha: stale.head_sha, local: local?.state ?? null }, report);
       applyEvent(
         store,

@@ -91,6 +91,15 @@ describe("queue ordering and capacity", () => {
     expect(queuedInOrder(store).map((p) => p.number)).toEqual([1, 4, 3, 2]);
   });
 
+  it("skips overseer-paused PRs entirely", () => {
+    queue(1, "2026-08-13T09:00:00Z");
+    queue(2, "2026-08-13T10:00:00Z");
+    store.setPaused(1, true);
+    expect(queuedInOrder(store).map((p) => p.number)).toEqual([2]);
+    store.setPaused(1, false);
+    expect(queuedInOrder(store).map((p) => p.number)).toEqual([1, 2]);
+  });
+
   it("counts running rounds against max_concurrent_rounds", () => {
     const cap = baseCfg.daemon.max_concurrent_rounds;
     expect(capacity(store, baseCfg)).toBe(cap);

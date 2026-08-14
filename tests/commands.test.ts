@@ -10,6 +10,8 @@ function makeDeps() {
     rerunRound: vi.fn(async () => ({ ok: true, redispatched: true })),
     restartSession: vi.fn(async () => undefined),
     markEscalationWorthy: vi.fn(async () => undefined),
+    pausePr: vi.fn(async () => undefined),
+    resumePr: vi.fn(async () => undefined),
     flagOwnerLegacy: vi.fn(async () => undefined),
     fileImprovementPr: vi.fn(async () => ({ ok: true, branch: "bot/improve-x" })),
     fileIssue: vi.fn(async () => ({ ok: true, issue: 7 })),
@@ -23,6 +25,8 @@ describe("validateCommand — whitelist", () => {
       { command: "restart-session", pr: 12 },
       { command: "restart-session", pr: "overseer" },
       { command: "mark-escalation-worthy", pr: 12, reason: "touches billing" },
+      { command: "pause-pr", pr: 12, reason: "same-head staleness churn" },
+      { command: "resume-pr", pr: 12 },
       { command: "flag-owner-legacy", message: "webhook signature failures spiking" },
       { command: "file-improvement-pr", branch: "wip/fix-docs", title: "t", body: "b", slug: "fix-docs" },
       { command: "file-issue", title: "t", body: "b" },
@@ -31,7 +35,7 @@ describe("validateCommand — whitelist", () => {
       const res = validateCommand(v);
       expect(res.ok, JSON.stringify(v)).toBe(true);
     }
-    expect(COMMAND_WHITELIST).toHaveLength(6);
+    expect(COMMAND_WHITELIST).toHaveLength(8);
   });
 
   it("rejects a command that is not whitelisted — no escape hatch", () => {
@@ -56,6 +60,8 @@ describe("validateCommand — whitelist", () => {
     expect(validateCommand({ command: "rerun-round", pr: -3 }).ok).toBe(false);
     expect(validateCommand({ command: "restart-session", pr: "everything" }).ok).toBe(false);
     expect(validateCommand({ command: "mark-escalation-worthy", pr: 1, reason: "  " }).ok).toBe(false);
+    expect(validateCommand({ command: "pause-pr", pr: 1 }).ok).toBe(false); // reason required
+    expect(validateCommand({ command: "resume-pr", pr: 1, reason: "x" }).ok).toBe(false); // unknown field
     expect(validateCommand({ command: "flag-owner-legacy", reason: "wrong field name" }).ok).toBe(false);
     expect(validateCommand({ command: "file-improvement-pr", branch: "b", title: "t", body: "y", slug: "Bad Slug" }).ok).toBe(false);
     expect(validateCommand("nope").ok).toBe(false);
@@ -73,6 +79,10 @@ describe("executeCommand", () => {
     expect(deps.restartSession).toHaveBeenCalledWith("overseer");
     await executeCommand({ command: "mark-escalation-worthy", pr: 9, reason: "schema" }, deps);
     expect(deps.markEscalationWorthy).toHaveBeenCalledWith(9, "schema");
+    await executeCommand({ command: "pause-pr", pr: 5266, reason: "same-head churn" }, deps);
+    expect(deps.pausePr).toHaveBeenCalledWith(5266, "same-head churn");
+    await executeCommand({ command: "resume-pr", pr: 5266 }, deps);
+    expect(deps.resumePr).toHaveBeenCalledWith(5266);
     await executeCommand({ command: "flag-owner-legacy", message: "look" }, deps);
     expect(deps.flagOwnerLegacy).toHaveBeenCalledWith("look");
     await executeCommand(

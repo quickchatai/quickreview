@@ -23,6 +23,8 @@ export interface PrStateRow {
   stale_recheck: number;
   escalation_worthy: number;
   migration_gate: number;
+  /** Overseer pause-pr: no dispatch/re-trigger until resumed (or closed). */
+  paused: number;
   updated_at: string;
 }
 
@@ -104,6 +106,12 @@ export class StateStore {
     this.db = new Database(path);
     this.db.pragma("journal_mode = WAL");
     this.db.exec(SCHEMA);
+    // Additive migration for stores created before pause-pr existed.
+    try {
+      this.db.exec("ALTER TABLE pr_state ADD COLUMN paused INTEGER NOT NULL DEFAULT 0");
+    } catch {
+      /* column already present */
+    }
   }
 
   close(): void {
@@ -124,7 +132,9 @@ export class StateStore {
     return this.db.prepare("SELECT * FROM pr_state ORDER BY number").all() as PrStateRow[];
   }
 
-  upsertPr(row: Omit<PrStateRow, "updated_at">): void {
+  /** `paused` is deliberately not part of the upsert: it is owned by
+   * setPaused() so state transitions can never clobber an overseer pause. */
+  upsertPr(row: Omit<PrStateRow, "updated_at" | "paused"> & { paused?: number }): void {
     this.db
       .prepare(
         `INSERT INTO pr_state (number, state, head_sha, title, author, trigger_ts, stale_recheck, escalation_worthy, migration_gate, updated_at)
@@ -133,7 +143,11 @@ export class StateStore {
            state=@state, head_sha=@head_sha, title=@title, author=@author, trigger_ts=@trigger_ts,
            stale_recheck=@stale_recheck, escalation_worthy=@escalation_worthy, migration_gate=@migration_gate, updated_at=@updated_at`,
       )
-      .run({ ...row, updated_at: this.ts() });
+      .run((({ paused: _paused, ...cols }) => ({ ...cols, updated_at: this.ts() }))(row));
+  }
+
+  setPaused(n: number, paused: boolean): void {
+    this.db.prepare("UPDATE pr_state SET paused = ?, updated_at = ? WHERE number = ?").run(paused ? 1 : 0, this.ts(), n);
   }
 
   setPrState(n: number, state: PrLifecycleState): void {
@@ -254,7 +268,7 @@ export interface StatusSnapshot {
   dry_run: boolean;
   prs: Array<
     Pick<PrStateRow, "number" | "state" | "title" | "head_sha" | "stale_recheck"> &
-      Partial<Pick<PrStateRow, "escalation_worthy" | "trigger_ts" | "updated_at">>
+      Partial<Pick<PrStateRow, "escalation_worthy" | "trigger_ts" | "updated_at" | "author" | "paused">>
   >;
   running_rounds: number;
   /** Absent in snapshots written before the TUI additions — readers default. */
@@ -294,6 +308,8 @@ export function buildStatusSnapshot(
       escalation_worthy: p.escalation_worthy,
       trigger_ts: p.trigger_ts,
       updated_at: p.updated_at,
+      author: p.author,
+      paused: p.paused,
     })),
     running_rounds: store.runningRounds().length,
     ...(maxConcurrentRounds !== undefined ? { max_concurrent_rounds: maxConcurrentRounds } : {}),

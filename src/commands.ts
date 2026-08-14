@@ -15,6 +15,8 @@ export type CommandName =
   | "rerun-round"
   | "restart-session"
   | "mark-escalation-worthy"
+  | "pause-pr"
+  | "resume-pr"
   | "flag-owner-legacy"
   | "file-improvement-pr"
   | "file-issue";
@@ -23,6 +25,8 @@ export const COMMAND_WHITELIST: readonly CommandName[] = [
   "rerun-round",
   "restart-session",
   "mark-escalation-worthy",
+  "pause-pr",
+  "resume-pr",
   "flag-owner-legacy",
   "file-improvement-pr",
   "file-issue",
@@ -32,6 +36,8 @@ export type Command =
   | { command: "rerun-round"; pr: number }
   | { command: "restart-session"; pr: number | "overseer" }
   | { command: "mark-escalation-worthy"; pr: number; reason: string }
+  | { command: "pause-pr"; pr: number; reason: string }
+  | { command: "resume-pr"; pr: number }
   | { command: "flag-owner-legacy"; message: string }
   | ({ command: "file-improvement-pr" } & ImprovementPayload)
   | ({ command: "file-issue" } & IssuePayload);
@@ -41,6 +47,8 @@ export interface CommandDeps {
   rerunRound(pr: number): Promise<FileOutcome | void> | FileOutcome | void;
   restartSession(target: number | "overseer"): Promise<FileOutcome | void> | FileOutcome | void;
   markEscalationWorthy(pr: number, reason: string): Promise<FileOutcome | void> | FileOutcome | void;
+  pausePr(pr: number, reason: string): Promise<FileOutcome | void> | FileOutcome | void;
+  resumePr(pr: number): Promise<FileOutcome | void> | FileOutcome | void;
   flagOwnerLegacy(message: string): Promise<FileOutcome | void> | FileOutcome | void;
   fileImprovementPr(payload: ImprovementPayload): Promise<FileOutcome | void> | FileOutcome | void;
   fileIssue(payload: IssuePayload): Promise<FileOutcome | void> | FileOutcome | void;
@@ -98,6 +106,19 @@ export function validateCommand(raw: unknown): ValidationResult {
       if (!isNonEmptyString(obj["reason"])) return { ok: false, reason: "'reason' must be a non-empty string" };
       return { ok: true, command: { command: "mark-escalation-worthy", pr: obj["pr"], reason: obj["reason"] } };
     }
+    case "pause-pr": {
+      const err = fieldError(obj, ["pr", "reason"]);
+      if (err) return { ok: false, reason: err };
+      if (!isPrNumber(obj["pr"])) return { ok: false, reason: "'pr' must be a positive integer" };
+      if (!isNonEmptyString(obj["reason"])) return { ok: false, reason: "'reason' must be a non-empty string" };
+      return { ok: true, command: { command: "pause-pr", pr: obj["pr"], reason: obj["reason"] } };
+    }
+    case "resume-pr": {
+      const err = fieldError(obj, ["pr"]);
+      if (err) return { ok: false, reason: err };
+      if (!isPrNumber(obj["pr"])) return { ok: false, reason: "'pr' must be a positive integer" };
+      return { ok: true, command: { command: "resume-pr", pr: obj["pr"] } };
+    }
     case "flag-owner-legacy": {
       const err = fieldError(obj, ["message"]);
       if (err) return { ok: false, reason: err };
@@ -149,6 +170,10 @@ export async function executeCommand(command: Command, deps: CommandDeps): Promi
       return normalize(await deps.restartSession(command.pr));
     case "mark-escalation-worthy":
       return normalize(await deps.markEscalationWorthy(command.pr, command.reason));
+    case "pause-pr":
+      return normalize(await deps.pausePr(command.pr, command.reason));
+    case "resume-pr":
+      return normalize(await deps.resumePr(command.pr));
     case "flag-owner-legacy":
       return normalize(await deps.flagOwnerLegacy(command.message));
     case "file-improvement-pr":

@@ -48,11 +48,12 @@ export function roundTypeFor(row: PrStateRow, priorRounds: number): RoundType {
   return "re-review";
 }
 
-/** Queued PRs in FIFO order by trigger time (nulls last, then PR number). */
+/** Queued PRs in FIFO order by trigger time (nulls last, then PR number).
+ * Overseer-paused PRs never dispatch. */
 export function queuedInOrder(store: StateStore): PrStateRow[] {
   return store
     .allPrs()
-    .filter((p) => p.state === "queued")
+    .filter((p) => p.state === "queued" && !p.paused)
     .sort((a, b) => {
       const at = a.trigger_ts ?? "";
       const bt = b.trigger_ts ?? "";

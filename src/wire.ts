@@ -101,6 +101,21 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           d.store.logEvent("marked_escalation_worthy", pr, { reason });
           return { ok: true };
         },
+        pausePr(pr, reason) {
+          const row = d.store.getPr(pr);
+          if (!row) return { ok: false, reason: `unknown PR #${pr}` };
+          d.store.setPaused(pr, true);
+          d.store.logEvent("pr_paused", pr, { reason });
+          return { ok: true, paused: pr };
+        },
+        async resumePr(pr) {
+          const row = d.store.getPr(pr);
+          if (!row) return { ok: false, reason: `unknown PR #${pr}` };
+          d.store.setPaused(pr, false);
+          d.store.logEvent("pr_resumed", pr, {});
+          await d.pump();
+          return { ok: true, resumed: pr };
+        },
         flagOwnerLegacy(message) {
           const flags = join(root, "state", "flags");
           mkdirSync(flags, { recursive: true });

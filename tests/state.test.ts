@@ -191,6 +191,8 @@ describe("status.json", () => {
         escalation_worthy: 0,
         trigger_ts: null,
         updated_at: expect.any(String),
+        author: "alice",
+        paused: 0,
       },
     ]);
 
