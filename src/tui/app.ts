@@ -28,6 +28,9 @@ export interface AppHooks {
   openUrl?: (url: string) => void;
   /** First-launch marker (read, write). Default: state/tui-help-shown. */
   helpSeen?: { get(): boolean; set(): void };
+  /**: the board is back in charge (attach closed) — a hot-reload that
+   * was deferred while attached can go through now. */
+  onResume?: () => void;
 }
 
 export type Tab = "board" | "digest";
@@ -108,6 +111,18 @@ export class App {
     this.out.write(CLEAR + MOUSE_ON);
     void this.refreshDetail();
     this.repaint();
+    this.hooks.onResume?.();
+  }
+
+  /** True while something other than the board owns the terminal or holds
+   * unsaved user input — hot-reload defers on it. */
+  isBusy(): boolean {
+    return this.suspended || this.view.inputBox !== undefined;
+  }
+
+  /** The PR the board is pointing at (survives a hot-reload). */
+  currentPr(): number | undefined {
+    return this.selectedPr;
   }
 
   // ---- data --------------------------------------------------------------

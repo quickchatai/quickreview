@@ -215,6 +215,37 @@ function cmdEvents(tail: number, json: boolean): void {
   }
 }
 
+/** `qcr companion up|down|status` — thin over CompanionLifecycle. */
+export async function cmdCompanion(sub: string | undefined): Promise<void> {
+  const { CompanionLifecycle, realDockerRunner } = await import("./tui/companion.js");
+  const cfg = loadConfig().companion;
+  const lc = new CompanionLifecycle(cfg, realDockerRunner);
+  switch (sub) {
+    case "up": {
+      const outcome = await lc.ensureUp();
+      const born = await lc.spawnPi();
+      console.log(`companion ${cfg.container_name}: ${outcome}; pi session ${born ? "spawned" : "already running"}`);
+      console.log(`attach: docker ${lc.attachArgv().join(" ")}`);
+      return;
+    }
+    case "down":
+      await lc.gracefulStop();
+      console.log(`companion ${cfg.container_name}: stopped (volumes and conversation kept)`);
+      return;
+    case "status": {
+      const st = await lc.status();
+      const pi = st.running ? await lc.piRunning() : false;
+      console.log(
+        `companion ${cfg.container_name}: ${st.running ? "running" : st.exists ? "stopped" : "absent"}` +
+          `${st.running ? ` · pi session ${pi ? "live" : "down"}` : ""}`,
+      );
+      return;
+    }
+    default:
+      throw new Error("usage: qcr companion <up|down|status>");
+  }
+}
+
 export async function main(argv: string[]): Promise<void> {
   const json = argv.includes("--json");
   argv = argv.filter((a) => a !== "--json");
@@ -271,14 +302,18 @@ export async function main(argv: string[]): Promise<void> {
     }
     case "tui": {
       const { runTui } = await import("./tui/index.js");
-      return runTui(rest[0]);
+      return runTui(rest);
     }
+    case "companion":
+      return cmdCompanion(rest[0]);
     case "attach": {
       if (!rest[0]) throw new Error("usage: qcr attach <pr-number|session>");
       return cmdAttach(rest[0]);
     }
     default:
-      console.log("usage: qcr <status|spend|today|why <n>|events|attach <n>|tui [pr|overseer]|checklist|compare <pr...>>");
+      console.log(
+        "usage: qcr <status|spend|today|why <n>|events|attach <n>|tui [pr|overseer]|companion <up|down|status>|checklist|compare <pr...>>",
+      );
       loadConfig(); // surface config errors early even on bad usage
   }
 }

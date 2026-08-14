@@ -32,6 +32,39 @@ export interface TuiConfig {
   msg_timeout_s: number;
 }
 
+/** The local companion container. Host paths are expanded; empty
+ * strings mean "derive from the sandbox root" at parse time. */
+export interface CompanionConfig {
+  /** `qcr tui` starts the companion unless this is off or --no-companion. */
+  enabled: boolean;
+  container_name: string;
+  image: string;
+  /** Named volume for the companion's own pihome (OAuth, sessions, memory). */
+  pihome_volume: string;
+  /** tmux session name inside the container. */
+  session: string;
+  model: string;
+  /** Host path of the review-sandbox repo → /workspace (rw). */
+  repo_dir: string;
+  /** Host path of the issue tracker → /tracker (rw, actor `companion`). */
+  tracker_dir: string;
+  /** Host dir the TUI writes ambient snapshots into → /feed. */
+  feed_dir: string;
+  /** Host dir the companion writes alert files into → /alerts. */
+  alerts_dir: string;
+  /** Host ssh config dir mounted read-only (VM reads + inject). */
+  ssh_dir: string;
+  // --- watcher knobs. C1 seeds sane defaults; C2 owns the full set. ---
+  /** A round overdue by more than this is worth waking the operator for. */
+  overdue_grace_min: number;
+  /** status.json older than this counts as a stale-daemon alert. */
+  stale_alert_s: number;
+  /** awaiting_author/awaiting_human older than this is nag-worthy. */
+  awaiting_age_h: number;
+  /** Minimum gap between two alerts about the same subject. */
+  cooldown_min: number;
+}
+
 export interface Config {
   dry_run: boolean;
   github: GithubConfig;
@@ -53,6 +86,7 @@ export interface Config {
   models: { default: string; conversation: string; overseer: string; passes: Record<string, string> };
   pi: { package: string; version: string; session_dir: string };
   tui: TuiConfig;
+  companion: CompanionConfig;
 }
 
 /** [tui] is optional in config.toml — the TUI is an operator convenience and
@@ -68,6 +102,25 @@ export const TUI_DEFAULTS: TuiConfig = {
   msg_timeout_s: 30,
 };
 
+/** [companion] is optional in config.toml, exactly like [tui]. */
+export const COMPANION_DEFAULTS: CompanionConfig = {
+  enabled: true,
+  container_name: "qcr-companion",
+  image: "qcr-companion",
+  pihome_volume: "companion-pihome",
+  session: "companion",
+  model: "openai-codex/gpt-5.6-sol",
+  repo_dir: "", // → sandboxRoot()
+  tracker_dir: "~/src/tracker",
+  feed_dir: "", // → <root>/state/companion/feed
+  alerts_dir: "", // → <root>/state/companion/alerts
+  ssh_dir: "~/.ssh",
+  overdue_grace_min: 30,
+  stale_alert_s: 300,
+  awaiting_age_h: 24,
+  cooldown_min: 20,
+};
+
 export function sandboxRoot(): string {
   // Robust under both dist/src (built) and src (vitest): walk up to package.json.
   let dir = dirname(fileURLToPath(import.meta.url));
@@ -80,6 +133,18 @@ export function sandboxRoot(): string {
 
 export function expandHome(p: string): string {
   return p.startsWith("~/") || p === "~" ? resolve(homedir(), p.slice(2)) : p;
+}
+
+/** Absolute host paths for every companion mount; "" means derive from root. */
+export function resolveCompanionPaths(c: CompanionConfig, root: string = sandboxRoot()): CompanionConfig {
+  return {
+    ...c,
+    repo_dir: c.repo_dir ? expandHome(c.repo_dir) : root,
+    tracker_dir: expandHome(c.tracker_dir),
+    feed_dir: c.feed_dir ? expandHome(c.feed_dir) : resolve(root, "state", "companion", "feed"),
+    alerts_dir: c.alerts_dir ? expandHome(c.alerts_dir) : resolve(root, "state", "companion", "alerts"),
+    ssh_dir: expandHome(c.ssh_dir),
+  };
 }
 
 function req(obj: Record<string, unknown>, key: string): unknown {
@@ -100,6 +165,7 @@ export function parseConfig(toml: string): Config {
     models: { ...(req(raw, "models") as Omit<Config["models"], "passes">), passes: (raw.models?.passes ?? {}) as Record<string, string> },
     pi: { ...(req(raw, "pi") as Config["pi"]) },
     tui: { ...TUI_DEFAULTS, ...((raw.tui ?? {}) as Partial<TuiConfig>) },
+    companion: resolveCompanionPaths({ ...COMPANION_DEFAULTS, ...((raw.companion ?? {}) as Partial<CompanionConfig>) }),
   };
   for (const k of [
     "repo", "app_slug", "bot_login", "review_team", "escalation_reviewer",

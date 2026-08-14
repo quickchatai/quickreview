@@ -1,7 +1,9 @@
 // `qcr tui [pr|overseer]` entry point. Wires the real ssh runner; the
 // optional target becomes the deep link.
-import { loadConfig } from "../config.js";
+import { join } from "node:path";
+import { loadConfig, sandboxRoot } from "../config.js";
 import { App } from "./app.js";
+import { HotReloader, parseResumeArg, readResumeState, realReexec } from "./reload.js";
 import { realSshRunner } from "./remote.js";
 
 export function parseTarget(arg: string | undefined): { kind: "none" } | { kind: "pr"; pr: number } | { kind: "session"; session: string } | { kind: "bad"; reason: string } {
@@ -13,11 +15,14 @@ export function parseTarget(arg: string | undefined): { kind: "none" } | { kind:
 
 export const TUI_HELP = `qcr tui — live board for the review daemon (over ssh, read-only)
 
-usage: qcr tui [<pr> | overseer | main]
+usage: qcr tui [<pr> | overseer | main] [--no-companion] [--no-reload]
 
   qcr tui           open the board
   qcr tui 5012      deep-link straight into PR 5012's pi session
   qcr tui overseer  deep-link into the overseer session
+
+  --no-companion    skip starting/stopping the local companion container
+  --no-reload       do not re-exec when a new dist/ build lands
 
 keys: 1/2 tabs · j/k select · ⏎ attach · Ctrl-q detach (twice = literal) ·
       m quick-message · o overseer · M main · w detail · e events · r refresh ·
@@ -34,12 +39,34 @@ troubleshooting:
                      extended-keys passthrough there too
 `;
 
-export async function runTui(targetArg?: string): Promise<void> {
-  if (targetArg === "--help" || targetArg === "-h") {
+/** Flags the TUI owns; everything else is the (optional) deep-link target. */
+export interface TuiArgs {
+  target: string | undefined;
+  companion: boolean;
+  reload: boolean;
+  resumeState: string | undefined;
+  help: boolean;
+}
+
+export function parseTuiArgs(args: string[]): TuiArgs {
+  const { stateFile, rest } = parseResumeArg(args);
+  const flags = new Set(rest.filter((a) => a.startsWith("-")));
+  return {
+    target: rest.find((a) => !a.startsWith("-")),
+    companion: !flags.has("--no-companion"),
+    reload: !flags.has("--no-reload"),
+    resumeState: stateFile,
+    help: flags.has("--help") || flags.has("-h"),
+  };
+}
+
+export async function runTui(argv: string | string[] = []): Promise<void> {
+  const args = parseTuiArgs(typeof argv === "string" ? [argv] : argv);
+  if (args.help) {
     console.log(TUI_HELP);
     return;
   }
-  const target = parseTarget(targetArg);
+  const target = parseTarget(args.target);
   if (target.kind === "bad") {
     console.error(`qcr tui: ${target.reason}`);
     process.exitCode = 2;
@@ -56,8 +83,6 @@ export async function runTui(targetArg?: string): Promise<void> {
   app.view.repo = full.github.repo;
   const { spawn } = await import("node:child_process");
   const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
-  const { join } = await import("node:path");
-  const { sandboxRoot } = await import("../config.js");
   app.hooks.openUrl = (url) => {
     spawn("xdg-open", [url], { detached: true, stdio: "ignore" }).unref();
   };
@@ -76,11 +101,70 @@ export async function runTui(targetArg?: string): Promise<void> {
   const { installDigestHooks } = await import("./digesttab.js");
   installDigestHooks(app);
 
+  // Companion container: adopt-or-start before the board comes up. A failure
+  // here is a degraded mode, never a reason not to open the TUI.
+  const { CompanionLifecycle, realDockerRunner } = await import("./companion.js");
+  const companion = new CompanionLifecycle(full.companion, realDockerRunner);
+  const companionOn = args.companion && full.companion.enabled;
+  let companionUp = false;
+  if (companionOn) {
+    try {
+      await companion.ensureUp();
+      await companion.spawnPi();
+      companionUp = true;
+    } catch (err) {
+      app.notice(`companion unavailable: ${String(err instanceof Error ? err.message : err)}`);
+    }
+  }
+
+  // Restore a hot-reload snapshot before run(), so the first paint is already
+  // on the right tab with the right selection.
+  const resumed = args.resumeState ? readResumeState(args.resumeState) : undefined;
+  if (resumed) {
+    if (resumed.tab === "digest") app.tab = "digest";
+    app.view.eventsScroll = resumed.eventsScroll;
+    app.view.eventsFocus = resumed.eventsFocus;
+    app.view.detailFull = resumed.detailFull;
+  }
+
+  // Hot-reload: watch our own dist/ and re-exec when a new build lands.
+  const reloadState = join(sandboxRoot(), "state", "tui-resume.json");
+  const reloader = args.reload
+    ? new HotReloader({
+        distDir: join(sandboxRoot(), "dist"),
+        stateFile: reloadState,
+        isBusy: () => app.isBusy(),
+        snapshot: () => ({
+          tab: app.tab,
+          pr: app.currentPr(),
+          eventsScroll: app.view.eventsScroll,
+          eventsFocus: app.view.eventsFocus,
+          detailFull: app.view.detailFull,
+          saved_at: "",
+        }),
+        reexec: (file) => realReexec(file, () => app.quit()),
+      })
+    : undefined;
+  reloader?.start();
+  app.hooks.onResume = () => reloader?.poke();
+
   // Deep link: run() completes its synchronous setup (terminal modes, poller)
   // before awaiting quit, so the attach can start right after — the board
   // loads behind it and is one Ctrl-q away.
-  const running = app.run(target.kind === "pr" ? target.pr : undefined);
+  const initial = target.kind === "pr" ? target.pr : resumed?.pr;
+  const running = app.run(initial);
   if (target.kind === "pr") void app.hooks.attach?.(`pr-${target.pr}`, app);
   else if (target.kind === "session") void app.hooks.attach?.(target.session, app);
   await running;
+  reloader?.stop();
+
+  // Clean quit stops the container (conversation + auth survive on volumes).
+  // A crash deliberately leaves it running — the next start adopts it.
+  if (companionUp) {
+    try {
+      await companion.gracefulStop();
+    } catch {
+      /* leaving it running is harmless: the next start adopts */
+    }
+  }
 }
