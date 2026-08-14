@@ -194,13 +194,14 @@ describe("chart primitives", () => {
 
   it("histogramLines is a small column chart: 4 bar rows + counts + labels", () => {
     const lines = histogramLines(fullWindow.ttfv, 40, ACCENTS.blue);
-    expect(lines).toHaveLength(6);
+    expect(lines).toHaveLength(7); // 4 bar rows + baseline + counts + axis
     const plain = lines.map(stripAnsi);
     // four buckets: 2, 4, 3, 0 → the max bucket reaches the top row
     expect(plain[0]!).toContain("█");
-    expect(plain[3]!).toContain("·"); // zero bucket keeps a dim baseline dot
-    expect(plain[4]!).toContain("4"); // counts row
-    expect(plain[5]!).toContain("5m"); // axis row
+    expect(plain[4]!).toContain("▔"); // the columns sit on a dim baseline
+    expect(plain[5]!).toContain("4"); // counts row
+    expect(plain[5]!).toContain("·"); // a zero bucket shows a dim dot count
+    expect(plain[6]!).toContain("5m"); // axis row
     expect(lines[0]).toContain(ACCENTS.blue); // marks carry the card accent
     expect(plain.join(" ")).not.toContain("median"); // stats live in the title
     for (const l of plain) expect(displayWidth(l)).toBeLessThanOrEqual(40);
@@ -208,9 +209,8 @@ describe("chart primitives", () => {
 
   it("histogramLines scales to the max count and collapses at n=0", () => {
     const lines = histogramLines(dist(3, 1, 1, [{ label: "a", count: 3 }, { label: "b", count: 0 }]), 20);
-    const bottom = stripAnsi(lines[3]!);
-    expect(bottom).toContain("█");
-    expect(bottom).toContain("·");
+    expect(stripAnsi(lines[3]!)).toContain("█"); // the max bucket fills the bottom bar row
+    expect(stripAnsi(lines[5]!)).toContain("·"); // the zero bucket's dot lives in the counts row
     expect(histogramLines(emptyDist, 40)).toEqual([]); // title says "no data yet"
   });
 
@@ -291,7 +291,7 @@ describe("metrics dashboard", () => {
     const cards = metricsCards(fullWindow as never, daily, 24);
     for (const title of ["TIME TO FIRST VERDICT", "ROUND DURATION", "ROUNDS UNTIL RESOLUTION", "AUTHOR RESPONSE", "PING-PONG"]) {
       const card = cards.find((c) => c.title === title)!;
-      expect(card.body(60).length).toBeLessThanOrEqual(6);
+      expect(card.body(60).length).toBeLessThanOrEqual(7);
     }
     // ...and no card row is a solid block of filled cells with text inside it
     for (const card of cards) {

@@ -110,13 +110,16 @@ export function histogramLines(dist: Dist, width: number, color: string = FG.acc
   const buckets = dist.histogram;
   // Slots widen with the terminal (up to 12 cells) and the bars get real
   // height — a small column chart, not a row of nubs (the owner, 2026-08-14).
-  const slot = Math.max(2, Math.min(12, Math.floor((w + 1) / buckets.length)));
-  const cell = slot - 1;
+  // Buckets spread across the full width with a 2-space gap and sit on a dim
+  // baseline, so the shape reads as one chart instead of floating strips.
+  const slot = Math.max(3, Math.min(18, Math.floor((w + 2) / buckets.length)));
+  const cell = Math.max(1, slot - 2);
   const height = 4;
   const max = buckets.reduce((m, b) => Math.max(m, b.count), 0);
   const levels = buckets.map((b) =>
     b.count <= 0 || max <= 0 ? 0 : Math.max(1, Math.ceil((b.count / max) * height * 8)),
   );
+  const chartW = buckets.length * slot - 2;
   const rows: string[] = [];
   for (let r = height - 1; r >= 0; r--) {
     const row = buckets
@@ -124,15 +127,15 @@ export function histogramLines(dist: Dist, width: number, color: string = FG.acc
         const rem = levels[i]! - r * 8;
         if (rem >= 8) return `${color}${"█".repeat(cell)}${RESET}`;
         if (rem > 0) return `${color}${SPARK[rem - 1]!.repeat(cell)}${RESET}`;
-        if (r === 0) return `${dim("·")}${" ".repeat(cell - 1)}`;
         return " ".repeat(cell);
       })
-      .join(" ");
+      .join("  ");
     rows.push(truncate(row, w));
   }
-  const counts = buckets.map((b) => fit(b.count > 0 ? String(b.count) : "", slot)).join("").trimEnd();
+  rows.push(truncate(dim("▔".repeat(Math.min(chartW, w))), w));
+  const counts = buckets.map((b) => fit(b.count > 0 ? String(b.count) : "·", slot)).join("").trimEnd();
   const axis = buckets.map((b) => fit(b.label.replace(/^</, ""), slot)).join("").trimEnd();
-  if (counts) rows.push(truncate(dim(counts), w));
+  rows.push(truncate(dim(counts), w));
   rows.push(truncate(dim(axis), w));
   return rows;
 }
@@ -424,14 +427,16 @@ export function packColumns(cards: MetricsCard[], widths: number[], targetRows =
     const target = assign[i]!;
     const w = Math.max(8, widths[target]! - 1);
     const block = [truncate(section(card.title, card.subtitle, card.accent), w)];
-    for (const line of card.body(w)) block.push(truncate(line, w));
+    // Bodies sit indented under their title — the extra margin keeps
+    // neighbouring charts from reading as one figure.
+    for (const line of card.body(w - 2)) block.push(`  ${truncate(line, w - 2)}`);
     blocks[target]!.push(block);
   });
-  // Exactly one blank row between cards — a tight report, no stranded slack.
+  // Two blank rows between cards — proper breathing room between figures.
   return blocks.map((column) => {
     const out: string[] = [];
     column.forEach((block, i) => {
-      if (i > 0) out.push("");
+      if (i > 0) out.push("", "");
       out.push(...block);
     });
     return out;
