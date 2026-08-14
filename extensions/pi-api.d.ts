@@ -40,8 +40,15 @@ declare module "@earendil-works/pi-coding-agent" {
     [key: string]: unknown;
   }
 
+  export interface PiEventContext {
+    /** VERIFY-ON-PIN: documented extension UI surface in pi 0.84.1. */
+    ui?: { setTheme(theme: string | unknown): { success: boolean; error?: string } };
+    [key: string]: unknown;
+  }
+
   export type PiEventHandler = (
     event: PiEventPayload,
+    context?: PiEventContext,
   ) => void | CompactHandlerResult | Promise<void | CompactHandlerResult>;
 
   /** VERIFY-ON-PIN: message-delivery options (findings §3 option 2). */

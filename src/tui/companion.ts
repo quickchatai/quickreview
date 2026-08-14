@@ -117,6 +117,10 @@ export class CompanionLifecycle {
       // the entrypoint already writes).
       `${CONTAINER.workspace}/extensions/companion-wake.ts`,
       "--extension",
+      `${CONTAINER.workspace}/extensions/companion-theme.ts`,
+      "--theme",
+      `${CONTAINER.workspace}/docker/companion/theme.json`,
+      "--extension",
       // day-open channel: the daemon's inject bridge, unmodified. It
       // drains its directory on session_start before it starts watching, so
       // the rollover can queue the opening message BEFORE pi is spawned and

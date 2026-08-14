@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TUI_DEFAULTS } from "../src/config.js";
 import { App } from "../src/tui/app.js";
-import { AttachScreen, statusRow, type PtyLike, type PtySpawner } from "../src/tui/attach.js";
+import { AttachScreen, muteCompanionToolFlash, statusRow, type PtyLike, type PtySpawner } from "../src/tui/attach.js";
 import { CHORD_GRACE_MS, ChordScanner } from "../src/tui/chord.js";
 import { parseTarget } from "../src/tui/index.js";
 import { stripAnsi } from "../src/tui/paint.js";
@@ -61,6 +61,13 @@ describe("ChordScanner", () => {
 });
 
 // ---- term painter ----------------------------------------------------------
+
+describe("companion tool colors", () => {
+  it("neutralizes pi's green tool-success background without touching other SGR", () => {
+    const input = "a\x1b[48;2;40;50;40mtool\x1b[0m\x1b[38;2;40;50;40mtext";
+    expect(muteCompanionToolFlash(input)).toBe("a\x1b[48;2;32;35;42mtool\x1b[0m\x1b[38;2;40;50;40mtext");
+  });
+});
 
 describe("TermPane", () => {
   it("paints written text with truecolor SGR runs", async () => {

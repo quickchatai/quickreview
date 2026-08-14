@@ -12,6 +12,14 @@ import { rule, SGR, CLEAR } from "./paint.js";
 import { attachArgv } from "./remote.js";
 import { TermPane } from "./term.js";
 
+/** pi 0.84.1's built-in dark theme paints every successful tool panel with
+ * #283228. Through the nested tmux/xterm pane that reads as a full-width green
+ * flash. Neutralize that one background for an already-running companion;
+ * fresh sessions also select the companion-muted theme at source. */
+export function muteCompanionToolFlash(data: string): string {
+  return data.replaceAll("\x1b[48;2;40;50;40m", "\x1b[48;2;32;35;42m");
+}
+
 export interface PtyLike {
   write(data: string): void;
   resize(cols: number, rows: number): void;
@@ -90,7 +98,8 @@ export class AttachScreen {
     this.pty.onData((data) => {
       this.sawData = true;
       stderrTail = (stderrTail + data).slice(-200);
-      this.pane?.write(data, () => this.schedulePaint());
+      const painted = this.session === "companion" ? muteCompanionToolFlash(data) : data;
+      this.pane?.write(painted, () => this.schedulePaint());
     });
     this.pty.onExit(({ exitCode }) => {
       if (this.done) return;
