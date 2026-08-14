@@ -198,7 +198,7 @@ print_plan() {
   echo "  pi pin       $CFG_PI (config.toml == group_vars, not bumped)"
   echo "  vm host      ${VM_HOST:-<unset — set QC_VM_HOST>}"
   case "$MODE" in
-    sync)    echo "  action       rsync working copy -> /opt/quickreview/sandbox, recreate container (no image rebuild)" ;;
+    sync)    echo "  action       mirror-rsync working copy -> /opt/quickreview/sandbox (--delete, runtime dirs kept), restart container (no image rebuild)" ;;
     rebuild) echo "  action       full playbook with -e rebuild_image=true (image rebuilt against the pins)" ;;
     verify)  echo "  action       post-deploy checks over ssh only (no ansible)" ;;
   esac
