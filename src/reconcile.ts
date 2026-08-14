@@ -58,6 +58,40 @@ function correction(deps: ReconcileDeps, pr: number | null, what: string, detail
   (deps.log ?? (() => {}))(`reconcile: correction ${what}${pr ? ` #${pr}` : ""}`, detail);
 }
 
+/** Startup repair: a DB round marked running whose tmux session did not
+ * survive the restart will never produce a verdict — it would sit as a
+ * phantom until its deadline, holding a capacity slot and then corrupting the
+ * PR via the overdue path. Cancel it; if it was the PR's newest round and the
+ * PR still says reviewing, requeue so the lost work is redone. */
+export function reconcileOrphanedRounds(
+  store: StateStore,
+  adoptedPrs: Iterable<number>,
+  opts: { botLogin: string; now?: () => Date; log?: (msg: string, extra?: unknown) => void },
+): { cancelled: number[]; requeued: number[] } {
+  const live = new Set(adoptedPrs);
+  const now = opts.now ?? (() => new Date());
+  const log = opts.log ?? (() => {});
+  const cancelled: number[] = [];
+  const requeued: number[] = [];
+  for (const round of store.runningRounds()) {
+    if (live.has(round.pr)) continue;
+    store.markRoundCancelled(round.id, "orphaned — tmux session lost across a restart");
+    store.logEvent("round_orphaned", round.pr, { round_id: round.id, round_no: round.round_no });
+    cancelled.push(round.pr);
+    log(`startup: #${round.pr} round ${round.round_no} cancelled (session lost)`);
+    const row = store.getPr(round.pr);
+    if (row?.state === "reviewing" && !store.hasLaterRound(round.pr, round.round_no)) {
+      // "reviewing" was true only while the session lived. Same move as the
+      // overseer's rerun-round command: back to queued for a fresh dispatch.
+      store.upsertPr({ ...row, state: "queued", trigger_ts: now().toISOString() });
+      store.logEvent("orphaned_round_requeued", round.pr, { round_id: round.id, round_no: round.round_no });
+      requeued.push(round.pr);
+      log(`startup: #${round.pr} requeued — its in-flight round was lost`);
+    }
+  }
+  return { cancelled, requeued };
+}
+
 /** One reconcile pass. Never throws: per-step failures land in
  * `report.errors` so a single bad PR or a flaky API call cannot stall the
  * daemon. */

@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
 import type { PrRef, StalePr } from "../src/github.js";
-import { reconcileOnce, type ReconcileAdapter, type ReconcileSearchItem } from "../src/reconcile.js";
+import { reconcileOnce, reconcileOrphanedRounds, type ReconcileAdapter, type ReconcileSearchItem } from "../src/reconcile.js";
 import { StateStore, type PrLifecycleState } from "../src/state.js";
 import type { SessionHooks } from "../src/types.js";
 
@@ -329,5 +329,55 @@ describe("dry-run re-trigger suppression", () => {
     store.setPaused(13, false);
     await reconcileOnce({ cfg: { ...cfg, dry_run: false }, store, adapter: gh, hooks });
     expect(store.getPr(13)!.state).toBe("queued");
+  });
+});
+
+describe("reconcileOrphanedRounds", () => {
+  const upsert = (store: StateStore, n: number, state: PrLifecycleState) =>
+    store.upsertPr({
+      number: n,
+      state,
+      head_sha: `sha${n}`,
+      title: `PR ${n}`,
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      escalation_worthy: 0,
+      migration_gate: 0,
+    });
+
+  it("cancels rounds whose session is gone and requeues lost work", () => {
+    const store = new StateStore(":memory:");
+    upsert(store, 10, "reviewing"); // session survived
+    upsert(store, 11, "reviewing"); // session lost — latest round → requeue
+    upsert(store, 12, "tracked"); // phantom round, PR already moved on
+    store.startRound(10, "first", ["pass-baseline"], 75);
+    const lostId = store.startRound(11, "first", ["pass-baseline"], 75);
+    const phantomId = store.startRound(12, "first", ["pass-baseline"], 75);
+
+    const res = reconcileOrphanedRounds(store, [10], { botLogin: cfg.github.bot_login });
+
+    expect(res.cancelled.sort()).toEqual([11, 12]);
+    expect(res.requeued).toEqual([11]);
+    expect(store.runningRounds().map((r) => r.pr)).toEqual([10]); // capacity restored
+    expect((store.db.prepare("SELECT status FROM rounds WHERE id = ?").get(lostId) as any).status).toBe("cancelled");
+    expect((store.db.prepare("SELECT status FROM rounds WHERE id = ?").get(phantomId) as any).status).toBe("cancelled");
+    expect(store.getPr(11)!.state).toBe("queued");
+    expect(store.getPr(12)!.state).toBe("tracked"); // never disturbed
+    store.close();
+  });
+
+  it("does not requeue a PR whose newer round already completed", () => {
+    const store = new StateStore(":memory:");
+    upsert(store, 20, "reviewing");
+    const oldId = store.startRound(20, "first", ["pass-baseline"], 75);
+    const newId = store.startRound(20, "re-review", ["pass-baseline"], 75);
+    store.finishRound(newId, "REQUEST_CHANGES", 1.25);
+
+    const res = reconcileOrphanedRounds(store, [], { botLogin: cfg.github.bot_login });
+    expect(res.cancelled).toEqual([20]);
+    expect(res.requeued).toEqual([]); // the phantom was superseded — no new round
+    expect((store.db.prepare("SELECT status FROM rounds WHERE id = ?").get(oldId) as any).status).toBe("cancelled");
+    store.close();
   });
 });

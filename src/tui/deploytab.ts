@@ -8,7 +8,7 @@ import { execFile } from "node:child_process";
 import type { TuiConfig } from "../config.js";
 import type { App } from "./app.js";
 import type { BoardKey } from "./keys.js";
-import { Frame, SGR, rule, truncate } from "./paint.js";
+import { Frame, SGR, displayWidth, rule, stripAnsi, truncate } from "./paint.js";
 import type { RemoteResult, SshRunner } from "./remote.js";
 import { FG, RESET } from "./theme.js";
 
@@ -74,8 +74,10 @@ export interface DeployState {
   /** deploy.sh --dry-run output — a refusal (dirty tree, pin drift) shows verbatim. */
   plan: string[];
   scroll: number;
-  /** First D pressed at this ms timestamp; a second D inside the window deploys. */
+  /** First D/click at this ms timestamp; a second inside the window deploys. */
   armedAt?: number;
+  /** Screen rect of the DEPLOY button (1-based), refreshed on every paint. */
+  buttonZone?: { x1: number; y1: number; x2: number; y2: number };
 }
 
 export const DEPLOY_CONFIRM_MS = 5000;
@@ -168,13 +170,22 @@ export function deployLines(st: DeployState, width: number): string[] {
 export function renderDeployTab(st: DeployState, dryRun: boolean, cols: number, rows: number): Frame {
   const frame = new Frame(cols, rows);
   frame.set(0, rule(cols, "┌", "┐", ["quickreview", dryRun ? "DRY-RUN" : `${SGR.bgRed}${SGR.bold} LIVE ${SGR.reset}`, "deploy"]));
-  const bodyRows = rows - 3; // top bar + hints + bottom border
+
+  // THE button — always visible, pinned under the title, mouse-clickable.
+  const armed = st.armedAt !== undefined;
+  const label = armed ? " ⚠ CLICK AGAIN TO DEPLOY NOW " : " ▶ DEPLOY TO VM ";
+  const btn = armed ? `${SGR.bgRed}${SGR.bold}${label}${SGR.reset}` : `${SGR.inverse}${SGR.bold}${label}${SGR.reset}`;
+  const suffix = armed ? "  any other key/click cancels" : "  runs ./scripts/deploy.sh sync (also: D D)";
+  frame.boxRow(1, [{ text: ` ${btn}${FG.dim}${suffix}${RESET}`, width: cols - 2 }]);
+  st.buttonZone = { x1: 2, y1: 2, x2: 1 + displayWidth(stripAnsi(label)), y2: 2 };
+
+  const bodyRows = rows - 4; // top bar + button row + hints + bottom border
   const lines = deployLines(st, cols - 4);
   for (let r = 0; r < bodyRows; r++) {
-    frame.boxRow(1 + r, [{ text: ` ${lines[st.scroll + r] ?? ""}`, width: cols - 2 }]);
+    frame.boxRow(2 + r, [{ text: ` ${lines[st.scroll + r] ?? ""}`, width: cols - 2 }]);
   }
   const refreshing = st.loading ? "  refreshing…" : "";
-  frame.boxRow(rows - 2, [{ text: ` ${SGR.dim}[1]board [2]digest [4]deploy  j/k scroll  r refresh  D D deploy  q quit${refreshing}${SGR.reset}`, width: cols - 2 }]);
+  frame.boxRow(rows - 2, [{ text: ` ${SGR.dim}[1]board [2]digest [4]deploy  click ▶ or D D deploy  j/k scroll  r refresh  q quit${refreshing}${SGR.reset}`, width: cols - 2 }]);
   frame.set(rows - 1, rule(cols, "└", "┘", []));
   return frame;
 }
