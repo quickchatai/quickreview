@@ -258,8 +258,10 @@ describe("metrics dashboard", () => {
     expect(text).toContain("⚑ 3 awaiting you");
   });
 
-  it("renders every chart card at a wide terminal, stats in the titles", () => {
-    const text = renderMetrics(mkView(), 200, 44).lines.map(stripAnsi).join("\n");
+  it("renders every chart card in the single-column stack (scrolling the fold into view)", () => {
+    const text = [0, 40, 80]
+      .map((scroll) => renderMetrics(mkView({ scroll }), 200, 44).lines.map(stripAnsi).join("\n"))
+      .join("\n");
     for (const title of [
       "ACTIVITY",
       "TIME TO FIRST VERDICT",
@@ -314,23 +316,23 @@ describe("metrics dashboard", () => {
     expect(body[6]).toBe("…+3 more");
   });
 
-  it("balances the columns by rendered height", () => {
+  it("stacks every card into the one column, slack spread over the gaps", () => {
     for (const [cols, rows] of [
       [200, 44],
       [200, 130],
       [120, 40],
     ] as const) {
       const widths = columnWidths(cols);
+      expect(widths).toHaveLength(1);
       const cards = metricsCards(fullWindow as never, daily, rows - 5);
-      // packing proper: columns end within a card of each other
-      const packed = packColumns(cards, widths).map((c) => c.length);
-      expect(Math.max(...packed) - Math.min(...packed)).toBeLessThanOrEqual(6);
-      // and the slack of a tall terminal is spread over the gaps, never overflowed
-      const spread = packColumns(cards, widths, rows - 5).map((c) => c.length);
-      for (let i = 0; i < spread.length; i++) {
-        expect(spread[i]!).toBeGreaterThanOrEqual(packed[i]!);
-        expect(spread[i]!).toBeLessThanOrEqual(rows - 5);
-      }
+      const packed = packColumns(cards, widths);
+      expect(packed).toHaveLength(1);
+      // every card is present, in order, in the single stack
+      const stack = packed[0]!.join("\n");
+      for (const c of cards) expect(stack).toContain(c.title.split(" ")[0]!);
+      // slack spreading never shrinks the stack
+      const spread = packColumns(cards, widths, rows - 5);
+      expect(spread[0]!.length).toBeGreaterThanOrEqual(packed[0]!.length);
     }
   });
 
@@ -347,17 +349,23 @@ describe("metrics dashboard", () => {
     expect(chartRows.length).toBeGreaterThan(10);
   });
 
-  it("goes 1 / 2 / 3 columns by width", () => {
-    expect(columnWidths(80)).toHaveLength(1);
-    expect(columnWidths(99)).toHaveLength(1);
-    expect(columnWidths(100)).toHaveLength(2);
-    expect(columnWidths(169)).toHaveLength(2);
-    expect(columnWidths(170)).toHaveLength(3);
-    expect(columnWidths(200).reduce((a, b) => a + b, 0)).toBe(200 - 2 - 2);
+  it("is always a single column at every width", () => {
+    for (const cols of [80, 99, 100, 169, 170, 220]) {
+      expect(columnWidths(cols)).toEqual([cols - 2]);
+    }
+  });
+
+  it("caps every card at a readable measure even on an ultrawide terminal", () => {
+    const cards = metricsCards(fullWindow as never, daily, 39);
+    for (const column of packColumns(cards, columnWidths(220))) {
+      for (const line of column) expect(displayWidth(line)).toBeLessThanOrEqual(92);
+    }
   });
 
   it("renders sparse distributions as 'no data yet' rather than empty charts", () => {
-    const text = renderMetrics(mkView(), 200, 44).lines.map(stripAnsi).join("\n");
+    const text = [0, 40, 80]
+      .map((scroll) => renderMetrics(mkView({ scroll }), 200, 44).lines.map(stripAnsi).join("\n"))
+      .join("\n");
     expect(text).toContain("no data yet"); // review_depth + pingpong are n=0
     expect(text).not.toContain("XL"); // zero-PR size buckets drop out
   });

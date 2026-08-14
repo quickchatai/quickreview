@@ -25,6 +25,9 @@ import { FG, RESET, fmtAge, stateColor, verdictColor } from "./theme.js";
 
 // ---- chart primitives -------------------------------------------------------
 
+/** Widest a card may render — the single column stays a legible measure. */
+const READ_WIDTH = 92;
+
 const SPARK = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"] as const;
 
 /** Fixed card accents — five hues, assigned per card, never cycled. */
@@ -375,15 +378,9 @@ export function metricsCards(win: MetricsWindow, daily: DailyRow[], rows = 24): 
   ];
 }
 
-/** Column count and per-column widths — the board's adaptive-layout idea. */
+/** Always a single column — one card under the other (the owner, 2026-08-14). */
 export function columnWidths(cols: number): number[] {
-  const inner = cols - 2;
-  const n = cols >= 170 ? 3 : cols >= 100 ? 2 : 1;
-  const usable = inner - (n - 1); // the dividers boxRow inserts between cells
-  const base = Math.floor(usable / n);
-  const widths = new Array<number>(n).fill(base);
-  widths[n - 1] = usable - base * (n - 1);
-  return widths;
+  return [cols - 2];
 }
 
 /**
@@ -393,7 +390,7 @@ export function columnWidths(cols: number): number[] {
  */
 export function packColumns(cards: MetricsCard[], widths: number[], targetRows = 0): string[][] {
   const n = widths.length;
-  const measureW = Math.max(8, Math.min(...widths) - 1);
+  const measureW = Math.max(8, Math.min(READ_WIDTH, Math.min(...widths) - 1));
   const heights = new Array<number>(n).fill(0);
   const assign = new Array<number>(cards.length).fill(0);
   const sized = cards.map((card, i) => ({ i, h: card.body(measureW).length + 1 }));
@@ -410,7 +407,9 @@ export function packColumns(cards: MetricsCard[], widths: number[], targetRows =
   const blocks: string[][][] = widths.map(() => []);
   cards.forEach((card, i) => {
     const target = assign[i]!;
-    const w = Math.max(8, widths[target]! - 1); // one leading space per cell
+    // Cap at a readable measure — a lone column on an ultrawide terminal
+    // reads like a document, not a wall (the owner, 2026-08-14).
+    const w = Math.max(8, Math.min(READ_WIDTH, widths[target]! - 1));
     const block = [truncate(section(card.title, card.subtitle, card.accent), w)];
     for (const line of card.body(w)) block.push(truncate(line, w));
     blocks[target]!.push(block);
