@@ -82,6 +82,10 @@ export function installCompanionTabHooks(app: App, deps: CompanionTabDeps): void
       ).run();
     } finally {
       attached = false;
+      // Ctrl-q means "back to the board" — the companion tab is always pi,
+      // never a resting screen you have to ⏎ through (the owner, 2026-08-14).
+      if (theApp.tab === "companion") theApp.tab = "board";
+      theApp.repaint();
     }
   };
 }
