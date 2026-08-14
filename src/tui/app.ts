@@ -4,11 +4,13 @@
 // quick-message land in and plug in via AppHooks).
 import type { WhyPayload } from "../cli.js";
 import type { TuiConfig } from "../config.js";
-import { renderBoard, type BoardView } from "./board.js";
+import { renderBoard, type BoardAction, type BoardView } from "./board.js";
 import { decodeInputKey, decodeKey } from "./keys.js";
 import { formatEvent, moveSelection, reselect, sortPrs, type EventLine } from "./model.js";
-import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR } from "./paint.js";
+import { MOUSE_OFF, MOUSE_ON, extractMouseEvents, hitTest, type MouseEvent, type Zone } from "./mouse.js";
+import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR, Frame } from "./paint.js";
 import { Poller } from "./poll.js";
+import { prUrl } from "./theme.js";
 import { eventsArgv, whyArgv, type SshRunner } from "./remote.js";
 
 export interface AppHooks {
@@ -22,6 +24,10 @@ export interface AppHooks {
   digestScreen?: (app: App, cols: number, rows: number) => string;
   /**: digest tab key handling; returns true when it consumed the key. */
   digestKey?: (app: App, key: ReturnType<typeof decodeKey>) => boolean;
+  /** Open a URL in the user's browser (default: xdg-open, detached). */
+  openUrl?: (url: string) => void;
+  /** First-launch marker (read, write). Default: state/tui-help-shown. */
+  helpSeen?: { get(): boolean; set(): void };
 }
 
 export type Tab = "board" | "digest";
@@ -61,11 +67,15 @@ export class App {
 
   async run(initialSelection?: number): Promise<void> {
     if (initialSelection !== undefined) this.selectedPr = initialSelection;
-    this.out.write(ALT_SCREEN_ON + CLEAR);
+    this.out.write(ALT_SCREEN_ON + CLEAR + MOUSE_ON);
     if (this.input.isTTY) this.input.setRawMode(true);
     this.input.resume();
     this.input.on("data", this.onData);
     this.out.on("resize", this.onResize);
+    if (this.hooks.helpSeen && !this.hooks.helpSeen.get()) {
+      this.view.help = true;
+      this.hooks.helpSeen.set();
+    }
     this.poller.start();
     await new Promise<void>((resolve) => (this.quitResolve = resolve));
     this.teardown();
@@ -77,23 +87,25 @@ export class App {
     this.out.off("resize", this.onResize);
     if (this.input.isTTY) this.input.setRawMode(false);
     this.input.pause();
-    this.out.write(ALT_SCREEN_OFF);
+    this.out.write(MOUSE_OFF + ALT_SCREEN_OFF);
   }
 
   quit(): void {
     this.quitResolve?.();
   }
 
-  /** Attach mode owns the terminal: stop painting and swallow board keys. */
+  /** Attach mode owns the terminal: stop painting, swallow board keys, and
+   * drop our mouse reporting (the attach screen manages passthrough). */
   suspend(): void {
     this.suspended = true;
     this.input.off("data", this.onData);
+    this.out.write(MOUSE_OFF);
   }
 
   resume(): void {
     this.suspended = false;
     this.input.on("data", this.onData);
-    this.out.write(CLEAR);
+    this.out.write(CLEAR + MOUSE_ON);
     void this.refreshDetail();
     this.repaint();
   }
@@ -216,8 +228,72 @@ export class App {
     this.repaint();
   }
 
+  private openGithub(pr?: number): void {
+    const n = pr ?? this.selectedPrNumber();
+    if (n === undefined || !this.view.repo) return;
+    this.hooks.openUrl?.(prUrl(this.view.repo, n));
+    this.notice(`opened #${n} on GitHub`);
+  }
+
+  private selectedPrNumber(): number | undefined {
+    const sorted = this.view.snapshot ? sortPrs(this.view.snapshot.prs) : [];
+    return sorted[this.view.selected]?.number;
+  }
+
+  private handleMouse(ev: MouseEvent): void {
+    if (this.tab === "digest") {
+      // Digest tab: wheel scrolls; row-level actions stay on the keyboard.
+      if (ev.kind !== "click") this.hooks.digestKey?.(this, { kind: ev.kind === "wheel-down" ? "down" : "up" });
+      return;
+    }
+    if (ev.kind === "wheel-up" || ev.kind === "wheel-down") {
+      const delta = ev.kind === "wheel-down" ? 1 : -1;
+      const stripTop = (this.lastFrame?.meta["stripTop"] ?? Number.MAX_SAFE_INTEGER) + 1;
+      if (ev.y >= stripTop) {
+        this.view.eventsScroll = Math.max(0, Math.min(this.view.eventsScroll + delta, Math.max(0, this.view.events.length - 1)));
+      } else {
+        const sorted = this.view.snapshot ? sortPrs(this.view.snapshot.prs) : [];
+        this.view.selected = moveSelection(this.view.selected, delta, sorted.length);
+        this.selectedPr = sorted[this.view.selected]?.number;
+        void this.refreshDetail();
+      }
+      this.repaint();
+      return;
+    }
+    const action = this.lastFrame ? hitTest(this.lastFrame.zones as Zone<BoardAction>[], ev.x, ev.y) : undefined;
+    if (!action) return;
+    switch (action.t) {
+      case "select-pr": {
+        if (this.selectedPr === action.pr) {
+          // Second click on the selected row = attach (grill decision).
+          this.startAttach(`pr-${action.pr}`);
+          return;
+        }
+        this.selectPr(action.pr);
+        break;
+      }
+      case "open-github":
+        this.openGithub(action.pr);
+        return;
+      case "event-jump":
+        this.selectPr(action.pr);
+        break;
+      case "tab":
+        this.tab = action.tab;
+        break;
+      case "key":
+        this.handleInput(Buffer.from(action.key, "utf8"));
+        return;
+    }
+    this.repaint();
+  }
+
   private handleInput(buf: Buffer): void {
     if (this.suspended) return;
+    const { events, rest } = extractMouseEvents(buf);
+    for (const ev of events) this.handleMouse(ev);
+    if (rest.length === 0) return;
+    buf = rest;
     if (this.view.inputBox) {
       this.handleMessageBoxKey(buf);
       return;
@@ -278,6 +354,9 @@ export class App {
         this.startAttach(session);
         return;
       }
+      case "github":
+        this.openGithub();
+        return;
       case "overseer":
         this.startAttach("overseer");
         return;
@@ -307,15 +386,21 @@ export class App {
 
   // ---- paint -------------------------------------------------------------
 
+  private lastFrame: Frame | undefined;
+
   repaint(): void {
     if (this.suspended) return;
     const cols = this.out.columns ?? 80;
     const rows = this.out.rows ?? 24;
     if (this.tab === "digest") {
       const screen = this.hooks.digestScreen?.(this, cols, rows);
+      this.lastFrame = undefined;
       this.out.write(screen ?? `${CLEAR}digest tab lands in — [1] back to board`);
       return;
     }
-    this.out.write(renderBoard(this.view, cols, rows).render());
+    this.view.now = this.now();
+    const frame = renderBoard(this.view, cols, rows);
+    this.lastFrame = frame;
+    this.out.write(frame.render());
   }
 }

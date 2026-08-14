@@ -94,6 +94,28 @@ export interface WhyPayload {
   threads: { open: number; total: number };
   ledger?: string;
   archive?: string[];
+  /** GitHub conversation surface — present only when the enrichment fetch
+   * succeeded (needs the app credential; degrades silently without it). */
+  description?: string;
+  labels?: string[];
+  comments?: Array<{ author: string; body: string; created_at: string }>;
+}
+
+/** Best-effort GitHub enrichment for `why --json` (description, labels, last
+ * comments). Read-only; any failure leaves the payload un-enriched. */
+export async function enrichWhy(payload: WhyPayload): Promise<WhyPayload> {
+  try {
+    const { TokenMinter } = await import("./githubAuth.js");
+    const { MutationGate } = await import("./gate.js");
+    const { GitHubAdapter } = await import("./github.js");
+    const cfg = loadConfig();
+    const gate = new MutationGate(true, join(sandboxRoot(), "state", "dryrun"), async () => undefined);
+    const adapter = new GitHubAdapter(cfg, new TokenMinter(cfg.github.secrets_dir), gate);
+    const convo = await adapter.prConversation(payload.pr, 3);
+    return { ...payload, description: convo.body, labels: convo.labels, comments: convo.comments };
+  } catch {
+    return payload;
+  }
 }
 
 export function whyJson(store: StateStore, n: number, archiveDir: string): WhyPayload {
@@ -232,7 +254,8 @@ export async function main(argv: string[]): Promise<void> {
       if (json) {
         const store = openStore();
         try {
-          console.log(JSON.stringify(whyJson(store, n, join(sandboxRoot(), "archive", `pr-${n}`))));
+          const payload = whyJson(store, n, join(sandboxRoot(), "archive", `pr-${n}`));
+          console.log(JSON.stringify(await enrichWhy(payload)));
         } finally {
           store.close();
         }

@@ -40,6 +40,12 @@ export class TermPane {
     this.term.resize(cols, rows);
   }
 
+  /** Does the inner app currently want mouse reports? (tmux/pi enable
+   * tracking via DEC modes the emulator records but never re-emits.) */
+  wantsMouse(): boolean {
+    return this.term.modes.mouseTrackingMode !== "none";
+  }
+
   dispose(): void {
     this.term.dispose();
   }

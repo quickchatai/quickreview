@@ -193,6 +193,8 @@ describe("status.json", () => {
         updated_at: expect.any(String),
         author: "alice",
         paused: 0,
+        rounds: 1,
+        last_verdict: "APPROVE",
       },
     ]);
 

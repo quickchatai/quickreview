@@ -6,6 +6,12 @@ import type { Config } from "./config.js";
 import { MutationGate, type MutationIntent, type GateResult } from "./gate.js";
 import { TokenMinter, type FetchFn } from "./githubAuth.js";
 
+export interface PrConversation {
+  body: string;
+  labels: string[];
+  comments: Array<{ author: string; body: string; created_at: string }>;
+}
+
 export interface PrRef {
   number: number;
   title: string;
@@ -168,6 +174,23 @@ export class GitHubAdapter {
       draft: pr.draft,
       merged: Boolean(pr.merged),
       labels: (pr.labels ?? []).map((l: { name: string }) => l.name),
+    };
+  }
+
+  /** Read-only conversation surface for the TUI detail pane (QOL):
+   * PR description, labels, and the newest issue comments, oldest-first. */
+  async prConversation(n: number, commentCount = 3): Promise<PrConversation> {
+    const pr = await this.request<any>("GET", `/repos/${this.owner}/${this.repo}/pulls/${n}`);
+    const comments = await this.request<any[]>(
+      "GET",
+      `/repos/${this.owner}/${this.repo}/issues/${n}/comments?per_page=${commentCount}&sort=created&direction=desc`,
+    );
+    return {
+      body: pr.body ?? "",
+      labels: (pr.labels ?? []).map((l: { name: string }) => l.name),
+      comments: comments
+        .map((c) => ({ author: c.user?.login ?? "?", body: c.body ?? "", created_at: c.created_at ?? "" }))
+        .reverse(),
     };
   }
 

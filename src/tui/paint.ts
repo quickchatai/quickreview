@@ -18,7 +18,8 @@ export function rgb(r: number, g: number, b: number): string {
   return `${ESC}38;2;${r};${g};${b}m`;
 }
 
-const ANSI_RE = /\x1b\[[0-9;?]*[a-zA-Z]/g;
+// CSI sequences plus OSC (hyperlinks etc., \x07- or ST-terminated).
+const ANSI_RE = /\x1b\[[0-9;?<]*[a-zA-Z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
 
 export function stripAnsi(s: string): string {
   return s.replace(ANSI_RE, "");
@@ -48,18 +49,34 @@ export function displayWidth(s: string): number {
   return w;
 }
 
-/** Truncate to `width` cells with a `…` when cut; ANSI-free input expected. */
+const ANSI_AT_START = /^(?:\x1b\[[0-9;?<]*[a-zA-Z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\))/;
+
+/** Truncate to `width` cells with a `…` when cut. ANSI-aware: escape
+ * sequences are zero-width and never sliced mid-sequence; a truncated
+ * styled string gets a trailing reset so styling can't leak. */
 export function truncate(s: string, width: number): string {
   if (displayWidth(s) <= width) return s;
   let out = "";
   let w = 0;
-  for (const ch of s) {
-    const cw = charWidth(ch.codePointAt(0) ?? 0);
+  let i = 0;
+  let styled = false;
+  while (i < s.length) {
+    const m = ANSI_AT_START.exec(s.slice(i));
+    if (m) {
+      out += m[0];
+      styled = true;
+      i += m[0].length;
+      continue;
+    }
+    const cp = s.codePointAt(i)!;
+    const ch = String.fromCodePoint(cp);
+    const cw = charWidth(cp);
     if (w + cw > width - 1) break;
     out += ch;
     w += cw;
+    i += ch.length;
   }
-  return `${out}…`;
+  return `${out}${styled ? "\x1b[0m" : ""}…`;
 }
 
 /** Truncate-or-pad to exactly `width` cells. */
@@ -77,9 +94,12 @@ export function rule(width: number, left: string, right: string, segments: strin
   return `${left}${fitted}${"─".repeat(fill)}${right}`;
 }
 
-/** Frame: fixed-size grid of styled lines, flushed as one write. */
+/** Frame: fixed-size grid of styled lines, flushed as one write. Renderers
+ * may also declare clickable `zones` and layout `meta` for the input layer. */
 export class Frame {
   readonly lines: string[];
+  zones: Array<{ x1: number; y1: number; x2: number; y2: number; action: unknown }> = [];
+  meta: Record<string, number> = {};
 
   constructor(
     readonly cols: number,

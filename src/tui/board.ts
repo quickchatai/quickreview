@@ -1,24 +1,22 @@
-// Board screen — the main-screen mockup: top status bar, PR list
-// (left, 30 cells) / detail (right), events strip, key-hint row. Pure:
-// (view, cols, rows) → Frame.
+// Board screen — the main-screen mockup, restyled per the 2026-08-14
+// design grill: semantic truecolor everywhere, rich PR rows (author, last-tick
+// age, rounds, verdict chip), colored glyph legend, section titles with
+// subtitles, clickable zones for full mouse navigation, OSC-8 PR links.
+// Pure: (view, cols, rows) → Frame (+ zones/meta for the input layer).
 import type { WhyPayload } from "../cli.js";
 import type { StatusSnapshot } from "../state.js";
-import { awaitingRows, formatEvent, glyphFor, sortPrs, type EventLine, type SnapshotPr } from "./model.js";
-import { Frame, SGR, displayWidth, fit, rule, truncate } from "./paint.js";
+import { formatEvent, glyphFor, sortPrs, type EventLine, type SnapshotPr } from "./model.js";
+import { Frame, SGR, displayWidth, fit, rule, stripAnsi, truncate } from "./paint.js";
 import type { Health } from "./poll.js";
+import { FG, RESET, fmtAge, legendLine, osc8, prUrl, stateColor, verdictChip } from "./theme.js";
 
-/** Left column sized to the longest PR row so titles aren't cropped while
- * the detail pane sits empty — clamped to 45% of the terminal. */
-export function listWidth(prs: SnapshotPr[], cols: number): number {
-  const widest = prs.reduce((w, pr) => Math.max(w, displayWidth(`${glyphFor(pr)} #${pr.number} ${pr.title}`)), 0);
-  return Math.min(Math.max(24, widest + 3), Math.floor(cols * 0.45));
-}
-
-/** Events strip grows with terminal height: divider + header + lines +
- * hints; ~a quarter of the screen, 3–10 visible event lines. */
-export function eventsRows(rows: number): number {
-  return Math.min(Math.max(6, Math.floor(rows * 0.25)), 13);
-}
+/** Every clickable thing the board declares. */
+export type BoardAction =
+  | { t: "select-pr"; pr: number }
+  | { t: "open-github"; pr: number }
+  | { t: "event-jump"; pr: number }
+  | { t: "tab"; tab: "board" | "digest" }
+  | { t: "key"; key: string }; // hint-bar button → synthesized keypress
 
 export interface BoardView {
   health: Health;
@@ -35,80 +33,153 @@ export interface BoardView {
   noticeLine?: string;
   /** Replaces the events strip when the message box is open. */
   inputBox?: { target: string; text: string };
+  /** Wall clock for age rendering; injected for testability. */
+  now?: Date;
+  /** owner/repo for GitHub links (OSC-8 + click). */
+  repo?: string;
 }
 
+// ---- layout ----------------------------------------------------------------
+
+function rowPlain(pr: SnapshotPr, now: Date): string {
+  const chip = pr.last_verdict === "APPROVE" ? "✓A" : pr.last_verdict === "REQUEST_CHANGES" ? "✗RC" : pr.last_verdict === "ESCALATE" ? "⚑E" : "";
+  const rounds = pr.rounds ? `r${pr.rounds}` : "";
+  return [glyphFor(pr), `#${pr.number}`, pr.author ?? "", fmtAge(pr.updated_at, now), rounds, chip, pr.title].filter((s) => s !== "").join(" ");
+}
+
+/** Left column sized to the longest PR row so titles aren't cropped while
+ * the detail pane sits empty — clamped to 45% of the terminal. */
+export function listWidth(prs: SnapshotPr[], cols: number, now: Date = new Date(0)): number {
+  const widest = prs.reduce((w, pr) => Math.max(w, displayWidth(rowPlain(pr, now))), displayWidth(stripAnsi(legendLine())));
+  return Math.min(Math.max(24, widest + 3), Math.floor(cols * 0.45));
+}
+
+/** Events strip grows with terminal height: divider + header + lines +
+ * hints; ~a quarter of the screen, 3–10 visible event lines. */
+export function eventsRows(rows: number): number {
+  return Math.min(Math.max(6, Math.floor(rows * 0.25)), 13);
+}
+
+// ---- pieces ----------------------------------------------------------------
+
 export function topBar(view: BoardView, cols: number): string {
-  const mode = view.dryRun ? "DRY-RUN" : `${SGR.bgRed}${SGR.bold} LIVE ${SGR.reset}`;
+  const mode = view.dryRun ? `${FG.accent}DRY-RUN${RESET}` : `${SGR.bgRed}${SGR.bold} LIVE ${SGR.reset}`;
   let health: string;
   switch (view.health.kind) {
     case "ok":
-      health = `${SGR.green}●${SGR.reset} daemon ok (hb ${view.health.heartbeatAgeS}s)`;
+      health = `${FG.approve}●${RESET} daemon ok (hb ${view.health.heartbeatAgeS}s)`;
       break;
     case "stale":
       health = `${SGR.yellow}▲ DATA STALE (${view.health.dataAgeS}s)${SGR.reset}`;
       break;
     case "unreachable":
-      health = `${SGR.red}✖ unreachable${SGR.reset}`;
+      health = `${FG.anomaly}✖ unreachable${RESET}`;
       break;
   }
   const s = view.snapshot;
   const rounds = s ? `rounds ${s.running_rounds}/${s.max_concurrent_rounds ?? "?"}` : "";
   const spend = s?.today_spend_usd !== undefined ? `today $${s.today_spend_usd.toFixed(2)}` : "";
-  return rule(cols, "┌", "┐", ["quickreview", mode, health, rounds, spend]);
+  return rule(cols, "┌", "┐", [`${SGR.bold}quickreview${SGR.reset}`, mode, health, rounds, spend]);
 }
 
-function prRow(pr: SnapshotPr, selected: boolean, width: number): string {
-  const line = `${glyphFor(pr)} #${pr.number} ${pr.title}`;
-  const fitted = fit(line, width - 1);
-  return selected ? `${SGR.inverse} ${fitted}${SGR.reset}` : ` ${fitted}`;
+function styledRow(pr: SnapshotPr, selected: boolean, width: number, now: Date, repo: string | undefined): string {
+  const color = stateColor(pr.stale_recheck ? "reviewing" : pr.state);
+  const chip = verdictChip(pr.last_verdict);
+  const rounds = pr.rounds ? `${FG.dim}r${pr.rounds}${RESET}` : "";
+  const head = `${color}${glyphFor(pr)} ${SGR.bold}#${pr.number}${RESET}`;
+  const meta = [`${FG.author}${pr.author ?? ""}${RESET}`, `${FG.dim}${fmtAge(pr.updated_at, now)}${RESET}`, rounds, chip]
+    .filter((s) => stripAnsi(s) !== "")
+    .join(" ");
+  const used = displayWidth(`${stripAnsi(head)} ${stripAnsi(meta)} `);
+  const title = truncate(pr.title, Math.max(4, width - used - 1));
+  const numLinked = repo ? `${color}${glyphFor(pr)} ${SGR.bold}${osc8(prUrl(repo, pr.number), `#${pr.number}`)}${RESET}` : head;
+  const body = `${numLinked} ${meta} ${title}`;
+  const pad = " ".repeat(Math.max(0, width - displayWidth(body) - 1));
+  return selected ? `${SGR.inverse} ${body}${pad}${SGR.reset}` : ` ${body}${pad}`;
 }
 
 const VERDICT_ABBREV: Record<string, string> = { REQUEST_CHANGES: "RC", APPROVE: "APPROVE", COMMENT: "COMMENT" };
 
-export function detailLines(detail: WhyPayload | undefined, pr: SnapshotPr | undefined, width: number): string[] {
+function section(title: string, subtitle: string): string {
+  return `${FG.accent}${SGR.bold}${title}${RESET} ${FG.dim}${subtitle}${RESET}`;
+}
+
+export function detailLines(detail: WhyPayload | undefined, pr: SnapshotPr | undefined, width: number, now: Date = new Date(0)): string[] {
   const lines: string[] = [];
   if (!pr) return ["no PR selected"];
-  lines.push(`${SGR.bold}#${pr.number} ${truncate(pr.title, width - 8 - String(pr.number).length)}${SGR.reset}`);
+  lines.push(`${stateColor(pr.state)}${SGR.bold}#${pr.number}${RESET} ${SGR.bold}${truncate(pr.title, width - 8 - String(pr.number).length)}${RESET}`);
   if (!detail || detail.pr !== pr.number) {
-    lines.push(`${SGR.dim}loading detail…${SGR.reset}`);
+    lines.push(`${FG.dim}loading detail…${RESET}`);
     return lines;
   }
   const round = detail.rounds.length > 0 ? detail.rounds[detail.rounds.length - 1]?.round_no : undefined;
-  const facts: string[] = [`state ${detail.state ?? pr.state}`];
+  const facts: string[] = [`${stateColor(detail.state ?? pr.state)}${detail.state ?? pr.state}${RESET}`];
   if (round !== undefined) facts.push(`round ${round}`);
   facts.push(`esc-worthy: ${detail.escalation_worthy ? "yes" : "no"}`);
+  if (detail.author) facts.push(`by ${FG.author}${detail.author}${RESET}`);
   lines.push(facts.join(" · "));
-  const trig = detail.trigger_ts ? `trig ${detail.trigger_ts.slice(11, 16)}` : "trig —";
+  const trig = detail.trigger_ts ? `trig ${fmtAge(detail.trigger_ts, now)} ago` : "trig —";
   lines.push(`spend $${detail.spend_usd.toFixed(2)} · head ${(detail.head_sha ?? "").slice(0, 7)} · ${trig}`);
-  lines.push("─".repeat(Math.max(0, width)));
-  lines.push(`${SGR.bold}LEDGER${SGR.reset}`);
+  if (detail.labels && detail.labels.length > 0) {
+    lines.push(detail.labels.map((l) => `${FG.accent}[${l}]${RESET}`).join(" "));
+  }
+  lines.push(`${FG.dim}${"─".repeat(Math.max(0, width))}${RESET}`);
+  if (detail.description !== undefined) {
+    lines.push(section("DESCRIPTION", "the PR body"));
+    const desc = detail.description.trim().length > 0 ? detail.description.trim().split("\n") : ["(empty)"];
+    for (const l of desc.slice(0, 12)) lines.push(truncate(l, width));
+    if (desc.length > 12) lines.push(`${FG.dim}… ${desc.length - 12} more lines (open on GitHub with g)${RESET}`);
+  }
+  lines.push(section("LEDGER", "findings the conversation tracks"));
   if (detail.ledger) {
     for (const l of detail.ledger.split("\n")) {
       const t = l.trim();
       if (t.length > 0) lines.push(truncate(t, width));
     }
   } else {
-    lines.push(`${SGR.dim}(none archived — live ledger is pinned in the session)${SGR.reset}`);
+    lines.push(`${FG.dim}(none archived — live ledger is pinned in the session)${RESET}`);
   }
   const roundsBits = detail.rounds.map((r) => {
     const v = r.verdict ? (VERDICT_ABBREV[r.verdict] ?? r.verdict) : r.status === "running" ? "…" : "—";
-    return `r${r.round_no} ${v}`;
+    const color = r.verdict === "APPROVE" ? FG.approve : r.verdict === "REQUEST_CHANGES" ? FG.request_changes : FG.dim;
+    return `r${r.round_no} ${color}${v}${RESET}`;
   });
-  lines.push(`${SGR.bold}ROUNDS${SGR.reset}  ${roundsBits.join(" · ") || "—"}`);
-  lines.push(`${SGR.bold}THREADS${SGR.reset} ${detail.threads.total} known`);
+  lines.push(`${section("ROUNDS", "review rounds + verdicts")}  ${roundsBits.join(" · ") || "—"}`);
+  lines.push(`${section("THREADS", "bot review threads")} ${detail.threads.total} known`);
+  if (detail.comments && detail.comments.length > 0) {
+    lines.push(section("COMMENTS", "latest PR conversation"));
+    for (const c of detail.comments) {
+      const first = c.body.split("\n")[0] ?? "";
+      lines.push(truncate(`${FG.author}${c.author}${RESET} ${FG.dim}${fmtAge(c.created_at, now)} ago${RESET}  ${first}`, width + 40));
+    }
+  }
   return lines;
 }
 
-export const BOARD_HINTS = "[1]board [2]digest  ⏎attach  m msg  o overseer  w why  e events  r refresh  ? keys  q quit";
+/** Hint-bar buttons: label + the key they synthesize when clicked. */
+export const HINT_BUTTONS: Array<{ label: string; key: string }> = [
+  { label: "1 board", key: "1" },
+  { label: "2 digest", key: "2" },
+  { label: "⏎ attach", key: "\r" },
+  { label: "m message", key: "m" },
+  { label: "g github", key: "g" },
+  { label: "o overseer", key: "o" },
+  { label: "w detail", key: "w" },
+  { label: "e events", key: "e" },
+  { label: "r refresh", key: "r" },
+  { label: "? keys", key: "?" },
+  { label: "q quit", key: "q" },
+];
 
 export const HELP_LINES = [
   "1 / 2          board / digest tab",
-  "j/k ↓/↑        select PR",
-  "⏎              attach selected PR (embedded)",
+  "j/k ↓/↑        select PR (mouse: click a row; click again to attach)",
+  "⏎              attach selected PR (embedded pi session)",
+  "g              open the PR on GitHub (PR numbers are Ctrl+clickable links)",
   "w              toggle full-height detail",
   "m              quick-message selected PR",
   "o / M          attach overseer / main session",
-  "e              focus events strip (j/k scroll, Esc back)",
+  "e              focus events strip (j/k scroll, Esc back; click an event → its PR)",
   "r              force refresh",
   "[ / ]          older / newer digest (digest tab)",
   "Ctrl-q         detach (inside attach; twice = literal)",
@@ -117,18 +188,22 @@ export const HELP_LINES = [
   "any key to close",
 ];
 
+// ---- render ----------------------------------------------------------------
+
 export function renderBoard(view: BoardView, cols: number, rows: number): Frame {
   const frame = new Frame(cols, rows);
+  const now = view.now ?? new Date();
   frame.set(0, topBar(view, cols));
   const evRows = eventsRows(rows);
   const bodyRows = rows - 2 - evRows; // top bar + bottom border
   const sorted = view.snapshot ? sortPrs(view.snapshot.prs) : [];
-  const listW = listWidth(sorted, cols);
+  const listW = listWidth(sorted, cols, now);
   const detailW = cols - 2 - listW - 1;
   const selectedPr = sorted[view.selected];
+  frame.meta = { listW, bodyRows, stripTop: 1 + bodyRows, evRows };
 
   if (view.help) {
-    frame.boxRow(1, [{ text: ` ${SGR.bold}KEYS${SGR.reset}`, width: cols - 2 }]);
+    frame.boxRow(1, [{ text: ` ${FG.accent}${SGR.bold}KEYS${RESET} ${FG.dim}everything the TUI answers to${RESET}`, width: cols - 2 }]);
     HELP_LINES.forEach((l, i) => {
       if (2 + i < rows - 1) frame.boxRow(2 + i, [{ text: `   ${l}`, width: cols - 2 }]);
     });
@@ -138,7 +213,7 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
   }
 
   if (view.detailFull) {
-    const lines = detailLines(view.detail, selectedPr, cols - 4);
+    const lines = detailLines(view.detail, selectedPr, cols - 4, now);
     for (let r = 0; r < bodyRows + evRows; r++) {
       frame.boxRow(1 + r, [{ text: ` ${lines[r] ?? ""}`, width: cols - 2 }]);
     }
@@ -147,12 +222,18 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
   }
 
   // Board body: list | detail.
-  const listLines: string[] = [`${SGR.bold}PRS (${sorted.length})${SGR.reset}`];
-  sorted.forEach((pr, i) => listLines.push(prRow(pr, i === view.selected, listW - 1)));
-  const dLines = detailLines(view.detail, selectedPr, detailW - 2);
+  const listLines: string[] = [section(`PRS (${sorted.length})`, "the daemon's live set")];
+  sorted.forEach((pr, i) => {
+    listLines.push(styledRow(pr, i === view.selected, listW - 1, now, view.repo));
+    const y = 1 + listLines.length - 1 + 1; // frame row of this PR line (below top bar)
+    frame.zones.push({ x1: 2, y1: y, x2: listW, y2: y, action: { t: "select-pr", pr: pr.number } satisfies BoardAction });
+    frame.zones.push({ x1: 4, y1: y, x2: 4 + String(pr.number).length + 1, y2: y, action: { t: "open-github", pr: pr.number } satisfies BoardAction });
+  });
+  const dLines = detailLines(view.detail, selectedPr, detailW - 2, now);
   for (let r = 0; r < bodyRows; r++) {
+    const isLegendRow = r === bodyRows - 1;
     frame.boxRow(1 + r, [
-      { text: ` ${listLines[r] ?? ""}`, width: listW },
+      { text: isLegendRow ? ` ${legendLine()}` : ` ${listLines[r] ?? ""}`, width: listW },
       { text: ` ${dLines[r] ?? ""}`, width: detailW },
     ]);
   }
@@ -167,16 +248,33 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
     frame.boxRow(stripTop + 3, [{ text: ` ⏎ send · Esc cancel · Alt-⏎ newline`, width: cols - 2 }]);
     for (let i = 4; i <= stripLines + 1; i++) frame.boxRow(stripTop + i, [{ text: "", width: cols - 2 }]);
   } else {
-    const header = view.eventsFocus ? `${SGR.inverse}EVENTS${SGR.reset} (j/k scroll · Esc back)` : `${SGR.bold}EVENTS${SGR.reset}`;
+    const header = view.eventsFocus
+      ? `${SGR.inverse}EVENTS${SGR.reset} ${FG.dim}(j/k scroll · Esc back)${RESET}`
+      : section("EVENTS", "what the daemon just did");
     frame.boxRow(stripTop + 1, [{ text: ` ${header}${view.noticeLine ? `   ${view.noticeLine}` : ""}`, width: cols - 2 }]);
     const visible = view.events.slice(view.eventsScroll, view.eventsScroll + stripLines);
     for (let i = 0; i < stripLines; i++) {
       const e = visible[i];
-      const text = e ? (e.anomaly ? `${SGR.red}${truncate(e.text, cols - 4)}${SGR.reset}` : truncate(e.text, cols - 4)) : "";
+      const text = e ? (e.anomaly ? `${FG.anomaly}${truncate(e.text, cols - 4)}${RESET}` : truncate(e.text, cols - 4)) : "";
       frame.boxRow(stripTop + 2 + i, [{ text: ` ${text}`, width: cols - 2 }]);
+      const prMatch = e ? /#(\d+)/.exec(e.text) : null;
+      if (prMatch) {
+        frame.zones.push({ x1: 2, y1: stripTop + 2 + i + 1, x2: cols - 1, y2: stripTop + 2 + i + 1, action: { t: "event-jump", pr: Number(prMatch[1]) } satisfies BoardAction });
+      }
     }
   }
-  frame.boxRow(rows - 2, [{ text: ` ${SGR.dim}${BOARD_HINTS}${SGR.reset}`, width: cols - 2 }]);
+
+  // Hint bar as clickable buttons.
+  let x = 2;
+  const parts: string[] = [];
+  for (const b of HINT_BUTTONS) {
+    const label = `[ ${b.label} ]`;
+    const action: BoardAction = b.key === "1" ? { t: "tab", tab: "board" } : b.key === "2" ? { t: "tab", tab: "digest" } : { t: "key", key: b.key };
+    frame.zones.push({ x1: x, y1: rows - 1, x2: x + label.length - 1, y2: rows - 1, action });
+    parts.push(`${FG.dim}[${RESET} ${b.label} ${FG.dim}]${RESET}`);
+    x += label.length + 1;
+  }
+  frame.boxRow(rows - 2, [{ text: ` ${parts.join(" ")}`, width: cols - 2 }]);
   frame.set(rows - 1, rule(cols, "└", "┘", []));
   return frame;
 }

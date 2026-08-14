@@ -268,7 +268,10 @@ export interface StatusSnapshot {
   dry_run: boolean;
   prs: Array<
     Pick<PrStateRow, "number" | "state" | "title" | "head_sha" | "stale_recheck"> &
-      Partial<Pick<PrStateRow, "escalation_worthy" | "trigger_ts" | "updated_at" | "author" | "paused">>
+      Partial<Pick<PrStateRow, "escalation_worthy" | "trigger_ts" | "updated_at" | "author" | "paused">> & {
+        rounds?: number;
+        last_verdict?: string | null;
+      }
   >;
   running_rounds: number;
   /** Absent in snapshots written before the TUI additions — readers default. */
@@ -296,10 +299,16 @@ export function buildStatusSnapshot(
   maxConcurrentRounds?: number,
 ): StatusSnapshot {
   const today = now().toISOString().slice(0, 10);
+  const roundStats = store.db
+    .prepare("SELECT pr, COUNT(*) AS c, (SELECT verdict FROM rounds r2 WHERE r2.pr = rounds.pr AND verdict IS NOT NULL ORDER BY round_no DESC LIMIT 1) AS v FROM rounds GROUP BY pr")
+    .all() as Array<{ pr: number; c: number; v: string | null }>;
+  const byPr = new Map(roundStats.map((r) => [r.pr, r]));
   return {
     written_at: now().toISOString(),
     dry_run: dryRun,
     prs: store.allPrs().map((p) => ({
+      rounds: byPr.get(p.number)?.c ?? 0,
+      last_verdict: byPr.get(p.number)?.v ?? null,
       number: p.number,
       state: p.state,
       title: p.title,

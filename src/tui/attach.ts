@@ -113,8 +113,19 @@ export class AttachScreen {
     }, PAINT_INTERVAL_MS);
   }
 
+  private mouseOn = false;
+
   private paint(): void {
     if (!this.pane) return;
+    // Mouse passthrough: mirror the inner app's tracking mode onto the real
+    // terminal — the emulator absorbs the enable/disable sequences, so we
+    // re-issue them; the resulting reports are raw stdin bytes the chord
+    // scanner forwards verbatim.
+    const wants = this.pane.wantsMouse();
+    if (wants !== this.mouseOn) {
+      this.mouseOn = wants;
+      this.out.write(wants ? "\x1b[?1000h\x1b[?1002h\x1b[?1006h" : "\x1b[?1006l\x1b[?1002l\x1b[?1000l");
+    }
     this.out.write(this.pane.renderFrame(1));
     this.paintStatus(false);
   }
@@ -178,6 +189,10 @@ export class AttachScreen {
 
   private teardown(): void {
     this.done = true;
+    if (this.mouseOn) {
+      this.out.write("\x1b[?1006l\x1b[?1002l\x1b[?1000l");
+      this.mouseOn = false;
+    }
     if (this.paintTimer) clearTimeout(this.paintTimer);
     if (this.chordTimer) clearTimeout(this.chordTimer);
     this.input.off("data", this.onKey);

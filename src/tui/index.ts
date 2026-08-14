@@ -50,8 +50,25 @@ export async function runTui(targetArg?: string): Promise<void> {
     process.exitCode = 2;
     return;
   }
-  const cfg = loadConfig().tui;
+  const full = loadConfig();
+  const cfg = full.tui;
   const app = new App(cfg, realSshRunner);
+  app.view.repo = full.github.repo;
+  const { spawn } = await import("node:child_process");
+  const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { sandboxRoot } = await import("../config.js");
+  app.hooks.openUrl = (url) => {
+    spawn("xdg-open", [url], { detached: true, stdio: "ignore" }).unref();
+  };
+  const marker = join(sandboxRoot(), "state", "tui-help-shown");
+  app.hooks.helpSeen = {
+    get: () => existsSync(marker),
+    set: () => {
+      mkdirSync(join(sandboxRoot(), "state"), { recursive: true });
+      writeFileSync(marker, new Date().toISOString());
+    },
+  };
   const { installAttachHooks } = await import("./attach.js");
   await installAttachHooks(app);
   const { installMessageHooks } = await import("./msg.js");
