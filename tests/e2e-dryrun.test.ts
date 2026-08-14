@@ -13,7 +13,7 @@ import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadConfig, modelForPass } from "../src/config.js";
+import { loadConfig } from "../src/config.js";
 import { MutationGate } from "../src/gate.js";
 import { GitHubAdapter } from "../src/github.js";
 import { TokenMinter } from "../src/githubAuth.js";
@@ -123,19 +123,28 @@ describe("dry-run fixture round", () => {
     expect(loadConfig(join(SANDBOX, "config.toml")).dry_run).toBe(false);
   });
 
-  it("builds the round's agent definitions with includes expanded", () => {
+  it("builds the round's agent variant definitions with includes expanded", () => {
     const { cfg } = harness();
     const out = join(dir, "agents");
-    const built = buildAgents(join(SANDBOX, "agents"), out, { root: SANDBOX, models: cfg.models.passes });
+    const built = buildAgents(join(SANDBOX, "agents"), out, {
+      root: SANDBOX,
+      tiers: cfg.models.tiers,
+      riskPasses: cfg.models.risk_passes,
+      validateTier: cfg.models.validate_tier,
+    });
     const lenses = [...selectLenses(PR.files), "pass-validate"];
 
     for (const lens of lenses) {
-      const agent = built.find((b) => b.name === lens);
-      expect(agent, `${lens} must have a built definition`).toBeDefined();
-      const text = readFileSync(agent!.output, "utf8");
-      expect(text).not.toContain("{{include:");
-      expect(text).toContain("FINDINGS <lens> PR#<n>"); // the shared output contract
-      expect(text).toContain(`model: ${modelForPass(cfg, lens)}`);
+      const variants = built.filter((b) => b.name.startsWith(`${lens}--`));
+      expect(variants.length, `${lens} must have at least one tier variant`).toBeGreaterThan(0);
+      for (const agent of variants) {
+        const text = readFileSync(agent.output, "utf8");
+        expect(text).not.toContain("{{include:");
+        expect(text).toContain("FINDINGS <lens> PR#<n>"); // the shared output contract
+        expect(text).toMatch(/^model: openai-codex\/gpt-5\.6-(sol|terra)$/m); // spec split into model+thinking
+        expect(text).toMatch(/^thinking: (medium|high)$/m);
+        expect(text).toContain("## Execution policy"); // no-exec addendum on every variant
+      }
     }
   });
 

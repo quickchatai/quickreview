@@ -56,6 +56,13 @@ export interface RoundRow {
   /** The trigger instant this round answered, copied off pr_state at start so
    * time-to-first-verdict survives the `trigger_ts = null` reset at dispatch. */
   trigger_ts: string | null;
+  // ---- measured usage (from pi session JSONLs, not self-reported) --
+  tokens_in: number | null;
+  /** Output tokens including reasoning tokens. */
+  tokens_out: number | null;
+  tokens_cache_read: number | null;
+  /** Daemon-side USD estimate (config pricing); null when a model is unpriced. */
+  est_usd: number | null;
 }
 
 /** PR lifecycle facts for PRs the daemon never tracked (M2 backfill fills it).
@@ -175,6 +182,11 @@ export class StateStore {
       "ALTER TABLE rounds ADD COLUMN gh_commit_id TEXT",
       "ALTER TABLE rounds ADD COLUMN trigger_ts TEXT",
       "ALTER TABLE bot_comments ADD COLUMN round_no INTEGER",
+      // Measured usage — nullable, additive.
+      "ALTER TABLE rounds ADD COLUMN tokens_in INTEGER",
+      "ALTER TABLE rounds ADD COLUMN tokens_out INTEGER",
+      "ALTER TABLE rounds ADD COLUMN tokens_cache_read INTEGER",
+      "ALTER TABLE rounds ADD COLUMN est_usd REAL",
     ]) {
       try {
         this.db.exec(ddl);
@@ -295,6 +307,17 @@ export class StateStore {
       .run(verdict, spendUsd, duration, this.ts(), summary, id);
   }
 
+  /** Measured usage for a round (pi session JSONLs). Overwrites —
+   * a re-measured round keeps only the latest figures. */
+  recordRoundUsage(
+    id: number,
+    usage: { tokens_in: number; tokens_out: number; tokens_cache_read?: number | null; est_usd: number | null },
+  ): void {
+    this.db
+      .prepare("UPDATE rounds SET tokens_in = ?, tokens_out = ?, tokens_cache_read = ?, est_usd = ? WHERE id = ?")
+      .run(usage.tokens_in, usage.tokens_out, usage.tokens_cache_read ?? null, usage.est_usd, id);
+  }
+
   /** A dispatch attempt creates its round row before handing the order to the
    * session hook. If that handoff fails, remove the provisional row so it
    * cannot consume capacity or inflate the round number on retry. */
@@ -332,8 +355,10 @@ export class StateStore {
     return this.db.prepare("SELECT * FROM rounds WHERE started_at LIKE ? ORDER BY started_at").all(`${dateIso}%`) as RoundRow[];
   }
 
+  /** Daemon-measured est_usd preferred; self-reported spend_usd only as the
+   * fallback for historical rows recorded before usage measurement existed. */
   totalSpend(): number {
-    return (this.db.prepare("SELECT COALESCE(SUM(spend_usd), 0) AS s FROM rounds").get() as { s: number }).s;
+    return (this.db.prepare("SELECT COALESCE(SUM(COALESCE(est_usd, spend_usd)), 0) AS s FROM rounds").get() as { s: number }).s;
   }
 
   // ---- backfilled rounds (M2 importer writes; nothing live reads them) ----
@@ -553,7 +578,7 @@ export function buildStatusSnapshot(
     running_rounds: store.runningRounds().length,
     ...(maxConcurrentRounds !== undefined ? { max_concurrent_rounds: maxConcurrentRounds } : {}),
     total_spend_usd: store.totalSpend(),
-    today_spend_usd: store.roundsOn(today).reduce((n, r) => n + (r.spend_usd ?? 0), 0),
+    today_spend_usd: store.roundsOn(today).reduce((n, r) => n + (r.est_usd ?? r.spend_usd ?? 0), 0),
     ...(digestHeadline ? { digest_headline: digestHeadline } : {}),
     heartbeat: now().toISOString(),
   };

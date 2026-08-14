@@ -8,10 +8,10 @@
 import type { Config } from "./config.js";
 import type { GateResult } from "./gate.js";
 import type { PrFileEntry } from "./github.js";
-import { escalationWorthy, migrationGate, selectLenses } from "./heuristics.js";
+import { escalationWorthy, migrationGate, passTier, selectLenses } from "./heuristics.js";
 import { applyEvent, setPrGates } from "./statemachine.js";
 import type { PrStateRow, StateStore } from "./state.js";
-import type { RoundOrder, RoundType, SessionHooks } from "./types.js";
+import type { PassPlanEntry, PassTier, RoundOrder, RoundType, SessionHooks } from "./types.js";
 
 /** The slice of GitHubAdapter dispatch needs — all mutations are gated inside
  * the adapter, so this module never touches GitHub directly. */
@@ -122,8 +122,59 @@ async function consumeTriggers(deps: DispatchDeps, pr: number): Promise<string[]
   return consumed;
 }
 
+/** Every pass the system knows: the lenses selectLenses can emit plus the
+ * always-appended validator. addable_lenses derives from this set (∪ the
+ * configured risk passes, which today are a subset of it). */
+export const ALL_PASSES: readonly string[] = [
+  "pass-baseline",
+  "pass-ui",
+  "pass-contracts",
+  "pass-data-safety",
+  "pass-security",
+  "pass-statelessness",
+  "pass-prod-risk",
+  "pass-delivery",
+  "pass-validate",
+];
+
+/** Tier ladder, ascending. raisable_to lists the higher rungs only — a session
+ * may raise a pass, never lower it. */
+const TIER_ORDER: readonly PassTier[] = ["terra-med", "sol-med", "sol-high"];
+
+function raisableFrom(lens: string, tier: PassTier): string[] {
+  return TIER_ORDER.slice(TIER_ORDER.indexOf(tier) + 1).map((t) => `${lens}--${t}`);
+}
+
+/** Deterministic per-round pass plan (agent = `${lens}--${tier}`):
+ * - risk passes are always "sol-high", single variant, not raisable;
+ * - pass-validate is pinned to cfg.models.validate_tier, not raisable;
+ * - every other selected lens gets the passTier() tier and may be raised to
+ *   any higher tier's variant (ascending order).
+ * addable_lenses = every known pass not already in the plan. */
+export function buildPassPlan(
+  cfg: Config,
+  files: PrFileEntry[],
+): { pass_plan: PassPlanEntry[]; addable_lenses: string[] } {
+  const defaultTier = passTier(files, {
+    migrationGate: migrationGate(files),
+    escalationWorthy: escalationWorthy(files).worthy,
+    smallDiffLines: cfg.models.small_diff_lines,
+  });
+  const risk = new Set(cfg.models.risk_passes);
+  const lenses = [...selectLenses(files), "pass-validate"];
+  const pass_plan = lenses.map((lens): PassPlanEntry => {
+    const pinned = lens === "pass-validate" || risk.has(lens);
+    const tier: PassTier = lens === "pass-validate" ? cfg.models.validate_tier : risk.has(lens) ? "sol-high" : defaultTier;
+    return { lens, agent: `${lens}--${tier}`, tier, raisable_to: pinned ? [] : raisableFrom(lens, tier) };
+  });
+  const selected = new Set(lenses);
+  const addable_lenses = [...new Set([...ALL_PASSES, ...cfg.models.risk_passes])].filter((l) => !selected.has(l));
+  return { pass_plan, addable_lenses };
+}
+
 /** Build the round order for one PR — pure once the files list is in hand. */
 export function buildRoundOrder(args: {
+  cfg: Config;
   row: PrStateRow;
   files: PrFileEntry[];
   roundId: number;
@@ -134,14 +185,18 @@ export function buildRoundOrder(args: {
   issuedAt: string;
 }): RoundOrder {
   const { worthy, reasons } = escalationWorthy(args.files);
-  const lenses = [...selectLenses(args.files), "pass-validate"];
+  const { pass_plan, addable_lenses } = buildPassPlan(args.cfg, args.files);
   return {
     pr: args.row.number,
     title: args.row.title,
     round_id: args.roundId,
     round_no: args.roundNo,
     round_type: args.roundType,
-    lenses,
+    // Kept for compatibility with the rounds table / event log: always the
+    // pass_plan's lens names in plan order.
+    lenses: pass_plan.map((p) => p.lens),
+    pass_plan,
+    addable_lenses,
     escalation_worthy: worthy,
     escalation_reasons: reasons,
     migration_gate: migrationGate(args.files),
@@ -221,6 +276,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         .round_no;
 
       const order = buildRoundOrder({
+        cfg,
         row,
         files,
         roundId,

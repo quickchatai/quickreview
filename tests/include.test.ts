@@ -3,12 +3,17 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  EXECUTION_POLICY_ADDENDUM,
   applyModelOverride,
+  applyNameOverride,
+  applyThinkingOverride,
   buildAgents,
   expandIncludes,
   frontmatterName,
   joinFrontmatter,
   splitFrontmatter,
+  splitModelSpec,
+  tiersForPass,
 } from "../src/include.js";
 
 /** In-memory fs for the pure expansion tests. */
@@ -95,6 +100,38 @@ describe("frontmatter", () => {
   it("adds a model field when absent", () => {
     expect(applyModelOverride("name: pass-x\n", "m")).toBe("name: pass-x\nmodel: m\n");
   });
+
+  it("rewrites the name field and adds/rewrites thinking", () => {
+    expect(applyNameOverride("name: pass-x\nmodel: m\n", "pass-x--sol-med")).toBe("name: pass-x--sol-med\nmodel: m\n");
+    expect(applyThinkingOverride("name: pass-x\n", "high")).toBe("name: pass-x\nthinking: high\n");
+    expect(applyThinkingOverride("thinking: low\n", "medium")).toBe("thinking: medium\n");
+  });
+});
+
+describe("splitModelSpec", () => {
+  it("splits a recognized thinking suffix into the separate field", () => {
+    expect(splitModelSpec("openai-codex/gpt-5.6-sol:high")).toEqual({ model: "openai-codex/gpt-5.6-sol", thinking: "high" });
+    expect(splitModelSpec("openai-codex/gpt-5.6-terra:medium")).toEqual({
+      model: "openai-codex/gpt-5.6-terra",
+      thinking: "medium",
+    });
+  });
+
+  it("leaves specs without a thinking suffix whole", () => {
+    expect(splitModelSpec("openai-codex/gpt-5.6-sol")).toEqual({ model: "openai-codex/gpt-5.6-sol", thinking: null });
+    // A colon whose tail is not a thinking level is part of the model id.
+    expect(splitModelSpec("provider/model:v2")).toEqual({ model: "provider/model:v2", thinking: null });
+  });
+});
+
+describe("tiersForPass", () => {
+  const risk = ["pass-security", "pass-prod-risk", "pass-data-safety"];
+
+  it("risk passes get only sol-high; validate its fixed tier; others all three", () => {
+    expect(tiersForPass("pass-security", risk, "terra-med")).toEqual(["sol-high"]);
+    expect(tiersForPass("pass-validate", risk, "terra-med")).toEqual(["terra-med"]);
+    expect(tiersForPass("pass-baseline", risk, "terra-med")).toEqual(["terra-med", "sol-med", "sol-high"]);
+  });
 });
 
 describe("buildAgents", () => {
@@ -118,32 +155,84 @@ describe("buildAgents", () => {
 
   afterEach(() => rmSync(root, { recursive: true, force: true }));
 
-  it("builds every pass-*.md into the output dir with includes expanded", () => {
+  it("fans every pass out into per-tier variant files with includes expanded", () => {
     const out = join(root, "state", "agents");
     const built = buildAgents(join(root, "agents"), out, { root });
 
-    expect(built.map((b) => b.name)).toEqual(["pass-alpha", "pass-beta"]);
-    const alpha = readFileSync(join(out, "pass-alpha.md"), "utf8");
+    expect(built.map((b) => b.name)).toEqual([
+      "pass-alpha--terra-med",
+      "pass-alpha--sol-med",
+      "pass-alpha--sol-high",
+      "pass-beta--terra-med",
+      "pass-beta--sol-med",
+      "pass-beta--sol-high",
+    ]);
+    const alpha = readFileSync(join(out, "pass-alpha--sol-med.md"), "utf8");
     expect(alpha).toContain("# shared\nrules");
     expect(alpha).not.toContain("{{include:");
     expect(alpha).toContain("# Lens: alpha");
   });
 
-  it("passes frontmatter through untouched without an override", () => {
+  it("writes variant name/model/thinking frontmatter, other fields untouched", () => {
     const out = join(root, "state", "agents");
     buildAgents(join(root, "agents"), out, { root });
-    const alpha = readFileSync(join(out, "pass-alpha.md"), "utf8");
-    expect(alpha.startsWith("---\nname: pass-alpha\ndescription: a\ntools: read, bash\nmodel: openai/gpt-5.6-sol\n---\n")).toBe(true);
+    const alpha = readFileSync(join(out, "pass-alpha--terra-med.md"), "utf8");
+    expect(alpha.startsWith("---\nname: pass-alpha--terra-med\ndescription: a\ntools: read, bash\nmodel: openai-codex/gpt-5.6-terra\n")).toBe(true);
+    expect(alpha).toContain("thinking: medium\n");
+    const high = readFileSync(join(out, "pass-alpha--sol-high.md"), "utf8");
+    expect(high).toContain("name: pass-alpha--sol-high\n");
+    expect(high).toContain("model: openai-codex/gpt-5.6-sol\n");
+    expect(high).toContain("thinking: high\n");
+    // The thinking suffix never leaks into the model field.
+    expect(high).not.toContain("model: openai-codex/gpt-5.6-sol:high");
   });
 
-  it("applies the per-pass model override from config.models.passes", () => {
+  it("appends the execution-policy addendum to every built body (seeds untouched)", () => {
     const out = join(root, "state", "agents");
-    const built = buildAgents(join(root, "agents"), out, { root, models: { "pass-beta": "openai/gpt-5.6-terra" } });
+    const built = buildAgents(join(root, "agents"), out, { root });
+    for (const b of built) {
+      expect(readFileSync(b.output, "utf8")).toContain("## Execution policy (sandbox rule, enforced)");
+      expect(readFileSync(b.output, "utf8").endsWith(EXECUTION_POLICY_ADDENDUM)).toBe(true);
+    }
+    expect(readFileSync(join(root, "agents", "pass-alpha.md"), "utf8")).not.toContain("Execution policy");
+  });
 
-    expect(readFileSync(join(out, "pass-beta.md"), "utf8")).toContain("model: openai/gpt-5.6-terra");
-    // untouched pass keeps its own model
-    expect(readFileSync(join(out, "pass-alpha.md"), "utf8")).toContain("model: openai/gpt-5.6-sol");
-    expect(built.find((b) => b.name === "pass-beta")?.model).toBe("openai/gpt-5.6-terra");
+  it("builds a single sol-high variant for risk passes and a single fixed-tier validate", () => {
+    writeFileSync(
+      join(root, "agents", "pass-validate.md"),
+      `---\nname: pass-validate\nmodel: openai/gpt-5.6-sol\n---\n\n{{include:prompts/pass-common.md}}\n`,
+    );
+    const out = join(root, "state", "agents");
+    const built = buildAgents(join(root, "agents"), out, {
+      root,
+      riskPasses: ["pass-alpha"],
+      validateTier: "terra-med",
+    });
+    expect(built.filter((b) => b.pass === "pass-alpha").map((b) => b.name)).toEqual(["pass-alpha--sol-high"]);
+    expect(built.filter((b) => b.pass === "pass-validate").map((b) => b.name)).toEqual(["pass-validate--terra-med"]);
+    expect(built.filter((b) => b.pass === "pass-beta")).toHaveLength(3);
+    const validate = readFileSync(join(out, "pass-validate--terra-med.md"), "utf8");
+    expect(validate).toContain("model: openai-codex/gpt-5.6-terra\n");
+    expect(validate).toContain("thinking: medium\n");
+  });
+
+  it("honors custom tier specs and per-variant model overrides", () => {
+    const out = join(root, "state", "agents");
+    const built = buildAgents(join(root, "agents"), out, {
+      root,
+      tiers: {
+        "terra-med": "openai-codex/custom-terra:low",
+        "sol-med": "openai-codex/custom-sol:medium",
+        "sol-high": "openai-codex/custom-sol:high",
+      },
+      models: { "pass-beta--sol-high": "openai-codex/override-model" },
+    });
+    expect(readFileSync(join(out, "pass-alpha--terra-med.md"), "utf8")).toContain("model: openai-codex/custom-terra\n");
+    expect(readFileSync(join(out, "pass-alpha--terra-med.md"), "utf8")).toContain("thinking: low\n");
+    const beta = built.find((b) => b.name === "pass-beta--sol-high");
+    expect(beta?.model).toBe("openai-codex/override-model");
+    expect(beta?.thinking).toBe(null);
+    expect(readFileSync(join(out, "pass-beta--sol-high.md"), "utf8")).toContain("model: openai-codex/override-model\n");
   });
 
   it("ignores non pass-* files", () => {
@@ -164,14 +253,22 @@ describe("the real seeded content", () => {
     const out = mkdtempSync(join(tmpdir(), "qcr-agents-build-"));
     try {
       const built = buildAgents(join(sandbox, "agents"), out, { root: sandbox });
-      expect(built).toHaveLength(9);
+      // 5 raisable passes × 3 tiers + 3 risk passes × 1 + validate × 1 = 19.
+      expect(built).toHaveLength(19);
       for (const b of built) {
         const text = readFileSync(b.output, "utf8");
         expect(text).not.toContain("{{include:");
         expect(text).toContain("You are a **blank-slate review pass**"); // from pass-common.md
-        expect(text.startsWith("---\nname: ")).toBe(true);
+        expect(text).toContain("## Execution policy (sandbox rule, enforced)");
+        expect(text.startsWith(`---\nname: ${b.name}\n`)).toBe(true);
+        expect(b.name).toBe(`${b.pass}--${b.tier}`);
       }
-      expect(built.map((b) => b.name)).toContain("pass-validate");
+      const names = built.map((b) => b.name);
+      expect(names).toContain("pass-validate--terra-med");
+      expect(names).toContain("pass-security--sol-high");
+      expect(names).not.toContain("pass-security--terra-med");
+      expect(names).not.toContain("pass-security--sol-med");
+      expect(names.filter((n) => n.startsWith("pass-baseline--"))).toHaveLength(3);
     } finally {
       rmSync(out, { recursive: true, force: true });
     }

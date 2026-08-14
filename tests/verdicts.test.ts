@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -100,6 +100,8 @@ function watcher(over: Partial<ConstructorParameters<typeof VerdictWatcher>[0]> 
     adapter,
     hooks: hooks ?? recordingHooks().hooks,
     verdictDir: dir,
+    root: dir, // usage measurement stays inside the temp dir…
+    usage: { globalStoreDir: null }, // …and never scans the real ~/.pi store
     parseRetries: 0,
     retryDelayMs: 1,
     ...over,
@@ -128,7 +130,10 @@ describe("validateVerdict", () => {
     expect(validateVerdict({ ...verdictFile(), pr: "100" }).ok).toBe(true); // digit-strings coerce (live-round regression)
     expect(validateVerdict({ ...verdictFile(), pr: "100x" }).ok).toBe(false);
     expect(validateVerdict({ ...verdictFile(), head_sha: "" }).ok).toBe(false);
-    expect(validateVerdict({ ...verdictFile(), spend_usd: "2.25" }).ok).toBe(false);
+    // spend_usd is legacy: accepted in ANY shape and stripped, never stored.
+    const legacy = validateVerdict({ ...verdictFile(), spend_usd: "2.25" });
+    expect(legacy.ok).toBe(true);
+    if (legacy.ok) expect(legacy.verdict?.spend_usd).toBeUndefined();
     const { finished_at, ...missing } = verdictFile();
     expect(validateVerdict(missing).ok).toBe(false);
   });
@@ -147,7 +152,7 @@ describe("valid verdicts", () => {
     const round = store.db.prepare("SELECT * FROM rounds WHERE id = ?").get(roundId) as any;
     expect(round.status).toBe("done");
     expect(round.verdict).toBe("REQUEST_CHANGES");
-    expect(round.spend_usd).toBe(2.25);
+    expect(round.spend_usd).toBeNull(); // self-reported spend is fiction — ignored
     expect(store.getPr(100)!.state).toBe("awaiting_author");
     expect(readdirSync(dir).filter((f) => f.endsWith(".json"))).toEqual([]); // consumed
     expect(readdirSync(join(dir, "processed")).length).toBe(1);
@@ -193,6 +198,97 @@ describe("valid verdicts", () => {
     await pending;
     expect(store.getPr(105)!.state).toBe("tracked");
     expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'verdict_malformed'").get()).toMatchObject({ c: 0 });
+  });
+});
+
+describe("measured round usage", () => {
+  const jsonlLine = (input: number, output: number): string =>
+    JSON.stringify({ type: "message", timestamp: new Date().toISOString(), message: { role: "assistant", usage: { input, output } } });
+  const modelLine = (): string => JSON.stringify({ type: "model_change", provider: "openai-codex", modelId: "gpt-5.6-sol" });
+  const bashLine = (command: string): string =>
+    JSON.stringify({
+      type: "message",
+      timestamp: new Date().toISOString(),
+      message: { role: "assistant", content: [{ type: "toolCall", name: "bash", arguments: { command } }] },
+    });
+
+  function writeSessionJsonl(pr: number, lines: string[]): void {
+    const sessionDir = join(dir, cfg.pi.session_dir, `pr-${pr}`);
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(join(sessionDir, "session.jsonl"), lines.join("\n"));
+  }
+
+  it("prefers pi's own usage.cost.total when records carry it", async () => {
+    const roundId = reviewingRound(103);
+    const costLine = JSON.stringify({
+      type: "message",
+      timestamp: new Date().toISOString(),
+      message: {
+        role: "assistant",
+        usage: { input: 500, output: 50, cacheRead: 2000, reasoning: 25, cost: { total: 0.077 } },
+      },
+    });
+    writeSessionJsonl(103, [modelLine(), costLine]);
+    // No pricing configured — cost.total alone must carry the estimate.
+    await watcher({ usage: { globalStoreDir: null, pricing: {} } }).handleFile(write(103, 1, verdictFile({ pr: 103 })));
+    const round = store.db.prepare("SELECT * FROM rounds WHERE id = ?").get(roundId) as any;
+    expect(round.tokens_in).toBe(500);
+    expect(round.tokens_out).toBe(75); // output + reasoning
+    expect(round.tokens_cache_read).toBe(2000);
+    expect(round.est_usd).toBeCloseTo(0.077, 9);
+  });
+
+  it("stores measured tokens and a price-table fallback estimate on the round (no cost fields), ignoring self-reported spend", async () => {
+    const roundId = reviewingRound(100);
+    writeSessionJsonl(100, [modelLine(), jsonlLine(1_000_000, 500_000), jsonlLine(200_000, 100_000), "garbage line"]);
+    const w = watcher({
+      usage: { globalStoreDir: null, pricing: { "gpt-5.6-sol": { input_per_mtok: 2, output_per_mtok: 8 } } },
+    });
+    await w.handleFile(write(100, 1, verdictFile({ spend_usd: 1.25 })));
+
+    const round = store.db.prepare("SELECT * FROM rounds WHERE id = ?").get(roundId) as any;
+    expect(round.tokens_in).toBe(1_200_000);
+    expect(round.tokens_out).toBe(600_000);
+    expect(round.est_usd).toBeCloseTo(1.2 * 2 + 0.6 * 8, 6);
+    expect(round.spend_usd).toBeNull();
+  });
+
+  it("records est_usd null when the model has no price entry", async () => {
+    const roundId = reviewingRound(101);
+    writeSessionJsonl(101, [modelLine(), jsonlLine(1000, 100)]);
+    await watcher({ usage: { globalStoreDir: null, pricing: {} } }).handleFile(write(101, 1, verdictFile({ pr: 101 })));
+    const round = store.db.prepare("SELECT * FROM rounds WHERE id = ?").get(roundId) as any;
+    expect(round.tokens_in).toBe(1000);
+    expect(round.est_usd).toBeNull();
+  });
+
+  it("logs exec-policy violations without inject spam, then piggybacks on an anomaly inject", async () => {
+    reviewingRound(100);
+    writeSessionJsonl(100, [jsonlLine(10, 1), bashLine("git diff | head"), bashLine("python manage.py test")]);
+    const rec = recordingHooks();
+    const w = watcher({}, rec.hooks);
+    await w.handleFile(write(100, 1, verdictFile()));
+
+    const ev = store.db.prepare("SELECT payload FROM events WHERE kind = 'exec_policy_violation'").get() as { payload: string };
+    expect(JSON.parse(ev.payload)).toEqual({ commands: ["python manage.py test"] });
+    expect(rec.overseer).toHaveLength(0); // violations alone never inject
+
+    // A later anomaly on the same PR carries the pending violations line.
+    store.setPrState(100, "reviewing");
+    store.startRound(100, "re_review", ["pass-baseline"], cfg.daemon.round_deadline_min);
+    await w.handleFile(write(100, 2, "{broken"));
+    expect(rec.overseer).toHaveLength(1);
+    expect(rec.overseer[0]).toContain("exec-policy violations");
+    expect(rec.overseer[0]).toContain("python manage.py test");
+  });
+
+  it("survives a missing session dir (zero usage, verdict still applied)", async () => {
+    const roundId = reviewingRound(102);
+    await watcher().handleFile(write(102, 1, verdictFile({ pr: 102, verdict: "APPROVE" })));
+    const round = store.db.prepare("SELECT * FROM rounds WHERE id = ?").get(roundId) as any;
+    expect(round.status).toBe("done");
+    expect(round.tokens_in).toBe(0);
+    expect(round.tokens_out).toBe(0);
   });
 });
 

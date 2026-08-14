@@ -50,9 +50,16 @@ function cmdSpend(): void {
     const total = store.totalSpend();
     const today = new Date().toISOString().slice(0, 10);
     const todayRounds = store.roundsOn(today);
-    const todaySpend = todayRounds.reduce((n, r) => n + (r.spend_usd ?? 0), 0);
-    console.log(`total spend: $${total.toFixed(2)}`);
-    console.log(`today (${today}): $${todaySpend.toFixed(2)} across ${todayRounds.length} rounds`);
+    // est_usd (measured from session JSONLs) preferred; spend_usd only covers
+    // historical rows recorded before usage measurement existed.
+    const todaySpend = todayRounds.reduce((n, r) => n + (r.est_usd ?? r.spend_usd ?? 0), 0);
+    const totals = store.db
+      .prepare("SELECT COALESCE(SUM(tokens_in), 0) AS tin, COALESCE(SUM(tokens_out), 0) AS tout FROM rounds")
+      .get() as { tin: number; tout: number };
+    const todayIn = todayRounds.reduce((n, r) => n + (r.tokens_in ?? 0), 0);
+    const todayOut = todayRounds.reduce((n, r) => n + (r.tokens_out ?? 0), 0);
+    console.log(`total spend: $${total.toFixed(2)} (est) — ${totals.tin} in / ${totals.tout} out tokens`);
+    console.log(`today (${today}): $${todaySpend.toFixed(2)} across ${todayRounds.length} rounds — ${todayIn} in / ${todayOut} out tokens`);
   } finally {
     store.close();
   }
@@ -65,8 +72,9 @@ function cmdToday(): void {
     const rounds = store.roundsOn(today);
     console.log(`rounds on ${today}: ${rounds.length}`);
     for (const r of rounds) {
+      const tokens = r.tokens_in !== null || r.tokens_out !== null ? ` tok=${r.tokens_in ?? 0}/${r.tokens_out ?? 0}` : "";
       console.log(
-        `#${r.pr} round ${r.round_no} (${r.round_type}) [${r.status}] verdict=${r.verdict ?? "—"} spend=$${(r.spend_usd ?? 0).toFixed(2)} lenses=${r.lenses}`,
+        `#${r.pr} round ${r.round_no} (${r.round_type}) [${r.status}] verdict=${r.verdict ?? "—"} spend=$${(r.est_usd ?? r.spend_usd ?? 0).toFixed(2)}${tokens} lenses=${r.lenses}`,
       );
     }
     const events = store.eventsOn(today);
@@ -91,7 +99,7 @@ export interface WhyPayload {
   escalation_worthy?: boolean;
   updated_at?: string;
   spend_usd: number;
-  rounds: Array<{ round_no: number; round_type: string; status: string; verdict: string | null; started_at: string; finished_at: string | null; spend_usd: number | null; lenses: string; summary?: string | null }>;
+  rounds: Array<{ round_no: number; round_type: string; status: string; verdict: string | null; started_at: string; finished_at: string | null; spend_usd: number | null; est_usd?: number | null; tokens_in?: number | null; tokens_out?: number | null; lenses: string; summary?: string | null }>;
   threads: { open: number; total: number };
   ledger?: string;
   archive?: string[];
@@ -126,7 +134,7 @@ export function whyJson(store: StateStore, n: number, archiveDir: string): WhyPa
   const payload: WhyPayload = {
     pr: n,
     known: pr !== undefined || rounds.length > 0,
-    spend_usd: rounds.reduce((s, r) => s + (r.spend_usd ?? 0), 0),
+    spend_usd: rounds.reduce((s, r) => s + (r.est_usd ?? r.spend_usd ?? 0), 0),
     rounds: rounds.map((r) => ({
       round_no: r.round_no,
       round_type: r.round_type,
@@ -135,6 +143,9 @@ export function whyJson(store: StateStore, n: number, archiveDir: string): WhyPa
       started_at: r.started_at,
       finished_at: r.finished_at ?? null,
       spend_usd: r.spend_usd ?? null,
+      est_usd: r.est_usd ?? null,
+      tokens_in: r.tokens_in ?? null,
+      tokens_out: r.tokens_out ?? null,
       lenses: r.lenses,
       summary: r.summary ?? null,
     })),
@@ -160,12 +171,17 @@ export function whyJson(store: StateStore, n: number, archiveDir: string): WhyPa
   return payload;
 }
 
-export function todayJson(store: StateStore, today: string): { date: string; rounds: unknown[]; spend_usd: number; events: unknown[] } {
+export function todayJson(
+  store: StateStore,
+  today: string,
+): { date: string; rounds: unknown[]; spend_usd: number; tokens_in: number; tokens_out: number; events: unknown[] } {
   const rounds = store.roundsOn(today);
   return {
     date: today,
     rounds,
-    spend_usd: rounds.reduce((n, r) => n + (r.spend_usd ?? 0), 0),
+    spend_usd: rounds.reduce((n, r) => n + (r.est_usd ?? r.spend_usd ?? 0), 0),
+    tokens_in: rounds.reduce((n, r) => n + (r.tokens_in ?? 0), 0),
+    tokens_out: rounds.reduce((n, r) => n + (r.tokens_out ?? 0), 0),
     events: store.eventsOn(today),
   };
 }

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
-import { capacity, dispatchOnce, queuedInOrder, roundTypeFor, type DispatchAdapter } from "../src/dispatch.js";
+import { ALL_PASSES, buildPassPlan, capacity, dispatchOnce, queuedInOrder, roundTypeFor, type DispatchAdapter } from "../src/dispatch.js";
 import type { GateResult } from "../src/gate.js";
 import type { PrFileEntry } from "../src/github.js";
 import { StateStore } from "../src/state.js";
@@ -162,6 +162,76 @@ describe("recording at round start", () => {
   });
 });
 
+describe("buildPassPlan", () => {
+  // Deterministic knobs regardless of config.toml churn.
+  const planCfg: Config = {
+    ...baseCfg,
+    models: {
+      ...baseCfg.models,
+      risk_passes: ["pass-security", "pass-prod-risk", "pass-data-safety"],
+      validate_tier: "terra-med",
+      small_diff_lines: 150,
+    },
+  };
+
+  it("pins risk passes to sol-high with no raise ladder", () => {
+    const { pass_plan } = buildPassPlan(planCfg, [
+      file("infra/main.tf", 120, 5),
+      file("auth/permissions.py", 10, 2),
+      file("app/migrations/0007_add_index.py", 30, 0),
+    ]);
+    for (const lens of ["pass-security", "pass-prod-risk", "pass-data-safety"]) {
+      const entry = pass_plan.find((p) => p.lens === lens)!;
+      expect(entry).toEqual({ lens, agent: `${lens}--sol-high`, tier: "sol-high", raisable_to: [] });
+    }
+  });
+
+  it("pins pass-validate to cfg.models.validate_tier, never raisable", () => {
+    const { pass_plan } = buildPassPlan(planCfg, [file("README.md", 3, 1)]);
+    expect(pass_plan[pass_plan.length - 1]).toEqual({
+      lens: "pass-validate",
+      agent: "pass-validate--terra-med",
+      tier: "terra-med",
+      raisable_to: [],
+    });
+    const solValidate = buildPassPlan(
+      { ...planCfg, models: { ...planCfg.models, validate_tier: "sol-high" } },
+      [file("README.md", 3, 1)],
+    ).pass_plan;
+    expect(solValidate[solValidate.length - 1]!.agent).toBe("pass-validate--sol-high");
+    expect(solValidate[solValidate.length - 1]!.raisable_to).toEqual([]);
+  });
+
+  it("gives non-risk lenses the heuristic tier with an ascending raise ladder", () => {
+    // Small quiet diff → terra-med, raisable through sol-med to sol-high.
+    const small = buildPassPlan(planCfg, [file("README.md", 3, 1)]);
+    expect(small.pass_plan[0]).toEqual({
+      lens: "pass-baseline",
+      agent: "pass-baseline--terra-med",
+      tier: "terra-med",
+      raisable_to: ["pass-baseline--sol-med", "pass-baseline--sol-high"],
+    });
+    // Diff at/over small_diff_lines → sol-med, only sol-high above it.
+    const big = buildPassPlan(planCfg, [file("app/service.py", 200, 0)]);
+    expect(big.pass_plan[0]).toEqual({
+      lens: "pass-baseline",
+      agent: "pass-baseline--sol-med",
+      tier: "sol-med",
+      raisable_to: ["pass-baseline--sol-high"],
+    });
+    // Migration gate forces sol-med even on a tiny diff (for non-risk lenses).
+    const gated = buildPassPlan(planCfg, [file("app/migrations/0001_init.py", 5, 0)]);
+    expect(gated.pass_plan[0]!.tier).toBe("sol-med");
+  });
+
+  it("addable_lenses = every known pass not already planned", () => {
+    const { pass_plan, addable_lenses } = buildPassPlan(planCfg, [file("README.md", 3, 1)]);
+    expect(pass_plan.map((p) => p.lens)).toEqual(["pass-baseline", "pass-validate"]);
+    expect(addable_lenses).toEqual(ALL_PASSES.filter((l) => l !== "pass-baseline" && l !== "pass-validate"));
+    expect(addable_lenses).not.toContain("pass-validate");
+  });
+});
+
 describe("dispatchOnce", () => {
   it("dispatches in FIFO order and stops at the concurrency cap", async () => {
     const cfg = { ...baseCfg, daemon: { ...baseCfg.daemon, max_concurrent_rounds: 2 } };
@@ -237,7 +307,7 @@ describe("dispatchOnce", () => {
     adapter.files.set(31, [
       file("infra/main.tf", 120, 5),
       file("app/migrations/0007_add_index.py", 30, 0),
-      file("app/api/routes.py", 40, 2),
+      file("app/serializers/routes.py", 40, 2),
       file("tests/test_routes.py", 400, 0), // test file: excluded from prod stats
     ]);
     const { hooks, orders } = recordingHooks();
@@ -258,6 +328,9 @@ describe("dispatchOnce", () => {
     expect(order!.escalation_worthy).toBe(true);
     expect(order!.escalation_reasons.join(" ")).toContain("infra/main.tf");
     expect(order!.migration_gate).toBe(true);
+    // pass_plan mirrors lenses in order; addable = the known passes not planned.
+    expect(order!.pass_plan.map((p) => p.lens)).toEqual(order!.lenses);
+    expect(order!.addable_lenses).toEqual(ALL_PASSES.filter((l) => !order!.lenses.includes(l)));
 
     const row = store.getPr(31)!;
     expect(row.escalation_worthy).toBe(1);
@@ -273,6 +346,13 @@ describe("dispatchOnce", () => {
     expect(order!.escalation_worthy).toBe(false);
     expect(order!.migration_gate).toBe(false);
     expect(order!.lenses).toEqual(["pass-baseline", "pass-validate"]);
+    // Small quiet diff: baseline starts terra-med and can be raised up the ladder.
+    expect(order!.pass_plan[0]).toEqual({
+      lens: "pass-baseline",
+      agent: "pass-baseline--terra-med",
+      tier: "terra-med",
+      raisable_to: ["pass-baseline--sol-med", "pass-baseline--sol-high"],
+    });
   });
 
   it("uses the injected prompt renderer and settled digest", async () => {

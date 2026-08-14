@@ -419,6 +419,17 @@ export class PiSessionManager implements SessionHooks {
   }
 
   /** SessionHooks: PR merged/closed — archive, drop the worktree, kill tmux. */
+  /** Post-round compaction: type `/compact` into the session's pane. Manual
+   * /compact is a documented pi command (findings §compaction) —
+   * VERIFY-ON-PIN only for edge behavior (mid-turn arrival is harmless: the
+   * text lands in the composer and the next Enter-less state discards it).
+   * Best-effort: a missing session is a no-op, never an error. */
+  async compactSession(pr: number): Promise<void> {
+    const session = prSessionName(pr);
+    if (!(await this.tmux.hasSession(session))) return;
+    await this.tmux.send(session, "/compact", true);
+  }
+
   async archiveAndClose(pr: number): Promise<void> {
     const session = prSessionName(pr);
     this.archiveSession(session, this.archiveDir(session));

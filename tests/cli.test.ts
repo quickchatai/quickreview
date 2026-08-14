@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { renderStatus } from "../src/cli.js";
-import type { StatusSnapshot } from "../src/state.js";
+import { renderStatus, todayJson, whyJson } from "../src/cli.js";
+import { StateStore, type StatusSnapshot } from "../src/state.js";
 
 const snapshot: StatusSnapshot = {
   written_at: "2026-08-13T17:04:00.000Z",
@@ -57,5 +57,42 @@ describe("renderStatus", () => {
     const out = renderStatus({ ...snapshot, prs: [{ ...snapshot.prs[0]!, title: long }] });
     expect(out).toContain("x".repeat(60));
     expect(out).not.toContain("x".repeat(61));
+  });
+});
+
+describe("usage-aware spend reporting", () => {
+  function seededStore(): StateStore {
+    const store = new StateStore(":memory:");
+    const a = store.startRound(7, "initial", [], 45);
+    const b = store.startRound(7, "re_review", [], 45);
+    store.finishRound(a, "REQUEST_CHANGES", 1.25); // legacy: self-reported only
+    store.finishRound(b, "APPROVE", 1.25); // measured figures supersede the fiction
+    store.recordRoundUsage(b, { tokens_in: 120_000, tokens_out: 8_000, est_usd: 0.31 });
+    return store;
+  }
+
+  it("whyJson prefers est_usd with spend_usd fallback and exposes tokens per round", () => {
+    const store = seededStore();
+    try {
+      const payload = whyJson(store, 7, "/nonexistent-archive");
+      expect(payload.spend_usd).toBeCloseTo(1.25 + 0.31, 6);
+      expect(payload.rounds[0]).toMatchObject({ est_usd: null, tokens_in: null, tokens_out: null, spend_usd: 1.25 });
+      expect(payload.rounds[1]).toMatchObject({ est_usd: 0.31, tokens_in: 120_000, tokens_out: 8_000 });
+    } finally {
+      store.close();
+    }
+  });
+
+  it("todayJson sums est-preferred spend and tokens", () => {
+    const store = seededStore();
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const payload = todayJson(store, today);
+      expect(payload.spend_usd).toBeCloseTo(1.56, 6);
+      expect(payload.tokens_in).toBe(120_000);
+      expect(payload.tokens_out).toBe(8_000);
+    } finally {
+      store.close();
+    }
   });
 });

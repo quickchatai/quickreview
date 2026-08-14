@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expandHome, loadConfig, modelForPass, parseConfig } from "../src/config.js";
+import { MODELS_TIER_DEFAULTS, expandHome, loadConfig, parseConfig, tierModel } from "../src/config.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const configPath = resolve(root, "config.toml");
@@ -57,21 +57,53 @@ describe("parseConfig", () => {
   });
 });
 
-describe("loadConfig / modelForPass", () => {
+describe("[models] tiered pass scheme", () => {
+  const cfg = parseConfig(readFileSync(configPath, "utf8"));
+
+  it("reads the shipped tier map, risk passes, validate tier, and diff knob", () => {
+    expect(cfg.models.tiers).toEqual({
+      "terra-med": "openai-codex/gpt-5.6-terra:medium",
+      "sol-med": "openai-codex/gpt-5.6-sol:medium",
+      "sol-high": "openai-codex/gpt-5.6-sol:high",
+    });
+    expect(cfg.models.risk_passes).toEqual(["pass-security", "pass-prod-risk", "pass-data-safety"]);
+    expect(cfg.models.validate_tier).toBe("terra-med");
+    expect(cfg.models.small_diff_lines).toBe(150);
+  });
+
+  it("defaults every tiered knob when [models] carries only the role models", () => {
+    const minimal = readFileSync(configPath, "utf8").replace(
+      /\[models\][\s\S]*?(?=\n\[tui\])/,
+      '[models]\ndefault = "openai-codex/gpt-5.6-sol"\nconversation = "openai-codex/gpt-5.6-sol"\noverseer = "openai-codex/gpt-5.6-sol"\n',
+    );
+    const cfg2 = parseConfig(minimal);
+    expect(cfg2.models.tiers).toEqual(MODELS_TIER_DEFAULTS.tiers);
+    expect(cfg2.models.risk_passes).toEqual(MODELS_TIER_DEFAULTS.risk_passes);
+    expect(cfg2.models.validate_tier).toBe("terra-med");
+    expect(cfg2.models.small_diff_lines).toBe(150);
+    expect(cfg2.models.pricing).toEqual({});
+  });
+
+  it("parses [models.pricing] entries keyed by bare model id", () => {
+    const withPricing = readFileSync(configPath, "utf8").replace(
+      "[models.pricing]",
+      '[models.pricing]\n"gpt-5.6-sol" = { input_per_mtok = 1.25, output_per_mtok = 10.0 }',
+    );
+    const cfg2 = parseConfig(withPricing);
+    expect(cfg2.models.pricing["gpt-5.6-sol"]).toEqual({ input_per_mtok: 1.25, output_per_mtok: 10.0 });
+  });
+
+  it("tierModel resolves the full spec for a tier", () => {
+    expect(tierModel(cfg, "terra-med")).toBe("openai-codex/gpt-5.6-terra:medium");
+    expect(tierModel(cfg, "sol-high")).toBe("openai-codex/gpt-5.6-sol:high");
+  });
+});
+
+describe("loadConfig", () => {
   it("loads from an explicit path without poisoning the module cache", () => {
     const a = loadConfig(configPath);
     const b = loadConfig(configPath);
     expect(a).not.toBe(b);
     expect(a.github.repo).toBe(b.github.repo);
-  });
-
-  it("falls back to the default model when no per-pass override exists", () => {
-    const cfg = loadConfig(configPath);
-    // Every real pass carries an override in config.toml now, so probe the
-    // fallback with a pass name that has none.
-    delete cfg.models.passes["pass-baseline"];
-    expect(modelForPass(cfg, "pass-baseline")).toBe(cfg.models.default);
-    cfg.models.passes["pass-security"] = "openai/gpt-5.6-terra";
-    expect(modelForPass(cfg, "pass-security")).toBe("openai/gpt-5.6-terra");
   });
 });

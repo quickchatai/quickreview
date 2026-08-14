@@ -64,7 +64,12 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     async onStart(d) {
       // Lens agents: expand {{include:...}} + per-pass model overrides into the
       // build dir pi-subagents is pointed at (.pi/subagents.config.json).
-      const built = buildAgents(join(root, "agents"), join(root, "state", "agents"), { root, models: cfg.models.passes });
+      const built = buildAgents(join(root, "agents"), join(root, "state", "agents"), {
+        root,
+        tiers: cfg.models.tiers,
+        riskPasses: cfg.models.risk_passes,
+        validateTier: cfg.models.validate_tier,
+      });
       log(`built ${built.length} pass agents into state/agents`);
 
       // Adopt live sessions + sweep stale worktrees (never kills a live session).
