@@ -5,6 +5,7 @@
 // Pure: (view, cols, rows) → Frame (+ zones/meta for the input layer).
 import type { WhyPayload } from "../cli.js";
 import type { StatusSnapshot } from "../state.js";
+import type { AlertBadge } from "./alerts.js";
 import { formatEvent, glyphFor, sortPrs, type EventLine, type SnapshotPr } from "./model.js";
 import { Frame, SGR, displayWidth, fit, rule, stripAnsi, truncate } from "./paint.js";
 import type { Health } from "./poll.js";
@@ -15,7 +16,7 @@ export type BoardAction =
   | { t: "select-pr"; pr: number }
   | { t: "open-github"; pr: number }
   | { t: "event-jump"; pr: number }
-  | { t: "tab"; tab: "board" | "digest" }
+  | { t: "tab"; tab: "board" | "digest" | "companion" }
   | { t: "key"; key: string }; // hint-bar button → synthesized keypress
 
 export interface BoardView {
@@ -37,6 +38,11 @@ export interface BoardView {
   now?: Date;
   /** owner/repo for GitHub links (OSC-8 + click). */
   repo?: string;
+  /**: companion alert badge (count + latest, themed by tier). */
+  alerts?: AlertBadge;
+  /** A live `alert`-tier badge takes ⏎ until it is acknowledged (Esc) or
+   * followed into the companion tab. */
+  alertFocus?: boolean;
 }
 
 // ---- layout ----------------------------------------------------------------
@@ -62,7 +68,22 @@ export function eventsRows(rows: number): number {
 
 // ---- pieces ----------------------------------------------------------------
 
-export function topBar(view: BoardView, cols: number): string {
+/** The companion's alert badge as it sits in the top bar: tier color, today's
+ * count, the latest title, and how many repeats folded into counters. */
+export function alertSegment(badge: AlertBadge, focused: boolean): string {
+  const latest = badge.latest;
+  if (!latest) return "";
+  const color = latest.tier === "alert" ? FG.anomaly : FG.accent;
+  const glyph = latest.tier === "alert" ? "▲" : "•";
+  const where = latest.pr !== null ? ` #${latest.pr}` : "";
+  const folds = badge.folds > 0 ? ` +${badge.folds}` : "";
+  const label = `${glyph} ${badge.count}${where} ${truncate(latest.title, 40)}${folds}${focused ? " ⏎ companion" : " (c)"}`;
+  return focused ? `${SGR.inverse}${color}${label}${RESET}${SGR.reset}` : `${color}${label}${RESET}`;
+}
+
+/** Top-bar segments, left to right — shared by the renderer and the hit-test
+ * geometry so the alert click zone can never drift from the text. */
+function barSegments(view: BoardView, alerts: boolean): string[] {
   const mode = view.dryRun ? `${FG.accent}DRY-RUN${RESET}` : `${SGR.bgRed}${SGR.bold} LIVE ${SGR.reset}`;
   let health: string;
   switch (view.health.kind) {
@@ -79,7 +100,29 @@ export function topBar(view: BoardView, cols: number): string {
   const s = view.snapshot;
   const rounds = s ? `rounds ${s.running_rounds}/${s.max_concurrent_rounds ?? "?"}` : "";
   const spend = s?.today_spend_usd !== undefined ? `today $${s.today_spend_usd.toFixed(2)}` : "";
-  return rule(cols, "┌", "┐", [`${SGR.bold}quickreview${SGR.reset}`, mode, health, rounds, spend]);
+  const badge = alerts && view.alerts ? alertSegment(view.alerts, view.alertFocus === true) : "";
+  return [`${SGR.bold}quickreview${SGR.reset}`, mode, health, rounds, spend, badge].filter((x) => x !== "");
+}
+
+export function topBar(view: BoardView, cols: number): string {
+  return rule(cols, "┌", "┐", barSegments(view, true));
+}
+
+/**
+ * 1-based screen columns of the alert badge inside the top bar, or undefined
+ * when there is no badge. Derived from the same segment list `topBar` renders:
+ * `rule` lays out `border + " " + segments.join(" ── ") + " "`, so the badge
+ * starts one column past the border, the leading space, and every earlier
+ * segment.
+ */
+export function alertZone(view: BoardView, cols: number): { x1: number; x2: number } | undefined {
+  if (!view.alerts?.latest) return undefined;
+  const before = barSegments(view, false);
+  const prefix = before.length > 0 ? `${before.join(" ── ")} ── ` : "";
+  const x1 = 3 + displayWidth(stripAnsi(prefix));
+  const width = displayWidth(stripAnsi(alertSegment(view.alerts, view.alertFocus === true)));
+  if (x1 >= cols) return undefined; // truncated away on a narrow terminal
+  return { x1, x2: Math.min(cols - 1, x1 + width - 1) };
 }
 
 function styledRow(pr: SnapshotPr, selected: boolean, width: number, now: Date, repo: string | undefined): string {
@@ -160,6 +203,7 @@ export function detailLines(detail: WhyPayload | undefined, pr: SnapshotPr | und
 export const HINT_BUTTONS: Array<{ label: string; key: string }> = [
   { label: "1 board", key: "1" },
   { label: "2 digest", key: "2" },
+  { label: "3 companion", key: "3" },
   { label: "⏎ attach", key: "\r" },
   { label: "m message", key: "m" },
   { label: "g github", key: "g" },
@@ -172,7 +216,8 @@ export const HINT_BUTTONS: Array<{ label: string; key: string }> = [
 ];
 
 export const HELP_LINES = [
-  "1 / 2          board / digest tab",
+  "1 / 2 / 3      board / digest / companion tab (c = companion too)",
+  "               an alert in the top bar: click it or ⏎ to open the companion",
   "j/k ↓/↑        select PR (mouse: click a row; click again to attach)",
   "⏎              attach selected PR (embedded pi session)",
   "g              open the PR on GitHub (PR numbers are Ctrl+clickable links)",
@@ -194,6 +239,8 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
   const frame = new Frame(cols, rows);
   const now = view.now ?? new Date();
   frame.set(0, topBar(view, cols));
+  const az = alertZone(view, cols);
+  if (az) frame.zones.push({ x1: az.x1, y1: 1, x2: az.x2, y2: 1, action: { t: "tab", tab: "companion" } satisfies BoardAction });
   const evRows = eventsRows(rows);
   const bodyRows = rows - 2 - evRows; // top bar + bottom border
   const sorted = view.snapshot ? sortPrs(view.snapshot.prs) : [];

@@ -109,6 +109,13 @@ export class CompanionLifecycle {
   piArgv(): string[] {
     return [
       "pi",
+      "--extension",
+      // wake channel: fs.watch on /feed/wake → sendUserMessage. The
+      // repo is mounted at /workspace, so the extension ships with the repo, no
+      // image rebuild. VERIFY-ON-PIN: `--extension <path>` (same undocumented
+      // flag sessions.ts uses; fallback is the settings.json "extensions" array
+      // the entrypoint already writes).
+      `${CONTAINER.workspace}/extensions/companion-wake.ts`,
       "--model",
       this.cfg.model,
       "--session-dir",

@@ -21,10 +21,12 @@ usage: qcr tui [<pr> | overseer | main] [--no-companion] [--no-reload]
   qcr tui 5012      deep-link straight into PR 5012's pi session
   qcr tui overseer  deep-link into the overseer session
 
-  --no-companion    skip starting/stopping the local companion container
+  --no-companion    skip the local companion entirely (container, ambient
+                    feed, alert pipeline and the companion tab)
   --no-reload       do not re-exec when a new dist/ build lands
 
-keys: 1/2 tabs · j/k select · ⏎ attach · Ctrl-q detach (twice = literal) ·
+keys: 1/2/3 tabs (3 = companion, also c) · j/k select · ⏎ attach ·
+      Ctrl-q detach (twice = literal) ·
       m quick-message · o overseer · M main · w detail · e events · r refresh ·
       ? full key map · q quit
 
@@ -117,6 +119,58 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
     }
   }
 
+  // ambient feed + alert pipeline + companion tab. All of it hangs off
+  // companionOn, so --no-companion really means "none of this runs".
+  const { installCompanionTabHooks } = await import("./companiontab.js");
+  const { spawn: spawnPty } = companionOn ? await import("node-pty") : { spawn: undefined };
+  installCompanionTabHooks(app, {
+    lifecycle: companion,
+    available: companionUp,
+    spawner: (argv, cols, rows) => {
+      const p = spawnPty!("docker", argv, { name: "xterm-256color", cols, rows, env: process.env as Record<string, string> });
+      return {
+        write: (data) => p.write(data),
+        resize: (c, r) => p.resize(c, r),
+        kill: () => {
+          try {
+            p.kill();
+          } catch {
+            /* already dead */
+          }
+        },
+        onData: (cb) => p.onData(cb),
+        onExit: (cb) => p.onExit(cb),
+      };
+    },
+  });
+
+  let alerts: { stop(): void } | undefined;
+  if (companionUp) {
+    const { FeedWriter } = await import("./feed.js");
+    const feed = new FeedWriter(full.companion.feed_dir);
+    app.hooks.onPoll = (a) => {
+      const snap = a.view.snapshot;
+      if (!snap) return;
+      try {
+        feed.write(snap, a.rawEvents, a.view.health.kind);
+      } catch (err) {
+        a.notice(`✖ feed write failed: ${String(err instanceof Error ? err.message : err)}`);
+      }
+    };
+
+    const { AlertConsumer, AlertPolicy, notifySendRunner } = await import("./alerts.js");
+    const { InjectSender } = await import("./msg.js");
+    const overseer = new InjectSender(cfg, realSshRunner);
+    const consumer = new AlertConsumer(full.companion.alerts_dir, new AlertPolicy(full.companion.cooldown_min), {
+      notice: (text) => app.notice(text),
+      badge: (badge) => app.setAlertBadge(badge),
+      notify: notifySendRunner,
+      inject: (text) => void overseer.send("overseer", text, (_state, label) => app.notice(label)),
+    });
+    consumer.start(Math.max(1, cfg.poll_interval_s) * 1000);
+    alerts = consumer;
+  }
+
   // Restore a hot-reload snapshot before run(), so the first paint is already
   // on the right tab with the right selection.
   const resumed = args.resumeState ? readResumeState(args.resumeState) : undefined;
@@ -157,6 +211,7 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
   else if (target.kind === "session") void app.hooks.attach?.(target.session, app);
   await running;
   reloader?.stop();
+  alerts?.stop();
 
   // Clean quit stops the container (conversation + auth survive on volumes).
   // A crash deliberately leaves it running — the next start adopts it.

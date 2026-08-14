@@ -131,6 +131,9 @@ describe("CompanionLifecycle argv", () => {
     const pi = argv.slice(argv.indexOf("pi"));
     expect(pi).toEqual([
       "pi",
+      // the wake extension ships with the mounted repo.
+      "--extension",
+      `${CONTAINER.workspace}/extensions/companion-wake.ts`,
       "--model",
       COMPANION_DEFAULTS.model,
       "--session-dir",

@@ -53,6 +53,10 @@ export class AttachScreen {
     private readonly spawn: PtySpawner,
     private readonly out: NodeJS.WriteStream = process.stdout,
     private readonly input: NodeJS.ReadStream = process.stdin,
+    /**: the companion tab attaches a LOCAL container (`docker exec -it
+     * … tmux attach`), so it supplies its own argv; the ssh path stays the
+     * default. The spawner owns the binary either way. */
+    private readonly argvOverride?: string[],
   ) {}
 
   /** Resolves when the user is back on the board. */
@@ -78,7 +82,7 @@ export class AttachScreen {
     this.pane = new TermPane(cols, rows);
     let stderrTail = "";
     try {
-      this.pty = this.spawn(attachArgv(this.app.cfg, this.session), cols, rows);
+      this.pty = this.spawn(this.argvOverride ?? attachArgv(this.app.cfg, this.session), cols, rows);
     } catch (err) {
       this.bailToBoard(`attach ${this.session}: ${String(err)}`);
       return;

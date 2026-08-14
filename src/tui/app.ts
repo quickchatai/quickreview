@@ -4,6 +4,7 @@
 // quick-message land in and plug in via AppHooks).
 import type { WhyPayload } from "../cli.js";
 import type { TuiConfig } from "../config.js";
+import type { AlertBadge } from "./alerts.js";
 import { renderBoard, type BoardAction, type BoardView } from "./board.js";
 import { decodeInputKey, decodeKey } from "./keys.js";
 import { formatEvent, moveSelection, reselect, sortPrs, type EventLine } from "./model.js";
@@ -31,9 +32,16 @@ export interface AppHooks {
   /**: the board is back in charge (attach closed) — a hot-reload that
    * was deferred while attached can go through now. */
   onResume?: () => void;
+  /**: called after every poll and every events refresh — the ambient
+   * feed writer hangs off this (daemon-owned cadence). */
+  onPoll?: (app: App) => void;
+  /**: attach the local companion container's tmux session. */
+  companionAttach?: (app: App) => Promise<void>;
+  /**: what the companion tab shows when nothing is attached. */
+  companionScreen?: (app: App, cols: number, rows: number) => string;
 }
 
-export type Tab = "board" | "digest";
+export type Tab = "board" | "digest" | "companion";
 
 export class App {
   readonly view: BoardView = {
@@ -48,6 +56,9 @@ export class App {
   };
   tab: Tab = "board";
   readonly poller: Poller;
+  /** Raw event rows behind view.events — the ambient feed writes these
+   * verbatim, so the companion sees what the daemon logged, not our prose. */
+  rawEvents: Array<{ ts: string; kind: string; pr: number | null; payload: string | null }> = [];
   private selectedPr: number | undefined;
   private detailSeq = 0;
   private quitResolve: (() => void) | undefined;
@@ -139,6 +150,7 @@ export class App {
     this.view.health = this.poller.health();
     void this.refreshEvents();
     if (this.view.detail?.pr !== this.selectedPr) void this.refreshDetail();
+    this.hooks.onPoll?.(this);
     this.repaint();
   }
 
@@ -147,8 +159,10 @@ export class App {
     if (!res.ok) return;
     try {
       const parsed = JSON.parse(res.stdout) as { events: Array<{ ts: string; kind: string; pr: number | null; payload: string | null }> };
+      this.rawEvents = parsed.events;
       const lines = parsed.events.map(formatEvent).reverse(); // newest first
       this.view.events = this.mergeNotices(lines);
+      this.hooks.onPoll?.(this); // feed the companion the fresh tail too
       this.repaint();
     } catch {
       /* keep the previous strip on parse failure */
@@ -256,6 +270,7 @@ export class App {
   }
 
   private handleMouse(ev: MouseEvent): void {
+    if (this.tab === "companion") return; // the attach (or its placeholder) owns it
     if (this.tab === "digest") {
       // Digest tab: wheel scrolls; row-level actions stay on the keyboard.
       if (ev.kind !== "click") this.hooks.digestKey?.(this, { kind: ev.kind === "wheel-down" ? "down" : "up" });
@@ -294,6 +309,10 @@ export class App {
         this.selectPr(action.pr);
         break;
       case "tab":
+        if (action.tab === "companion") {
+          this.openCompanion();
+          return;
+        }
         this.tab = action.tab;
         break;
       case "key":
@@ -321,6 +340,23 @@ export class App {
       return;
     }
     if (this.tab === "digest" && this.hooks.digestKey?.(this, key)) return;
+    if (this.tab === "companion") {
+      // The tab is the conversation: ⏎ re-attaches, tab/quit keys still work,
+      // everything else would silently act on the board — so it doesn't.
+      switch (key.kind) {
+        case "enter":
+        case "tab-companion":
+          this.openCompanion();
+          return;
+        case "tab-board":
+        case "tab-digest":
+        case "quit":
+        case "help":
+          break;
+        default:
+          return;
+      }
+    }
 
     switch (key.kind) {
       case "quit":
@@ -335,6 +371,9 @@ export class App {
       case "tab-digest":
         this.tab = "digest";
         break;
+      case "tab-companion":
+        this.openCompanion();
+        return;
       case "up":
       case "down": {
         if (this.view.eventsFocus) {
@@ -351,6 +390,7 @@ export class App {
       }
       case "escape":
         this.view.eventsFocus = false;
+        this.view.alertFocus = false; // acknowledged: ⏎ goes back to attach
         break;
       case "events":
         this.view.eventsFocus = !this.view.eventsFocus;
@@ -364,6 +404,12 @@ export class App {
         void this.refreshDetail();
         break;
       case "enter": {
+        // A live alert owns ⏎ until it is followed or dismissed — the point of
+        // an alert is that the next thing you do is talk to the companion.
+        if (this.view.alertFocus) {
+          this.openCompanion();
+          return;
+        }
         const session = this.selectedSession();
         if (!session) break;
         this.startAttach(session);
@@ -391,6 +437,26 @@ export class App {
     this.repaint();
   }
 
+  /** The companion tab: switching to it *is* attaching to the local container's
+   * pi session (there is nothing else to show). Following an alert clears its
+   * focus — it has been acted on. */
+  openCompanion(): void {
+    this.tab = "companion";
+    this.view.alertFocus = false;
+    if (!this.hooks.companionAttach) {
+      this.repaint();
+      return;
+    }
+    void this.hooks.companionAttach(this);
+  }
+
+  /** Alert consumer → top bar. `alert` tier also grabs ⏎ (see handleInput). */
+  setAlertBadge(badge: AlertBadge): void {
+    this.view.alerts = badge;
+    if (badge.latest?.tier === "alert") this.view.alertFocus = true;
+    this.repaint();
+  }
+
   private startAttach(session: string): void {
     if (!this.hooks.attach) {
       this.notice(`attach ${session}: lands in`);
@@ -411,6 +477,12 @@ export class App {
       const screen = this.hooks.digestScreen?.(this, cols, rows);
       this.lastFrame = undefined;
       this.out.write(screen ?? `${CLEAR}digest tab lands in — [1] back to board`);
+      return;
+    }
+    if (this.tab === "companion") {
+      const screen = this.hooks.companionScreen?.(this, cols, rows);
+      this.lastFrame = undefined;
+      this.out.write(screen ?? `${CLEAR}companion unavailable (started with --no-companion?) — [1] back to board`);
       return;
     }
     this.view.now = this.now();
