@@ -68,7 +68,7 @@ describe("daemon wiring", () => {
   it("runs reconcile → dispatch → verdict apply end to end in dry-run", async () => {
     const recorded: string[] = [];
     const daemon = createDaemon({
-      cfg: loadConfig(),
+      cfg: { ...loadConfig(), dry_run: true }, // the test exercises dry-run machinery regardless of the shipped flag
       root,
       store,
       adapter: fakeAdapter(recorded, join(root, "state", "dryrun")),

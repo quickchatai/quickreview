@@ -77,10 +77,10 @@ describe("rounds", () => {
   it("finishRound records verdict, spend and wall-clock duration", () => {
     const id = store.startRound(7, "initial", [], 45);
     clock = new Date(T0.getTime() + 12 * 60_000 + 30_000);
-    store.finishRound(id, "REQUEST_CHANGES", 1.25);
+    store.finishRound(id, "REQUEST_CHANGES", 1.25, "Short round summary for the TUI.");
 
     const row = store.db.prepare("SELECT * FROM rounds WHERE id = ?").get(id) as any;
-    expect(row).toMatchObject({ verdict: "REQUEST_CHANGES", spend_usd: 1.25, status: "done" });
+    expect(row).toMatchObject({ verdict: "REQUEST_CHANGES", spend_usd: 1.25, status: "done", summary: "Short round summary for the TUI." });
     expect(row.duration_s).toBe(750);
     expect(row.finished_at).toBe(clock.toISOString());
     expect(store.runningRounds()).toHaveLength(0);

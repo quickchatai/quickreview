@@ -33,8 +33,8 @@ describe("parseConfig", () => {
     expect(cfg.pi.session_dir).toBeTruthy();
   });
 
-  it("defaults dry_run to on in the shipped config", () => {
-    expect(cfg.dry_run).toBe(true);
+  it("ships dry_run off — the cutover flag (flipped by the owner, 2026-08-14)", () => {
+    expect(cfg.dry_run).toBe(false);
   });
 
   it("expands secrets_dir to an absolute path", () => {

@@ -37,6 +37,8 @@ export interface RoundRow {
   verdict: string | null;
   spend_usd: number | null;
   duration_s: number | null;
+  /** Session-written 3-4 sentence round summary (verdict file `summary`). */
+  summary: string | null;
   started_at: string;
   deadline_at: string;
   finished_at: string | null;
@@ -112,6 +114,11 @@ export class StateStore {
     } catch {
       /* column already present */
     }
+    try {
+      this.db.exec("ALTER TABLE rounds ADD COLUMN summary TEXT");
+    } catch {
+      /* column already present */
+    }
   }
 
   close(): void {
@@ -169,12 +176,12 @@ export class StateStore {
     return Number(info.lastInsertRowid);
   }
 
-  finishRound(id: number, verdict: string, spendUsd: number | null): void {
+  finishRound(id: number, verdict: string, spendUsd: number | null, summary: string | null = null): void {
     const row = this.db.prepare("SELECT started_at FROM rounds WHERE id = ?").get(id) as { started_at: string } | undefined;
     const duration = row ? (this.now().getTime() - Date.parse(row.started_at)) / 1000 : null;
     this.db
-      .prepare("UPDATE rounds SET verdict = ?, spend_usd = ?, duration_s = ?, finished_at = ?, status = 'done' WHERE id = ?")
-      .run(verdict, spendUsd, duration, this.ts(), id);
+      .prepare("UPDATE rounds SET verdict = ?, spend_usd = ?, duration_s = ?, finished_at = ?, summary = ?, status = 'done' WHERE id = ?")
+      .run(verdict, spendUsd, duration, this.ts(), summary, id);
   }
 
   markRoundOverdue(id: number): void {

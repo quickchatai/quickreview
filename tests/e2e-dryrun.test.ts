@@ -119,8 +119,8 @@ afterEach(() => {
 });
 
 describe("dry-run fixture round", () => {
-  it("has dry_run true in the committed config — the pre-cutover invariant", () => {
-    expect(loadConfig(join(SANDBOX, "config.toml")).dry_run).toBe(true);
+  it("has dry_run false in the committed config — LIVE since the 2026-08-14 cutover", () => {
+    expect(loadConfig(join(SANDBOX, "config.toml")).dry_run).toBe(false);
   });
 
   it("builds the round's agent definitions with includes expanded", () => {

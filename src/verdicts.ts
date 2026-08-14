@@ -65,6 +65,8 @@ export function validateVerdict(raw: unknown): ParsedVerdict {
   if (v.spend_usd !== undefined && typeof v.spend_usd !== "number") return bad("spend_usd must be a number");
   if (v.ai_approved !== undefined && typeof v.ai_approved !== "boolean") return bad("ai_approved must be a boolean");
   if (v.ledger_snapshot !== undefined && typeof v.ledger_snapshot !== "string") return bad("ledger_snapshot must be a string");
+  if (v.summary !== undefined && typeof v.summary !== "string") return bad("summary must be a string");
+  if (typeof v.summary === "string") v.summary = v.summary.trim().slice(0, 800);
   return { ok: true, verdict: raw as unknown as VerdictFile };
 }
 
@@ -196,7 +198,7 @@ export class VerdictWatcher {
       escalation = (await this.safe(() => adapter.requestEscalationReview(v.pr), `escalate #${v.pr}`)) ?? null;
     }
 
-    if (round) store.finishRound(round.id, v.verdict, v.spend_usd ?? null);
+    if (round) store.finishRound(round.id, v.verdict, v.spend_usd ?? null, v.summary ?? null);
     applyEvent(store, v.pr, { type: "verdict", verdict: v.verdict }, { head_sha: v.head_sha }, { botLogin: cfg.github.bot_login, now: () => this.now(), reason: `verdict:${v.verdict}` });
     store.logEvent("verdict_applied", v.pr, {
       file: name,

@@ -107,6 +107,16 @@ function watcher(over: Partial<ConstructorParameters<typeof VerdictWatcher>[0]> 
 }
 
 describe("validateVerdict", () => {
+  it("accepts and caps an optional summary; rejects non-strings", () => {
+    const ok = validateVerdict({ ...verdictFile(), summary: "  Adds retry to the CRM send. Round found two nits. Awaiting author. " });
+    expect(ok.ok).toBe(true);
+    if (ok.ok) expect(ok.verdict?.summary).toBe("Adds retry to the CRM send. Round found two nits. Awaiting author.");
+    const long = validateVerdict({ ...verdictFile(), summary: "x".repeat(2000) });
+    expect(long.ok).toBe(true);
+    if (long.ok) expect(long.verdict?.summary?.length).toBe(800);
+    expect(validateVerdict({ ...verdictFile(), summary: 42 }).ok).toBe(false);
+  });
+
   it("accepts a well-formed verdict", () => {
     expect(validateVerdict(verdictFile()).ok).toBe(true);
     expect(validateVerdict(verdictFile({ verdict: "ESCALATE", ai_approved: true })).ok).toBe(true);

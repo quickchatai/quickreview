@@ -30,6 +30,9 @@ export interface VerdictFile {
   head_sha: string;
   spend_usd?: number;
   ledger_snapshot?: string;
+  /** 3-4 sentence plain-prose "what is going on" written by the session for
+   * the owner's TUI detail pane. Optional; capped by the consumer. */
+  summary?: string;
   finished_at: string;
 }
 

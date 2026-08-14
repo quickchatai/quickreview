@@ -7,7 +7,7 @@ import type { WhyPayload } from "../cli.js";
 import type { StatusSnapshot } from "../state.js";
 import type { AlertBadge } from "./alerts.js";
 import { formatEvent, glyphFor, sortPrs, type EventLine, type SnapshotPr } from "./model.js";
-import { Frame, SGR, displayWidth, fit, rule, stripAnsi, truncate } from "./paint.js";
+import { Frame, SGR, displayWidth, fit, rule, sanitizeText, stripAnsi, truncate, wrap } from "./paint.js";
 import type { Health } from "./poll.js";
 import { FG, RESET, fmtAge, legendLine, osc8, prUrl, stateColor, verdictChip } from "./theme.js";
 
@@ -150,7 +150,7 @@ function section(title: string, subtitle: string): string {
 export function detailLines(detail: WhyPayload | undefined, pr: SnapshotPr | undefined, width: number, now: Date = new Date(0)): string[] {
   const lines: string[] = [];
   if (!pr) return ["no PR selected"];
-  lines.push(`${stateColor(pr.state)}${SGR.bold}#${pr.number}${RESET} ${SGR.bold}${truncate(pr.title, width - 8 - String(pr.number).length)}${RESET}`);
+  lines.push(`${stateColor(pr.state)}${SGR.bold}#${pr.number}${RESET} ${SGR.bold}${truncate(sanitizeText(pr.title), width - 8 - String(pr.number).length)}${RESET}`);
   if (!detail || detail.pr !== pr.number) {
     lines.push(`${FG.dim}loading detail…${RESET}`);
     return lines;
@@ -160,40 +160,53 @@ export function detailLines(detail: WhyPayload | undefined, pr: SnapshotPr | und
   if (round !== undefined) facts.push(`round ${round}`);
   facts.push(`esc-worthy: ${detail.escalation_worthy ? "yes" : "no"}`);
   if (detail.author) facts.push(`by ${FG.author}${detail.author}${RESET}`);
-  lines.push(facts.join(" · "));
+  lines.push(truncate(facts.join(" · "), width));
   const trig = detail.trigger_ts ? `trig ${fmtAge(detail.trigger_ts, now)} ago` : "trig —";
-  lines.push(`spend $${detail.spend_usd.toFixed(2)} · head ${(detail.head_sha ?? "").slice(0, 7)} · ${trig}`);
+  lines.push(truncate(`spend $${detail.spend_usd.toFixed(2)} · head ${(detail.head_sha ?? "").slice(0, 7)} · ${trig}`, width));
   if (detail.labels && detail.labels.length > 0) {
-    lines.push(detail.labels.map((l) => `${FG.accent}[${l}]${RESET}`).join(" "));
+    lines.push(truncate(detail.labels.map((l) => `${FG.accent}[${sanitizeText(l)}]${RESET}`).join(" "), width));
   }
   lines.push(`${FG.dim}${"─".repeat(Math.max(0, width))}${RESET}`);
+  const lastSummary = [...detail.rounds].reverse().find((r) => r.summary && r.summary.trim().length > 0)?.summary;
+  if (lastSummary) {
+    lines.push(truncate(section("NOW", "the session's own 3-4 sentence read"), width));
+    for (const l of wrap(sanitizeText(lastSummary).trim(), width)) lines.push(l);
+  }
   if (detail.description !== undefined) {
-    lines.push(section("DESCRIPTION", "the PR body"));
-    const desc = detail.description.trim().length > 0 ? detail.description.trim().split("\n") : ["(empty)"];
-    for (const l of desc.slice(0, 12)) lines.push(truncate(l, width));
+    lines.push(truncate(section("DESCRIPTION", "the PR body"), width));
+    const raw = sanitizeText(detail.description).trim();
+    const desc = raw.length > 0 ? wrap(raw, width) : ["(empty)"];
+    for (const l of desc.slice(0, 12)) lines.push(l);
     if (desc.length > 12) lines.push(`${FG.dim}… ${desc.length - 12} more lines (open on GitHub with g)${RESET}`);
   }
-  lines.push(section("LEDGER", "findings the conversation tracks"));
+  lines.push(truncate(section("LEDGER", "findings the conversation tracks"), width));
   if (detail.ledger) {
-    for (const l of detail.ledger.split("\n")) {
+    for (const l of sanitizeText(detail.ledger).split("\n")) {
       const t = l.trim();
-      if (t.length > 0) lines.push(truncate(t, width));
+      if (t.length > 0) for (const wl of wrap(t, width)) lines.push(wl);
     }
   } else {
-    lines.push(`${FG.dim}(none archived — live ledger is pinned in the session)${RESET}`);
+    lines.push(truncate(`${FG.dim}(none archived — live ledger is pinned in the session)${RESET}`, width));
   }
   const roundsBits = detail.rounds.map((r) => {
     const v = r.verdict ? (VERDICT_ABBREV[r.verdict] ?? r.verdict) : r.status === "running" ? "…" : "—";
     const color = r.verdict === "APPROVE" ? FG.approve : r.verdict === "REQUEST_CHANGES" ? FG.request_changes : FG.dim;
     return `r${r.round_no} ${color}${v}${RESET}`;
   });
-  lines.push(`${section("ROUNDS", "review rounds + verdicts")}  ${roundsBits.join(" · ") || "—"}`);
-  lines.push(`${section("THREADS", "bot review threads")} ${detail.threads.total} known`);
+  lines.push(truncate(`${section("ROUNDS", "review rounds + verdicts")}  ${roundsBits.join(" · ") || "—"}`, width));
+  lines.push(truncate(`${section("THREADS", "bot review threads")} ${detail.threads.total} known`, width));
   if (detail.comments && detail.comments.length > 0) {
-    lines.push(section("COMMENTS", "latest PR conversation"));
+    lines.push(truncate(section("COMMENTS", "latest PR conversation"), width));
     for (const c of detail.comments) {
-      const first = c.body.split("\n")[0] ?? "";
-      lines.push(truncate(`${FG.author}${c.author}${RESET} ${FG.dim}${fmtAge(c.created_at, now)} ago${RESET}  ${first}`, width + 40));
+      lines.push(truncate(`${FG.author}${c.author}${RESET} ${FG.dim}${fmtAge(c.created_at, now)} ago${RESET}`, width));
+      const body = sanitizeText(c.body)
+        .split("\n")
+        .map((t) => t.trim())
+        .filter((t) => t.length > 0)
+        .join(" ");
+      const bodyLines = wrap(body, Math.max(8, width - 2));
+      for (const bl of bodyLines.slice(0, 2)) lines.push(`  ${bl}`);
+      if (bodyLines.length > 2) lines.push(`  ${FG.dim}…${RESET}`);
     }
   }
   return lines;

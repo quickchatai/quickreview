@@ -86,10 +86,14 @@ are not):
   "ai_approved": true,
   "head_sha": "{{head_sha}}",
   "spend_usd": 1.25,
+  "summary": "<3-4 plain sentences for the owner>",
   "finished_at": "<ISO-8601 UTC now>"
 }
 ```
 
 `pr` and `round_no` are numbers. `ai_approved` (soundness marker, ESCALATE
-only) and `spend_usd` are optional. Update the ledger header to
+only), `spend_usd`, and `summary` are optional — but always write `summary`:
+3-4 plain sentences telling the owner what is going on with this PR right now
+(what the change does, what this round found, where it stands). No markdown,
+no lens jargon; it renders verbatim in his TUI detail pane. Update the ledger header to
 `{{head_sha}}`. Labels and the escalation review request belong to the daemon.

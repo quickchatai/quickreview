@@ -175,7 +175,8 @@ describe("rich board", () => {
     expect(text).toContain("Frames the CTA buttons");
     expect(text).toContain("[AI review requested]");
     expect(text).toContain("COMMENTS");
-    expect(text).toContain("owner_legacy 1h ago  please also check mobile");
+    expect(text).toContain("owner_legacy 1h ago");
+    expect(text).toContain("  please also check mobile"); // body wraps on its own indented line now
     expect(text).toContain("by jbennett");
   });
 });

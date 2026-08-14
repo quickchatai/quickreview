@@ -3,7 +3,7 @@ import type { WhyPayload } from "../src/cli.js";
 import type { StatusSnapshot } from "../src/state.js";
 import { renderBoard, topBar, detailLines, type BoardView } from "../src/tui/board.js";
 import { decodeKey, decodeInputKey } from "../src/tui/keys.js";
-import { displayWidth, fit, rule, stripAnsi, truncate } from "../src/tui/paint.js";
+import { displayWidth, fit, rule, sanitizeText, stripAnsi, truncate, wrap } from "../src/tui/paint.js";
 import { statusArgv, whyArgv, eventsArgv, attachArgv } from "../src/tui/remote.js";
 import { TUI_DEFAULTS } from "../src/config.js";
 
@@ -105,6 +105,64 @@ describe("detailLines", () => {
   it("shows a loading line until the payload matches the selection", () => {
     const lines = detailLines(undefined, snapshot.prs[0], 60).map(stripAnsi);
     expect(lines[1]).toBe("loading detail…");
+  });
+});
+
+describe("sanitizeText + wrap (foreign-text hygiene)", () => {
+  it("strips CR so GitHub CRLF bodies cannot rehome the cursor", () => {
+    expect(sanitizeText("line one\r\nline two\r")).toBe("line one\nline two\n");
+  });
+  it("expands tabs and drops other control bytes", () => {
+    expect(sanitizeText("a\tb")).toBe("a  b");
+    expect(sanitizeText("x\x00y\x08z\x07w")).toBe("xyzw");
+  });
+  it("word-wraps at cell width, preserving paragraph breaks", () => {
+    expect(wrap("alpha beta gamma", 11)).toEqual(["alpha beta", "gamma"]);
+    expect(wrap("one\n\ntwo", 20)).toEqual(["one", "", "two"]);
+  });
+  it("hard-breaks a word longer than the width", () => {
+    expect(wrap("abcdefghij", 4)).toEqual(["abcd", "efgh", "ij"]);
+  });
+  it("counts CJK as two cells when wrapping", () => {
+    expect(wrap("\u6c49\u5b57\u6c49\u5b57", 4)).toEqual(["\u6c49\u5b57", "\u6c49\u5b57"]);
+  });
+});
+
+describe("detailLines keeps foreign text inside the pane", () => {
+  const whyBase: WhyPayload = {
+    pr: 5012,
+    known: true,
+    state: "reviewing",
+    title: "fix(crm): retry send_message",
+    head_sha: "a2e380ff11",
+    escalation_worthy: false,
+    trigger_ts: "2026-08-13T14:02:00Z",
+    spend_usd: 1.3,
+    rounds: [],
+    threads: { open: 0, total: 0 },
+    ledger: null,
+  };
+  it("wraps a long CRLF description instead of truncating rightwards", () => {
+    const d: WhyPayload = {
+      ...whyBase,
+      description: "First sentence of the body.\r\nSecond line that is quite long and would previously vanish off the right edge of the pane entirely.",
+    };
+    const lines = detailLines(d, snapshot.prs[0], 30);
+    const flat = lines.map(stripAnsi);
+    expect(flat.some((l) => l.includes("First sentence"))).toBe(true);
+    expect(flat.some((l) => l.includes("right edge"))).toBe(true);
+    for (const l of lines) expect(displayWidth(l)).toBeLessThanOrEqual(30);
+    for (const l of lines) expect(l.includes("\r")).toBe(false);
+  });
+  it("comments render as head line + wrapped indented body, never overwide", () => {
+    const d: WhyPayload = {
+      ...whyBase,
+      comments: [{ author: "alice", created_at: "2026-08-14T00:00:00Z", body: "A very long comment body\r\nwith CRLF endings that keeps going and going well past the pane width to prove wrapping works." }],
+    };
+    const lines = detailLines(d, snapshot.prs[0], 28, new Date("2026-08-14T01:00:00Z"));
+    for (const l of lines) expect(displayWidth(l)).toBeLessThanOrEqual(28);
+    const flat = lines.map(stripAnsi);
+    expect(flat.some((l) => l.startsWith("  A very long"))).toBe(true);
   });
 });
 

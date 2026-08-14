@@ -90,7 +90,7 @@ export interface WhyPayload {
   escalation_worthy?: boolean;
   updated_at?: string;
   spend_usd: number;
-  rounds: Array<{ round_no: number; round_type: string; status: string; verdict: string | null; started_at: string; finished_at: string | null; spend_usd: number | null; lenses: string }>;
+  rounds: Array<{ round_no: number; round_type: string; status: string; verdict: string | null; started_at: string; finished_at: string | null; spend_usd: number | null; lenses: string; summary?: string | null }>;
   threads: { open: number; total: number };
   ledger?: string;
   archive?: string[];
@@ -135,6 +135,7 @@ export function whyJson(store: StateStore, n: number, archiveDir: string): WhyPa
       finished_at: r.finished_at ?? null,
       spend_usd: r.spend_usd ?? null,
       lenses: r.lenses,
+      summary: r.summary ?? null,
     })),
     // The registry knows every bot thread; "open" needs GitHub truth the
     // daemon doesn't mirror, so it is reported as total until archived.

@@ -61,6 +61,10 @@ export class App {
   rawEvents: Array<{ ts: string; kind: string; pr: number | null; payload: string | null }> = [];
   private selectedPr: number | undefined;
   private detailSeq = 0;
+  /** Stale-while-revalidate detail cache: paint the last known payload
+   * instantly on selection, refresh over ssh behind it. */
+  private readonly detailCache = new Map<number, { payload: WhyPayload; fetched_at: number }>();
+  private static readonly DETAIL_TTL_MS = 60_000;
   private quitResolve: (() => void) | undefined;
   private suspended = false;
   private readonly onData = (buf: Buffer): void => this.handleInput(buf);
@@ -141,6 +145,11 @@ export class App {
   private onPoll(): void {
     const snap = this.poller.state.snapshot;
     if (snap) {
+      // Invalidate cached details the snapshot proves stale (state/head moved).
+      for (const pr of snap.prs) {
+        const c = this.detailCache.get(pr.number);
+        if (c && (c.payload.head_sha !== pr.head_sha || c.payload.state !== pr.state)) this.detailCache.delete(pr.number);
+      }
       this.view.snapshot = snap;
       this.view.dryRun = snap.dry_run;
       const sorted = sortPrs(snap.prs);
@@ -177,15 +186,31 @@ export class App {
   async refreshDetail(): Promise<void> {
     const pr = this.selectedPr;
     if (pr === undefined) return;
+    // Serve from cache immediately; skip the fetch entirely while fresh.
+    const cached = this.detailCache.get(pr);
+    const now = Date.now();
+    if (cached) {
+      this.view.detail = cached.payload;
+      this.repaint();
+      if (now - cached.fetched_at < App.DETAIL_TTL_MS) return;
+    }
     const seq = ++this.detailSeq;
     const res = await this.ssh(this.cfg.ssh_host, whyArgv(this.cfg, pr));
-    if (!res.ok || seq !== this.detailSeq) return;
+    if (!res.ok) return;
     try {
-      this.view.detail = JSON.parse(res.stdout) as WhyPayload;
+      const payload = JSON.parse(res.stdout) as WhyPayload;
+      this.detailCache.set(payload.pr, { payload, fetched_at: Date.now() });
+      if (seq !== this.detailSeq || payload.pr !== this.selectedPr) return;
+      this.view.detail = payload;
       this.repaint();
     } catch {
       /* stale/garbled detail keeps the loading line */
     }
+  }
+
+  /** Drop a PR's cached detail (a new verdict/round event makes it stale). */
+  invalidateDetail(pr: number): void {
+    this.detailCache.delete(pr);
   }
 
   // ---- input -------------------------------------------------------------

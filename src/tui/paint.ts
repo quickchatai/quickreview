@@ -79,6 +79,69 @@ export function truncate(s: string, width: number): string {
   return `${out}${styled ? "\x1b[0m" : ""}…`;
 }
 
+/** Sanitize foreign text (GitHub bodies, comments) for chrome painting:
+ * normalize CRLF, expand tabs, drop C0/C1 controls - a stray CR painted
+ * mid-row rehomes the cursor and overwrites the frame border. */
+export function sanitizeText(s: string): string {
+  return s
+    .replace(/\r\n?/g, "\n")
+    .replace(/\t/g, "  ")
+    .replace(/[\x00-\x09\x0b-\x1f\x7f-\x9f]/g, "");
+}
+
+/** Word-wrap plain (unstyled) text to `width` cells; words longer than a
+ * line hard-break. Preserves paragraph breaks from the source. */
+export function wrap(s: string, width: number): string[] {
+  const w = Math.max(1, width);
+  const out: string[] = [];
+  for (const para of s.split("\n")) {
+    if (para.trim().length === 0) {
+      out.push("");
+      continue;
+    }
+    let line = "";
+    let lineW = 0;
+    const flush = (): void => {
+      if (lineW > 0) out.push(line);
+      line = "";
+      lineW = 0;
+    };
+    for (const word of para.split(/ +/)) {
+      const ww = displayWidth(word);
+      if (ww === 0) continue;
+      if (ww > w) {
+        // overlong word: flush, then emit full-width chunks
+        flush();
+        let piece = "";
+        let pieceW = 0;
+        for (const ch of word) {
+          const cw = charWidth(ch.codePointAt(0) ?? 0);
+          if (pieceW + cw > w) {
+            out.push(piece);
+            piece = "";
+            pieceW = 0;
+          }
+          piece += ch;
+          pieceW += cw;
+        }
+        line = piece;
+        lineW = pieceW;
+        continue;
+      }
+      if (lineW > 0 && lineW + 1 + ww > w) flush();
+      if (lineW > 0) {
+        line += " " + word;
+        lineW += 1 + ww;
+      } else {
+        line = word;
+        lineW = ww;
+      }
+    }
+    flush();
+  }
+  return out;
+}
+
 /** Truncate-or-pad to exactly `width` cells. */
 export function fit(s: string, width: number): string {
   const t = truncate(s, width);
