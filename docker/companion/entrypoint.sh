@@ -18,6 +18,22 @@ cat > "$HOME/.tmux.conf" <<'TMUXCONF'
 set -g extended-keys on
 set -g extended-keys-format csi-u
 set -as terminal-features 'xterm*:extkeys'
+# Mouse wheel scrolls the pane HISTORY (tmux copy-mode), not pi's prompt list;
+# pi /copy propagates via OSC 52 through set-clipboard. Keep in sync with the
+# VM entrypoint template.
+set -g mouse on
+set -g set-clipboard on
+set -as terminal-features 'xterm*:clipboard'
+set -g history-limit 50000
+# Muted look — no bright greens anywhere (operator order, 2026-08-14).
+set -g status-style 'bg=colour235,fg=colour247'
+set -g status-left-style 'fg=colour250'
+set -g status-right-style 'fg=colour244'
+set -g window-status-current-style 'fg=colour252,bold'
+set -g message-style 'bg=colour235,fg=colour250'
+set -g mode-style 'bg=colour238,fg=colour252'
+set -g pane-border-style 'fg=colour238'
+set -g pane-active-border-style 'fg=colour245'
 TMUXCONF
 
 # Extension discovery for pi-memory. Seeded only when absent: ~/.pi lives on a

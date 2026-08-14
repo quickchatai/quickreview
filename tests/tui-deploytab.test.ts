@@ -207,4 +207,33 @@ describe("deploy tab keys", () => {
     app.quit();
     await run;
   });
+
+  it("clicking THE button arms then deploys; a click elsewhere disarms", async () => {
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    let deploys = 0;
+    app.hooks.deployRun = () => deploys++;
+    let clock = 1000;
+    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [] }) }, () => clock);
+    const run = app.run();
+    streams.type("4");
+    await new Promise((r) => setTimeout(r, 0)); // render → buttonZone measured
+    expect(st.buttonZone).toBeDefined();
+    const { x1, y1 } = st.buttonZone!;
+    const click = (x: number, y: number) => streams.type(`\x1b[<0;${x};${y}M`);
+
+    click(x1, y1); // arms
+    expect(st.armedAt).toBe(1000);
+    click(70, 15); // click away cancels
+    expect(st.armedAt).toBeUndefined();
+    expect(deploys).toBe(0);
+
+    click(x1, y1);
+    clock += 1000;
+    click(st.buttonZone!.x2, st.buttonZone!.y2); // second click inside the window deploys
+    expect(deploys).toBe(1);
+    expect(st.armedAt).toBeUndefined();
+    app.quit();
+    await run;
+  });
 });

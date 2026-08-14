@@ -138,9 +138,9 @@ describe("CompanionLifecycle argv", () => {
       "--extension",
       `${CONTAINER.workspace}/extensions/companion-wake.ts`,
       "--extension",
-      `${CONTAINER.workspace}/extensions/companion-theme.ts`,
+      `${CONTAINER.workspace}/extensions/muted-theme.ts`,
       "--theme",
-      `${CONTAINER.workspace}/docker/companion/theme.json`,
+      `${CONTAINER.workspace}/extensions/muted-theme.json`,
       // the inject bridge delivers the day-open message.
       "--extension",
       `${CONTAINER.workspace}/extensions/inject-bridge.ts`,

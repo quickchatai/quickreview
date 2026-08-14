@@ -213,22 +213,38 @@ export function installDeployHooks(app: App, fetcher?: DeployFetcher, now: () =>
     return renderDeployTab(st, theApp.view.dryRun, cols, rows).render();
   };
 
+  // One press = arm; a second press inside the confirm window = deploy.
+  // Shared by the D key and the mouse button.
+  const press = (theApp: App): void => {
+    const t = now();
+    if (st.armedAt !== undefined && t - st.armedAt < DEPLOY_CONFIRM_MS) {
+      st.armedAt = undefined;
+      if (theApp.hooks.deployRun) {
+        theApp.hooks.deployRun(theApp); // synchronous: TUI is suspended while deploy.sh runs
+        st.loaded = false;
+        void load(); // re-read BUILD_SHA + plan against the new reality
+      } else {
+        theApp.notice("✖ deploy runner not wired");
+      }
+    } else {
+      st.armedAt = t;
+    }
+    theApp.repaint();
+  };
+
+  app.hooks.deployClick = (theApp, x, y): void => {
+    const z = st.buttonZone;
+    if (z && x >= z.x1 && x <= z.x2 && y >= z.y1 && y <= z.y2) {
+      press(theApp);
+    } else if (st.armedAt !== undefined) {
+      st.armedAt = undefined; // a click anywhere else cancels
+      theApp.repaint();
+    }
+  };
+
   app.hooks.deployKey = (theApp, key: BoardKey): boolean => {
     if (key.kind === "char" && key.ch === "D") {
-      const t = now();
-      if (st.armedAt !== undefined && t - st.armedAt < DEPLOY_CONFIRM_MS) {
-        st.armedAt = undefined;
-        if (theApp.hooks.deployRun) {
-          theApp.hooks.deployRun(theApp); // synchronous: TUI is suspended while deploy.sh runs
-          st.loaded = false;
-          void load(); // re-read BUILD_SHA + plan against the new reality
-        } else {
-          theApp.notice("✖ deploy runner not wired");
-        }
-      } else {
-        st.armedAt = t;
-      }
-      theApp.repaint();
+      press(theApp);
       return true;
     }
     if (st.armedAt !== undefined) st.armedAt = undefined; // any other key disarms

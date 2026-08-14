@@ -47,6 +47,8 @@ export interface AppHooks {
   /** Run ./scripts/deploy.sh sync on the operator's terminal (D D on the
    * deploy tab). The script's own guardrails are the only gate. */
   deployRun?: (app: App) => void;
+  /** Mouse click on the deploy tab (1-based terminal coords) — the button. */
+  deployClick?: (app: App, x: number, y: number) => void;
   /** Re-establish the VM ssh master on the operator's terminal (key s) —
    * the one native GCP-passphrase prompt. */
   reconnect?: (app: App) => void;
@@ -329,7 +331,8 @@ export class App {
       return;
     }
     if (this.tab === "deploy") {
-      if (ev.kind !== "click") this.hooks.deployKey?.(this, { kind: ev.kind === "wheel-down" ? "down" : "up" });
+      if (ev.kind === "click") this.hooks.deployClick?.(this, ev.x, ev.y);
+      else this.hooks.deployKey?.(this, { kind: ev.kind === "wheel-down" ? "down" : "up" });
       return;
     }
     if (ev.kind === "wheel-up" || ev.kind === "wheel-down") {

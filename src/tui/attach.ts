@@ -14,10 +14,46 @@ import { TermPane } from "./term.js";
 
 /** pi 0.84.1's built-in dark theme paints every successful tool panel with
  * #283228. Through the nested tmux/xterm pane that reads as a full-width green
- * flash. Neutralize that one background for an already-running companion;
- * fresh sessions also select the companion-muted theme at source. */
+ * flash. Neutralize that one background for already-running sessions; fresh
+ * sessions (VM and companion alike) select the fleet muted theme at source. */
 export function muteCompanionToolFlash(data: string): string {
   return data.replaceAll("\x1b[48;2;40;50;40m", "\x1b[48;2;32;35;42m");
+}
+
+/** pi's /copy emits OSC 52 (clipboard write). The embedded terminal emulator
+ * swallows it, so /copy silently did nothing through the TUI. Extract every
+ * complete OSC 52 sequence from the pty stream so the attach screen can replay
+ * it on the REAL terminal. Sequences can split across pty chunks — a bounded
+ * carry holds an unterminated candidate between feeds. */
+export class Osc52Relay {
+  private carry = "";
+
+  feed(data: string): string[] {
+    const s = this.carry + data;
+    const out: string[] = [];
+    const re = /\x1b\]52;[^\x07\x1b]*(?:\x07|\x1b\\)/g;
+    let lastEnd = 0;
+    for (let m = re.exec(s); m; m = re.exec(s)) {
+      out.push(m[0]);
+      lastEnd = m.index + m[0].length;
+    }
+    const tail = s.slice(lastEnd);
+    const open = tail.lastIndexOf("\x1b]52;");
+    if (open >= 0) {
+      this.carry = tail.slice(open);
+    } else {
+      // The chunk may end mid-introducer ("\x1b", "\x1b]", …).
+      this.carry = "";
+      for (let k = 4; k > 0; k--) {
+        if (tail.endsWith("\x1b]52;".slice(0, k))) {
+          this.carry = tail.slice(tail.length - k);
+          break;
+        }
+      }
+    }
+    if (this.carry.length > 262144) this.carry = ""; // runaway payload — drop
+    return out;
+  }
 }
 
 export interface PtyLike {
@@ -53,6 +89,7 @@ export class AttachScreen {
   private chord = new ChordScanner();
   private chordTimer: NodeJS.Timeout | undefined;
   private killChord = new TripleCtrlC();
+  private clip = new Osc52Relay();
   private readonly onKey = (buf: Buffer): void => this.handleKey(buf);
   private readonly onResize = (): void => this.propagateResize();
 
@@ -99,8 +136,8 @@ export class AttachScreen {
     this.pty.onData((data) => {
       this.sawData = true;
       stderrTail = (stderrTail + data).slice(-200);
-      const painted = this.session === "companion" ? muteCompanionToolFlash(data) : data;
-      this.pane?.write(painted, () => this.schedulePaint());
+      for (const seq of this.clip.feed(data)) this.out.write(seq); // /copy → real clipboard
+      this.pane?.write(muteCompanionToolFlash(data), () => this.schedulePaint());
     });
     this.pty.onExit(({ exitCode }) => {
       if (this.done) return;
