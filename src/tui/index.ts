@@ -1,8 +1,12 @@
 // `qcr tui [pr|overseer]` entry point. Wires the real ssh runner; the
 // optional target becomes the deep link.
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { loadConfig, sandboxRoot } from "../config.js";
 import { App } from "./app.js";
+import { ensureSshMaster } from "./connect.js";
+import { MOUSE_OFF, MOUSE_ON } from "./mouse.js";
+import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR } from "./paint.js";
 import { HotReloader, parseResumeArg, readResumeState, realReexec } from "./reload.js";
 import { realSshRunner } from "./remote.js";
 
@@ -25,16 +29,18 @@ usage: qcr tui [<pr> | overseer | main] [--no-companion] [--no-reload]
                     feed, alert pipeline and the companion tab)
   --no-reload       do not re-exec when a new dist/ build lands
 
-keys: 1/2/3/4/5 tabs (3 = companion, also c; 4 = deploy plan, read-only;
+keys: 1/2/3/4/5 tabs (3 = companion, also c; 4 = deploy — click ▶ or D D deploys;
       5 = metrics — 7/0/a window, # <pr> ⏎ for a PR timeline) ·
       j/k select · ⏎ attach ·
-      Ctrl-q detach (twice = literal) ·
+      Ctrl-q detach (twice = literal) · Ctrl-c ×3 hard-kill the TUI ·
+      s reconnect ssh (GCP passphrase, once) ·
       m quick-message · o overseer · M main · w detail · e events · r refresh ·
       ? full key map · q quit
 
 troubleshooting:
-  ✖ unreachable      ssh to the VM failed — check the ssh control socket
-                     (ssh my-vm true) and your VPN/bastion session
+  ✖ unreachable      ssh to the VM failed — press s to re-establish the
+                     master (prompts for the GCP key passphrase once); after a
+                     reboot the 4h shared connection is gone until you do
   ▲ DATA STALE       ssh works but status.json stopped updating — the
                      container is down or the daemon hung (qcr-side:
                      ssh my-vm sudo docker ps / docker logs)
@@ -83,7 +89,64 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
   }
   const full = loadConfig();
   const cfg = full.tui;
+
+  // The GCP key passphrase, once, natively — before the alt screen, so the
+  // OpenSSH prompt is a plain terminal prompt. Failure degrades to the
+  // unreachable banner (retry from the board with s).
+  ensureSshMaster(cfg);
+
   const app = new App(cfg, realSshRunner);
+
+  // The terminal must come back whatever kills us — raw mode + alt screen
+  // surviving a crash is exactly the "only closing the terminal works" trap.
+  const restoreTerminal = (): void => {
+    try {
+      if (process.stdin.isTTY) process.stdin.setRawMode(false);
+    } catch {
+      /* stdin already gone */
+    }
+    process.stdout.write(MOUSE_OFF + ALT_SCREEN_OFF);
+  };
+  process.on("exit", restoreTerminal);
+  process.on("SIGINT", () => {
+    restoreTerminal();
+    process.exit(130);
+  });
+  process.on("SIGTERM", () => {
+    restoreTerminal();
+    process.exit(143);
+  });
+  process.on("uncaughtException", (err) => {
+    restoreTerminal();
+    console.error("qcr tui crashed:", err);
+    process.exit(1);
+  });
+
+  /** Suspend the TUI, run something on the real terminal, come back. */
+  const onRealTerminal = (fn: () => void): void => {
+    app.suspend();
+    try {
+      if (process.stdin.isTTY) process.stdin.setRawMode(false);
+    } catch {
+      /* keep going — fn may still work */
+    }
+    process.stdout.write(MOUSE_OFF + ALT_SCREEN_OFF);
+    try {
+      fn();
+    } finally {
+      if (process.stdin.isTTY) process.stdin.setRawMode(true);
+      process.stdout.write(ALT_SCREEN_ON + CLEAR + MOUSE_ON);
+      app.resume();
+    }
+  };
+  app.hooks.reconnect = () => onRealTerminal(() => ensureSshMaster(cfg));
+  app.hooks.deployRun = () =>
+    onRealTerminal(() => {
+      // deploy.sh's own guardrails (clean tree, pin agreement) are the gate;
+      // the pause keeps the ansible tail readable before the board repaints.
+      spawnSync("bash", ["scripts/deploy.sh", "sync"], { stdio: "inherit", cwd: sandboxRoot() });
+      spawnSync("bash", ["-c", "read -r -p 'deploy finished — press enter to return to the tui '"], { stdio: "inherit" });
+    });
   app.view.repo = full.github.repo;
   const { spawn } = await import("node:child_process");
   const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");

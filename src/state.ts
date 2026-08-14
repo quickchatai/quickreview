@@ -306,6 +306,24 @@ export class StateStore {
     this.db.prepare("UPDATE rounds SET status = 'overdue' WHERE id = ?").run(id);
   }
 
+  /** Administrative close of a round that will never produce a verdict —
+   * superseded by a newer round, or orphaned when its tmux session died.
+   * Unlike overdue it carries no anomaly semantics and touches no PR state. */
+  markRoundCancelled(id: number, reason: string): void {
+    this.db
+      .prepare("UPDATE rounds SET status = 'cancelled', summary = ?, finished_at = ? WHERE id = ? AND status = 'running'")
+      .run(reason, this.ts(), id);
+  }
+
+  /** True when a newer round exists for the PR (any status) — the given round
+   * is historical and must not drive deadline/overdue side effects. */
+  hasLaterRound(pr: number, roundNo: number): boolean {
+    const row = this.db
+      .prepare("SELECT COUNT(*) AS c FROM rounds WHERE pr = ? AND round_no > ?")
+      .get(pr, roundNo) as { c: number };
+    return row.c > 0;
+  }
+
   runningRounds(): RoundRow[] {
     return this.db.prepare("SELECT * FROM rounds WHERE status = 'running' ORDER BY started_at").all() as RoundRow[];
   }

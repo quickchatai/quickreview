@@ -15,6 +15,7 @@ import { GitHubAdapter } from "./github.js";
 import { TokenMinter } from "./githubAuth.js";
 import { buildAgents } from "./include.js";
 import { fileImprovementPr, fileIssue, type Run } from "./improvements.js";
+import { reconcileOrphanedRounds } from "./reconcile.js";
 import { PiSessionManager } from "./sessions.js";
 import { renderRoundPrompt, roundTemplateFile } from "./templates.js";
 import { nodeExec } from "./tmux.js";
@@ -70,6 +71,13 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       const active = d.store.allPrs().filter((p) => p.state !== "closed").map((p) => p.number);
       const pre = await sessions.preflight(active);
       log(`preflight: adopted=${pre.adoption.adopted.join(",") || "none"} swept-worktrees=${pre.sweptWorktrees.join(",") || "none"}`);
+
+      // Rounds still marked running whose session did not survive the restart
+      // are phantoms: cancel them, requeue the ones whose work was truly lost.
+      const orphans = reconcileOrphanedRounds(d.store, pre.adoption.prs, { botLogin: cfg.github.bot_login, log });
+      if (orphans.cancelled.length) {
+        log(`startup: cancelled orphaned rounds on #${orphans.cancelled.join(", #")}; requeued ${orphans.requeued.length}`);
+      }
 
       // The overseer must exist from boot — lazily spawning it on the first
       // anomaly left `tmux attach -t overseer` dead after every restart.

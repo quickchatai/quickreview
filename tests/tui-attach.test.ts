@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TUI_DEFAULTS } from "../src/config.js";
 import { App } from "../src/tui/app.js";
-import { AttachScreen, muteCompanionToolFlash, statusRow, type PtyLike, type PtySpawner } from "../src/tui/attach.js";
+import { AttachScreen, muteCompanionToolFlash, Osc52Relay, statusRow, type PtyLike, type PtySpawner } from "../src/tui/attach.js";
 import { CHORD_GRACE_MS, ChordScanner } from "../src/tui/chord.js";
 import { parseTarget } from "../src/tui/index.js";
 import { stripAnsi } from "../src/tui/paint.js";
@@ -66,6 +66,25 @@ describe("companion tool colors", () => {
   it("neutralizes pi's green tool-success background without touching other SGR", () => {
     const input = "a\x1b[48;2;40;50;40mtool\x1b[0m\x1b[38;2;40;50;40mtext";
     expect(muteCompanionToolFlash(input)).toBe("a\x1b[48;2;32;35;42mtool\x1b[0m\x1b[38;2;40;50;40mtext");
+  });
+});
+
+describe("Osc52Relay", () => {
+  it("extracts complete OSC 52 sequences (BEL- and ST-terminated)", () => {
+    const relay = new Osc52Relay();
+    const bel = "\x1b]52;c;aGVsbG8=\x07";
+    const st = "\x1b]52;c;d29ybGQ=\x1b\\";
+    expect(relay.feed(`before${bel}mid${st}after`)).toEqual([bel, st]);
+    expect(relay.feed("plain output, no clipboard")).toEqual([]);
+  });
+
+  it("reassembles a sequence split across pty chunks", () => {
+    const relay = new Osc52Relay();
+    expect(relay.feed("output\x1b]52;c;aGVs")).toEqual([]);
+    expect(relay.feed("bG8=\x07more")).toEqual(["\x1b]52;c;aGVsbG8=\x07"]);
+    // split inside the introducer itself
+    expect(relay.feed("x\x1b]5")).toEqual([]);
+    expect(relay.feed("2;c;eQ==\x07")).toEqual(["\x1b]52;c;eQ==\x07"]);
   });
 });
 

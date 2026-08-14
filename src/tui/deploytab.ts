@@ -1,13 +1,14 @@
-// Deploy tab (key 4) — read-only "what would a deploy ship?": the commit the
-// VM is running (the BUILD_SHA marker deploy.sh rsyncs along), local HEAD,
-// the pending commit list + diffstat between them, and deploy.sh's own
-// --dry-run plan verbatim. The tab NEVER deploys — running
-// `scripts/deploy.sh sync` stays a manual act on the operator's terminal.
+// Deploy tab (key 4) — "what would a deploy ship?" plus the deploy button:
+// the commit the VM is running (the BUILD_SHA marker deploy.sh rsyncs along),
+// local HEAD, the pending commit list + diffstat between them, and deploy.sh's
+// own --dry-run plan verbatim. D D (armed confirm) runs `scripts/deploy.sh
+// sync` on the operator's real terminal via hooks.deployRun — deploy.sh's own
+// guardrails (clean tree, pin agreement) stay the only gate.
 import { execFile } from "node:child_process";
 import type { TuiConfig } from "../config.js";
 import type { App } from "./app.js";
 import type { BoardKey } from "./keys.js";
-import { Frame, SGR, rule, truncate } from "./paint.js";
+import { Frame, SGR, displayWidth, rule, stripAnsi, truncate } from "./paint.js";
 import type { RemoteResult, SshRunner } from "./remote.js";
 import { FG, RESET } from "./theme.js";
 
@@ -73,7 +74,13 @@ export interface DeployState {
   /** deploy.sh --dry-run output — a refusal (dirty tree, pin drift) shows verbatim. */
   plan: string[];
   scroll: number;
+  /** First D/click at this ms timestamp; a second inside the window deploys. */
+  armedAt?: number;
+  /** Screen rect of the DEPLOY button (1-based), refreshed on every paint. */
+  buttonZone?: { x1: number; y1: number; x2: number; y2: number };
 }
+
+export const DEPLOY_CONFIRM_MS = 5000;
 
 export interface DeployFetcher {
   load(): Promise<Omit<DeployState, "loaded" | "loading" | "scroll">>;
@@ -152,27 +159,40 @@ export function deployLines(st: DeployState, width: number): string[] {
   lines.push(truncate(section("PLAN", "scripts/deploy.sh --dry-run sync, verbatim"), width));
   for (const p of st.plan) lines.push(truncate(`  ${p}`, width));
   lines.push("");
-  lines.push(truncate(`${SGR.bold}to deploy:${SGR.reset} run ${FG.accent}./scripts/deploy.sh sync${RESET} yourself — this tab never deploys`, width));
+  if (st.armedAt !== undefined) {
+    lines.push(truncate(`${SGR.bgRed}${SGR.bold} ARMED ${SGR.reset} press ${SGR.bold}D${SGR.reset} again to run ./scripts/deploy.sh sync (any other key cancels)`, width));
+  } else {
+    lines.push(truncate(`${SGR.bold}to deploy:${SGR.reset} press ${SGR.bold}D${SGR.reset} twice (runs ${FG.accent}./scripts/deploy.sh sync${RESET} in your terminal) — or run it yourself`, width));
+  }
   return lines;
 }
 
 export function renderDeployTab(st: DeployState, dryRun: boolean, cols: number, rows: number): Frame {
   const frame = new Frame(cols, rows);
   frame.set(0, rule(cols, "┌", "┐", ["quickreview", dryRun ? "DRY-RUN" : `${SGR.bgRed}${SGR.bold} LIVE ${SGR.reset}`, "deploy"]));
-  const bodyRows = rows - 3; // top bar + hints + bottom border
+
+  // THE button — always visible, pinned under the title, mouse-clickable.
+  const armed = st.armedAt !== undefined;
+  const label = armed ? " ⚠ CLICK AGAIN TO DEPLOY NOW " : " ▶ DEPLOY TO VM ";
+  const btn = armed ? `${SGR.bgRed}${SGR.bold}${label}${SGR.reset}` : `${SGR.inverse}${SGR.bold}${label}${SGR.reset}`;
+  const suffix = armed ? "  any other key/click cancels" : "  runs ./scripts/deploy.sh sync (also: D D)";
+  frame.boxRow(1, [{ text: ` ${btn}${FG.dim}${suffix}${RESET}`, width: cols - 2 }]);
+  st.buttonZone = { x1: 2, y1: 2, x2: 1 + displayWidth(stripAnsi(label)), y2: 2 };
+
+  const bodyRows = rows - 4; // top bar + button row + hints + bottom border
   const lines = deployLines(st, cols - 4);
   for (let r = 0; r < bodyRows; r++) {
-    frame.boxRow(1 + r, [{ text: ` ${lines[st.scroll + r] ?? ""}`, width: cols - 2 }]);
+    frame.boxRow(2 + r, [{ text: ` ${lines[st.scroll + r] ?? ""}`, width: cols - 2 }]);
   }
   const refreshing = st.loading ? "  refreshing…" : "";
-  frame.boxRow(rows - 2, [{ text: ` ${SGR.dim}[1]board [2]digest [4]deploy  j/k scroll  r refresh  q quit${refreshing}${SGR.reset}`, width: cols - 2 }]);
+  frame.boxRow(rows - 2, [{ text: ` ${SGR.dim}[1]board [2]digest [4]deploy  click ▶ or D D deploy  j/k scroll  r refresh  q quit${refreshing}${SGR.reset}`, width: cols - 2 }]);
   frame.set(rows - 1, rule(cols, "└", "┘", []));
   return frame;
 }
 
 // ---- hooks ------------------------------------------------------------------
 
-export function installDeployHooks(app: App, fetcher?: DeployFetcher): DeployState {
+export function installDeployHooks(app: App, fetcher?: DeployFetcher, now: () => number = () => Date.now()): DeployState {
   const f = fetcher ?? new RealDeployFetcher(app.cfg, app.ssh, realLocalRunner(process.cwd()));
   const st: DeployState = { loaded: false, loading: false, dirty: [], plan: [], scroll: 0 };
 
@@ -193,7 +213,41 @@ export function installDeployHooks(app: App, fetcher?: DeployFetcher): DeploySta
     return renderDeployTab(st, theApp.view.dryRun, cols, rows).render();
   };
 
+  // One press = arm; a second press inside the confirm window = deploy.
+  // Shared by the D key and the mouse button.
+  const press = (theApp: App): void => {
+    const t = now();
+    if (st.armedAt !== undefined && t - st.armedAt < DEPLOY_CONFIRM_MS) {
+      st.armedAt = undefined;
+      if (theApp.hooks.deployRun) {
+        theApp.hooks.deployRun(theApp); // synchronous: TUI is suspended while deploy.sh runs
+        st.loaded = false;
+        void load(); // re-read BUILD_SHA + plan against the new reality
+      } else {
+        theApp.notice("✖ deploy runner not wired");
+      }
+    } else {
+      st.armedAt = t;
+    }
+    theApp.repaint();
+  };
+
+  app.hooks.deployClick = (theApp, x, y): void => {
+    const z = st.buttonZone;
+    if (z && x >= z.x1 && x <= z.x2 && y >= z.y1 && y <= z.y2) {
+      press(theApp);
+    } else if (st.armedAt !== undefined) {
+      st.armedAt = undefined; // a click anywhere else cancels
+      theApp.repaint();
+    }
+  };
+
   app.hooks.deployKey = (theApp, key: BoardKey): boolean => {
+    if (key.kind === "char" && key.ch === "D") {
+      press(theApp);
+      return true;
+    }
+    if (st.armedAt !== undefined) st.armedAt = undefined; // any other key disarms
     switch (key.kind) {
       case "down":
       case "up":

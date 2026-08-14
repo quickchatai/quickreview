@@ -259,6 +259,38 @@ describe("anomaly paths", () => {
     expect(await watcher({}, hooks).checkDeadlines()).toEqual([]);
     expect(overseer).toHaveLength(0);
   });
+
+  it("an overdue round superseded by a newer round is cancelled silently", async () => {
+    // Live incident (overseer report 2026-08-14): old phantom round 2 expired
+    // and yanked #4844 to awaiting_human while round 7 was actively running.
+    let clock = new Date("2026-08-14T12:00:00Z");
+    const s = new StateStore(":memory:", () => clock);
+    s.upsertPr({
+      number: 4844,
+      state: "reviewing",
+      head_sha: "abc",
+      title: "PR 4844",
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      escalation_worthy: 0,
+      migration_gate: 0,
+    });
+    const oldId = s.startRound(4844, "first", ["pass-baseline"], cfg.daemon.round_deadline_min);
+    clock = new Date("2026-08-14T13:50:00Z");
+    const newId = s.startRound(4844, "re-review", ["pass-baseline"], cfg.daemon.round_deadline_min);
+    clock = new Date("2026-08-14T14:03:00Z"); // old round overdue, new one inside its deadline
+    const { hooks, overseer } = recordingHooks();
+    const w = new VerdictWatcher({ cfg, store: s, adapter, hooks, verdictDir: dir, now: () => clock });
+
+    expect(await w.checkDeadlines()).toEqual([]);
+    expect((s.db.prepare("SELECT status, summary FROM rounds WHERE id = ?").get(oldId) as any).status).toBe("cancelled");
+    expect((s.db.prepare("SELECT status FROM rounds WHERE id = ?").get(newId) as any).status).toBe("running");
+    expect(s.getPr(4844)!.state).toBe("reviewing"); // the live round keeps the PR
+    expect(overseer).toHaveLength(0); // no anomaly, no escalation
+    expect(adapter.calls).toEqual([]); // no label yank, no human request
+    s.close();
+  });
 });
 
 describe("structural invariant: no review-retraction path", () => {

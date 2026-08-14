@@ -247,12 +247,22 @@ export class VerdictWatcher {
     this.log(`verdicts: anomaly (${kind}) on #${pr}`, message);
   }
 
-  /** Deadline sweep — a running round past `deadline_at` is an anomaly. */
+  /** Deadline sweep — a running round past `deadline_at` is an anomaly.
+   * A superseded round (a newer round exists on the same PR) is cancelled
+   * silently instead: its PR state, labels and reviewer requests belong to
+   * the newer round, and yanking them here corrupted live reviews. */
   async checkDeadlines(): Promise<number[]> {
     const overdue: number[] = [];
     const nowMs = this.now().getTime();
-    for (const round of this.deps.store.runningRounds()) {
+    const { store } = this.deps;
+    for (const round of store.runningRounds()) {
       if (Date.parse(round.deadline_at) > nowMs) continue;
+      if (store.hasLaterRound(round.pr, round.round_no)) {
+        store.markRoundCancelled(round.id, `superseded — round ${round.round_no} outlived by a newer round`);
+        store.logEvent("round_superseded", round.pr, { round_id: round.id, round_no: round.round_no });
+        this.log(`verdicts: #${round.pr} round ${round.round_no} cancelled (superseded)`);
+        continue;
+      }
       overdue.push(round.pr);
       await this.handleAnomaly(
         round.pr,

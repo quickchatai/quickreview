@@ -51,6 +51,8 @@ export interface PiCommandSpec {
   systemPromptPath: string;
   extensionPaths: string[];
   sessionName: string;
+  /** Path to a pi theme JSON; omitted = pi's built-in default. */
+  themePath?: string;
 }
 
 /**
@@ -71,6 +73,8 @@ export interface PiCommandSpec {
  *   and a settings.json "extensions" array. Fallback: emit the same paths into
  *   the session's settings.json.
  * - `--name <display name>` — documented (findings §1).
+ * - `--theme <path>` — same flag the companion uses (VERIFY-ON-PIN); loads the
+ *   fleet muted theme so no session ever flashes pi's bright-green tool panel.
  * There is deliberately no update/auto-update flag: the pi version is pinned by
  * config.pi.version and the container image.
  */
@@ -84,6 +88,7 @@ export function buildPiCommand(spec: PiCommandSpec): string[] {
     "--system-prompt",
     spec.systemPromptPath,
   ];
+  if (spec.themePath) argv.push("--theme", spec.themePath);
   for (const ext of spec.extensionPaths) argv.push("--extension", ext);
   argv.push("--name", spec.sessionName);
   return argv;
@@ -157,7 +162,13 @@ export class PiSessionManager implements SessionHooks {
     return [
       join(this.root, "extensions", "inject-bridge.ts"),
       join(this.root, "extensions", "ledger-pin.ts"),
+      join(this.root, "extensions", "muted-theme.ts"),
     ];
+  }
+
+  /** The fleet muted theme — every pi session gets it (no bright greens). */
+  themePath(): string {
+    return join(this.root, "extensions", "muted-theme.json");
   }
 
   // ---- environment -------------------------------------------------------
@@ -232,6 +243,7 @@ export class PiSessionManager implements SessionHooks {
       systemPromptPath: promptPath,
       extensionPaths: this.extensionPaths(),
       sessionName: session,
+      themePath: this.themePath(),
     });
     // tmux panes inherit the tmux SERVER's environment, not the client's, so
     // per-session vars must ride the command line itself. Only the QCR_*

@@ -117,7 +117,13 @@ describe("deployLines", () => {
     const text = stripAnsi(deployLines(emptyState({ deployed: { sha: "aaa1111" }, head: "aaa1111", commits: [], diffstat: [] }), 90).join("\n"));
     expect(text).toContain("nothing to deploy");
     expect(text).toContain("./scripts/deploy.sh sync");
-    expect(text).toContain("this tab never deploys");
+    expect(text).toContain("press D twice");
+  });
+
+  it("shows the armed banner after the first D", () => {
+    const text = stripAnsi(deployLines(emptyState({ armedAt: 123 }), 90).join("\n"));
+    expect(text).toContain("ARMED");
+    expect(text).toContain("press D again");
   });
 
   it("lists pending commits, dirty files and the plan", () => {
@@ -166,6 +172,67 @@ describe("deploy tab keys", () => {
     expect(loads).toBe(2);
     streams.type("1");
     expect(app.tab).toBe("board");
+    app.quit();
+    await run;
+  });
+
+  it("D D runs the deploy hook; D then any other key disarms", async () => {
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    let deploys = 0;
+    app.hooks.deployRun = () => deploys++;
+    let clock = 1000;
+    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [] }) }, () => clock);
+    const run = app.run();
+    streams.type("4");
+    await new Promise((r) => setTimeout(r, 0));
+
+    streams.type("D");
+    expect(st.armedAt).toBe(1000);
+    streams.type("j"); // disarms
+    expect(st.armedAt).toBeUndefined();
+    expect(deploys).toBe(0);
+
+    streams.type("D");
+    clock += 2000; // inside the confirm window
+    streams.type("D");
+    expect(deploys).toBe(1);
+    expect(st.armedAt).toBeUndefined();
+
+    streams.type("D");
+    clock += 10_000; // window expired: second D only re-arms
+    streams.type("D");
+    expect(deploys).toBe(1);
+    expect(st.armedAt).toBeDefined();
+    app.quit();
+    await run;
+  });
+
+  it("clicking THE button arms then deploys; a click elsewhere disarms", async () => {
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    let deploys = 0;
+    app.hooks.deployRun = () => deploys++;
+    let clock = 1000;
+    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [] }) }, () => clock);
+    const run = app.run();
+    streams.type("4");
+    await new Promise((r) => setTimeout(r, 0)); // render → buttonZone measured
+    expect(st.buttonZone).toBeDefined();
+    const { x1, y1 } = st.buttonZone!;
+    const click = (x: number, y: number) => streams.type(`\x1b[<0;${x};${y}M`);
+
+    click(x1, y1); // arms
+    expect(st.armedAt).toBe(1000);
+    click(70, 15); // click away cancels
+    expect(st.armedAt).toBeUndefined();
+    expect(deploys).toBe(0);
+
+    click(x1, y1);
+    clock += 1000;
+    click(st.buttonZone!.x2, st.buttonZone!.y2); // second click inside the window deploys
+    expect(deploys).toBe(1);
+    expect(st.armedAt).toBeUndefined();
     app.quit();
     await run;
   });

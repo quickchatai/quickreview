@@ -78,7 +78,10 @@ describe("companion config", () => {
 
   it("honors an explicit [companion] override", () => {
     const base = readFileSync(resolve(root, "config.toml"), "utf8");
-    const cfg = parseConfig(`${base}\ncontainer_name = "other"\nenabled = false\ncooldown_min = 5\n`).companion;
+    // Inject into the [companion] table itself — appended bare keys would join
+    // whatever table happens to be last in config.toml ([backfill]).
+    const withOverrides = base.replace("[companion]", `[companion]\ncontainer_name = "other"\nenabled = false\ncooldown_min = 5`);
+    const cfg = parseConfig(withOverrides).companion;
     expect(cfg.container_name).toBe("other");
     expect(cfg.enabled).toBe(false);
     expect(cfg.cooldown_min).toBe(5);
@@ -138,9 +141,9 @@ describe("CompanionLifecycle argv", () => {
       "--extension",
       `${CONTAINER.workspace}/extensions/companion-wake.ts`,
       "--extension",
-      `${CONTAINER.workspace}/extensions/companion-theme.ts`,
+      `${CONTAINER.workspace}/extensions/muted-theme.ts`,
       "--theme",
-      `${CONTAINER.workspace}/docker/companion/theme.json`,
+      `${CONTAINER.workspace}/extensions/muted-theme.json`,
       // the inject bridge delivers the day-open message.
       "--extension",
       `${CONTAINER.workspace}/extensions/inject-bridge.ts`,
