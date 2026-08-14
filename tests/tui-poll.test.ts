@@ -25,13 +25,18 @@ describe("classifyHealth", () => {
     expect(h).toEqual({ kind: "unreachable", sinceS: 60 });
   });
 
-  it("is stale when written_at ages past 3× the poll interval", () => {
-    const h = classifyHealth(now, 3, snap("2026-08-13T11:59:00Z"), true, now);
+  it("is stale when written_at ages past the stale_after threshold", () => {
+    const h = classifyHealth(now, 45, snap("2026-08-13T11:59:00Z"), true, now);
     expect(h).toEqual({ kind: "stale", dataAgeS: 60 });
   });
 
+  it("tolerates the daemon's ~30s write cadence at the default threshold", () => {
+    const h = classifyHealth(now, 90, snap("2026-08-13T11:59:30Z", "2026-08-13T11:59:30Z"), true, now);
+    expect(h).toEqual({ kind: "ok", heartbeatAgeS: 30 });
+  });
+
   it("is ok inside the freshness window and reports heartbeat age", () => {
-    const h = classifyHealth(now, 30, snap("2026-08-13T11:59:58Z", "2026-08-13T11:59:56Z"), true, now);
+    const h = classifyHealth(now, 90, snap("2026-08-13T11:59:58Z", "2026-08-13T11:59:56Z"), true, now);
     expect(h).toEqual({ kind: "ok", heartbeatAgeS: 4 });
   });
 });

@@ -26,6 +26,9 @@ export interface TuiConfig {
   remote_sandbox_root: string;
   sudo_docker: boolean;
   poll_interval_s: number;
+  /** DATA STALE banner when status.json's written_at ages past this — sized
+   * to the daemon's ~30s write cadence, not the TUI's fetch cadence. */
+  stale_after_s: number;
   msg_timeout_s: number;
 }
 
@@ -61,6 +64,7 @@ export const TUI_DEFAULTS: TuiConfig = {
   remote_sandbox_root: "/opt/quickreview/sandbox",
   sudo_docker: true,
   poll_interval_s: 3,
+  stale_after_s: 90,
   msg_timeout_s: 30,
 };
 

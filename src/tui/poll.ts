@@ -13,14 +13,15 @@ export type Health =
 /**
  * Health rules, in precedence order:
  *  - no successful fetch yet, or the last fetch failed → unreachable;
- *  - `written_at` older than 3× the poll interval → DATA STALE;
+ *  - `written_at` older than `staleAfterS` (sized to the daemon's ~30s write
+ *    cadence, NOT the TUI's fetch cadence) → DATA STALE;
  *  - otherwise ok, reporting the daemon heartbeat age.
  * Snapshot ages are judged against wall clock, so a dead daemon behind a
  * healthy ssh path still degrades to stale.
  */
 export function classifyHealth(
   now: Date,
-  pollIntervalS: number,
+  staleAfterS: number,
   lastSnapshot: StatusSnapshot | undefined,
   lastFetchOk: boolean,
   lastOkAt: Date | undefined,
@@ -30,7 +31,7 @@ export function classifyHealth(
     return { kind: "unreachable", sinceS };
   }
   const dataAgeS = Math.floor((now.getTime() - new Date(lastSnapshot.written_at).getTime()) / 1000);
-  if (dataAgeS > 3 * pollIntervalS) return { kind: "stale", dataAgeS };
+  if (dataAgeS > staleAfterS) return { kind: "stale", dataAgeS };
   const heartbeatAgeS = Math.floor((now.getTime() - new Date(lastSnapshot.heartbeat).getTime()) / 1000);
   return { kind: "ok", heartbeatAgeS };
 }
@@ -66,7 +67,7 @@ export class Poller {
   ) {}
 
   health(): Health {
-    return classifyHealth(this.now(), this.cfg.poll_interval_s, this.state.snapshot, this.state.lastFetchOk, this.state.lastOkAt);
+    return classifyHealth(this.now(), this.cfg.stale_after_s, this.state.snapshot, this.state.lastFetchOk, this.state.lastOkAt);
   }
 
   async tick(): Promise<void> {
