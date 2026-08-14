@@ -67,6 +67,13 @@ describe("companion tool colors", () => {
     const input = "a\x1b[48;2;40;50;40mtool\x1b[0m\x1b[38;2;40;50;40mtext";
     expect(muteCompanionToolFlash(input)).toBe("a\x1b[48;2;32;35;42mtool\x1b[0m\x1b[38;2;40;50;40mtext");
   });
+
+  it("neutralizes the tmux-downgraded 256-color panels, compound SGRs included", () => {
+    const input = "\x1b[48;5;22mok\x1b[0m \x1b[48;5;17mpend\x1b[0m \x1b[38;5;231;48;5;22mboth\x1b[0m \x1b[48;5;220mgold\x1b[0m";
+    expect(muteCompanionToolFlash(input)).toBe(
+      "\x1b[48;5;235mok\x1b[0m \x1b[48;5;235mpend\x1b[0m \x1b[38;5;231;48;5;235mboth\x1b[0m \x1b[48;5;220mgold\x1b[0m",
+    );
+  });
 });
 
 describe("Osc52Relay", () => {
