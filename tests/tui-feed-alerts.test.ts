@@ -398,7 +398,8 @@ describe("companion tab", () => {
     const pty: PtyLike = { write: () => {}, resize: () => {}, kill: () => {}, onData: () => {}, onExit: () => {} };
     installCompanionTabHooks(app, {
       lifecycle,
-      available,
+      available: () => available,
+      failure: () => (available ? undefined : "docker build qcr-companion failed: boom"),
       out: s.out,
       input: s.input,
       spawner: (argv) => {
@@ -450,12 +451,53 @@ describe("companion tab", () => {
     await h.close();
   });
 
-  it("renders a resting screen when the companion is disabled, and never attaches", async () => {
+  it("shows the REAL failure and offers retry when the companion is down, never a mislabel", async () => {
     const h = harness(false);
     h.app.openCompanion();
     await Promise.resolve();
     expect(h.spawned).toEqual([]);
-    expect(stripAnsi(h.s.written())).toContain("disabled (--no-companion)");
+    const text = stripAnsi(h.s.written());
+    expect(text).toContain("not running: docker build qcr-companion failed: boom");
+    expect(text).toContain("⏎ retry");
+    expect(text).not.toContain("disabled (--no-companion)");
     await h.close();
+  });
+
+  it("⏎ on a failed companion runs retry and attaches once it heals", async () => {
+    const s = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ({ ok: false, stdout: "", stderr: "", code: 1 }), s.out, s.input);
+    const lifecycle = new CompanionLifecycle(CFG, noDocker, {});
+    const spawned: string[][] = [];
+    const pty: PtyLike = { write: () => {}, resize: () => {}, kill: () => {}, onData: () => {}, onExit: () => {} };
+    let up = false;
+    let fireExit: ((e: { exitCode: number }) => void) | undefined;
+    const exitingPty: PtyLike = {
+      ...pty,
+      onExit: (cb) => {
+        fireExit = cb;
+      },
+    };
+    installCompanionTabHooks(app, {
+      lifecycle,
+      available: () => up,
+      failure: () => (up ? undefined : "image missing"),
+      retry: async () => {
+        up = true; // the retry path healed the startup
+      },
+      out: s.out,
+      input: s.input,
+      spawner: (argv) => {
+        spawned.push(argv);
+        return exitingPty;
+      },
+    });
+    const running = app.run();
+    app.openCompanion();
+    for (let i = 0; i < 100 && spawned.length === 0; i++) await new Promise((r) => setTimeout(r, 5));
+    expect(up).toBe(true);
+    expect(spawned.length).toBe(1); // healed, then attached
+    fireExit?.({ exitCode: 0 });
+    app.quit();
+    await running;
   });
 });

@@ -54,6 +54,8 @@ export interface CompanionConfig {
   alerts_dir: string;
   /** Host ssh config dir mounted read-only (VM reads + inject). */
   ssh_dir: string;
+  /** Docker build context for the companion image (auto-built when missing). */
+  build_context: string;
   // --- watcher knobs. C1 seeds sane defaults; C2 owns the full set. ---
   /** A round overdue by more than this is worth waking the operator for. */
   overdue_grace_min: number;
@@ -115,6 +117,7 @@ export const COMPANION_DEFAULTS: CompanionConfig = {
   feed_dir: "", // → <root>/state/companion/feed
   alerts_dir: "", // → <root>/state/companion/alerts
   ssh_dir: "~/.ssh",
+  build_context: "", // → <root>/docker/companion
   overdue_grace_min: 30,
   stale_alert_s: 300,
   awaiting_age_h: 24,
@@ -144,6 +147,7 @@ export function resolveCompanionPaths(c: CompanionConfig, root: string = sandbox
     feed_dir: c.feed_dir ? expandHome(c.feed_dir) : resolve(root, "state", "companion", "feed"),
     alerts_dir: c.alerts_dir ? expandHome(c.alerts_dir) : resolve(root, "state", "companion", "alerts"),
     ssh_dir: expandHome(c.ssh_dir),
+    build_context: c.build_context ? expandHome(c.build_context) : resolve(root, "docker", "companion"),
   };
 }
 

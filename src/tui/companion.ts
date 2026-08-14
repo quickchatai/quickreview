@@ -194,7 +194,26 @@ export class CompanionLifecycle {
   // ---- transitions --------------------------------------------------------
 
   /** Idempotent: running → adopt; stopped → start; absent → run. */
-  async ensureUp(): Promise<EnsureOutcome> {
+  /** True when the companion image exists locally. */
+  async imageExists(): Promise<boolean> {
+    const res = await this.docker(["image", "inspect", this.cfg.image]);
+    return res.ok;
+  }
+
+  /** Build the companion image from docker/companion (idempotent, cached).
+   * Runs with the caller's uid so the host bind mounts stay writable. */
+  async buildImage(onProgress?: (line: string) => void): Promise<void> {
+    onProgress?.(`building ${this.cfg.image} image (first run — takes a few minutes)…`);
+    const uid = typeof process.getuid === "function" ? process.getuid() : 1000;
+    const res = await this.docker(
+      ["build", "-t", this.cfg.image, "--build-arg", `COMPANION_UID=${uid}`, this.cfg.build_context],
+      { timeoutMs: 1_800_000 },
+    );
+    if (!res.ok) throw new Error(`docker build ${this.cfg.image} failed: ${errText(res)}`);
+    onProgress?.(`${this.cfg.image} image built`);
+  }
+
+  async ensureUp(onProgress?: (line: string) => void): Promise<EnsureOutcome> {
     const st = await this.status();
     if (st.running) return "adopted";
     if (st.exists) {
@@ -202,6 +221,8 @@ export class CompanionLifecycle {
       if (!started.ok) throw new Error(`docker start ${this.cfg.container_name} failed: ${errText(started)}`);
       return "started";
     }
+    // Self-healing first run: build the image rather than failing on its absence.
+    if (!(await this.imageExists())) await this.buildImage(onProgress);
     this.ensureDirs([this.cfg.feed_dir, this.cfg.alerts_dir]);
     const created = await this.docker(this.runArgv(), { timeoutMs: 120_000 });
     if (!created.ok) throw new Error(`docker run ${this.cfg.image} failed: ${errText(created)}`);

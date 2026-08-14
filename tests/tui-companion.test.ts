@@ -172,10 +172,27 @@ describe("CompanionLifecycle state machine", () => {
     expect(calls[1]).toEqual(["start", "qcr-companion"]);
   });
 
-  it("runs a fresh container when none exists", async () => {
-    const { lc, calls } = lifecycle([inspect("absent"), okFor("run")]);
+  it("runs a fresh container when none exists (image already built)", async () => {
+    const { lc, calls } = lifecycle([inspect("absent"), okFor("image"), okFor("run")]);
     expect(await lc.ensureUp()).toBe("created");
-    expect(calls.map((c) => c[0])).toEqual(["inspect", "run"]);
+    expect(calls.map((c) => c[0])).toEqual(["inspect", "image", "run"]);
+  });
+
+  it("self-heals a missing image: builds it, then runs — never fails on first launch", async () => {
+    const { lc, calls } = lifecycle([
+      inspect("absent"),
+      (argv) => (argv[0] === "image" ? { ok: false, stdout: "", stderr: "No such image", code: 1 } : undefined),
+      okFor("build"),
+      okFor("run"),
+    ]);
+    const progress: string[] = [];
+    expect(await lc.ensureUp((l) => progress.push(l))).toBe("created");
+    expect(calls.map((c) => c[0])).toEqual(["inspect", "image", "build", "run"]);
+    const build = calls.find((c) => c[0] === "build")!;
+    expect(build).toContain("-t");
+    expect(build).toContain("qcr-companion");
+    expect(build.some((a) => a.startsWith("COMPANION_UID="))).toBe(true);
+    expect(progress.some((l) => l.includes("building"))).toBe(true);
   });
 
   it("is idempotent: a second TUI adopts, it never twins", async () => {

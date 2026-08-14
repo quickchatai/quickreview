@@ -109,11 +109,12 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
   const companion = new CompanionLifecycle(full.companion, realDockerRunner);
   const companionOn = args.companion && full.companion.enabled;
   let companionUp = false;
+  let companionError: string | undefined;
   const companionStateDir = join(sandboxRoot(), "state", "companion");
   const policyStatePath = join(companionStateDir, "alert-policy.json");
-  if (companionOn) {
+  const startCompanion = async (): Promise<void> => {
     try {
-      await companion.ensureUp();
+      await companion.ensureUp((line) => app.notice(`companion: ${line}`));
       // daily rollover — strictly between "container is up" and
       // "pi is spawned": on the first start of a new Warsaw day it archives
       // yesterday, kills the session and queues the opening context, so the
@@ -133,10 +134,13 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
       }
       await companion.spawnPi();
       companionUp = true;
+      companionError = undefined;
     } catch (err) {
-      app.notice(`companion unavailable: ${String(err instanceof Error ? err.message : err)}`);
+      companionError = String(err instanceof Error ? err.message : err);
+      app.notice(`companion unavailable: ${companionError}`);
     }
-  }
+  };
+  if (companionOn) await startCompanion();
 
   // ambient feed + alert pipeline + companion tab. All of it hangs off
   // companionOn, so --no-companion really means "none of this runs".
@@ -144,7 +148,9 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
   const { spawn: spawnPty } = companionOn ? await import("node-pty") : { spawn: undefined };
   installCompanionTabHooks(app, {
     lifecycle: companion,
-    available: companionUp,
+    available: () => companionUp,
+    failure: () => companionError,
+    retry: companionOn ? startCompanion : undefined,
     spawner: (argv, cols, rows) => {
       const p = spawnPty!("docker", argv, { name: "xterm-256color", cols, rows, env: process.env as Record<string, string> });
       return {

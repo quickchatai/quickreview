@@ -33,8 +33,12 @@ export function renderCompanionRest(app: App, cols: number, rows: number, hint: 
 export interface CompanionTabDeps {
   lifecycle: CompanionLifecycle;
   spawner: PtySpawner;
-  /** False when the TUI ran with --no-companion or [companion] enabled=false. */
-  available: boolean;
+  /** Live view of the companion's state — startup may fail and later heal. */
+  available: () => boolean;
+  /** The real startup error when unavailable (never a mislabel). */
+  failure?: () => string | undefined;
+  /** Re-runs the full startup (build image if missing, up, rollover, spawn). */
+  retry?: () => Promise<void>;
   /** Terminal the attach takes over; injectable so tests own their streams. */
   out?: NodeJS.WriteStream;
   input?: NodeJS.ReadStream;
@@ -42,14 +46,28 @@ export interface CompanionTabDeps {
 
 export function installCompanionTabHooks(app: App, deps: CompanionTabDeps): void {
   let attached = false;
-  app.hooks.companionScreen = (theApp, cols, rows) =>
-    deps.available
-      ? renderCompanionRest(theApp, cols, rows, attached ? "attached" : "detached — ⏎ attach")
-      : renderCompanionRest(theApp, cols, rows, "disabled (--no-companion)");
+  let retrying = false;
+  app.hooks.companionScreen = (theApp, cols, rows) => {
+    if (deps.available()) return renderCompanionRest(theApp, cols, rows, attached ? "attached" : "detached — ⏎ attach");
+    if (retrying) return renderCompanionRest(theApp, cols, rows, "starting…");
+    const why = deps.failure?.() ?? "not started";
+    return renderCompanionRest(theApp, cols, rows, `not running: ${why} — ⏎ retry`);
+  };
 
-  if (!deps.available) return;
   app.hooks.companionAttach = async (theApp) => {
     if (attached) return;
+    if (!deps.available()) {
+      if (retrying || !deps.retry) return;
+      retrying = true;
+      theApp.repaint();
+      try {
+        await deps.retry();
+      } finally {
+        retrying = false;
+      }
+      theApp.repaint();
+      if (!deps.available()) return;
+    }
     attached = true;
     try {
       // The session name is only a label here — the argv already points at the
