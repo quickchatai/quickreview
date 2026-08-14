@@ -104,6 +104,8 @@ describe("deploy.sh --dry-run", () => {
     expect(r.stdout).toContain("(--dry-run: nothing executed)");
     // the flip is never automated
     expect(r.stdout).toContain("dry_run is NOT touched by deploy");
+    // the deploy tab's marker is part of the plan (written only on a real run)
+    expect(r.stdout).toContain("BUILD_SHA=");
   });
 
   it("plans an image rebuild in rebuild mode", () => {

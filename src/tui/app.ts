@@ -39,9 +39,13 @@ export interface AppHooks {
   companionAttach?: (app: App) => Promise<void>;
   /**: what the companion tab shows when nothing is attached. */
   companionScreen?: (app: App, cols: number, rows: number) => string;
+  /** Deploy tab: what would a deploy ship (read-only — never deploys). */
+  deployScreen?: (app: App, cols: number, rows: number) => string;
+  /** Deploy tab key handling; returns true when it consumed the key. */
+  deployKey?: (app: App, key: ReturnType<typeof decodeKey>) => boolean;
 }
 
-export type Tab = "board" | "digest" | "companion";
+export type Tab = "board" | "digest" | "companion" | "deploy";
 
 export class App {
   readonly view: BoardView = {
@@ -301,6 +305,10 @@ export class App {
       if (ev.kind !== "click") this.hooks.digestKey?.(this, { kind: ev.kind === "wheel-down" ? "down" : "up" });
       return;
     }
+    if (this.tab === "deploy") {
+      if (ev.kind !== "click") this.hooks.deployKey?.(this, { kind: ev.kind === "wheel-down" ? "down" : "up" });
+      return;
+    }
     if (ev.kind === "wheel-up" || ev.kind === "wheel-down") {
       const delta = ev.kind === "wheel-down" ? 1 : -1;
       const stripTop = (this.lastFrame?.meta["stripTop"] ?? Number.MAX_SAFE_INTEGER) + 1;
@@ -365,6 +373,7 @@ export class App {
       return;
     }
     if (this.tab === "digest" && this.hooks.digestKey?.(this, key)) return;
+    if (this.tab === "deploy" && this.hooks.deployKey?.(this, key)) return;
     if (this.tab === "companion") {
       // The tab is the conversation: ⏎ re-attaches, tab/quit keys still work,
       // everything else would silently act on the board — so it doesn't.
@@ -375,6 +384,7 @@ export class App {
           return;
         case "tab-board":
         case "tab-digest":
+        case "tab-deploy":
         case "quit":
         case "help":
           break;
@@ -395,6 +405,9 @@ export class App {
         break;
       case "tab-digest":
         this.tab = "digest";
+        break;
+      case "tab-deploy":
+        this.tab = "deploy";
         break;
       case "tab-companion":
         this.openCompanion();
@@ -508,6 +521,12 @@ export class App {
       const screen = this.hooks.companionScreen?.(this, cols, rows);
       this.lastFrame = undefined;
       this.out.write(screen ?? `${CLEAR}companion unavailable (started with --no-companion?) — [1] back to board`);
+      return;
+    }
+    if (this.tab === "deploy") {
+      const screen = this.hooks.deployScreen?.(this, cols, rows);
+      this.lastFrame = undefined;
+      this.out.write(screen ?? `${CLEAR}deploy tab not wired — [1] back to board`);
       return;
     }
     this.view.now = this.now();

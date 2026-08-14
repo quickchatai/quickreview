@@ -16,7 +16,7 @@ export type BoardAction =
   | { t: "select-pr"; pr: number }
   | { t: "open-github"; pr: number }
   | { t: "event-jump"; pr: number }
-  | { t: "tab"; tab: "board" | "digest" | "companion" }
+  | { t: "tab"; tab: "board" | "digest" | "companion" | "deploy" }
   | { t: "key"; key: string }; // hint-bar button → synthesized keypress
 
 export interface BoardView {
@@ -217,6 +217,7 @@ export const HINT_BUTTONS: Array<{ label: string; key: string }> = [
   { label: "1 board", key: "1" },
   { label: "2 digest", key: "2" },
   { label: "3 companion", key: "3" },
+  { label: "4 deploy", key: "4" },
   { label: "⏎ attach", key: "\r" },
   { label: "m message", key: "m" },
   { label: "g github", key: "g" },
@@ -229,7 +230,8 @@ export const HINT_BUTTONS: Array<{ label: string; key: string }> = [
 ];
 
 export const HELP_LINES = [
-  "1 / 2 / 3      board / digest / companion tab (c = companion too)",
+  "1 / 2 / 3 / 4  board / digest / companion / deploy tab (c = companion too)",
+  "               deploy tab: what a deploy would ship (read-only — run scripts/deploy.sh yourself)",
   "               an alert in the top bar: click it or ⏎ to open the companion",
   "j/k ↓/↑        select PR (mouse: click a row; click again to attach)",
   "⏎              attach selected PR (embedded pi session)",
@@ -329,7 +331,8 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
   const parts: string[] = [];
   for (const b of HINT_BUTTONS) {
     const label = `[ ${b.label} ]`;
-    const action: BoardAction = b.key === "1" ? { t: "tab", tab: "board" } : b.key === "2" ? { t: "tab", tab: "digest" } : { t: "key", key: b.key };
+    const action: BoardAction =
+      b.key === "1" ? { t: "tab", tab: "board" } : b.key === "2" ? { t: "tab", tab: "digest" } : b.key === "4" ? { t: "tab", tab: "deploy" } : { t: "key", key: b.key };
     frame.zones.push({ x1: x, y1: rows - 1, x2: x + label.length - 1, y2: rows - 1, action });
     parts.push(`${FG.dim}[${RESET} ${b.label} ${FG.dim}]${RESET}`);
     x += label.length + 1;

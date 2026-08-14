@@ -11,6 +11,7 @@ export type BoardKey =
   | { kind: "tab-board" }
   | { kind: "tab-digest" }
   | { kind: "tab-companion" }
+  | { kind: "tab-deploy" }
   | { kind: "quit" }
   | { kind: "help" }
   | { kind: "detail" }
@@ -40,6 +41,7 @@ export function decodeKey(buf: Buffer): BoardKey {
   if (s === "1") return { kind: "tab-board" };
   if (s === "2") return { kind: "tab-digest" };
   if (s === "3" || s === "c") return { kind: "tab-companion" };
+  if (s === "4") return { kind: "tab-deploy" };
   if (s === "q" || s === "\x03") return { kind: "quit" };
   if (s === "?") return { kind: "help" };
   if (s === "w") return { kind: "detail" };

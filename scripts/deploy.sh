@@ -209,6 +209,9 @@ print_plan() {
   local c
   for c in "${VERIFY_CMDS[@]}"; do echo "                 $c"; done
   echo "  dry_run      config.toml dry_run is NOT touched by deploy — the cutover flip is a manual edit"
+  if [[ "$MODE" != "verify" ]]; then
+    echo "  marker       BUILD_SHA=$HEAD_SHA written before the rsync (gitignored; the qcr tui deploy tab reads it on the VM)"
+  fi
 }
 
 if [[ $DRY_RUN -eq 1 ]]; then
@@ -226,6 +229,10 @@ echo >&2
 if [[ "$MODE" != "verify" ]]; then
   command -v ansible-playbook >/dev/null 2>&1 || die "ansible-playbook not on PATH — run this from the controller machine"
   [[ -f "$INVENTORY" ]] || die "no inventory at $INVENTORY (cp inventory.example.ini inventory.ini, then edit; or set QC_INVENTORY)"
+  # BUILD_SHA rides the rsync so the VM can answer "what commit runs here?"
+  # (the qcr tui deploy tab diffs local HEAD against it). Gitignored, so the
+  # clean-tree guard above stays meaningful.
+  printf '%s %s %s\n' "$HEAD_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$MODE" > "$SANDBOX_DIR/BUILD_SHA"
   note "running: ${ANSIBLE_CMD[*]}"
   "${ANSIBLE_CMD[@]}"
 fi
