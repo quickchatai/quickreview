@@ -71,6 +71,15 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       const pre = await sessions.preflight(active);
       log(`preflight: adopted=${pre.adoption.adopted.join(",") || "none"} swept-worktrees=${pre.sweptWorktrees.join(",") || "none"}`);
 
+      // The overseer must exist from boot — lazily spawning it on the first
+      // anomaly left `tmux attach -t overseer` dead after every restart.
+      try {
+        await sessions.ensureOverseerSession();
+        log("overseer session ready");
+      } catch (err) {
+        log("overseer spawn failed (will retry on first wake)", err);
+      }
+
       // Overseer command files → validated execution (whitelist + caps).
       const commandDeps: CommandDeps = {
         async rerunRound(pr) {

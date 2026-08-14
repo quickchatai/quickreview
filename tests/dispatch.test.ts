@@ -21,6 +21,7 @@ class FakeAdapter implements DispatchAdapter {
   calls: Call[] = [];
   files = new Map<number, PrFileEntry[]>();
   failLabelOn = new Set<number>();
+  goneLabelOn = new Set<number>();
 
   async listPrFiles(n: number): Promise<PrFileEntry[]> {
     this.calls.push({ fn: "listPrFiles", pr: n });
@@ -33,6 +34,8 @@ class FakeAdapter implements DispatchAdapter {
   async removeLabel(n: number, label: string): Promise<GateResult> {
     this.calls.push({ fn: "removeLabel", pr: n, arg: label });
     if (this.failLabelOn.has(n)) throw new Error("404 label not present");
+    if (this.goneLabelOn.has(n))
+      throw new Error(`DELETE /repos/o/r/issues/${n}/labels/AI%20review%20requested → 404: {"message":"Label does not exist","status":"404"}`);
     return { executed: false, dryRunFile: "x" };
   }
   async deleteTeamReviewRequest(n: number): Promise<GateResult> {
@@ -160,6 +163,31 @@ describe("dispatchOnce", () => {
     expect(orders).toHaveLength(1);
     const logged = store.db.prepare("SELECT payload FROM events WHERE kind = 'trigger_consume_failed'").all() as Array<{ payload: string }>;
     expect(JSON.parse(logged[0]!.payload).which).toBe("label");
+  });
+
+  it("treats a GitHub 404 on label removal as already-consumed, not a failure", async () => {
+    queue(23, "2026-08-13T09:00:00Z");
+    adapter.goneLabelOn.add(23);
+    const { hooks, orders } = recordingHooks();
+    const dispatched = await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+    expect(dispatched).toHaveLength(1);
+    expect(orders).toHaveLength(1);
+    expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'trigger_consume_failed'").get()).toEqual({ c: 0 });
+    const already = store.db.prepare("SELECT payload FROM events WHERE kind = 'trigger_already_consumed'").all() as Array<{ payload: string }>;
+    expect(JSON.parse(already[0]!.payload).which).toBe("label");
+    const round = store.db.prepare("SELECT payload FROM events WHERE kind = 'round_dispatched'").get() as { payload: string };
+    expect(JSON.parse(round.payload).triggers_consumed).toContain("label");
+  });
+
+  it("never dispatches a PR that already has a running round (one worktree, one round)", async () => {
+    queue(24, "2026-08-13T09:00:00Z");
+    queue(25, "2026-08-13T09:01:00Z");
+    store.startRound(24, "first", ["pass-baseline"], 45); // round in flight, PR requeued behind it
+    const { hooks, orders } = recordingHooks();
+    const dispatched = await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+    expect(dispatched.map((o) => o.pr)).toEqual([25]);
+    expect(orders.map((o) => o.order.pr)).toEqual([25]);
+    expect(adapter.calls.filter((c) => c.pr === 24)).toHaveLength(0);
   });
 
   it("builds the round order from the files API: lenses, escalation, migration gate", async () => {

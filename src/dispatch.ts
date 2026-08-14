@@ -68,6 +68,13 @@ export function capacity(store: StateStore, cfg: Config): number {
   return Math.max(0, cfg.daemon.max_concurrent_rounds - store.runningRounds().length);
 }
 
+/** A consume target that is already gone (label removed in an earlier round,
+ * no pending team request) comes back as a 404 — that is consumption already
+ * done, not a failure. */
+function alreadyConsumed(err: unknown): boolean {
+  return /→ 404\b|"status":\s*"404"/.test(String(err));
+}
+
 /** Consume both triggers at dispatch: the label and the team review request.
  * Both go through the adapter (and therefore the dry-run gate); failures are
  * logged, never fatal — the reconcile poll re-derives the truth. */
@@ -78,15 +85,25 @@ async function consumeTriggers(deps: DispatchDeps, pr: number): Promise<string[]
     await deps.adapter.removeLabel(pr, deps.cfg.github.trigger_label);
     consumed.push("label");
   } catch (err) {
-    log(`dispatch: label removal failed on #${pr}`, err);
-    deps.store.logEvent("trigger_consume_failed", pr, { which: "label", error: String(err) });
+    if (alreadyConsumed(err)) {
+      consumed.push("label");
+      deps.store.logEvent("trigger_already_consumed", pr, { which: "label" });
+    } else {
+      log(`dispatch: label removal failed on #${pr}`, err);
+      deps.store.logEvent("trigger_consume_failed", pr, { which: "label", error: String(err) });
+    }
   }
   try {
     await deps.adapter.deleteTeamReviewRequest(pr);
     consumed.push("team_request");
   } catch (err) {
-    log(`dispatch: team-request DELETE failed on #${pr}`, err);
-    deps.store.logEvent("trigger_consume_failed", pr, { which: "team_request", error: String(err) });
+    if (alreadyConsumed(err)) {
+      consumed.push("team_request");
+      deps.store.logEvent("trigger_already_consumed", pr, { which: "team_request" });
+    } else {
+      log(`dispatch: team-request DELETE failed on #${pr}`, err);
+      deps.store.logEvent("trigger_consume_failed", pr, { which: "team_request", error: String(err) });
+    }
   }
   try {
     await deps.adapter.addLabel(pr, deps.cfg.github.in_progress_label);
@@ -160,7 +177,15 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
   if (slots <= 0) return [];
 
   const dispatched: RoundOrder[] = [];
+  const running = new Set(store.runningRounds().map((r) => r.pr));
   for (const row of queuedInOrder(store).slice(0, slots)) {
+    // One PR = one worktree = at most one round in flight. A queued row with a
+    // round still running (requeue raced the verdict) waits for the next pump —
+    // two rounds sharing wt/pr-<n> fight over the git index.
+    if (running.has(row.number)) {
+      log(`dispatch: #${row.number} skipped — a round is already running`);
+      continue;
+    }
     let provisionalRoundId: number | undefined;
     try {
       const priorRounds = (
