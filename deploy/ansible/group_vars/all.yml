@@ -17,6 +17,28 @@ node_major: "22"
 pi_npm_package: "@earendil-works/pi-coding-agent"
 pi_version: "0.84.1"
 
+# pi extensions — same discipline as pi_version: exact pins, never floating,
+# bumping is a deliberate edit + `-e rebuild_image=true`.
+#
+# pi-subagents: the package we depend on is amosblomqvist/pi-subagents
+# (§1, package.json `pi.extensions`). It is a RAW extension repo with
+# no package.json — it is NOT on npm, and the npm/pi.dev name "pi-subagents"
+# belongs to nicobailon's UNRELATED package (verified 2026-08-14: npm
+# repository.url = nicobailon/pi-subagents; github.com/amosblomqvist/
+# pi-subagents exists separately and does not redirect). So it is pinned by
+# exact git commit (main HEAD, committed 2026-05-22, checked 2026-08-14) and
+# baked into the image by clone+checkout, not npm install.
+pi_subagents_repo: "https://github.com/amosblomqvist/pi-subagents.git"
+pi_subagents_commit: "1f541897588b995144f0bb8e71a335d1c85b1e62"
+
+# pi-memory: MUST be jayzeng/pi-memory (§2) — the npm name is collided
+# with unrelated packages by josephkern/catlain/@chendpoc. Exact-version pin
+# (registry-verified 2026-08-14: pi-memory@0.4.2 repository.url =
+# github.com/jayzeng/pi-memory); the Dockerfile hard-fails the build if the
+# installed package's repository does not resolve to jayzeng/pi-memory.
+pi_memory_package: "pi-memory"
+pi_memory_version: "0.4.2"
+
 # tmux ≥3.5 for csi-u extended keys end-to-end (§3E):
 # Ubuntu 24.04 apt ships 3.4, so the image builds this release from source.
 tmux_version: "3.5a"

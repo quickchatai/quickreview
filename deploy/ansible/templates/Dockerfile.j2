@@ -6,7 +6,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TZ={{ timezone }}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl git jq openssh-client gnupg tzdata sqlite3 \
+      ca-certificates curl git jq ripgrep openssh-client gnupg tzdata sqlite3 \
       build-essential python3 \
     && rm -rf /var/lib/apt/lists/*
 
@@ -35,6 +35,25 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 
 # pi — pinned, never floating
 RUN npm install -g {{ pi_npm_package }}@{{ pi_version }}
+
+# pi-memory extension — pinned, never floating. The npm name is collided with
+# unrelated packages (josephkern/catlain/@chendpoc): hard-fail the build unless
+# the INSTALLED package's repository resolves to github.com/jayzeng/pi-memory.
+RUN npm install -g {{ pi_memory_package }}@{{ pi_memory_version }} \
+    && url="$(node -p "String((require(require('child_process').execSync('npm root -g').toString().trim() + '/{{ pi_memory_package }}/package.json').repository || {}).url)")" \
+    && echo "pi-memory repository.url: $url" \
+    && echo "$url" | grep -Eq 'github\.com[:/]jayzeng/pi-memory' \
+    || { echo "FATAL: {{ pi_memory_package }}@{{ pi_memory_version }} is not jayzeng/pi-memory" >&2; exit 1; }
+
+# pi-subagents extension — amosblomqvist/pi-subagents is a raw extension repo
+# (no package.json, NOT on npm; the npm/pi.dev "pi-subagents" name belongs to
+# nicobailon's unrelated package). Pin by exact commit; verify the checkout.
+RUN git clone {{ pi_subagents_repo }} /opt/pi-extensions/pi-subagents \
+    && git -C /opt/pi-extensions/pi-subagents checkout --detach {{ pi_subagents_commit }} \
+    && [ "$(git -C /opt/pi-extensions/pi-subagents rev-parse HEAD)" = "{{ pi_subagents_commit }}" ] \
+    && rm -rf /opt/pi-extensions/pi-subagents/.git \
+    && test -f /opt/pi-extensions/pi-subagents/index.ts \
+    && echo "{{ pi_subagents_commit }}" > /opt/pi-extensions/pi-subagents/.pinned-commit
 
 RUN useradd --create-home --uid 1001 review
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh

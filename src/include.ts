@@ -11,10 +11,20 @@
 //  - `{{include:<path>}}` — path is relative to the sandbox root.
 //  - includes may nest; a cycle throws.
 //  - a missing include throws (never silently emits the literal directive).
-//  - frontmatter passes through byte-for-byte, except the `model:` field when
-//    a per-pass override exists in config.models.passes (knob).
+//  - frontmatter passes through byte-for-byte, except the `name:`/`model:`/
+//    `thinking:` fields the tier fan-out rewrites (knob, tiered).
+//
+// Tier fan-out: each seeded pass builds into per-tier variant files
+// `<pass>--<tier>.md`. Risk passes (config models.risk_passes) build only the
+// sol-high variant; pass-validate builds only its fixed tier
+// (models.validate_tier); every other pass builds all three tiers. The tier's
+// model spec ("provider/model:thinking") is split into the SEPARATE
+// pi-subagents `model` and `thinking` frontmatter fields. The read-only
+// execution-policy addendum is appended to every BUILT body — seeds untouched.
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, resolve, join } from "node:path";
+import { MODELS_TIER_DEFAULTS } from "./config.js";
+import type { PassTier } from "./types.js";
 
 const INCLUDE_RE = /\{\{include:([^}\r\n]+)\}\}/g;
 
@@ -87,40 +97,93 @@ export function frontmatterName(frontmatter: string): string | null {
   return m ? (m[1] ?? null) : null;
 }
 
+/** Rewrite a scalar frontmatter field in place; append it when absent. */
+function applyField(frontmatter: string, field: string, value: string): string {
+  const re = new RegExp(`^${field}:[ \\t]*.*$`, "m");
+  if (re.test(frontmatter)) return frontmatter.replace(re, `${field}: ${value}`);
+  return `${frontmatter}${field}: ${value}\n`;
+}
+
 /** Rewrite the `model:` frontmatter field. Adds it when absent. */
 export function applyModelOverride(frontmatter: string, model: string): string {
-  if (/^model:[ \t]*.*$/m.test(frontmatter)) {
-    return frontmatter.replace(/^model:[ \t]*.*$/m, `model: ${model}`);
-  }
-  return `${frontmatter}model: ${model}\n`;
+  return applyField(frontmatter, "model", model);
+}
+
+/** Rewrite the `name:` frontmatter field. Adds it when absent. */
+export function applyNameOverride(frontmatter: string, name: string): string {
+  return applyField(frontmatter, "name", name);
+}
+
+/** Rewrite the `thinking:` frontmatter field. Adds it when absent. */
+export function applyThinkingOverride(frontmatter: string, thinking: string): string {
+  return applyField(frontmatter, "thinking", thinking);
+}
+
+/** Split a "provider/model:thinking" spec into pi-subagents' SEPARATE
+ * `model` and `thinking` frontmatter fields. Only a recognized thinking
+ * level after the last colon is treated as a suffix. */
+export function splitModelSpec(spec: string): { model: string; thinking: string | null } {
+  const m = /^(.+):(off|minimal|low|medium|high)$/.exec(spec);
+  return m ? { model: m[1] as string, thinking: m[2] as string } : { model: spec, thinking: null };
 }
 
 // ---- the build step ------------------------------------------------------
 
+/** All pass tiers, ascending. */
+export const PASS_TIERS: readonly PassTier[] = ["terra-med", "sol-med", "sol-high"];
+
+/** Appended to every BUILT agent body (never to the seeds). */
+export const EXECUTION_POLICY_ADDENDUM =
+  "\n\n## Execution policy (sandbox rule, enforced)\nYou are a read-only reviewer. Never execute project code, tests, builds, scripts, or package managers (no python/pytest/uv/npm/node/make or similar). Allowed commands: git, rg, grep, cat, ls, find, head, tail, wc, jq, sed, awk, sort, uniq, diff, and read-only gh. CI results are READ via `gh pr checks` / `gh api` — never re-run or trigger anything.\n";
+
 export interface BuildAgentsOptions {
   /** Sandbox root for include resolution. Defaults to `srcDir`'s parent. */
   root?: string;
-  /** config.models.passes — per-agent model overrides, keyed by agent name. */
+  /** config.models.tiers — PassTier → model spec ("provider/model:thinking"). */
+  tiers?: Record<PassTier, string>;
+  /** config.models.risk_passes — build only the sol-high variant. */
+  riskPasses?: string[];
+  /** config.models.validate_tier — pass-validate's single fixed tier. */
+  validateTier?: PassTier;
+  /** Per-VARIANT model-spec overrides, keyed by variant name
+   * (`<pass>--<tier>`) — wins over the tier's spec; same splitting rules. */
   models?: Record<string, string>;
   readFile?: (path: string) => string;
 }
 
 export interface BuiltAgent {
+  /** Variant agent name: `<pass>--<tier>`. */
   name: string;
+  /** The seeded pass this variant was built from. */
+  pass: string;
+  tier: PassTier;
   source: string;
   output: string;
+  /** Model id written to frontmatter (thinking suffix already split off). */
   model: string | null;
+  /** Thinking level written to frontmatter, when the spec carried one. */
+  thinking: string | null;
+}
+
+/** The tiers a given pass fans out into. */
+export function tiersForPass(pass: string, riskPasses: string[], validateTier: PassTier): PassTier[] {
+  if (riskPasses.includes(pass)) return ["sol-high"];
+  if (pass === "pass-validate") return [validateTier];
+  return [...PASS_TIERS];
 }
 
 /**
- * Preprocess every `agents/pass-*.md` in `srcDir` into `outDir` — the
- * directory the pi-subagents extension is configured to read (see
- * `.pi/subagents.config.json`; the exact config key/location is
- * VERIFY-ON-PIN).
+ * Preprocess every `agents/pass-*.md` in `srcDir` into per-tier variant files
+ * `<pass>--<tier>.md` in `outDir` — the directory the pi-subagents extension
+ * is configured to read (see `.pi/subagents.config.json`; the exact config
+ * key/location is VERIFY-ON-PIN).
  */
 export function buildAgents(srcDir: string, outDir: string, opts: BuildAgentsOptions = {}): BuiltAgent[] {
   const root = opts.root ?? resolve(srcDir, "..");
   const read = opts.readFile ?? ((p: string) => readFileSync(p, "utf8"));
+  const tiers = opts.tiers ?? MODELS_TIER_DEFAULTS.tiers;
+  const riskPasses = opts.riskPasses ?? MODELS_TIER_DEFAULTS.risk_passes;
+  const validateTier = opts.validateTier ?? MODELS_TIER_DEFAULTS.validate_tier;
   const sources = readdirSync(srcDir)
     .filter((f) => f.startsWith("pass-") && f.endsWith(".md"))
     .sort();
@@ -129,18 +192,19 @@ export function buildAgents(srcDir: string, outDir: string, opts: BuildAgentsOpt
   for (const file of sources) {
     const src = join(srcDir, file);
     const doc = splitFrontmatter(read(src));
-    const name = frontmatterName(doc.frontmatter) ?? file.replace(/\.md$/, "");
-    const override = opts.models?.[name];
-    const frontmatter = override ? applyModelOverride(doc.frontmatter, override) : doc.frontmatter;
-    const body = expandIncludes(doc.body, { root, readFile: opts.readFile });
-    const out = join(outDir, file);
-    writeFileSync(out, joinFrontmatter({ ...doc, frontmatter, body }));
-    built.push({ name, source: src, output: out, model: override ?? modelOf(doc.frontmatter) });
+    const pass = frontmatterName(doc.frontmatter) ?? file.replace(/\.md$/, "");
+    const body = expandIncludes(doc.body, { root, readFile: opts.readFile }) + EXECUTION_POLICY_ADDENDUM;
+    for (const tier of tiersForPass(pass, riskPasses, validateTier)) {
+      const name = `${pass}--${tier}`;
+      const spec = opts.models?.[name] ?? tiers[tier];
+      const { model, thinking } = splitModelSpec(spec);
+      let frontmatter = applyNameOverride(doc.frontmatter, name);
+      frontmatter = applyModelOverride(frontmatter, model);
+      if (thinking !== null) frontmatter = applyThinkingOverride(frontmatter, thinking);
+      const out = join(outDir, `${name}.md`);
+      writeFileSync(out, joinFrontmatter({ ...doc, frontmatter, body }));
+      built.push({ name, pass, tier, source: src, output: out, model, thinking });
+    }
   }
   return built;
-}
-
-function modelOf(frontmatter: string): string | null {
-  const m = /^model:[ \t]*(.+?)[ \t]*$/m.exec(frontmatter);
-  return m ? (m[1] ?? null) : null;
 }

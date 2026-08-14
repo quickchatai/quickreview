@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { join } from "node:path";
 import { sandboxRoot } from "./config.js";
 import type { Run } from "./improvements.js";
+import type { StateStore } from "./state.js";
 
 export const HEADLINE_MAX = 200;
 
@@ -53,6 +54,34 @@ export function latestDigestHeadline(digestDir: string = defaultDigestDir()): st
   } catch {
     return undefined;
   }
+}
+
+// ---- daily usage summary -----------------------------------------
+
+export interface DailyUsage {
+  date: string;
+  rounds: number;
+  tokens_in: number;
+  tokens_out: number;
+  /** est_usd (measured) preferred; spend_usd only for pre-measurement rows. */
+  est_usd: number;
+}
+
+/** Aggregate one day's measured usage from the rounds table. */
+export function dailyUsage(store: StateStore, date: string): DailyUsage {
+  const rounds = store.roundsOn(date);
+  return {
+    date,
+    rounds: rounds.length,
+    tokens_in: rounds.reduce((n, r) => n + (r.tokens_in ?? 0), 0),
+    tokens_out: rounds.reduce((n, r) => n + (r.tokens_out ?? 0), 0),
+    est_usd: rounds.reduce((n, r) => n + (r.est_usd ?? r.spend_usd ?? 0), 0),
+  };
+}
+
+/** One digest-ready line, e.g. "usage: 3 rounds — 120000 in / 4000 out tokens — est $1.23". */
+export function usageSummaryLine(usage: DailyUsage): string {
+  return `usage: ${usage.rounds} rounds — ${usage.tokens_in} in / ${usage.tokens_out} out tokens — est $${usage.est_usd.toFixed(2)}`;
 }
 
 // ---- rubric proposals (local-only branches) --------------------------------

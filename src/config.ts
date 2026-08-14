@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "smol-toml";
+import type { PassTier } from "./types.js";
 
 export interface GithubConfig {
   repo: string;
@@ -89,6 +90,46 @@ export interface BackfillConfig {
   max_search_pages: number;
 }
 
+/** Per-model spend rates, keyed by bare model id (e.g. "gpt-5.6-sol"). */
+export interface ModelPricing {
+  input_per_mtok: number;
+  output_per_mtok: number;
+}
+
+/** [models] — role models plus the tiered pass-model scheme (replaces the
+ * old per-pass [models.passes] override map). */
+export interface ModelsConfig {
+  default: string;
+  conversation: string;
+  overseer: string;
+  /** PassTier → full model spec ("provider/model:thinking"). */
+  tiers: Record<PassTier, string>;
+  /** Passes always run at sol-high, single variant, not raisable. */
+  risk_passes: string[];
+  /** pass-validate is FIXED at this tier — single variant, not raisable. */
+  validate_tier: PassTier;
+  /** Diffs under this many changed lines start at terra-med (heuristics). */
+  small_diff_lines: number;
+  /** Spend rates keyed by bare model id; consumed by spend accounting. */
+  pricing: Record<string, ModelPricing>;
+}
+
+/** Defaults for the tiered [models] knobs — older configs keep parsing. */
+export const MODELS_TIER_DEFAULTS: Pick<
+  ModelsConfig,
+  "tiers" | "risk_passes" | "validate_tier" | "small_diff_lines" | "pricing"
+> = {
+  tiers: {
+    "terra-med": "openai-codex/gpt-5.6-terra:medium",
+    "sol-med": "openai-codex/gpt-5.6-sol:medium",
+    "sol-high": "openai-codex/gpt-5.6-sol:high",
+  },
+  risk_passes: ["pass-security", "pass-prod-risk", "pass-data-safety"],
+  validate_tier: "terra-med",
+  small_diff_lines: 150,
+  pricing: {},
+};
+
 export interface Config {
   dry_run: boolean;
   github: GithubConfig;
@@ -107,7 +148,7 @@ export interface Config {
     improvement_pr_per_week: number;
     issues_per_day: number;
   };
-  models: { default: string; conversation: string; overseer: string; passes: Record<string, string> };
+  models: ModelsConfig;
   pi: { package: string; version: string; session_dir: string };
   tui: TuiConfig;
   companion: CompanionConfig;
@@ -204,7 +245,7 @@ export function parseConfig(toml: string): Config {
     daemon: { ...(req(raw, "daemon") as Config["daemon"]) },
     eod: { ...(req(raw, "eod") as Config["eod"]) },
     caps: { ...(req(raw, "caps") as Config["caps"]) },
-    models: { ...(req(raw, "models") as Omit<Config["models"], "passes">), passes: (raw.models?.passes ?? {}) as Record<string, string> },
+    models: parseModels(req(raw, "models") as Record<string, any>),
     pi: { ...(req(raw, "pi") as Config["pi"]) },
     tui: { ...TUI_DEFAULTS, ...((raw.tui ?? {}) as Partial<TuiConfig>) },
     companion: resolveCompanionPaths({ ...COMPANION_DEFAULTS, ...((raw.companion ?? {}) as Partial<CompanionConfig>) }),
@@ -229,7 +270,20 @@ export function loadConfig(path?: string): Config {
   return cfg;
 }
 
-/** Model for a given pass agent, honoring the per-pass override knob. */
-export function modelForPass(cfg: Config, passName: string): string {
-  return cfg.models.passes[passName] ?? cfg.models.default;
+function parseModels(raw: Record<string, any>): ModelsConfig {
+  return {
+    default: String(req(raw, "default")),
+    conversation: String(req(raw, "conversation")),
+    overseer: String(req(raw, "overseer")),
+    tiers: { ...MODELS_TIER_DEFAULTS.tiers, ...((raw.tiers ?? {}) as Partial<Record<PassTier, string>>) },
+    risk_passes: (raw.risk_passes ?? MODELS_TIER_DEFAULTS.risk_passes) as string[],
+    validate_tier: (raw.validate_tier ?? MODELS_TIER_DEFAULTS.validate_tier) as PassTier,
+    small_diff_lines: Number(raw.small_diff_lines ?? MODELS_TIER_DEFAULTS.small_diff_lines),
+    pricing: (raw.pricing ?? {}) as Record<string, ModelPricing>,
+  };
+}
+
+/** Full model spec ("provider/model:thinking") for a pass tier. */
+export function tierModel(cfg: Config, tier: PassTier): string {
+  return cfg.models.tiers[tier];
 }

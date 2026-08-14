@@ -98,7 +98,7 @@ describe("daemon wiring", () => {
 
       const round = store.db.prepare("SELECT verdict, spend_usd, status FROM rounds WHERE pr = ?").get(PR) as any;
       expect(round.verdict).toBe("APPROVE");
-      expect(round.spend_usd).toBe(1.25);
+      expect(round.spend_usd).toBeNull(); // self-reported spend is fiction — never stored
       expect(round.status).toBe("done");
 
       // status.json exists and reports dry-run.

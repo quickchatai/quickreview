@@ -29,6 +29,45 @@ if [[ -r "$SECRETS/openai_api_key" ]]; then
   export OPENAI_API_KEY
 fi
 
+# pi extensions — register in $HOME/.pi/agent/settings.json (on the pihome
+# volume). Every pi process shares HOME=/home/review — main sessions AND the
+# isolated child processes pi-subagents spawns — so this one file covers all.
+# Idempotent MERGE, safe on every boot: the file predates the "extensions" key
+# and carries user keys (auth/defaults) that must never be clobbered. Each
+# path is appended only if absent; missing extension files hard-fail the boot
+# (a silently unregistered bash-guard would mean unguarded sessions).
+node <<'PI_EXT_MERGE'
+const fs = require("fs");
+const path = require("path");
+const { execSync } = require("child_process");
+
+const file = path.join(process.env.HOME, ".pi", "agent", "settings.json");
+fs.mkdirSync(path.dirname(file), { recursive: true });
+let settings = {};
+if (fs.existsSync(file)) settings = JSON.parse(fs.readFileSync(file, "utf8"));
+if (!Array.isArray(settings.extensions)) settings.extensions = [];
+
+const globalRoot = execSync("npm root -g").toString().trim();
+const wanted = [
+  // pi-memory: resolve the globally-installed package's entry point (its
+  // package.json "main" is index.ts; pi loads TS extensions natively).
+  require.resolve("pi-memory", { paths: [globalRoot] }),
+  // pi-subagents: raw-repo extension baked into the image (Dockerfile pin).
+  "/opt/pi-extensions/pi-subagents/index.ts",
+  // Repo-shipped guard, rides `deploy.sh sync`.
+  "/opt/quickreview/sandbox/extensions/bash-guard.ts",
+];
+for (const p of wanted) {
+  if (!fs.existsSync(p)) {
+    console.error("FATAL: pi extension missing: " + p);
+    process.exit(1);
+  }
+  if (!settings.extensions.includes(p)) settings.extensions.push(p);
+}
+fs.writeFileSync(file, JSON.stringify(settings, null, 2) + "\n");
+console.log("pi extensions registered: " + settings.extensions.join(", "));
+PI_EXT_MERGE
+
 # Private-repo git auth (example-app clone + per-PR fetches): the app
 # installation token over HTTPS — never a personal credential (§2).
 git config --global credential.helper \

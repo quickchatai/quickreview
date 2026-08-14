@@ -99,6 +99,42 @@ describe("rounds", () => {
     expect(store.totalSpend()).toBeCloseTo(0.75, 6); // an overdue round adds no spend
   });
 
+  it("recordRoundUsage stores measured tokens and estimate (nullable, overwritable)", () => {
+    const id = store.startRound(7, "initial", [], 45);
+    expect(store.roundsFor(7)[0]).toMatchObject({ tokens_in: null, tokens_out: null, est_usd: null });
+
+    store.recordRoundUsage(id, { tokens_in: 120_000, tokens_out: 8_000, est_usd: null });
+    expect(store.roundsFor(7)[0]).toMatchObject({ tokens_in: 120_000, tokens_out: 8_000, est_usd: null });
+
+    store.recordRoundUsage(id, { tokens_in: 130_000, tokens_out: 9_000, tokens_cache_read: 400_000, est_usd: 0.42 });
+    expect(store.roundsFor(7)[0]).toMatchObject({ tokens_in: 130_000, tokens_out: 9_000, tokens_cache_read: 400_000, est_usd: 0.42 });
+  });
+
+  it("totalSpend prefers est_usd, falling back to spend_usd for pre-measurement rows", () => {
+    const a = store.startRound(7, "initial", [], 45);
+    const b = store.startRound(8, "initial", [], 45);
+    store.finishRound(a, "APPROVE", 1.25); // legacy self-reported only
+    store.finishRound(b, "APPROVE", 1.25); // legacy figure superseded by measurement
+    store.recordRoundUsage(b, { tokens_in: 1000, tokens_out: 100, est_usd: 0.1 });
+    expect(store.totalSpend()).toBeCloseTo(1.25 + 0.1, 6);
+  });
+
+  it("migrates a pre-usage store in place (idempotent ALTERs)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-state-"));
+    try {
+      const path = join(dir, "state.db");
+      const first = new StateStore(path, now);
+      const id = first.startRound(7, "initial", [], 45);
+      first.close();
+      const second = new StateStore(path, now); // re-running the ALTERs is a no-op
+      second.recordRoundUsage(id, { tokens_in: 5, tokens_out: 6, est_usd: 0.01 });
+      expect(second.roundsFor(7)[0]).toMatchObject({ tokens_in: 5, tokens_out: 6, est_usd: 0.01 });
+      second.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("roundsOn filters by ISO date prefix", () => {
     store.startRound(7, "initial", [], 45);
     clock = new Date("2026-08-14T09:00:00.000Z");

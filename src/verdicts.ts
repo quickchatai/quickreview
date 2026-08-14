@@ -10,8 +10,10 @@
 // the invariant against retracting an approval is structural, not prompted
 // (spec §3, §8).
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, watch, type FSWatcher } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
-import type { Config } from "./config.js";
+import { sandboxRoot, type Config } from "./config.js";
+import { auditExecViolations, collectWindowLines, estimateUsd, measureRoundUsage, type ModelPricing, type UsageFs } from "./usage.js";
 import type { GateResult } from "./gate.js";
 import { applyEvent } from "./statemachine.js";
 import type { RoundRow, StateStore } from "./state.js";
@@ -30,6 +32,18 @@ export interface VerdictDeps {
   hooks: SessionHooks;
   /** Directory the sessions write into (sandbox `verdict/`). */
   verdictDir: string;
+  /** Sandbox root — anchors the default pi-session dir. */
+  root?: string;
+  /** Usage-measurement seams; every field defaults from cfg/root. */
+  usage?: {
+    /** pi session dir for a PR's sticky session (sessions.ts sessionDir()). */
+    sessionDirFor?: (pr: number) => string;
+    /** pi HOME global store (pass subagents); null disables the best-effort scan. */
+    globalStoreDir?: string | null;
+    /** Per-model pricing; defaults to config `[models.pricing]`. */
+    pricing?: Record<string, ModelPricing>;
+    fs?: UsageFs;
+  };
   now?: () => Date;
   log?: (msg: string, extra?: unknown) => void;
   /** Parse retries for partially-written files. */
@@ -62,7 +76,10 @@ export function validateVerdict(raw: unknown): ParsedVerdict {
     return bad(`bad verdict: ${String(v.verdict)}`);
   if (typeof v.head_sha !== "string" || v.head_sha.length === 0) return bad("head_sha must be a non-empty string");
   if (typeof v.finished_at !== "string" || v.finished_at.length === 0) return bad("finished_at must be a non-empty string");
-  if (v.spend_usd !== undefined && typeof v.spend_usd !== "number") return bad("spend_usd must be a number");
+  // spend_usd: legacy self-reported field — accepted in any shape and IGNORED
+  // (models copy the template's example figure; real usage is measured from
+  // the session JSONLs). Deleted so no consumer can store it.
+  delete v.spend_usd;
   if (v.ai_approved !== undefined && typeof v.ai_approved !== "boolean") return bad("ai_approved must be a boolean");
   if (v.ledger_snapshot !== undefined && typeof v.ledger_snapshot !== "string") return bad("ledger_snapshot must be a string");
   if (v.summary !== undefined && typeof v.summary !== "string") return bad("summary must be a string");
@@ -78,6 +95,10 @@ export class VerdictWatcher {
   private watcher: FSWatcher | null = null;
   private readonly inFlight = new Set<string>();
   private readonly processedDir: string;
+  /** Exec-policy violations found while measuring usage, kept only so an
+   * overseer inject that happens anyway can carry a line about them —
+   * violations alone never create inject spam. */
+  private readonly execViolations = new Map<number, string[]>();
 
   constructor(private readonly deps: VerdictDeps) {
     this.processedDir = join(deps.verdictDir, "processed");
@@ -198,7 +219,9 @@ export class VerdictWatcher {
       escalation = (await this.safe(() => adapter.requestEscalationReview(v.pr), `escalate #${v.pr}`)) ?? null;
     }
 
-    if (round) store.finishRound(round.id, v.verdict, v.spend_usd ?? null, v.summary ?? null);
+    // spend_usd from the file is fiction (template echo) — never stored; the
+    // measured figures land via recordRoundUsage below.
+    if (round) store.finishRound(round.id, v.verdict, null, v.summary ?? null);
     applyEvent(store, v.pr, { type: "verdict", verdict: v.verdict }, { head_sha: v.head_sha }, { botLogin: cfg.github.bot_login, now: () => this.now(), reason: `verdict:${v.verdict}` });
     store.logEvent("verdict_applied", v.pr, {
       file: name,
@@ -207,10 +230,72 @@ export class VerdictWatcher {
       head_sha: v.head_sha,
       verdict: v.verdict,
       ai_approved: v.ai_approved ?? null,
-      spend_usd: v.spend_usd ?? null,
       escalation_skipped: escalation?.skipped ?? null,
     });
+    if (round) this.measureUsage(v.pr, round.id, round.started_at, this.now().toISOString());
+    // Round is over: compact the sticky conversation. Cache re-reads of the
+    // ever-growing prefix were 41% of measured cost; the continuity that
+    // matters (SETTLED digest, ledger) survives compaction by design.
+    await this.safe(() => this.deps.hooks.compactSession?.(v.pr) ?? Promise.resolve(), `compact pr-${v.pr}`);
     this.log(`verdicts: #${v.pr} round ${v.round_no} → ${v.verdict}`);
+  }
+
+  // ---- measured usage -----------------------------------------
+
+  private sessionDirFor(pr: number): string {
+    const custom = this.deps.usage?.sessionDirFor;
+    if (custom) return custom(pr);
+    const root = this.deps.root ?? sandboxRoot();
+    return join(root, this.deps.cfg.pi.session_dir, `pr-${pr}`);
+  }
+
+  private globalStoreDir(): string | undefined {
+    const configured = this.deps.usage?.globalStoreDir;
+    if (configured === null) return undefined;
+    // pi-subagents' isolated children skip --session-dir → pi HOME global
+    // store (in-container /home/review/.pi/agent/sessions). Best-effort.
+    return configured ?? join(homedir(), ".pi", "agent", "sessions");
+  }
+
+  /** Measure real token usage for the round window from the pi session JSONLs,
+   * estimate USD from config pricing, and store both. Also the post-hoc
+   * exec-policy audit. Best-effort: no failure here disturbs the verdict. */
+  private measureUsage(pr: number, roundId: number, startedAt: string, finishedAt: string): void {
+    const { cfg, store } = this.deps;
+    try {
+      const opts = {
+        sessionDir: this.sessionDirFor(pr),
+        globalStoreDir: this.globalStoreDir(),
+        startedAt,
+        finishedAt,
+        ...(this.deps.usage?.fs ?? {}),
+      };
+      const usage = measureRoundUsage(opts);
+      // pi's own per-record usage.cost.total is the primary source (verified
+      // live on the VM); the config price table is only the fallback for
+      // windows whose records carried no cost object.
+      const pricing: Record<string, ModelPricing> = this.deps.usage?.pricing ?? cfg.models.pricing ?? {};
+      const est = usage.cost_usd ?? estimateUsd(usage.models, pricing);
+      store.recordRoundUsage(roundId, {
+        tokens_in: usage.tokens_in,
+        tokens_out: usage.tokens_out,
+        tokens_cache_read: usage.tokens_cache_read,
+        est_usd: est,
+      });
+      this.log(
+        `verdicts: #${pr} round usage ${usage.tokens_in}in/${usage.tokens_out}out/${usage.tokens_cache_read}cache` +
+          ` est=${est === null ? "unpriced" : `$${est.toFixed(2)}`}${usage.passes_included ? " (+passes)" : ""}`,
+      );
+
+      const violations = auditExecViolations(collectWindowLines(opts));
+      if (violations.length > 0) {
+        store.logEvent("exec_policy_violation", pr, { commands: violations });
+        this.execViolations.set(pr, violations);
+        this.log(`verdicts: #${pr} exec-policy violations`, violations);
+      }
+    } catch (err) {
+      this.log(`verdicts: usage measurement failed for #${pr}`, err);
+    }
   }
 
   /** Malformed verdict or blown deadline: overseer anomaly, round marked, and
@@ -232,6 +317,10 @@ export class VerdictWatcher {
       message,
       escalation_skipped: escalation?.skipped ?? null,
     });
+    // Piggyback pending exec-policy findings on an inject that happens anyway;
+    // violations by themselves never trigger an inject (no spam).
+    const pendingViolations = this.execViolations.get(pr);
+    this.execViolations.delete(pr);
     await this.safe(
       () =>
         hooks.injectOverseer(
@@ -240,6 +329,9 @@ export class VerdictWatcher {
             message,
             "Treated as ESCALATE / no-approve: the in-progress label was cleared, the human reviewer was requested, and the PR is parked on awaiting_human.",
             "Investigate the session and decide whether to rerun the round (commands/rerun-round) or restart the session.",
+            ...(pendingViolations && pendingViolations.length > 0
+              ? [`Also: exec-policy violations were audited on this PR — ${pendingViolations.join(" · ")}`]
+              : []),
           ].join("\n"),
         ),
       "inject overseer anomaly",

@@ -3,7 +3,7 @@
 // Contract: a {{placeholder}} in the text with no supplied value is a bug and
 // throws; a supplied value the template does not use is fine (templates are
 // edited independently of this renderer).
-import type { RoundOrder, RoundType } from "./types.js";
+import type { PassPlanEntry, RoundOrder, RoundType } from "./types.js";
 
 const PLACEHOLDER = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
 
@@ -51,6 +51,22 @@ const GATE_ON =
   "MIGRATION GATE: this PR touches migrations — escalate unless the migration is provably INSTANT-safe, in sequence with master, backfill-free and ordering-safe.";
 const GATE_OFF = "no migration gate on this round";
 
+/** Markdown table of the round's pass plan — one row per subagent launch. */
+export function renderPassPlan(plan: PassPlanEntry[]): string {
+  const rows = plan.map(
+    (p) =>
+      `| ${p.lens} | \`${p.agent}\` | ${p.tier} | ${
+        p.raisable_to.length > 0 ? p.raisable_to.map((a) => `\`${a}\``).join(", ") : "— (pinned)"
+      } |`,
+  );
+  return ["| lens | subagent to call | tier | may raise to |", "| --- | --- | --- | --- |", ...rows].join("\n");
+}
+
+/** Comma list of lenses the session may additionally run this round. */
+export function renderAddableLenses(addable: string[]): string {
+  return addable.length > 0 ? addable.join(", ") : "(none — every known lens is already planned)";
+}
+
 /** The full variable set every round template may reference. */
 export function roundVars(order: RoundOrder): TemplateVars {
   return {
@@ -61,6 +77,8 @@ export function roundVars(order: RoundOrder): TemplateVars {
     round_type: order.round_type,
     round_no: String(order.round_no),
     lenses: order.lenses.join(", "),
+    pass_plan: renderPassPlan(order.pass_plan),
+    addable_lenses: renderAddableLenses(order.addable_lenses),
     escalation_criteria: order.escalation_worthy
       ? order.escalation_reasons.join("; ") || "flagged escalation-worthy (no reason recorded)"
       : order.escalation_reasons.join("; ") || NO_ESCALATION,

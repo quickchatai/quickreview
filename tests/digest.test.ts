@@ -92,3 +92,25 @@ describe("rubric proposals (local branches only)", () => {
     expect(await pendingProposals(run)).toEqual([{ branch: "rubric/x-y-2026-01-01", hasProposal: false }]);
   });
 });
+
+describe("dailyUsage / usageSummaryLine", () => {
+  it("aggregates the day's rounds, preferring est_usd over legacy spend_usd", async () => {
+    const { StateStore } = await import("../src/state.js");
+    const { dailyUsage, usageSummaryLine } = await import("../src/digest.js");
+    const store = new StateStore(":memory:");
+    try {
+      const a = store.startRound(7, "initial", [], 45);
+      const b = store.startRound(8, "initial", [], 45);
+      store.finishRound(a, "APPROVE", 2.0); // pre-measurement row: fallback
+      store.finishRound(b, "APPROVE", 2.0);
+      store.recordRoundUsage(b, { tokens_in: 100_000, tokens_out: 5_000, est_usd: 0.25 });
+      const today = new Date().toISOString().slice(0, 10);
+      const usage = dailyUsage(store, today);
+      expect(usage).toMatchObject({ rounds: 2, tokens_in: 100_000, tokens_out: 5_000 });
+      expect(usage.est_usd).toBeCloseTo(2.25, 6);
+      expect(usageSummaryLine(usage)).toBe("usage: 2 rounds — 100000 in / 5000 out tokens — est $2.25");
+    } finally {
+      store.close();
+    }
+  });
+});

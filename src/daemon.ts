@@ -92,6 +92,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     adapter: gh,
     hooks,
     verdictDir,
+    root, // anchors the default pi-session dir for round usage measurement
     log,
   });
   const pingpong = new PingPongLedger(store.db);

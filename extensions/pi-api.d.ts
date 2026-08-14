@@ -20,6 +20,7 @@ declare module "@earendil-works/pi-coding-agent" {
     | "session_compact"
     | "turn_end"
     | "agent_settled"
+    | "tool_call"
     | (string & {});
 
   /** VERIFY-ON-PIN: the event payload shape is undocumented in the findings.
@@ -46,10 +47,35 @@ declare module "@earendil-works/pi-coding-agent" {
     [key: string]: unknown;
   }
 
+  /** tool_call event payload. VERIFIED capability (findings §5 lines
+   * 132-141): handlers see the tool name + input and `event.input` is mutable.
+   * VERIFY-ON-PIN: the exact field names (`toolName` vs `name`, `input` vs
+   * `arguments`) — consumers must probe both and degrade gracefully. */
+  export interface ToolCallEvent extends PiEventPayload {
+    toolName?: string;
+    /** Mutable per §5 lines 132-141 (handlers may rewrite tool input). */
+    input?: Record<string, unknown>;
+    arguments?: Record<string, unknown>;
+  }
+
+  /** Return shape a tool_call handler uses to veto the call. VERIFIED
+   * (findings §5 lines 132-141): `{ block: true, reason }` blocks the
+   * tool call and surfaces `reason` to the model. VERIFY-ON-PIN: additional
+   * keys, and whether `reason` is required when blocking. */
+  export interface ToolCallBlockResult {
+    block?: boolean;
+    reason?: string;
+    [key: string]: unknown;
+  }
+
   export type PiEventHandler = (
     event: PiEventPayload,
     context?: PiEventContext,
-  ) => void | CompactHandlerResult | Promise<void | CompactHandlerResult>;
+  ) =>
+    | void
+    | CompactHandlerResult
+    | ToolCallBlockResult
+    | Promise<void | CompactHandlerResult | ToolCallBlockResult>;
 
   /** VERIFY-ON-PIN: message-delivery options (findings §3 option 2). */
   export interface SendMessageOptions {

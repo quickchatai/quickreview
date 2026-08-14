@@ -2,8 +2,9 @@
 
 > Sandbox file: `prompts/round-staleness.md`. Rendered by `src/templates.ts` and
 > injected into the PR session (`pr-{{n}}`) by the daemon. Placeholders:
-> `{{n}} {{title}} {{worktree}} {{head_sha}} {{lenses}} {{escalation_criteria}}
-> {{migration_gate_note}} {{settled_digest}} {{round_type}}`.
+> `{{n}} {{title}} {{worktree}} {{head_sha}} {{lenses}} {{pass_plan}}
+> {{addable_lenses}} {{escalation_criteria}} {{migration_gate_note}}
+> {{settled_digest}} {{round_type}} {{round_no}}`.
 
 ---
 
@@ -16,6 +17,32 @@ approving review still stands on the record; the question is whether it is still
 *sound* at `{{head_sha}}`. Focus the delta — do not re-review the whole PR from
 scratch.
 
+## GitHub routine — use the scripts
+
+Routine GitHub work goes through the repo's contained scripts, never
+hand-rolled multi-part `gh`/GraphQL spells:
+
+- `scripts/pr-context.sh {{n}}` — one-shot read bundle: meta, diffstat, CI
+  checks, latest reviews, unresolved threads. Start here.
+- `scripts/pr-checks.sh {{n}}` — CI status.
+- `scripts/pr-threads.sh {{n}}` — unresolved threads with ids.
+- `scripts/post-review.sh {{n}} <REQUEST_CHANGES|COMMENT> <body-file>
+  [comments-json]` — the ONLY way to post the review; never raw `gh` mutations.
+- `scripts/reply-thread.sh {{n}} <comment-id> <body-file>` — author ping-pong
+  replies.
+
+Token hygiene (measured on live rounds, 2026-08-14):
+- Tool output truncates at ~50 KB — a full-PR `git diff --unified=80` dump
+  burns the budget and still arrives cut off. Diff per file with default
+  context; open whole files with the `read` tool when you need more.
+- Your conversation persists across rounds: do NOT re-fetch context you
+  already hold (same head sha = same diff, same threads). Fetch only what
+  changed since your last round.
+
+- `scripts/approve-pr.sh` — APPROVE (posts and clears both triggers).
+
+Raw `gh` is for additional READS only; every mutation goes through a script.
+
 ## 1. Sync — scope the delta
 
 Diff your approved sha against `{{head_sha}}` and establish exactly what changed
@@ -25,12 +52,35 @@ invalidate the approval?**
 
 ## 2. Dispatch passes
 
-Launch **{{lenses}}** as subagents **in parallel**, blank-slate, each task string
-self-contained: worktree `{{worktree}}` @ `{{head_sha}}`, PR #{{n}} + claims
-digest, the lens's focus files **restricted to the post-approval delta**, the
-SETTLED list, the gate notes, and an explicit **staleness note**: "this PR was
-already approved at an earlier head; review the delta since that approval, and
-flag anything in it that would have blocked the approval."
+**Pass plan for this round** (chosen by the daemon from the diff shape):
+
+{{pass_plan}}
+
+Launch every planned pass via the **`subagent` tool** — one `subagent` call per
+row, using that row's *subagent to call* name, **all in ONE assistant turn** so
+pi-subagents runs them in parallel. Never fan passes out via bash — no
+`pi --no-session` subprocesses, ever; the `subagent` tool is the only pass
+launcher. Every task string is blank-slate and self-contained: worktree
+`{{worktree}}` @ `{{head_sha}}`, PR #{{n}} + claims digest, the lens's focus
+files **restricted to the post-approval delta**, the SETTLED list, the gate
+notes, and an explicit **staleness note**: "this PR was already approved at an
+earlier head; review the delta since that approval, and flag anything in it
+that would have blocked the approval."
+
+**Raise protocol.** You MAY swap a pass to a higher-tier variant from its "may
+raise to" column when the diff's semantic complexity demands it — each raise
+needs a one-line stated reason, and those reasons go into the verdict
+`summary`. **Never lower a tier.** A pass marked pinned has no raise option.
+
+**Add protocol.** You MAY additionally run a lens from: {{addable_lenses}} —
+with a one-line stated reason. Run it at the plan's default tier: call the
+`<lens>--sol-med` variant, unless it is a risk pass (risk passes exist only as
+`<lens>--sol-high`). **Never drop a planned lens.**
+
+**No-exec policy (absolute).** You and every pass NEVER execute project code,
+tests, builds, or package managers — no test runners, no app entrypoints, no
+`npm`/`pip`/`make`/compilers, ever. CI results are read via `gh pr checks` /
+`gh api` (read-only). Reading the tree is allowed: git, rg, cat, gh reads.
 
 **SETTLED**
 {{settled_digest}}
@@ -45,9 +95,10 @@ concatenate.
 
 ## 4. Validate
 
-Dispatch `pass-validate` with all candidates + the SETTLED list. Only survivors
-post; log the kills. A finding that only restates a point settled before the
-approval is a kill, not a finding.
+Dispatch the planned `pass-validate` variant (its row in the plan table) with
+all candidates + the SETTLED list. Only survivors post; log the kills. A
+finding that only restates a point settled before the approval is a kill, not a
+finding.
 
 ## 5. Decide
 
@@ -67,10 +118,12 @@ Nits and questions never block.
 ## 6. Post
 
 One review over the delta: anchored inline comments (50 inline, overflow to
-body), summary opening with the verdict line and lenses line, an explicit
-sentence naming this a **staleness re-check of an earlier approval** and the
-range checked, `### Blockers / Nits / Questions`, "Start here" on ESCALATE,
-standard footer. A re-APPROVE goes through `scripts/approve-pr.sh`.
+body), summary opening with the verdict line and lenses line (including any
+raises/adds with their one-line reasons), an explicit sentence naming this a
+**staleness re-check of an earlier approval** and the range checked,
+`### Blockers / Nits / Questions`, "Start here" on ESCALATE, standard footer.
+REQUEST_CHANGES/COMMENT posts **only** through `scripts/post-review.sh`; a
+re-APPROVE goes through `scripts/approve-pr.sh`.
 
 ## 7. Return
 
@@ -85,15 +138,16 @@ are not):
   "verdict": "APPROVE" | "REQUEST_CHANGES" | "ESCALATE",
   "ai_approved": true,
   "head_sha": "{{head_sha}}",
-  "spend_usd": 1.25,
   "summary": "<3-4 plain sentences for the owner>",
   "finished_at": "<ISO-8601 UTC now>"
 }
 ```
 
 `pr` and `round_no` are numbers. `ai_approved` (soundness marker, ESCALATE
-only), `spend_usd`, and `summary` are optional — but always write `summary`:
-3-4 plain sentences telling the owner what is going on with this PR right now
-(what the change does, what this round found, where it stands). No markdown,
-no lens jargon; it renders verbatim in his TUI detail pane. Update the ledger header to
-`{{head_sha}}`. Labels and the escalation review request belong to the daemon.
+only) and `summary` are optional — but always write `summary`: 3-4 plain
+sentences telling the owner what is going on with this PR right now (what the
+change does, what this round found, where it stands), plus any tier raises or
+added lenses with their reasons. No markdown, no lens jargon; it renders
+verbatim in his TUI detail pane. Never report spend or cost figures — the
+daemon measures usage itself. Update the ledger header to `{{head_sha}}`.
+Labels and the escalation review request belong to the daemon.
