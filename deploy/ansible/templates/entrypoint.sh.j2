@@ -48,7 +48,12 @@ fi
 # tmux server = the jump-in surface (qcr attach / docker exec ... tmux attach
 # / the qcr tui embedded pane). The csi-u lines must exist before the server
 # starts or modified keys (Shift-Enter etc.) collapse before reaching pi.
-cat > "$HOME/.tmux.conf" <<'TMUXCONF'
+# Prefer the SYNCED config (rides `deploy.sh sync`, no image rebuild needed);
+# the inline heredoc below is only the no-sandbox fallback.
+if [[ -f "$SANDBOX/docker/vm/tmux.conf" ]]; then
+  cp "$SANDBOX/docker/vm/tmux.conf" "$HOME/.tmux.conf"
+else
+  cat > "$HOME/.tmux.conf" <<'TMUXCONF'
 # csi-u extended keys end-to-end (§3E /) — do not remove.
 set -g extended-keys on
 set -g extended-keys-format csi-u
@@ -70,6 +75,7 @@ set -g mode-style 'bg=colour238,fg=colour252'
 set -g pane-border-style 'fg=colour238'
 set -g pane-active-border-style 'fg=colour245'
 TMUXCONF
+fi
 tmux start-server
 tmux has-session -t main 2>/dev/null || tmux new-session -d -s main
 
