@@ -20,3 +20,4 @@ reports/
 pihome/
 *.log
 BUILD_SHA
+state-snapshots/
