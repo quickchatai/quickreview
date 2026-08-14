@@ -1,11 +1,13 @@
-// Live pi mirror (the board's lower region). The 2026-08-14 grill verdict:
-// the EVENTS strip was wasted space and the half-empty bottom of the board
-// should show what the selected PR's pi session is doing *right now*.
+// Live pi pane (the board's lower region). The 2026-08-14 grill verdict: the
+// EVENTS strip was wasted space and the half-empty bottom of the board should
+// show what the selected PR's pi session is doing *right now*.
 //
-// This is a read-only mirror: `tmux capture-pane -e -p -J` inside the
-// container, once per poll tick and ~300ms after the selection moves. It is
-// NOT an attach — no keystrokes ever travel this way; ⏎ (or a click on the
-// pane) hands over to the real AttachScreen.
+// Since the 2026-08-14 "integral part, not a window" pass it is not a
+// photograph either: the pane is an embedded terminal. Output comes from
+// `tmux capture-pane -e -p -J` inside the container (poll tick, ~400ms while
+// focused, ~300ms after the selection moves); input goes back the other way as
+// `tmux send-keys` (see `keysToTmux` + `sendKeysArgv`). The full-screen
+// AttachScreen still exists — it is just no longer the only way to type.
 import type { TuiConfig } from "../config.js";
 import { captureArgv, type SshRunner } from "./remote.js";
 
@@ -35,10 +37,20 @@ export interface PiPaneView {
   missing: boolean;
   /** `lines` come from an older successful capture (missing + cache hit). */
   stale: boolean;
+  /** Scrollback: how many lines above the live tail the pane is parked.
+   * 0 = following the bottom. The board drops this many lines off `lines`. */
+  offset: number;
 }
 
 /** Keep the mirror bounded — the board only ever paints the tail. */
 const MAX_LINES = 400;
+
+/** Wheel notch = three lines, the usual terminal step. */
+export const SCROLL_STEP = 3;
+
+/** Extra history a scrolled capture asks for beyond the offset itself, so the
+ * pane above the parked window is filled rather than blank. */
+const SCROLL_PAD = 200;
 
 /**
  * Per-PR capture cache with stale-while-revalidate semantics, mirroring the
@@ -49,6 +61,7 @@ export class PiMirror {
   private readonly cache = new Map<number, string[]>();
   private readonly missing = new Set<number>();
   private readonly inFlight = new Set<number>();
+  private readonly offsets = new Map<number, number>();
   private timer: NodeJS.Timeout | undefined;
 
   constructor(
@@ -63,7 +76,26 @@ export class PiMirror {
     if (pr === undefined) return undefined;
     const lines = this.cache.get(pr);
     const missing = this.missing.has(pr);
-    return { pr, lines: lines ?? [], missing, stale: missing && (lines?.length ?? 0) > 0 };
+    return { pr, lines: lines ?? [], missing, stale: missing && (lines?.length ?? 0) > 0, offset: this.offsetFor(pr) };
+  }
+
+  /** How far back in scrollback the pane for `pr` is parked (0 = live tail). */
+  offsetFor(pr: number | undefined): number {
+    return pr === undefined ? 0 : (this.offsets.get(pr) ?? 0);
+  }
+
+  /** Park the pane `n` lines above the tail (clamped at 0 = live). */
+  setOffset(pr: number, n: number): number {
+    const next = Math.max(0, Math.floor(n));
+    if (next === 0) this.offsets.delete(pr);
+    else this.offsets.set(pr, next);
+    return next;
+  }
+
+  /** Wheel: move the scrollback window by `notches × SCROLL_STEP` lines.
+   * Positive = further back in history, negative = towards the live tail. */
+  scroll(pr: number, notches: number): number {
+    return this.setOffset(pr, this.offsetFor(pr) + notches * SCROLL_STEP);
   }
 
   /** Selection moved (j/k, click, wheel): debounce, then capture. Rapid
@@ -91,7 +123,11 @@ export class PiMirror {
     if (this.inFlight.has(pr)) return;
     this.inFlight.add(pr);
     try {
-      const res = await this.ssh(this.cfg.ssh_host, captureArgv(this.cfg, `pr-${pr}`), { timeoutMs: 5_000 });
+      const offset = this.offsetFor(pr);
+      // Live tail = the plain visible-pane capture; scrolled back = the same
+      // capture with `-S -(offset + pad)` so there is history above the window.
+      const range = offset > 0 ? { startBack: offset + SCROLL_PAD } : undefined;
+      const res = await this.ssh(this.cfg.ssh_host, captureArgv(this.cfg, `pr-${pr}`, range), { timeoutMs: 5_000 });
       if (!res.ok) {
         this.missing.add(pr);
       } else {
@@ -108,12 +144,133 @@ export class PiMirror {
   invalidate(pr: number): void {
     this.cache.delete(pr);
     this.missing.delete(pr);
+    this.offsets.delete(pr);
   }
 
   stop(): void {
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
   }
+}
+
+// ---- keyboard: raw stdin → tmux send-keys ----------------------------------
+
+/** Escape sequences we can name for tmux. Longest-first matching. */
+const SEQUENCES: Array<[string, string]> = [
+  ["\x1b[1;5A", "C-Up"],
+  ["\x1b[1;5B", "C-Down"],
+  ["\x1b[1;5C", "C-Right"],
+  ["\x1b[1;5D", "C-Left"],
+  ["\x1b[5~", "PPage"],
+  ["\x1b[6~", "NPage"],
+  ["\x1b[3~", "DC"],
+  ["\x1b[2~", "IC"],
+  ["\x1b[1~", "Home"],
+  ["\x1b[4~", "End"],
+  ["\x1b[7~", "Home"],
+  ["\x1b[8~", "End"],
+  ["\x1b[A", "Up"],
+  ["\x1b[B", "Down"],
+  ["\x1b[C", "Right"],
+  ["\x1b[D", "Left"],
+  ["\x1b[H", "Home"],
+  ["\x1b[F", "End"],
+  ["\x1b[Z", "BTab"],
+  ["\x1bOA", "Up"],
+  ["\x1bOB", "Down"],
+  ["\x1bOC", "Right"],
+  ["\x1bOD", "Left"],
+  ["\x1bOH", "Home"],
+  ["\x1bOF", "End"],
+  ["\x1b\r", "M-Enter"],
+  ["\x1b\n", "M-Enter"],
+  ["\x1b\x7f", "M-BSpace"],
+];
+
+/**
+ * The board's Ctrl-q — the chord that hands focus back to the list. It is the
+ * one byte that never reaches the session, so the operator can always get out
+ * (mirrors AttachScreen's detach chord; see chord.ts CTRL_Q).
+ */
+export const PANE_ESCAPE = 0x11;
+
+/**
+ * One raw stdin chunk → the `tmux send-keys` argument groups that reproduce it
+ * inside the session.
+ *
+ * Why groups and not one flat argv: `send-keys -l` is a flag of the *command*,
+ * not of an argument, so literal text and named keys cannot share one
+ * invocation. Runs of printable characters coalesce into a single
+ * `["-l", "<text>"]` group (so typing a word — or pasting a paragraph — is one
+ * round trip), runs of specials coalesce into a single group of key names, and
+ * a chunk that is purely one or the other (the overwhelmingly common case) is
+ * exactly one invocation.
+ *
+ * Ctrl-q is dropped, never translated: the focus chord belongs to the board.
+ */
+export function keysToTmux(buf: Buffer): string[][] {
+  const s = buf.toString("utf8");
+  const groups: string[][] = [];
+  let literal = "";
+  let names: string[] = [];
+  const flushLiteral = (): void => {
+    if (literal.length === 0) return;
+    groups.push(["-l", literal]);
+    literal = "";
+  };
+  const flushNames = (): void => {
+    if (names.length === 0) return;
+    groups.push(names);
+    names = [];
+  };
+  const pushName = (name: string): void => {
+    flushLiteral();
+    names.push(name);
+  };
+
+  let i = 0;
+  outer: while (i < s.length) {
+    for (const [seq, name] of SEQUENCES) {
+      if (s.startsWith(seq, i)) {
+        pushName(name);
+        i += seq.length;
+        continue outer;
+      }
+    }
+    const ch = s[i]!;
+    const code = ch.codePointAt(0)!;
+    if (code === PANE_ESCAPE) {
+      i += 1; // the board's own chord — it never travels
+      continue;
+    }
+    if (ch === "\r" || ch === "\n") {
+      pushName("Enter");
+    } else if (ch === "\t") {
+      pushName("Tab");
+    } else if (ch === "\x7f" || ch === "\b") {
+      pushName("BSpace");
+    } else if (ch === "\x1b") {
+      // Alt-<printable> arrives as ESC + the character; a lone ESC is Escape.
+      const next = s[i + 1];
+      if (next !== undefined && next >= " " && next !== "\x7f") {
+        pushName(`M-${next}`);
+        i += 2;
+        continue;
+      }
+      pushName("Escape");
+    } else if (code === 0) {
+      pushName("C-Space");
+    } else if (code < 0x20) {
+      pushName(`C-${String.fromCharCode(code + 96)}`); // 0x01 → C-a …
+    } else {
+      flushNames();
+      literal += ch;
+    }
+    i += 1;
+  }
+  flushLiteral();
+  flushNames();
+  return groups;
 }
 
 /** Capture text → sanitized lines, trailing blanks trimmed, bounded. */

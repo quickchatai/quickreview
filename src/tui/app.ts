@@ -11,10 +11,10 @@ import { formatEvent, moveSelection, reselect, sortPrs, type EventLine } from ".
 import { TripleCtrlC } from "./chord.js";
 import { MOUSE_OFF, MOUSE_ON, extractMouseEvents, hitTest, type MouseEvent, type Zone } from "./mouse.js";
 import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR, Frame } from "./paint.js";
-import { PiMirror } from "./pipane.js";
+import { PANE_ESCAPE, PiMirror, keysToTmux } from "./pipane.js";
 import { Poller } from "./poll.js";
 import { prUrl } from "./theme.js";
-import { eventsArgv, whyArgv, type SshRunner } from "./remote.js";
+import { eventsArgv, sendKeysArgv, whyArgv, type SshRunner } from "./remote.js";
 
 export interface AppHooks {
   /**: attach the given tmux session full-screen; resolves on detach. */
@@ -69,6 +69,9 @@ export interface AppHooks {
 
 export type Tab = "board" | "digest" | "companion" | "deploy" | "metrics";
 
+/** Every encoding of the End key we might see — the pi pane's "back to live". */
+const END_KEYS = new Set(["\x1b[F", "\x1bOF", "\x1b[4~", "\x1b[8~"]);
+
 export class App {
   readonly view: BoardView = {
     health: { kind: "unreachable", sinceS: Number.POSITIVE_INFINITY },
@@ -109,19 +112,111 @@ export class App {
     this.poller = new Poller(cfg, ssh, () => this.onPoll(), now);
     this.pi = new PiMirror(cfg, ssh, () => {
       this.syncPiPane();
+      // The session we were typing into went away — say so and hand the
+      // keyboard back rather than swallowing keystrokes into nothing.
+      if (this.view.piFocus && this.view.pi?.missing) this.blurPiPane(`pi session pr-${this.piFocusPr} is gone — keyboard back on the board`);
       this.repaint();
     });
   }
 
-  /** Point the board's mirror at whatever is selected right now (cache first,
-   * so switching back paints instantly). */
-  private syncPiPane(): void {
-    this.view.pi = this.pi.view(this.selectedPr);
+  // ---- the pi pane as an embedded terminal --------------------------------
+
+  /** The session the pane types into while focused (locked at focus time). */
+  private piFocusPr: number | undefined;
+  /** While focused the capture runs far faster than the poll tick, so typing
+   * echoes back at something close to terminal speed. */
+  private piTimer: NodeJS.Timeout | undefined;
+  private static readonly PI_FOCUS_POLL_MS = 400;
+
+  /** Hand the keyboard to the pi pane (click, or a wheel-driven focus). */
+  focusPiPane(): void {
+    const pr = this.panePr();
+    if (pr === undefined) return;
+    if (this.view.piFocus && this.piFocusPr === pr) return;
+    this.piFocusPr = pr;
+    this.view.piFocus = true;
+    this.syncPiPane();
+    void this.pi.refresh(pr);
+    if (!this.piTimer) {
+      const t = setInterval(() => {
+        if (this.suspended || this.tab !== "board" || !this.view.piFocus) return;
+        void this.pi.refresh(this.piFocusPr);
+      }, App.PI_FOCUS_POLL_MS);
+      t.unref?.();
+      this.piTimer = t;
+    }
+    this.repaint();
   }
 
-  /** Selection moved: paint the cached mirror at once, capture behind it. */
+  /** Ctrl-q, a click outside the pane, or a dead session: back to the list. */
+  blurPiPane(notice?: string): void {
+    if (this.piTimer) clearInterval(this.piTimer);
+    this.piTimer = undefined;
+    if (!this.view.piFocus) return;
+    this.view.piFocus = false;
+    this.piFocusPr = undefined;
+    this.syncPiPane();
+    if (notice !== undefined) this.view.noticeLine = notice;
+    this.pi.select(this.selectedPr); // follow resumes where the list is
+  }
+
+  /** True while the pane owns the keyboard (tests + hot-reload read this). */
+  piFocused(): boolean {
+    return this.view.piFocus === true;
+  }
+
+  /** Forward one raw stdin chunk into the focused session, then re-capture so
+   * the echo lands immediately instead of on the next tick. Typing also snaps
+   * the pane back to the live tail — you cannot type into history. */
+  private sendKeysToPane(buf: Buffer): void {
+    const pr = this.piFocusPr;
+    if (pr === undefined) return;
+    const groups = keysToTmux(buf);
+    if (groups.length === 0) return;
+    if (this.pi.offsetFor(pr) !== 0) {
+      this.pi.setOffset(pr, 0);
+      this.syncPiPane();
+      this.repaint();
+    }
+    void (async () => {
+      for (const parts of groups) {
+        await this.ssh(this.cfg.ssh_host, sendKeysArgv(this.cfg, `pr-${pr}`, parts), { timeoutMs: 5_000 });
+      }
+      await this.pi.refresh(pr);
+    })();
+  }
+
+  /** Wheel over the pane: move its scrollback window, re-capture with history.
+   * Wheeling back to the bottom returns it to the live tail. */
+  private scrollPiPane(notches: number): void {
+    const pr = this.panePr();
+    if (pr === undefined) return;
+    this.pi.scroll(pr, notches);
+    this.syncPiPane();
+    this.repaint();
+    void this.pi.refresh(pr);
+  }
+
+  /** The PR whose session the pane is showing. While the pane has the keyboard
+   * this is LOCKED — a poll that reorders the list must never redirect the
+   * operator's typing to another PR's session. */
+  private panePr(): number | undefined {
+    return this.view.piFocus ? this.piFocusPr : this.selectedPr;
+  }
+
+  /** Point the board's pane at whatever it should be showing right now (cache
+   * first, so switching back paints instantly). */
+  private syncPiPane(): void {
+    const pr = this.panePr();
+    this.view.piPr = pr;
+    this.view.pi = this.pi.view(pr);
+  }
+
+  /** Selection moved: paint the cached mirror at once, capture behind it.
+   * A focused pane ignores this — follow is locked until Ctrl-q. */
   private followSelection(): void {
     this.syncPiPane();
+    if (this.view.piFocus) return;
     this.pi.select(this.selectedPr);
   }
 
@@ -146,6 +241,8 @@ export class App {
   private teardown(): void {
     this.poller.stop();
     this.pi.stop();
+    if (this.piTimer) clearInterval(this.piTimer);
+    this.piTimer = undefined;
     this.input.off("data", this.onData);
     this.out.off("resize", this.onResize);
     if (this.input.isTTY) this.input.setRawMode(false);
@@ -186,7 +283,7 @@ export class App {
     this.input.on("data", this.onData);
     this.out.write(CLEAR + MOUSE_ON);
     void this.refreshDetail();
-    void this.pi.refresh(this.selectedPr); // the mirror caught up while attached
+    void this.pi.refresh(this.panePr()); // the mirror caught up while attached
     this.repaint();
     this.hooks.onResume?.();
   }
@@ -194,7 +291,7 @@ export class App {
   /** True while something other than the board owns the terminal or holds
    * unsaved user input — hot-reload defers on it. */
   isBusy(): boolean {
-    return this.suspended || this.view.inputBox !== undefined;
+    return this.suspended || this.view.inputBox !== undefined || this.view.piFocus === true;
   }
 
   /** The PR the board is pointing at (survives a hot-reload). */
@@ -223,7 +320,7 @@ export class App {
     if (this.view.detail?.pr !== this.selectedPr) void this.refreshDetail();
     // The mirror only costs an ssh while the board is the visible tab.
     this.syncPiPane();
-    if (this.tab === "board" && !this.suspended) void this.pi.refresh(this.selectedPr);
+    if (this.tab === "board" && !this.suspended) void this.pi.refresh(this.panePr());
     this.hooks.onPoll?.(this);
     this.repaint();
   }
@@ -377,8 +474,16 @@ export class App {
       else this.hooks.metricsKey?.(this, { kind: ev.kind === "wheel-down" ? "down" : "up" });
       return;
     }
+    const zoneAt = (x: number, y: number): BoardAction | undefined =>
+      this.lastFrame ? hitTest(this.lastFrame.zones as Zone<BoardAction>[], x, y) : undefined;
     if (ev.kind === "wheel-up" || ev.kind === "wheel-down") {
       const delta = ev.kind === "wheel-down" ? 1 : -1;
+      // Pointer over the pi pane (focused or not) = that session's scrollback,
+      // in place. Everything else keeps the wheel's board meaning.
+      if (!this.view.eventsFocus && zoneAt(ev.x, ev.y)?.t === "pi-focus") {
+        this.scrollPiPane(-delta);
+        return;
+      }
       // The events overlay owns the wheel while it is up; otherwise the wheel
       // moves the selection (and the mirror follows it).
       if (this.view.eventsFocus) {
@@ -393,7 +498,13 @@ export class App {
       this.repaint();
       return;
     }
-    const action = this.lastFrame ? hitTest(this.lastFrame.zones as Zone<BoardAction>[], ev.x, ev.y) : undefined;
+    const action = zoneAt(ev.x, ev.y);
+    // Any click outside the pane hands the keyboard back to the board — that
+    // includes clicks on nothing in particular in the list/detail region.
+    if (action?.t !== "pi-focus" && this.view.piFocus) {
+      this.blurPiPane();
+      this.repaint();
+    }
     if (!action) return;
     switch (action.t) {
       case "select-pr": {
@@ -411,12 +522,10 @@ export class App {
       case "event-jump":
         this.selectPr(action.pr);
         break;
-      case "attach": {
-        // Clicking the live mirror is the same as ⏎ on the selection.
-        const session = this.selectedSession();
-        if (session) this.startAttach(session);
+      case "pi-focus":
+        // Clicking the pane types into it in place — no full-screen takeover.
+        this.focusPiPane();
         return;
-      }
       case "tab":
         if (action.tab === "companion") {
           this.openCompanion();
@@ -452,6 +561,27 @@ export class App {
     if (this.view.help) {
       this.view.help = false;
       this.repaint();
+      return;
+    }
+    // The pi pane owns the keyboard while it is focused: j/k/q/1-5/? and every
+    // other board binding is just text as far as the session is concerned.
+    // Ctrl-q — and only Ctrl-q — comes back to the board.
+    if (this.tab === "board" && this.view.piFocus) {
+      if (buf.length === 1 && buf[0] === PANE_ESCAPE) {
+        this.blurPiPane();
+        this.repaint();
+        return;
+      }
+      // End, while parked in scrollback, is the "back to live" key the header
+      // advertises — it snaps the window to the tail instead of travelling.
+      if (END_KEYS.has(buf.toString("utf8")) && this.pi.offsetFor(this.piFocusPr) > 0) {
+        this.pi.setOffset(this.piFocusPr!, 0);
+        this.syncPiPane();
+        this.repaint();
+        void this.pi.refresh(this.piFocusPr);
+        return;
+      }
+      this.sendKeysToPane(buf);
       return;
     }
     if (this.tab === "digest" && this.hooks.digestKey?.(this, key)) return;
@@ -528,17 +658,18 @@ export class App {
       case "refresh":
         void this.poller.tick();
         void this.refreshDetail();
-        void this.pi.refresh(this.selectedPr);
+        void this.pi.refresh(this.panePr());
         break;
       case "reconnect":
         if (this.hooks.reconnect) this.hooks.reconnect(this);
         else this.notice("reconnect not wired (test harness?)");
         void this.poller.tick();
         break;
+      case "attach":
       case "enter": {
         // A live alert owns ⏎ until it is followed or dismissed — the point of
         // an alert is that the next thing you do is talk to the companion.
-        if (this.view.alertFocus) {
+        if (key.kind === "enter" && this.view.alertFocus) {
           this.openCompanion();
           return;
         }

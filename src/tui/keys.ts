@@ -5,6 +5,7 @@ export type BoardKey =
   | { kind: "up"; arrow?: boolean }
   | { kind: "down"; arrow?: boolean }
   | { kind: "enter" }
+  | { kind: "attach" }
   | { kind: "alt-enter" }
   | { kind: "escape" }
   | { kind: "backspace" }
@@ -38,6 +39,7 @@ export function decodeKey(buf: Buffer): BoardKey {
   if (s === "\x1b\r" || s === "\x1b\n") return { kind: "alt-enter" };
   if (s === "\x1b") return { kind: "escape" };
   if (s === "\x7f" || s === "\b") return { kind: "backspace" };
+  if (s === "a") return { kind: "attach" }; // ⏎'s twin: full-screen takeover
   if (s === "j") return { kind: "down" };
   if (s === "k") return { kind: "up" };
   if (s === "1") return { kind: "tab-board" };

@@ -17,7 +17,7 @@ export type BoardAction =
   | { t: "select-pr"; pr: number }
   | { t: "open-github"; pr: number }
   | { t: "event-jump"; pr: number }
-  | { t: "attach" } // the live pi pane: clicking the mirror opens the real thing
+  | { t: "pi-focus" } // the live pi pane: clicking it types into the session in place
   | { t: "tab"; tab: "board" | "digest" | "companion" | "deploy" | "metrics" }
   | { t: "key"; key: string }; // hint-bar button → synthesized keypress
 
@@ -35,6 +35,12 @@ export interface BoardView {
   help: boolean;
   /** Live mirror of the selected PR's pi session (board's lower region). */
   pi?: PiPaneView;
+  /** The PR the pane is showing. Defaults to the selection; while the pane is
+   * focused it is LOCKED to the session being typed into, so a poll that
+   * reorders the list cannot yank the keyboard to another PR. */
+  piPr?: number;
+  /** The pi pane owns the keyboard: every key but Ctrl-q goes to the session. */
+  piFocus?: boolean;
   /** Extra line rendered on the pi pane header (quick-message state). */
   noticeLine?: string;
   /** Replaces the pi pane while the message box is open. */
@@ -255,7 +261,10 @@ export const HELP_LINES = [
   "Ctrl-c ×3      kill the TUI from anywhere (terminal restored) — the un-stuck hatch",
   "               an alert in the top bar: click it or ⏎ to open the companion",
   "j/k ↓/↑        select PR (mouse: click a row; click again to attach)",
-  "⏎              attach selected PR (the pane below the list mirrors it live; click it = ⏎)",
+  "⏎ / a          attach selected PR full-screen (the takeover; Ctrl-q back)",
+  "click the PI pane below the list — it is a live terminal, not a picture:",
+  "               everything you type goes to that pi session; Ctrl-q hands the keyboard back",
+  "               wheel over the pane scrolls its scrollback (End/live once you wheel back down)",
   "g              open the PR on GitHub (PR numbers are Ctrl+clickable links)",
   "w              toggle full-height detail",
   "m              quick-message selected PR",
@@ -271,27 +280,37 @@ export const HELP_LINES = [
 
 // ---- live pi pane ----------------------------------------------------------
 
-/** Header of the mirror: which session, whether it is live, and the way in. */
-export function piHeader(pr: number | undefined, pane: PiPaneView | undefined): string {
+/**
+ * Header of the pane: which session, whether it is live, whether it currently
+ * owns the keyboard, and how far back in scrollback it is parked.
+ */
+export function piHeader(pr: number | undefined, pane: PiPaneView | undefined, focused = false): string {
   if (pr === undefined) return `${FG.dim}PI — no PR selected${RESET}`;
-  const name = `${FG.dim}PI ${RESET}${FG.accent}pr-${pr}${RESET}`;
+  const name = focused
+    ? `${SGR.inverse}${FG.accent}PI pr-${pr}${RESET}${SGR.reset}`
+    : `${FG.dim}PI ${RESET}${FG.accent}pr-${pr}${RESET}`;
   const mine = pane && pane.pr === pr ? pane : undefined;
   if (!mine) return `${name}${FG.dim} · connecting…${RESET}`;
   if (mine.missing) {
     return `${name}${FG.dim} · no pi session for #${pr}${mine.stale ? " · (stale)" : ""}${RESET}`;
   }
-  return `${name}${FG.dim} · live mirror · ⏎ attach${RESET}`;
+  const scroll = mine.offset > 0 ? `${FG.accent} · ↑ ${mine.offset} lines back${RESET}${FG.dim} · End live${RESET}` : "";
+  const mode = focused ? `${FG.accent} · focused${RESET}${FG.dim} · Ctrl-q back to board${RESET}` : `${FG.dim} · live mirror · click to type${RESET}`;
+  return `${name}${mode}${scroll}`;
 }
 
-/** The tail of the capture that fits the region, already width-clamped. */
+/** The window of the capture that fits the region, already width-clamped.
+ * `pane.offset` parks the window that many lines above the live tail. */
 export function piBody(pr: number | undefined, pane: PiPaneView | undefined, width: number, height: number): string[] {
   if (pr === undefined || height <= 0) return [];
   const mine = pane && pane.pr === pr ? pane : undefined;
   if (!mine) return [`${FG.dim}waiting for the first capture…${RESET}`];
   if (mine.lines.length === 0) return mine.missing ? [] : [`${FG.dim}(pane empty)${RESET}`];
   // Bottom-anchored, like the terminal it mirrors: new output lands on a
-  // stable edge instead of shifting the whole pane down.
-  const tail = mine.lines.slice(-height).map((l) => truncate(l, width));
+  // stable edge instead of shifting the whole pane down. A scrollback offset
+  // moves that edge up through the captured history.
+  const src = mine.offset > 0 ? mine.lines.slice(0, Math.max(0, mine.lines.length - mine.offset)) : mine.lines;
+  const tail = src.slice(-height).map((l) => truncate(l, width));
   return [...new Array<string>(Math.max(0, height - tail.length)).fill(""), ...tail];
 }
 
@@ -370,19 +389,29 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
   // Live pi mirror (or the quick-message input box) — the lower region.
   const piTop = 1 + bodyRows;
   const piLines = Math.max(0, pRows - 2); // the region is divider + header + lines
-  if (pRows > 0) frame.set(piTop, `│${fit("─".repeat(listW), listW)}┴${"─".repeat(detailW)}│`);
+  const panePr = view.piPr ?? selectedPr?.number;
+  const piFocused = view.piFocus === true && panePr !== undefined;
+  if (pRows > 0) {
+    // Focused, the divider is drawn heavy and accented — the pane visibly
+    // becomes its own window rather than a strip of the board.
+    const bar = piFocused ? "━" : "─";
+    const inner = `${fit(bar.repeat(listW), listW)}${piFocused ? bar : "┴"}${bar.repeat(detailW)}`;
+    frame.set(piTop, `│${piFocused ? `${FG.accent}${inner}${RESET}` : inner}│`);
+  }
   if (view.inputBox) {
     frame.boxRow(piTop + 1, [{ text: ` ${SGR.bold}MSG → ${view.inputBox.target}${SGR.reset}`, width: cols - 2 }]);
     frame.boxRow(piTop + 2, [{ text: ` > ${view.inputBox.text}▁`, width: cols - 2 }]);
     frame.boxRow(piTop + 3, [{ text: ` ⏎ send · Esc cancel · Alt-⏎ newline`, width: cols - 2 }]);
     for (let i = 4; i <= piLines; i++) frame.boxRow(piTop + i, [{ text: "", width: cols - 2 }]);
   } else if (pRows > 0) {
-    frame.boxRow(piTop + 1, [{ text: ` ${piHeader(selectedPr?.number, view.pi)}${view.noticeLine ? `   ${view.noticeLine}` : ""}`, width: cols - 2 }]);
-    const body = piBody(selectedPr?.number, view.pi, cols - 4, piLines);
+    frame.boxRow(piTop + 1, [{ text: ` ${piHeader(panePr, view.pi, piFocused)}${view.noticeLine ? `   ${view.noticeLine}` : ""}`, width: cols - 2 }]);
+    const body = piBody(panePr, view.pi, cols - 4, piLines);
     for (let i = 0; i < piLines; i++) frame.boxRow(piTop + 2 + i, [{ text: ` ${body[i] ?? ""}`, width: cols - 2 }]);
-    // The whole mirror is one big "open the real session" button.
-    if (selectedPr) {
-      frame.zones.push({ x1: 2, y1: piTop + 2, x2: cols - 1, y2: piTop + pRows, action: { t: "attach" } satisfies BoardAction });
+    // Clicking anywhere in the region (divider, header or body) gives the pane
+    // the keyboard — it does NOT open the full-screen attach any more. The
+    // takeover is still there, on ⏎ / a from the PR list.
+    if (panePr !== undefined) {
+      frame.zones.push({ x1: 2, y1: piTop + 1, x2: cols - 1, y2: piTop + pRows, action: { t: "pi-focus" } satisfies BoardAction });
     }
   }
 

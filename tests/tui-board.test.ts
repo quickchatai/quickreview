@@ -204,7 +204,7 @@ describe("renderBoard", () => {
     const frame = renderBoard(
       view({
         events: [{ ts: "21:24:11", text: "21:24:11 verdict_applied #5049 (APPROVE)", anomaly: false }],
-        pi: { pr: 5012, lines: ["> reading tasks.py", "thinking…"], missing: false, stale: false },
+        pi: { pr: 5012, lines: ["> reading tasks.py", "thinking…"], missing: false, stale: false, offset: 0 },
       }),
       100,
       24,
@@ -214,7 +214,7 @@ describe("renderBoard", () => {
     expect(text).toContain("▶ #5012");
     expect(text).toContain("fix(crm)");
     expect(text).toContain("✎ #5049");
-    expect(text).toContain("PI pr-5012 · live mirror · ⏎ attach");
+    expect(text).toContain("PI pr-5012 · live mirror · click to type");
     expect(text).toContain("> reading tasks.py");
     expect(text).toContain("1 board");
     expect(text).toContain("2 digest");
@@ -238,7 +238,7 @@ describe("renderBoard", () => {
       stale: false,
     };
     for (const cols of [30, 100, 220]) {
-      for (const over of [{}, { eventsFocus: true }, { detailFull: true }]) {
+      for (const over of [{}, { eventsFocus: true }, { detailFull: true }, { piFocus: true, piPr: 5012 }, { piFocus: true, piPr: 5012, pi: { ...pi, offset: 9 } }]) {
         const frame = renderBoard(view({ events, pi, ...over }), cols, 30);
         for (const line of frame.lines) expect(displayWidth(line)).toBe(cols);
       }
@@ -248,7 +248,7 @@ describe("renderBoard", () => {
   it("shows the tail of the capture and passes SGR colors through", () => {
     const lines = Array.from({ length: 40 }, (_, i) => `line_${i}`);
     lines[39] = "\x1b[31mlast line\x1b[0m";
-    const frame = renderBoard(view({ pi: { pr: 5012, lines, missing: false, stale: false } }), 100, 24);
+    const frame = renderBoard(view({ pi: { pr: 5012, lines, missing: false, stale: false, offset: 0 } }), 100, 24);
     const raw = frame.lines.join("\n");
     expect(raw).toContain("\x1b[31mlast line");
     const text = frame.lines.map(stripAnsi).join("\n");
@@ -258,28 +258,57 @@ describe("renderBoard", () => {
   });
 
   it("falls back to a no-session line, keeping the last capture marked (stale)", () => {
-    const gone = renderBoard(view({ pi: { pr: 5012, lines: [], missing: true, stale: false } }), 100, 24).lines.map(stripAnsi).join("\n");
+    const gone = renderBoard(view({ pi: { pr: 5012, lines: [], missing: true, stale: false, offset: 0 } }), 100, 24).lines.map(stripAnsi).join("\n");
     expect(gone).toContain("no pi session for #5012");
     expect(gone).not.toContain("(stale)");
 
-    const stale = renderBoard(view({ pi: { pr: 5012, lines: ["old output"], missing: true, stale: true } }), 100, 24).lines.map(stripAnsi).join("\n");
+    const stale = renderBoard(view({ pi: { pr: 5012, lines: ["old output"], missing: true, stale: true, offset: 0 } }), 100, 24).lines.map(stripAnsi).join("\n");
     expect(stale).toContain("no pi session for #5012 · (stale)");
     expect(stale).toContain("old output");
   });
 
   it("ignores a mirror belonging to another PR (selection moved, capture in flight)", () => {
-    const text = renderBoard(view({ pi: { pr: 5049, lines: ["other pr"], missing: false, stale: false } }), 100, 24).lines.map(stripAnsi).join("\n");
+    const text = renderBoard(view({ pi: { pr: 5049, lines: ["other pr"], missing: false, stale: false, offset: 0 } }), 100, 24).lines.map(stripAnsi).join("\n");
     expect(text).toContain("PI pr-5012 · connecting…");
     expect(text).not.toContain("other pr");
   });
 
-  it("declares the mirror region as one attach zone", () => {
-    const frame = renderBoard(view({ pi: { pr: 5012, lines: ["x"], missing: false, stale: false } }), 100, 24);
+  it("declares the whole pane region as one focus zone (never an attach zone)", () => {
+    const frame = renderBoard(view({ pi: { pr: 5012, lines: ["x"], missing: false, stale: false, offset: 0 } }), 100, 24);
     const piTop = frame.meta["piTop"]!;
-    const zone = frame.zones.find((z) => (z.action as { t: string }).t === "attach");
+    const zone = frame.zones.find((z) => (z.action as { t: string }).t === "pi-focus");
     expect(zone).toBeDefined();
-    expect(zone!.y1).toBe(piTop + 2);
+    expect(zone!.y1).toBe(piTop + 1); // divider row included — the whole region
     expect(zone!.y2).toBe(piTop + frame.meta["piRows"]!);
+    expect(frame.zones.some((z) => (z.action as { t: string }).t === "attach")).toBe(false);
+  });
+
+  it("accents the header and divider while the pane owns the keyboard", () => {
+    const pi = { pr: 5012, lines: ["x"], missing: false, stale: false, offset: 0 };
+    const frame = renderBoard(view({ pi, piFocus: true, piPr: 5012 }), 100, 24);
+    const text = frame.lines.map(stripAnsi).join("\n");
+    expect(text).toContain("PI pr-5012 · focused · Ctrl-q back to board");
+    expect(text).not.toContain("click to type");
+    expect(frame.lines[frame.meta["piTop"]!]).toContain("━"); // heavy divider cue
+  });
+
+  it("shows the scrollback offset and drops that many lines off the tail", () => {
+    const lines = Array.from({ length: 40 }, (_, i) => `line_${i}`);
+    const text = renderBoard(view({ pi: { pr: 5012, lines, missing: false, stale: false, offset: 6 } }), 100, 24)
+      .lines.map(stripAnsi)
+      .join("\n");
+    expect(text).toContain("↑ 6 lines back · End live");
+    expect(text).toContain("line_33"); // 39 - 6
+    expect(text).not.toContain("line_34");
+  });
+
+  it("keeps painting the locked session when the pane is focused elsewhere", () => {
+    const pi = { pr: 5049, lines: ["locked output"], missing: false, stale: false, offset: 0 };
+    const text = renderBoard(view({ pi, piFocus: true, piPr: 5049, selected: 0 }), 100, 24)
+      .lines.map(stripAnsi)
+      .join("\n");
+    expect(text).toContain("PI pr-5049 · focused");
+    expect(text).toContain("locked output");
   });
 
   it("toggles the events overlay on e, with its own scroll and jump zones", () => {
@@ -335,6 +364,7 @@ describe("key decoding", () => {
     expect(decodeKey(Buffer.from("\x03"))).toEqual({ kind: "quit" });
     expect(decodeKey(Buffer.from("M"))).toEqual({ kind: "main-session" });
     expect(decodeKey(Buffer.from("?"))).toEqual({ kind: "help" });
+    expect(decodeKey(Buffer.from("a"))).toEqual({ kind: "attach" }); // ⏎'s twin
   });
 
   it("keeps printable text as chars in the input box, reserving control keys", () => {

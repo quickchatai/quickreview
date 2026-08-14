@@ -182,12 +182,12 @@ describe("rich board", () => {
 });
 
 describe("live pi mirror pane", () => {
-  const pane = { pr: 5277, lines: ["\x1b[36m▌ pi\x1b[0m reading src/tasks.py", "…thinking"], missing: false, stale: false };
+  const pane = { pr: 5277, lines: ["\x1b[36m▌ pi\x1b[0m reading src/tasks.py", "…thinking"], missing: false, stale: false, offset: 0 };
 
   it("fills the lower half with the selected session, colors intact", () => {
     const frame = renderBoard(view({ pi: pane }), 140, 40);
     const text = frame.lines.map(stripAnsi).join("\n");
-    expect(text).toContain("PI pr-5277 · live mirror · ⏎ attach"); // #5277 sorts first (reviewing)
+    expect(text).toContain("PI pr-5277 · live mirror · click to type"); // #5277 sorts first (reviewing)
     expect(text).toContain("reading src/tasks.py");
     expect(frame.lines.join("\n")).toContain("\x1b[36m▌ pi");
     // The pane really is the lower half, not a strip.
@@ -195,10 +195,13 @@ describe("live pi mirror pane", () => {
     expect(frame.meta["piTop"]).toBe(40 - 3 - 18 + 1);
   });
 
-  it("clicking anywhere in the mirror is ⏎ attach", () => {
-    const zones = renderBoard(view({ pi: pane }), 140, 40).zones as Zone<BoardAction>[];
-    expect(hitTest(zones, 50, 30)).toEqual({ t: "attach" });
+  it("clicking anywhere in the pane focuses it in place — never a full-screen attach", () => {
+    const frame = renderBoard(view({ pi: pane }), 140, 40);
+    const zones = frame.zones as Zone<BoardAction>[];
+    expect(hitTest(zones, 50, 30)).toEqual({ t: "pi-focus" });
+    expect(hitTest(zones, 4, frame.meta["piTop"]! + 1)).toEqual({ t: "pi-focus" }); // divider row too
     expect(hitTest(zones, 20, 3)).toEqual({ t: "select-pr", pr: 5277 }); // list untouched
+    expect(zones.some((z) => (z.action as { t: string }).t === "attach")).toBe(false);
   });
 
   it("the events overlay sits on top of the mirror and takes its clicks", () => {

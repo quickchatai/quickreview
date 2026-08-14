@@ -1,8 +1,10 @@
 // Remote access layer for qcr tui — every VM touch goes through here, and
-// every command it can produce is read-only against the box except the two
+// every command it can produce is read-only against the box except the three
 // user-initiated writes (attach keystrokes ride a pty in attach.ts; inject
-// files in msg.ts). Command construction is pure so tests can assert the
-// exact argv; execution is one injectable runner.
+// files in msg.ts; `sendKeysArgv` types into the board's focused pi pane).
+// None of them touch GitHub, so none of them go near the mutation gate.
+// Command construction is pure so tests can assert the exact argv; execution
+// is one injectable runner.
 import { spawn } from "node:child_process";
 import type { TuiConfig } from "../config.js";
 
@@ -50,11 +52,50 @@ export function metricsPrArgv(cfg: TuiConfig, pr: number): string[] {
   return [...dockerPrefix(cfg), cfg.container, "node", "dist/src/cli.js", "metrics", "--pr", String(pr), "--json"];
 }
 
+/**
+ * How much scrollback a capture should reach for, expressed the way tmux
+ * numbers pane lines: `0` is the first line of the *visible* pane and negative
+ * numbers walk up into the history buffer.
+ *
+ * `startBack: n` → `-S -n` (start n lines above the top of the visible pane).
+ * `endBack: m`   → `-E -m` (stop m lines above the top of the visible pane).
+ *
+ * The mirror only ever sets `startBack`: the pane's own height on the VM is not
+ * knowable client-side, so an `-E` would have to guess where the bottom is.
+ * Leaving `-E` off means the capture always runs through the bottom of the
+ * visible pane, and the scrollback offset is applied board-side by dropping
+ * that many lines off the tail (see `piBody`). `endBack` exists so the shape is
+ * expressible (and tested) for callers that do know both edges.
+ */
+export interface CaptureRange {
+  startBack: number;
+  endBack?: number;
+}
+
 /** Non-interactive snapshot of a live pi session for the board's mirror pane:
  * `-e` keeps the pane's colors, `-p` writes to stdout, `-J` joins wrapped
- * lines. Read-only — the mirror never writes a keystroke (that is attach). */
-export function captureArgv(cfg: TuiConfig, session: string): string[] {
-  return [...dockerPrefix(cfg), cfg.container, "tmux", "capture-pane", "-e", "-p", "-J", "-t", session];
+ * lines. Reads only — writing into the pane is `sendKeysArgv`. */
+export function captureArgv(cfg: TuiConfig, session: string, range?: CaptureRange): string[] {
+  const window: string[] = [];
+  if (range && range.startBack > 0) {
+    window.push("-S", `-${range.startBack}`);
+    if (range.endBack !== undefined && range.endBack > 0) window.push("-E", `-${range.endBack}`);
+  }
+  return [...dockerPrefix(cfg), cfg.container, "tmux", "capture-pane", "-e", "-p", "-J", ...window, "-t", session];
+}
+
+/**
+ * Type into a live pi session without attaching to it — the board's mirror pane
+ * is an embedded terminal, not a photograph. `parts` comes from `keysToTmux`
+ * (pipane.ts): either `["-l", "<literal text>"]` or a run of tmux key names
+ * (`Enter`, `Up`, `C-c`, …).
+ *
+ * This is the one write the TUI makes against a VM tmux session outside the
+ * attach pty. It touches no GitHub state, so it does not go near the mutation
+ * gate — it is the same keystroke the operator could type after `tmux attach`.
+ */
+export function sendKeysArgv(cfg: TuiConfig, session: string, parts: string[]): string[] {
+  return [...dockerPrefix(cfg), cfg.container, "tmux", "send-keys", "-t", session, ...parts];
 }
 
 /** The interactive attach argv — the whole remote command after `ssh`. */

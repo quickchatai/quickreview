@@ -759,6 +759,8 @@ export function keyChar(key: BoardKey): string | undefined {
   switch (key.kind) {
     case "char":
       return key.ch;
+    case "attach":
+      return "a"; // `a` is the board's full-screen-attach key; here it is the all-time window
     case "tab-board":
       return "1";
     case "tab-digest":
@@ -899,15 +901,17 @@ export function installMetricsHooks(app: App, fetcher?: MetricsFetcher, probe?: 
         else void load(true);
         theApp.repaint();
         return true;
+      case "attach":
       case "char": {
-        const w = WINDOW_LABELS.find((x) => x.hotkey === key.ch);
+        const ch = keyChar(key);
+        const w = WINDOW_LABELS.find((x) => x.hotkey === ch);
         if (w) {
           view.window = w.key;
           view.scroll = 0;
           theApp.repaint();
           return true;
         }
-        if (key.ch === "#") {
+        if (ch === "#") {
           view.prEntry = "";
           theApp.repaint();
           return true;

@@ -4,8 +4,10 @@ import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import { TUI_DEFAULTS } from "../src/config.js";
 import { App } from "../src/tui/app.js";
-import { PiMirror, keepSgrOnly, splitCapture } from "../src/tui/pipane.js";
-import { captureArgv, type RemoteResult, type SshRunner } from "../src/tui/remote.js";
+import { piHeader } from "../src/tui/board.js";
+import { stripAnsi } from "../src/tui/paint.js";
+import { PiMirror, keepSgrOnly, keysToTmux, splitCapture } from "../src/tui/pipane.js";
+import { captureArgv, sendKeysArgv, type RemoteResult, type SshRunner } from "../src/tui/remote.js";
 import type { StatusSnapshot } from "../src/state.js";
 
 const ok = (stdout: string): RemoteResult => ({ ok: true, stdout, stderr: "", code: 0 });
@@ -23,6 +25,82 @@ describe("captureArgv", () => {
     expect(argv[0]).toBe("docker");
     expect(argv).not.toContain("-it");
     expect(argv[argv.length - 1]).toBe("overseer");
+  });
+
+  it("asks for scrollback with tmux's negative line numbers (-S above the visible top)", () => {
+    expect(captureArgv(TUI_DEFAULTS, "pr-5012", { startBack: 212 })).toEqual([
+      "sudo", "docker", "exec", "quickreview-sandbox", "tmux", "capture-pane", "-e", "-p", "-J", "-S", "-212", "-t", "pr-5012",
+    ]);
+    // Both edges when a caller knows them; `-E` is omitted by the mirror so the
+    // capture always runs through the bottom of the visible pane.
+    expect(captureArgv(TUI_DEFAULTS, "pr-5012", { startBack: 30, endBack: 10 }).join(" ")).toContain("-S -30 -E -10");
+    expect(captureArgv(TUI_DEFAULTS, "pr-5012", { startBack: 0 })).not.toContain("-S");
+  });
+});
+
+describe("sendKeysArgv", () => {
+  it("writes into the session's tmux pane inside the container", () => {
+    expect(sendKeysArgv(TUI_DEFAULTS, "pr-5012", ["-l", "hi"])).toEqual([
+      "sudo", "docker", "exec", "quickreview-sandbox", "tmux", "send-keys", "-t", "pr-5012", "-l", "hi",
+    ]);
+  });
+
+  it("drops sudo when configured off and passes key names through", () => {
+    expect(sendKeysArgv({ ...TUI_DEFAULTS, sudo_docker: false }, "overseer", ["Enter"])).toEqual([
+      "docker", "exec", "quickreview-sandbox", "tmux", "send-keys", "-t", "overseer", "Enter",
+    ]);
+  });
+});
+
+describe("keysToTmux", () => {
+  const t = (s: string): string[][] => keysToTmux(Buffer.from(s, "utf8"));
+
+  it("batches a printable run into one literal send-keys", () => {
+    expect(t("hello world")).toEqual([["-l", "hello world"]]);
+    expect(t("")).toEqual([]);
+  });
+
+  it("names the specials tmux knows", () => {
+    expect(t("\r")).toEqual([["Enter"]]);
+    expect(t("\n")).toEqual([["Enter"]]);
+    expect(t("\x1b")).toEqual([["Escape"]]);
+    expect(t("\x7f")).toEqual([["BSpace"]]);
+    expect(t("\t")).toEqual([["Tab"]]);
+    expect(t("\x1b[A\x1b[B\x1b[C\x1b[D")).toEqual([["Up", "Down", "Right", "Left"]]);
+    expect(t("\x1bOA")).toEqual([["Up"]]);
+    expect(t("\x1b[5~\x1b[6~")).toEqual([["PPage", "NPage"]]);
+    expect(t("\x1b[H\x1b[F")).toEqual([["Home", "End"]]);
+    expect(t("\x1b[3~")).toEqual([["DC"]]);
+  });
+
+  it("maps control bytes to C-<letter> and ESC-<char> to M-<char>", () => {
+    expect(t("\x01")).toEqual([["C-a"]]);
+    expect(t("\x03")).toEqual([["C-c"]]);
+    expect(t("\x18")).toEqual([["C-x"]]);
+    expect(t("\x1a")).toEqual([["C-z"]]);
+    expect(t("\x1bb")).toEqual([["M-b"]]);
+    expect(t("\x1b\r")).toEqual([["M-Enter"]]);
+  });
+
+  it("never translates Ctrl-q — the focus chord belongs to the board", () => {
+    expect(t("\x11")).toEqual([]);
+    expect(t("a\x11b")).toEqual([["-l", "ab"]]);
+  });
+
+  it("splits literal runs from named keys (send-keys -l is per invocation)", () => {
+    expect(t("hi\r")).toEqual([
+      ["-l", "hi"],
+      ["Enter"],
+    ]);
+    expect(t("\x1b[Aabc\rz")).toEqual([["Up"], ["-l", "abc"], ["Enter"], ["-l", "z"]]);
+  });
+
+  it("keeps a pasted multi-line block to one invocation per run", () => {
+    expect(t("line one\nline two")).toEqual([
+      ["-l", "line one"],
+      ["Enter"],
+      ["-l", "line two"],
+    ]);
   });
 });
 
@@ -72,9 +150,9 @@ describe("PiMirror", () => {
 
   it("caches a successful capture per PR and serves it instantly", async () => {
     const { mirror, calls, repaints } = mirrorWith({ 5012: ok("hello\nworld\n") });
-    expect(mirror.view(5012)).toEqual({ pr: 5012, lines: [], missing: false, stale: false });
+    expect(mirror.view(5012)).toEqual({ pr: 5012, lines: [], missing: false, stale: false, offset: 0 });
     await mirror.refresh(5012);
-    expect(mirror.view(5012)).toEqual({ pr: 5012, lines: ["hello", "world"], missing: false, stale: false });
+    expect(mirror.view(5012)).toEqual({ pr: 5012, lines: ["hello", "world"], missing: false, stale: false, offset: 0 });
     expect(calls).toHaveLength(1);
     expect(repaints()).toBe(1);
   });
@@ -86,13 +164,13 @@ describe("PiMirror", () => {
     await mirror.refresh(7);
     live = false;
     await mirror.refresh(7);
-    expect(mirror.view(7)).toEqual({ pr: 7, lines: ["output"], missing: true, stale: true });
+    expect(mirror.view(7)).toEqual({ pr: 7, lines: ["output"], missing: true, stale: true, offset: 0 });
   });
 
   it("reports a never-seen session as missing without a stale marker", async () => {
     const { mirror } = mirrorWith({});
     await mirror.refresh(9);
-    expect(mirror.view(9)).toEqual({ pr: 9, lines: [], missing: true, stale: false });
+    expect(mirror.view(9)).toEqual({ pr: 9, lines: [], missing: true, stale: false, offset: 0 });
   });
 
   it("has nothing to say without a selection", () => {
@@ -150,7 +228,7 @@ describe("PiMirror", () => {
     const { mirror } = mirrorWith({ 4: ok("y") });
     await mirror.refresh(4);
     mirror.invalidate(4);
-    expect(mirror.view(4)).toEqual({ pr: 4, lines: [], missing: false, stale: false });
+    expect(mirror.view(4)).toEqual({ pr: 4, lines: [], missing: false, stale: false, offset: 0 });
   });
 });
 
@@ -184,13 +262,22 @@ function fakeStreams() {
   return { out, input, written: () => buf, type: (s: string | Buffer) => input.emit("data", Buffer.from(s)) };
 }
 
-function appWith() {
+function appWith(opts: { liveSessions?: number[] } = {}) {
   const captures: number[] = [];
+  const captureArgvs: string[][] = [];
+  const sendKeys: string[][] = [];
   const ssh: SshRunner = async (_h, argv) => {
     const last = argv[argv.length - 1] ?? "";
     if (argv.includes("capture-pane")) {
-      captures.push(Number(/pr-(\d+)/.exec(last)?.[1]));
-      return ok(`pane of ${last}`);
+      const pr = Number(/pr-(\d+)/.exec(argv.join(" "))?.[1]);
+      captures.push(pr);
+      captureArgvs.push(argv);
+      if (opts.liveSessions && !opts.liveSessions.includes(pr)) return fail();
+      return ok(`pane of pr-${pr}`);
+    }
+    if (argv.includes("send-keys")) {
+      sendKeys.push(argv);
+      return ok("");
     }
     if (argv[0] === "cat") return ok(JSON.stringify(snapshot));
     if (argv.includes("events")) return ok(JSON.stringify({ events: [] }));
@@ -201,8 +288,17 @@ function appWith() {
   const running = app.run(); // installs the input handler and the poller
   app.view.snapshot = snapshot;
   app.selectPr(5012);
-  return { app, streams, captures, running };
+  return { app, streams, captures, captureArgvs, sendKeys, running };
 }
+
+/** Let the fire-and-forget send/capture chains settle (real timers). */
+const settle = async (): Promise<void> => {
+  for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r));
+};
+
+/** A click inside the pane region of a 100x24 board (piTop 12, rows 13–22). */
+const CLICK_IN_PANE = "\x1b[<0;40;18M";
+const CLICK_ON_ROW = "\x1b[<0;20;3M";
 
 describe("App ↔ pi mirror", () => {
   it("follows the selection through a debounce and caches per PR", async () => {
@@ -231,13 +327,191 @@ describe("App ↔ pi mirror", () => {
     }
   });
 
-  it("a click on the mirror region attaches the selected session", async () => {
+  it("a click on the pane focuses it in place — it never opens the full-screen attach", async () => {
     const { app, streams, running } = appWith();
     let attached: string | undefined;
     app.hooks.attach = async (session) => void (attached = session);
     app.repaint(); // publish the frame the hit test reads
-    streams.type("\x1b[<0;40;18M"); // inside the lower mirror region
-    expect(attached).toBe("pr-5012");
+    streams.type(CLICK_IN_PANE);
+    expect(attached).toBeUndefined();
+    expect(app.piFocused()).toBe(true);
+    expect(app.view.piPr).toBe(5012);
+    app.quit();
+    await running;
+  });
+
+  it("⏎ from the list still opens the full-screen attach", async () => {
+    const { app, streams, running } = appWith();
+    const attached: string[] = [];
+    app.hooks.attach = async (session) => void attached.push(session);
+    app.repaint();
+    streams.type("\r");
+    streams.type("a");
+    expect(attached).toEqual(["pr-5012", "pr-5012"]);
+    app.quit();
+    await running;
+  });
+});
+
+// ---- the pane as an embedded terminal --------------------------------------
+
+describe("focused pi pane — keys go to the session", () => {
+  async function focused() {
+    const h = appWith();
+    h.app.repaint();
+    h.streams.type(CLICK_IN_PANE);
+    await settle();
+    h.sendKeys.length = 0;
+    h.captureArgvs.length = 0;
+    return h;
+  }
+
+  it("forwards printable text as one literal send-keys and re-captures", async () => {
+    const { app, streams, sendKeys, captureArgvs, running } = await focused();
+    streams.type("hello");
+    await settle();
+    expect(sendKeys).toEqual([["sudo", "docker", "exec", "quickreview-sandbox", "tmux", "send-keys", "-t", "pr-5012", "-l", "hello"]]);
+    expect(captureArgvs.length).toBeGreaterThan(0); // echo lands now, not next tick
+    app.quit();
+    await running;
+  });
+
+  it("board bindings are just text while focused — j/k/q/1-5 never act", async () => {
+    const { app, streams, sendKeys, running } = await focused();
+    const before = app.view.selected;
+    streams.type("j");
+    streams.type("k");
+    streams.type("q");
+    streams.type("5");
+    streams.type("?");
+    await settle();
+    expect(sendKeys.map((a) => a.slice(-2))).toEqual([
+      ["-l", "j"],
+      ["-l", "k"],
+      ["-l", "q"],
+      ["-l", "5"],
+      ["-l", "?"],
+    ]);
+    expect(app.view.selected).toBe(before);
+    expect(app.tab).toBe("board");
+    expect(app.view.help).toBe(false);
+    app.quit();
+    await running;
+  });
+
+  it("translates specials: Enter, Escape, arrows, Ctrl-x", async () => {
+    const { app, streams, sendKeys, running } = await focused();
+    streams.type("\r");
+    streams.type("\x1b");
+    streams.type("\x1b[A");
+    streams.type("\x18");
+    await settle();
+    expect(sendKeys.map((a) => a.slice(8))).toEqual([["Enter"], ["Escape"], ["Up"], ["C-x"]]);
+    app.quit();
+    await running;
+  });
+
+  it("Ctrl-q hands the keyboard back to the list and never reaches the session", async () => {
+    const { app, streams, sendKeys, running } = await focused();
+    streams.type("\x11");
+    await settle();
+    expect(sendKeys).toEqual([]);
+    expect(app.piFocused()).toBe(false);
+    streams.type("j"); // the board answers again
+    expect(app.view.selected).toBe(1);
+    app.quit();
+    await running;
+  });
+
+  it("locks follow: a selection change cannot move the keyboard to another session", async () => {
+    const { app, streams, captures, running } = await focused();
+    app.selectPr(5049); // e.g. an event jump while typing
+    await settle();
+    expect(app.view.piPr).toBe(5012);
+    expect(captures).not.toContain(5049);
+    streams.type("x");
+    await settle();
+    expect(app.view.piPr).toBe(5012);
+    app.quit();
+    await running;
+  });
+
+  it("clicking back in the list blurs the pane and still selects the row", async () => {
+    const { app, streams, running } = await focused();
+    streams.type(CLICK_ON_ROW);
+    await settle();
+    expect(app.piFocused()).toBe(false);
+    expect(app.currentPr()).toBe(5012); // first sorted row
+    app.quit();
+    await running;
+  });
+
+  it("drops focus gracefully when the focused session dies", async () => {
+    const live = [5012];
+    const h = appWith({ liveSessions: live });
+    h.app.repaint();
+    h.streams.type(CLICK_IN_PANE);
+    await settle();
+    expect(h.app.piFocused()).toBe(true);
+
+    live.length = 0; // the round finished, tmux session archived
+    await h.app.pi.refresh(5012);
+    await settle();
+    expect(h.app.piFocused()).toBe(false);
+    expect(h.app.view.pi?.stale).toBe(true); // the last capture stays on screen
+    expect(h.app.view.noticeLine).toContain("gone");
+    h.streams.type("j"); // the board has the keyboard back
+    expect(h.app.view.selected).toBe(1);
+    h.app.quit();
+    await h.running;
+  });
+});
+
+describe("pi pane scrollback (wheel)", () => {
+  it("wheel over the pane scrolls its history and shows the offset", async () => {
+    const { app, streams, captureArgvs, running } = appWith();
+    app.repaint();
+    captureArgvs.length = 0;
+    streams.type("\x1b[<64;40;18M"); // wheel-up inside the pane
+    await settle();
+    expect(app.view.pi?.offset).toBe(3);
+    expect(captureArgvs.at(-1)).toEqual([
+      "sudo", "docker", "exec", "quickreview-sandbox", "tmux", "capture-pane", "-e", "-p", "-J", "-S", "-203", "-t", "pr-5012",
+    ]);
+    expect(stripAnsi(piHeader(5012, app.view.pi, true))).toContain("↑ 3 lines back · End live");
+
+    streams.type("\x1b[<65;40;18M"); // wheel-down: back to the live tail
+    await settle();
+    expect(app.view.pi?.offset).toBe(0);
+    expect(captureArgvs.at(-1)).not.toContain("-S");
+    app.quit();
+    await running;
+  });
+
+  it("a keypress while parked in history snaps the pane back to live", async () => {
+    const { app, streams, captureArgvs, running } = appWith();
+    app.repaint();
+    streams.type(CLICK_IN_PANE);
+    streams.type("\x1b[<64;40;18M");
+    streams.type("\x1b[<64;40;18M");
+    await settle();
+    expect(app.view.pi?.offset).toBe(6);
+    captureArgvs.length = 0;
+    streams.type("z");
+    await settle();
+    expect(app.view.pi?.offset).toBe(0);
+    expect(captureArgvs.at(-1)).not.toContain("-S");
+    app.quit();
+    await running;
+  });
+
+  it("wheel outside the pane keeps its board meaning (move the selection)", async () => {
+    const { app, streams, running } = appWith();
+    app.repaint();
+    streams.type("\x1b[<65;20;3M"); // wheel-down over the PR list
+    await settle();
+    expect(app.view.selected).toBe(1);
+    expect(app.view.pi?.offset ?? 0).toBe(0);
     app.quit();
     await running;
   });
