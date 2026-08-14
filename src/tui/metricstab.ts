@@ -38,7 +38,7 @@ export function sparkline(values: number[], width: number): string {
   }
   const max = Math.max(...buckets);
   if (max <= 0) return SPARK[0]!.repeat(buckets.length);
-  return buckets.map((v) => SPARK[Math.min(SPARK.length - 1, Math.max(0, Math.round((v / max) * (SPARK.length - 1))))]!).join("");
+  return buckets.map((v) => SPARK[Math.min(SPARK.length - 1, Math.max(0, Math.floor((v / max) * (SPARK.length - 1))))]!).join("");
 }
 
 /** Label column width for a bar row — a third of the card, clamped. */
@@ -469,7 +469,9 @@ export function installMetricsHooks(app: App, fetcher?: MetricsFetcher): Metrics
 
   const load = async (force = false): Promise<void> => {
     if (view.loading) return;
-    if (!force && view.payload && Date.now() - fetchedAt < METRICS_TTL_MS) return;
+    // Gate on fetch time alone: a failed fetch must also wait out the TTL, or
+    // error -> repaint -> load would spin forever and the app could never quit.
+    if (!force && fetchedAt && Date.now() - fetchedAt < METRICS_TTL_MS) return;
     view.loading = true;
     try {
       const res = await f.overall();
@@ -479,6 +481,7 @@ export function installMetricsHooks(app: App, fetcher?: MetricsFetcher): Metrics
         fetchedAt = Date.now();
       } else {
         view.error = res.error ?? "unknown error";
+        fetchedAt = Date.now();
       }
     } finally {
       view.loading = false;
