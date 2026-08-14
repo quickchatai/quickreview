@@ -108,7 +108,10 @@ describe("the closed mutation vocabulary", () => {
         "push_branch",
         "remove_label",
         "request_reviewer",
-        // The one review-mutating kind, ratified by the owner 2026-08-13:
+        // Bot-owned inline threads may be resolved after a checked author
+        // response; this does not alter or dismiss a review verdict.
+        "resolve_own_review_thread",
+        // The one review-verdict-mutating kind, ratified by the owner 2026-08-13:
         // the bot superseding ITS OWN stale non-APPROVED review. No kind
         // for dismissing approvals or another identity's review exists.
         "supersede_own_review",

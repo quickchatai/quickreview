@@ -12,8 +12,8 @@
 //   awaiting_author REQUEST_CHANGES posted; the author owes a push/reply
 //   awaiting_human  escalated — the human reviewer owns it (never auto-approved)
 //   closed          merged or closed; session archived, worktree dropped
-// Plus the `stale_recheck` flag: set when the staleness scan finds an approved
-// review whose commit no longer matches head; cleared when the round dispatches.
+// `stale_recheck` remains as legacy state for old rows/rounds; ordinary pushes
+// never set it or queue work. Only an explicit review re-request starts a round.
 //
 // ┌─────────────────┬──────────────────────────────────────────────────────────┐
 // │ event \ state   │ tracked   queued   reviewing  awaiting_  awaiting_ closed │
@@ -28,7 +28,7 @@
 // │ verdict ESCAL.  │ aw_human  aw_human aw_human   aw_human   aw_human  closed │
 // │ round_overdue   │ aw_human  aw_human aw_human   aw_human   aw_human  closed │  (never an approve path)
 // │ author_reply    │ tracked   queued   reviewing  aw_author  aw_human  closed │  (ping-pong: no lifecycle change)
-// │ synchronize     │ tracked⁶  queued   reviewing¹ queued     aw_human³ closed │
+// │ synchronize     │ tracked   queued   reviewing  aw_author  aw_human  closed │
 // │ escalation_det. │ aw_human  queued⁷  reviewing⁷ aw_human   aw_human  closed │
 // │ closed          │ closed    closed   closed     closed     closed    closed │
 // │ reopened        │ tracked   queued   reviewing  aw_author  aw_human  tracked│
@@ -37,13 +37,11 @@
 //   current head, and the reconcile poll re-derives the triggered set after it
 //   finishes (GitHub truth wins — spec §3).
 // ² closed is terminal for the lifecycle; a reopened PR must first `reopened`.
-// ³ once escalated, the human owns the PR: pushes and staleness do not pull it
-//   back into the AI queue. Only an explicit re-trigger does.
+// ³ once escalated, the human owns the PR. Only an explicit re-trigger queues
+//   another full review.
 // ⁴ dispatch never runs against a closed PR (dispatch filters on `queued`).
 // ⁵ a verdict cannot demote an escalation: awaiting_human is sticky against
 //   APPROVE/REQUEST_CHANGES — the never-auto-approve-an-escalation invariant.
-// ⁶ pushes to an untriggered PR do nothing: "triggered PRs only, no sweeps"
-//   (spec §8). Staleness (an approved review going stale) is the exception.
 // ⁷ the escalation reviewer being requested while a round is queued/running
 //   does not cancel the round; the verdict then lands on awaiting_human.
 //
@@ -114,9 +112,8 @@ export function transition(current: PrLifecycleState, event: SmEvent): PrLifecyc
       return current;
 
     case "synchronize":
-      if (current === "awaiting_author") return "queued";
-      if (current === "tracked" || current === "reviewing" || current === "queued" || current === "awaiting_human")
-        return current;
+      // A push refreshes metadata only. Full reviews are explicit: trigger
+      // label or configured team review request.
       return current;
 
     case "escalation_detected":

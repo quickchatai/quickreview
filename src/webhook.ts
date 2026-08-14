@@ -48,8 +48,8 @@ export type Interpretation =
       in_reply_to_id: number | null;
       body: string;
       author: string;
-      via: "thread_reply" | "mention";
-      scope: "review_comment" | "issue_comment";
+      via: "thread_reply";
+      scope: "review_comment";
     }
   | { kind: "bot_comment"; pr: number; comment_id: number; scope: "review_comment" | "issue_comment" }
   | { kind: "ignored"; reason: string; pr?: number };
@@ -59,8 +59,9 @@ export interface InterpretDeps {
   triggerLabel: string;
   /** `org/team` as configured. */
   reviewTeam: string;
-  /** Bot-comment registry lookup (StateStore.isBotComment). */
-  isBotComment: (id: number) => boolean;
+  /** Bot-comment registry lookup. Returning the PR number prevents a comment
+   * id from ever waking a different PR session. */
+  botCommentPr: (id: number) => number | undefined;
 }
 
 /** `example-review[bot]` is @-mentioned as `@example-review`. */
@@ -144,7 +145,7 @@ function interpretReviewComment(action: string | null, payload: any, deps: Inter
   if (payload?.sender?.login === deps.botLogin) return { kind: "ignored", reason: "sender is the bot", pr };
 
   const inReplyTo: number | null = typeof comment.in_reply_to_id === "number" ? comment.in_reply_to_id : null;
-  if (inReplyTo !== null && deps.isBotComment(inReplyTo))
+  if (inReplyTo !== null && deps.botCommentPr(inReplyTo) === pr)
     return {
       kind: "author_reply",
       pr,
@@ -155,18 +156,7 @@ function interpretReviewComment(action: string | null, payload: any, deps: Inter
       via: "thread_reply",
       scope: "review_comment",
     };
-  if (mentionsBot(comment.body ?? "", deps.botLogin))
-    return {
-      kind: "author_reply",
-      pr,
-      comment_id: comment.id,
-      in_reply_to_id: inReplyTo,
-      body: comment.body ?? "",
-      author: comment.user?.login ?? "",
-      via: "mention",
-      scope: "review_comment",
-    };
-  return { kind: "ignored", reason: "not a bot thread and no mention", pr };
+  return { kind: "ignored", reason: "not a reply in this PR's bot thread", pr };
 }
 
 function interpretIssueComment(action: string | null, payload: any, deps: InterpretDeps): Interpretation {
@@ -183,19 +173,10 @@ function interpretIssueComment(action: string | null, payload: any, deps: Interp
   if (comment.user?.type === "Bot") return { kind: "ignored", reason: "other-bot comment", pr };
   if (payload?.sender?.login === deps.botLogin) return { kind: "ignored", reason: "sender is the bot", pr };
 
-  // PR conversation comments are flat — no in_reply_to_id; a mention is the
-  // only wake signal (§3.2).
-  if (!mentionsBot(comment.body ?? "", deps.botLogin)) return { kind: "ignored", reason: "no bot mention", pr };
-  return {
-    kind: "author_reply",
-    pr,
-    comment_id: comment.id,
-    in_reply_to_id: null,
-    body: comment.body ?? "",
-    author: comment.user?.login ?? "",
-    via: "mention",
-    scope: "issue_comment",
-  };
+  // Top-level PR conversation comments are deliberately never automatic.
+  // Automatic ping-pong is bounded to a reply in one of this PR's bot-owned
+  // inline review threads.
+  return { kind: "ignored", reason: "top-level PR comment is outside bot review threads", pr };
 }
 
 // ---- server --------------------------------------------------------------
@@ -266,7 +247,7 @@ export function handleDelivery(
     botLogin: deps.cfg.github.bot_login,
     triggerLabel: deps.cfg.github.trigger_label,
     reviewTeam: deps.cfg.github.review_team,
-    isBotComment: (id) => deps.store.isBotComment(id),
+    botCommentPr: (id) => deps.store.botCommentPr(id),
   });
   deps.store.logEvent("webhook_event", interpretation.kind === "ignored" ? (interpretation.pr ?? null) : interpretation.pr, {
     guid,
@@ -355,8 +336,8 @@ export async function applyInterpretation(
       await deps.onPrTouched?.(i.pr);
       return;
     case "synchronize":
+      // Metadata refresh only: pushes never start or pump a review.
       applyEventFor(store, i.pr, { type: "synchronize" }, i.meta, opts);
-      await deps.onPrTouched?.(i.pr);
       return;
     case "closed":
       applyEventFor(store, i.pr, { type: "closed" }, i.meta, opts);

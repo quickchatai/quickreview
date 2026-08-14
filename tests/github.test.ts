@@ -203,6 +203,45 @@ describe("mutations in dry-run", () => {
   });
 });
 
+describe("resolveOwnReviewThread ownership gate", () => {
+  const threadPayload = (author = cfg.github.bot_login, isResolved = false) => ({
+    data: {
+      repository: {
+        pullRequest: {
+          reviewThreads: {
+            nodes: [{ id: "PRRT_node", isResolved, comments: { nodes: [{ databaseId: 555, author: { login: author } }] } }],
+            pageInfo: { hasNextPage: false, endCursor: null },
+          },
+        },
+      },
+    },
+  });
+
+  it("records a gated GraphQL resolve only after verifying a bot-owned root", async () => {
+    const { adapter, calls } = build(() => threadPayload());
+    const out = await adapter.resolveOwnReviewThread(3, 555);
+    expect(out.skipped).toBeNull();
+    expect(calls).toHaveLength(1); // ownership read; mutation is dry-run recorded
+    expect(dryrunRecords()[0]).toMatchObject({
+      kind: "resolve_own_review_thread",
+      method: "POST",
+      path: "/graphql",
+      pr: 3,
+      body: { variables: { threadId: "PRRT_node" } },
+    });
+  });
+
+  it("refuses another identity's thread and skips an already-resolved own thread", async () => {
+    const other = build(() => threadPayload("alice"));
+    await expect(other.adapter.resolveOwnReviewThread(3, 555)).rejects.toThrow("root author is alice");
+    expect(dryrunRecords()).toHaveLength(0);
+
+    const own = build(() => threadPayload(cfg.github.bot_login, true));
+    expect(await own.adapter.resolveOwnReviewThread(3, 555)).toEqual({ skipped: "already-resolved" });
+    expect(dryrunRecords()).toHaveLength(0);
+  });
+});
+
 describe("requestEscalationReview redundancy skips", () => {
   const pr = (author: string) => ({
     number: 8, title: "T", user: { login: author }, head: { sha: "abc" },

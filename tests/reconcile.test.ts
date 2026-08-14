@@ -124,7 +124,8 @@ const corrections = (s: StateStore) =>
 describe("reconcileOnce", () => {
   it("adopts a hand-edited divergent pr_state from GitHub truth", async () => {
     // Local state says #1 is merely tracked and #2 is queued; GitHub says both
-    // carry a live trigger, #3 has a stale approval and #4 is closed.
+    // carry a live trigger, #3 has an outdated approval and #4 is closed.
+    // The outdated approval is metadata only: commits never queue reviews.
     gh.open = [ref(1), ref(2), ref(3)];
     gh.labelTriggered = [item(1)];
     gh.teamTriggered = [item(2)];
@@ -140,18 +141,18 @@ describe("reconcileOnce", () => {
 
     expect(store.getPr(1)!.state).toBe("queued");
     expect(store.getPr(2)!.state).toBe("queued"); // already correct: no correction
-    expect(store.getPr(3)!.state).toBe("queued");
-    expect(store.getPr(3)!.stale_recheck).toBe(1);
+    expect(store.getPr(3)!.state).toBe("tracked");
+    expect(store.getPr(3)!.stale_recheck).toBe(0);
     expect(store.getPr(4)!.state).toBe("closed");
     expect(archived).toEqual([4]);
     expect(report.closed).toEqual([4]);
 
     const what = corrections(store).map((c) => `${c.pr}:${c.what}`);
     expect(what).toContain("1:triggered-not-queued");
-    expect(what).toContain("3:stale-approval");
+    expect(what).not.toContain("3:stale-approval");
     expect(what).toContain("4:pr-closed");
     expect(what).not.toContain("2:triggered-not-queued");
-    expect(report.corrections).toBe(3);
+    expect(report.corrections).toBe(2);
   });
 
   it("tracks a triggered PR the daemon has never seen (lost delivery)", async () => {
@@ -252,7 +253,7 @@ describe("reconcileOnce", () => {
     const { hooks } = recordingHooks();
     const report = await reconcileOnce({ cfg, store, adapter: gh, hooks });
     expect(report.errors.join(" ")).toContain("search 503");
-    expect(store.getPr(20)!.state).toBe("queued"); // later steps still ran
+    expect(store.getPr(20)!.state).toBe("tracked"); // stale approval is not a fallback trigger
   });
 
   it("logs a reconcile_pass summary every time", async () => {
@@ -303,34 +304,14 @@ describe("dry-run re-trigger suppression", () => {
     expect(store.getPr(9)!.state).toBe("queued");
   });
 
-  it("suppresses same-head staleness rechecks in dry-run (live-fire 2026-08-14 churn)", async () => {
-    // GitHub's approved_sha never advances in dry-run (our re-approve is not
-    // posted), so the scan reports the same stale pair every poll.
-    gh.open = [ref(11, { head_sha: "sha11" })];
-    gh.stale = [{ number: 11, head_sha: "sha11", approved_sha: "old-sha", approved_at: "2026-08-10T00:00:00Z" }];
-    store.upsertPr({ number: 11, state: "tracked", head_sha: "sha11", title: "PR 11", author: "alice", trigger_ts: null, stale_recheck: 0, escalation_worthy: 0, migration_gate: 0 });
-    store.logEvent("verdict_applied", 11, { head_sha: "sha11", verdict: "APPROVE" });
-
-    await reconcileOnce({ cfg: { ...cfg, dry_run: true }, store, adapter: gh, hooks });
-    const after = store.getPr(11)!;
-    expect(after.state).toBe("tracked"); // no re-queue
-    expect(after.stale_recheck).toBe(0); // no recheck round pending
-
-    // A genuinely new head must still trigger the recheck.
+  it.each([true, false])("never queues an outdated approval merely because the head moved (dry_run=%s)", async (dryRun) => {
     gh.open = [ref(11, { head_sha: "sha11-new" })];
     gh.stale = [{ number: 11, head_sha: "sha11-new", approved_sha: "old-sha", approved_at: "2026-08-10T00:00:00Z" }];
-    await reconcileOnce({ cfg: { ...cfg, dry_run: true }, store, adapter: gh, hooks });
-    expect(store.getPr(11)!.state).toBe("queued");
-    expect(store.getPr(11)!.stale_recheck).toBe(1);
-  });
+    store.upsertPr({ number: 11, state: "tracked", head_sha: "sha11", title: "PR 11", author: "alice", trigger_ts: null, stale_recheck: 0, escalation_worthy: 0, migration_gate: 0 });
 
-  it("still dispatches staleness rechecks live (dry_run off)", async () => {
-    gh.open = [ref(12, { head_sha: "sha12" })];
-    gh.stale = [{ number: 12, head_sha: "sha12", approved_sha: "old-sha", approved_at: "2026-08-10T00:00:00Z" }];
-    store.upsertPr({ number: 12, state: "tracked", head_sha: "sha12", title: "PR 12", author: "alice", trigger_ts: null, stale_recheck: 0, escalation_worthy: 0, migration_gate: 0 });
-    store.logEvent("verdict_applied", 12, { head_sha: "sha12", verdict: "APPROVE" });
-    await reconcileOnce({ cfg: { ...cfg, dry_run: false }, store, adapter: gh, hooks });
-    expect(store.getPr(12)!.stale_recheck).toBe(1);
+    await reconcileOnce({ cfg: { ...cfg, dry_run: dryRun }, store, adapter: gh, hooks });
+    expect(store.getPr(11)).toMatchObject({ state: "tracked", head_sha: "sha11-new", stale_recheck: 0 });
+    expect(gh.calls).not.toContain("stalenessScan");
   });
 
   it("paused PRs are never re-triggered or staleness-rechecked", async () => {

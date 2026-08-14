@@ -105,10 +105,10 @@ describe("② reconcile queue diff", () => {
   });
 });
 
-describe("④ staleness wake", () => {
+describe("④ push does not review", () => {
   const fixture = { number: 4242, head_sha: "beef0000", approved_sha: "cafe1111" };
 
-  it("passes when the reconcile step issues a staleness round", async () => {
+  it("fails when reconcile issues an unsolicited staleness round", async () => {
     const injected: unknown[] = [];
     const orders: Array<{ pr: number; round_type: string }> = [];
     const r = await probeStalenessWake({
@@ -118,19 +118,19 @@ describe("④ staleness wake", () => {
       issuedOrders: () => orders,
     });
     expect(injected).toHaveLength(1);
-    expect(r.pass).toBe(true);
-    expect(r.detail).toContain("staleness round issued");
+    expect(r.pass).toBe(false);
+    expect(r.detail).toContain("unsolicited staleness round");
   });
 
-  it("fails when only a first-round order lands", async () => {
+  it("passes when a pushed approved PR produces no staleness round", async () => {
     const r = await probeStalenessWake({
       fixture,
       injectStalePr: () => {},
       runStalenessReconcile: async () => {},
-      issuedOrders: () => [{ pr: fixture.number, round_type: "first" }],
+      issuedOrders: () => [{ pr: 9999, round_type: "first" }],
     });
-    expect(r.pass).toBe(false);
-    expect(r.detail).toContain("no staleness round");
+    expect(r.pass).toBe(true);
+    expect(r.detail).toContain("push stayed quiet");
   });
 });
 
@@ -312,7 +312,7 @@ describe("runChecklist", () => {
         fixture: { number: 5, head_sha: "aaa", approved_sha: "bbb" },
         injectStalePr: () => {},
         runStalenessReconcile: async () => {},
-        issuedOrders: () => [{ pr: 5, round_type: "staleness" }],
+        issuedOrders: () => [],
       },
       pingPong: { injectDir, event: {}, interpret: async () => writeFileSync(join(injectDir, "pr-5.md"), "x") },
       digest: { digestDir, statusPath, today },

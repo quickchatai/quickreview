@@ -119,7 +119,7 @@ export async function probeQueueDiff(deps: QueueDiffDeps): Promise<ProbeResult> 
   return diff.missing.length === 0 && diff.extra.length === 0 ? ok(item, name, detail) : bad(item, name, detail);
 }
 
-// ---- ④ staleness wake --------------------------------------------------------
+// ---- ④ push does not review -------------------------------------------------
 
 export interface StalePrFixture {
   number: number;
@@ -134,26 +134,26 @@ export interface IssuedOrder {
 
 export interface StalenessProbeDeps {
   fixture: StalePrFixture;
-  /** Put the stale PR into the store / the scan's result set. */
+  /** Put an approved-then-pushed PR into the store / read fixture. */
   injectStalePr: (pr: StalePrFixture) => void | Promise<void>;
-  /** The daemon's staleness reconcile step. */
+  /** Run authoritative reconcile plus dispatch. */
   runStalenessReconcile: () => Promise<void>;
   /** Round orders the dispatcher issued during this run. */
   issuedOrders: () => IssuedOrder[] | Promise<IssuedOrder[]>;
 }
 
-/** ④ An approved-then-pushed PR must produce a `staleness` round order. */
+/** ④ A push must not produce a review; only an explicit re-request may. */
 export async function probeStalenessWake(deps: StalenessProbeDeps): Promise<ProbeResult> {
   const item = "④";
-  const name = "staleness wake";
+  const name = "push does not review";
   await deps.injectStalePr(deps.fixture);
   await deps.runStalenessReconcile();
   const orders = await deps.issuedOrders();
   const hit = orders.find((o) => o.pr === deps.fixture.number && o.round_type === "staleness");
   const detail = hit
-    ? `#${deps.fixture.number}: staleness round issued (approved ${deps.fixture.approved_sha.slice(0, 7)} -> head ${deps.fixture.head_sha.slice(0, 7)})`
-    : `#${deps.fixture.number}: no staleness round among [${orders.map((o) => `#${o.pr}:${o.round_type}`).join(", ") || "none"}]`;
-  return hit ? ok(item, name, detail) : bad(item, name, detail);
+    ? `#${deps.fixture.number}: unsolicited staleness round issued after push`
+    : `#${deps.fixture.number}: push stayed quiet (approved ${deps.fixture.approved_sha.slice(0, 7)} -> head ${deps.fixture.head_sha.slice(0, 7)})`;
+  return hit ? bad(item, name, detail) : ok(item, name, detail);
 }
 
 // ---- ⑤ ping-pong -------------------------------------------------------------
@@ -362,7 +362,7 @@ export async function runChecklistProbes(deps: ChecklistDeps): Promise<ProbeResu
   return [
     await safeProbe("①", "tunnel + HMAC", () => probeTunnelHmac(deps.tunnel)),
     await safeProbe("②", "reconcile queue == manual queries", () => probeQueueDiff(deps.queue)),
-    await safeProbe("④", "staleness wake", () => probeStalenessWake(deps.staleness)),
+    await safeProbe("④", "push does not review", () => probeStalenessWake(deps.staleness)),
     await safeProbe("⑤", "ping-pong reply", () => probePingPong(deps.pingPong)),
     await safeProbe("⑦", "EOD digest", async () => probeDigest(deps.digest)),
     await safeProbe("⑧", "tmux attach", () => probeTmux(deps.tmux)),

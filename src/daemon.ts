@@ -14,7 +14,9 @@ import { dispatchOnce, type DispatchAdapter } from "./dispatch.js";
 import { MutationGate, type MutationIntent } from "./gate.js";
 import { GitHubAdapter } from "./github.js";
 import { TokenMinter } from "./githubAuth.js";
+import { PingPongLedger, ThreadDecisionWatcher, buildWakeMessage, type AuthorReplyEvent } from "./pingpong.js";
 import { reconcileOnce, type ReconcileAdapter } from "./reconcile.js";
+import { applyEvent } from "./statemachine.js";
 import { buildStatusSnapshot, StateStore, writeStatusJson } from "./state.js";
 import { stubSessionHooks } from "./stubs.js";
 import type { SessionHooks } from "./types.js";
@@ -83,13 +85,29 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
 
   const gh: DaemonAdapter = deps.adapter ?? buildGitHubAdapter(cfg, stateDir);
 
+  const verdictDir = join(root, "verdict");
   const verdicts = new VerdictWatcher({
     cfg,
     store,
     adapter: gh,
     hooks,
-    verdictDir: join(root, "verdict"),
+    verdictDir,
     log,
+  });
+  const pingpong = new PingPongLedger(store.db);
+  const threadDecisions = new ThreadDecisionWatcher({
+    adapter: gh as GitHubAdapter,
+    store,
+    ledger: pingpong,
+    verdictDir,
+    log,
+    onHumanRequested: async (decision) => {
+      await gh.requestEscalationReview(decision.pr);
+      applyEvent(store, decision.pr, { type: "escalation_detected" }, {}, {
+        botLogin: cfg.github.bot_login,
+        reason: "pingpong:human-requested",
+      });
+    },
   });
 
   const timers: NodeJS.Timeout[] = [];
@@ -105,15 +123,25 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
           await pump();
         },
         onAuthorReply: async (reply) => {
-          // Ping-pong lives in the session (spec §4): wake it with the reply.
+          // Webhook interpretation guarantees a same-PR bot-owned root. Claim
+          // the author message before waking so duplicate deliveries cannot
+          // produce duplicate replies or resolutions.
+          if (reply.in_reply_to_id === null) return;
+          const event: AuthorReplyEvent = {
+            pr: reply.pr,
+            comment_id: reply.comment_id,
+            in_reply_to_id: reply.in_reply_to_id,
+            body: reply.body,
+            author: reply.author,
+          };
+          if (!pingpong.claimAuthorMessage(event)) return;
+          const row = store.getPr(reply.pr);
           await hooks.inject(
             reply.pr,
-            [
-              `AUTHOR REPLY (${reply.scope}, via ${reply.via}) by @${reply.author}`,
-              reply.in_reply_to_id !== null ? `in reply to bot comment ${reply.in_reply_to_id}` : "PR conversation comment",
-              "",
-              reply.body,
-            ].join("\n"),
+            buildWakeMessage(event, {
+              head_sha: row?.head_sha,
+              worktree: join(root, "wt", `pr-${reply.pr}`),
+            }, pingpong.discipline(reply.in_reply_to_id)),
           );
         },
         onClosed: async (pr) => {
@@ -137,7 +165,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     await guard("reconcile", async () => {
       const report = await reconcileOnce({ cfg, store, adapter: gh, hooks, log });
       log(
-        `reconcile: open=${report.open_prs} triggered=${report.triggered.length} stale=${report.stale.length} ` +
+        `reconcile: open=${report.open_prs} triggered=${report.triggered.length} ` +
           `closed=${report.closed.length} corrections=${report.corrections} errors=${report.errors.length}`,
       );
       await pump();
@@ -187,12 +215,16 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
       }
 
       verdicts.start();
+      threadDecisions.start();
       writeStatus();
       await reconcile();
 
       every(cfg.daemon.poll_interval_s, () => void reconcile());
       every(DISPATCH_TICK_S, () => void pump());
-      every(VERDICT_SWEEP_S, () => void guard("verdict sweep", () => verdicts.sweep()));
+      every(VERDICT_SWEEP_S, () => void guard("verdict sweep", async () => {
+        await verdicts.sweep();
+        await threadDecisions.sweep();
+      }));
       every(DEADLINE_TICK_S, () => void guard("deadline check", () => verdicts.checkDeadlines()));
       every(STATUS_TICK_S, writeStatus);
       if (deps.onStart) await guard("onStart", async () => deps.onStart!(this));
@@ -206,6 +238,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
       for (const t of timers) clearInterval(t);
       timers.length = 0;
       verdicts.stop();
+      threadDecisions.stop();
       if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
       server = null;
       writeStatus();

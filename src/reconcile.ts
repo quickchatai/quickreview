@@ -5,7 +5,7 @@
 // `reconcile_correction` event: a rising correction rate is the webhook-health
 // signal the operator watches.
 import type { Config } from "./config.js";
-import type { PrRef, StalePr } from "./github.js";
+import type { PrRef } from "./github.js";
 import { applyEvent, isBotAuthor } from "./statemachine.js";
 import type { StateStore } from "./state.js";
 import type { SessionHooks } from "./types.js";
@@ -25,7 +25,6 @@ export interface ReconcileAdapter {
   searchAwaitingEscalationReviewer(): Promise<ReconcileSearchItem[]>;
   listOpenPrs(): Promise<PrRef[]>;
   getPr(n: number): Promise<PrRef>;
-  stalenessScan(): Promise<StalePr[]>;
   listBotReviewComments(n: number): Promise<number[]>;
   getRequestedReviewers(n: number): Promise<{ users: string[]; teams: string[] }>;
 }
@@ -46,7 +45,6 @@ export interface ReconcileReport {
   ran_at: string;
   open_prs: number;
   triggered: number[];
-  stale: number[];
   closed: number[];
   awaiting_human: number[];
   backfilled_comments: number;
@@ -71,7 +69,6 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
     ran_at: now().toISOString(),
     open_prs: 0,
     triggered: [],
-    stale: [],
     closed: [],
     awaiting_human: [],
     backfilled_comments: 0,
@@ -143,37 +140,10 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
     }
   });
 
-  // ---- 3. staleness scan --------------------------------------------------
-  await step("staleness", async () => {
-    for (const stale of await adapter.stalenessScan()) {
-      const ref = open.get(stale.number);
-      if (ref && isBotAuthor(ref.author, botLogin)) continue;
-      const local = store.getPr(stale.number);
-      report.stale.push(stale.number);
-      if (local?.paused) continue; // overseer pause-pr
-      if (local?.stale_recheck === 1 && (local.state === "queued" || local.state === "reviewing")) continue;
-      if (local?.state === "reviewing" || local?.state === "awaiting_human") continue;
-      // Dry-run never posts the re-approval, so GitHub reports the same
-      // stale approved_sha forever; once we've verdicted this exact head,
-      // re-dispatching reviews an empty range — suppress until it moves
-      // (mirrors the trigger suppression above; live-fire 2026-08-14:
-      // same-head staleness rounds every poll, pure spend churn).
-      if (cfg.dry_run && store.lastVerdictHead(stale.number) === stale.head_sha) {
-        deps.log?.(`dry-run: suppressing staleness recheck of #${stale.number} at verdicted head ${stale.head_sha.slice(0, 10)}`);
-        continue;
-      }
-      correction(deps, stale.number, "stale-approval", { approved_sha: stale.approved_sha, head_sha: stale.head_sha, local: local?.state ?? null }, report);
-      applyEvent(
-        store,
-        stale.number,
-        { type: "stale_detected" },
-        { title: ref?.title, head_sha: stale.head_sha, author: ref?.author },
-        { botLogin, now, reason: "reconcile:staleness" },
-      );
-    }
-  });
+  // Commits never dispatch a review. Open-PR truth above refreshes the stored
+  // head, but only the explicit label/team triggered-set may queue a round.
 
-  // ---- 4. open-PR sync: locally-live PRs GitHub no longer lists as open ----
+  // ---- 3. open-PR sync: locally-live PRs GitHub no longer lists as open ----
   await step("closed-sync", async () => {
     for (const local of store.allPrs()) {
       if (local.state === "closed") continue;
@@ -239,7 +209,6 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
   store.logEvent("reconcile_pass", null, {
     open_prs: report.open_prs,
     triggered: report.triggered.length,
-    stale: report.stale.length,
     closed: report.closed.length,
     awaiting_human: report.awaiting_human.length,
     corrections: report.corrections,

@@ -7,7 +7,7 @@
 // a posted verdict; no new findings in ping-pong. The mechanical halves — "one
 // reply per message" and the exchange cap — are enforced here in SQLite; the
 // judgment halves are prompt-side, restated in every wake message.
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, watch, writeFileSync, type FSWatcher } from "node:fs";
 import { join } from "node:path";
 import type Database from "better-sqlite3";
 import type { GitHubAdapter } from "./github.js";
@@ -49,6 +49,12 @@ CREATE TABLE IF NOT EXISTS pingpong_handled (
   thread_id INTEGER NOT NULL,
   pr INTEGER NOT NULL,
   handled_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS pingpong_decisions (
+  comment_id INTEGER PRIMARY KEY,
+  reply_posted INTEGER NOT NULL DEFAULT 0,
+  thread_resolved INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL
 );
 `;
 
@@ -93,6 +99,27 @@ export class PingPongLedger {
       .prepare("INSERT OR IGNORE INTO pingpong_handled (comment_id, thread_id, pr, handled_at) VALUES (?, ?, ?, ?)")
       .run(event.comment_id, threadIdOf(event), event.pr, this.ts());
     return info.changes === 1;
+  }
+
+  hasClaim(pr: number, threadId: number, commentId: number): boolean {
+    return this.db
+      .prepare("SELECT 1 FROM pingpong_handled WHERE comment_id = ? AND thread_id = ? AND pr = ?")
+      .get(commentId, threadId, pr) !== undefined;
+  }
+
+  decisionProgress(commentId: number): { reply_posted: boolean; thread_resolved: boolean } {
+    const row = this.db
+      .prepare("SELECT reply_posted, thread_resolved FROM pingpong_decisions WHERE comment_id = ?")
+      .get(commentId) as { reply_posted: number; thread_resolved: number } | undefined;
+    return { reply_posted: row?.reply_posted === 1, thread_resolved: row?.thread_resolved === 1 };
+  }
+
+  markDecisionStep(commentId: number, step: "reply_posted" | "thread_resolved"): void {
+    this.db.prepare(
+      `INSERT INTO pingpong_decisions (comment_id, reply_posted, thread_resolved, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(comment_id) DO UPDATE SET ${step} = 1, updated_at = excluded.updated_at`,
+    ).run(commentId, step === "reply_posted" ? 1 : 0, step === "thread_resolved" ? 1 : 0, this.ts());
   }
 
   /** Whether a reply may be posted in this thread, and whether it is the last. */
@@ -152,8 +179,13 @@ export function buildWakeMessage(
     lines.push(
       "",
       `The ${MAX_EXCHANGES_PER_FINDING}-exchange cap for this finding is reached. **Do not reply again.**`,
-      "Mark the finding `conceded` or `held` in the ledger and stop; a re-trigger or",
-      "staleness round is the only way this finding moves.",
+      "Inspect the current code and rationale anyway. Write the structured response file",
+      `\`verdict/pr-${event.pr}-thread-${threadIdOf(event)}-comment-${event.comment_id}.json\` with`,
+      `{"pr":${event.pr},"thread_id":${threadIdOf(event)},"comment_id":${event.comment_id},` +
+        '"resolution":"resolve|keep_open","reply":"","reason":"why","human_requested":false}.',
+      "The daemon may resolve a satisfied thread, but it will not post a fourth reply.",
+      "Mark the finding `conceded` or `held` in the ledger; only an explicit",
+      "review re-request can start another round.",
     );
   } else {
     lines.push(
@@ -165,7 +197,16 @@ export function buildWakeMessage(
       '  label (or re-request the `review` team) when ready").',
       "- **Never change a posted verdict** — only a round can.",
       "- **No new findings**: record new observations in the ledger as `deferred`.",
-      "- If they ask for a human, write the wake-response file with `human_requested: true`",
+      "- Decide whether the finding is now satisfied: inspect the current code and",
+      "  accept a sound author rationale. Never treat either as satisfied without checking.",
+      `- Write exactly one response file at \`verdict/pr-${event.pr}-thread-${threadIdOf(event)}-comment-${event.comment_id}.json\``,
+      "  atomically, with this shape:",
+      `  {\"pr\":${event.pr},\"thread_id\":${threadIdOf(event)},\"comment_id\":${event.comment_id},` +
+        '"resolution":"resolve|keep_open","reply":"brief reply","reason":"why",' +
+        '"human_requested":false}.',
+      "  Use `resolve` only when the code addresses the finding or the rationale is satisfactory.",
+      "  The daemon posts the reply and, for `resolve`, resolves this bot-owned thread.",
+      "- If they ask for a human, set `human_requested: true` in that response file",
       "  and tell them the owner will be requested.",
     );
     if (discipline.final) {
@@ -225,7 +266,148 @@ export async function postReply(
   return { posted: true, result, exchanges, ...(registered !== undefined ? { registered } : {}) };
 }
 
-// ---- the human_requested wake response -----------------------------------
+// ---- structured thread decisions -----------------------------------------
+
+export const THREAD_DECISION_RE = /^pr-(\d+)-thread-(\d+)-comment-(\d+)\.json$/;
+
+export interface ThreadDecision {
+  pr: number;
+  thread_id: number;
+  comment_id: number;
+  resolution: "resolve" | "keep_open";
+  reply: string;
+  reason?: string;
+  human_requested?: boolean;
+}
+
+export function validateThreadDecision(raw: unknown): { ok: true; value: ThreadDecision } | { ok: false; error: string } {
+  if (typeof raw !== "object" || raw === null) return { ok: false, error: "not an object" };
+  const v = raw as Record<string, unknown>;
+  for (const key of ["pr", "thread_id", "comment_id"] as const) {
+    if (typeof v[key] === "string" && /^\d+$/.test(v[key])) v[key] = Number(v[key]);
+    if (!Number.isInteger(v[key])) return { ok: false, error: `${key} must be an integer` };
+  }
+  if (v.resolution !== "resolve" && v.resolution !== "keep_open") return { ok: false, error: "bad resolution" };
+  if (typeof v.reply !== "string") return { ok: false, error: "reply must be a string" };
+  if (v.reason !== undefined && typeof v.reason !== "string") return { ok: false, error: "reason must be a string" };
+  if (v.human_requested !== undefined && typeof v.human_requested !== "boolean") return { ok: false, error: "human_requested must be boolean" };
+  return { ok: true, value: v as unknown as ThreadDecision };
+}
+
+export interface ThreadDecisionDeps extends ReplyDeps {
+  adapter: Pick<GitHubAdapter, "createReviewCommentReply" | "resolveOwnReviewThread" | "requestEscalationReview">;
+  verdictDir: string;
+  onHumanRequested?: (decision: ThreadDecision) => void | Promise<void>;
+  now?: () => Date;
+  log?: (message: string, extra?: unknown) => void;
+}
+
+/** Reliable session→daemon handoff for ping-pong judgments. Session output is
+ * treated as untrusted: ids must match a claimed author message, and the
+ * adapter independently verifies bot ownership before resolving a thread. */
+export class ThreadDecisionWatcher {
+  private watcher: FSWatcher | null = null;
+  private readonly inFlight = new Set<string>();
+  private readonly processedDir: string;
+
+  constructor(private readonly deps: ThreadDecisionDeps) {
+    this.processedDir = join(deps.verdictDir, "processed");
+  }
+
+  start(): void {
+    mkdirSync(this.deps.verdictDir, { recursive: true });
+    void this.sweep();
+    this.watcher = watch(this.deps.verdictDir, (_event, filename) => {
+      const name = filename ? String(filename) : "";
+      if (THREAD_DECISION_RE.test(name)) void this.handleFile(name);
+    });
+  }
+
+  stop(): void {
+    this.watcher?.close();
+    this.watcher = null;
+  }
+
+  async sweep(): Promise<string[]> {
+    if (!existsSync(this.deps.verdictDir)) return [];
+    const done: string[] = [];
+    for (const name of readdirSync(this.deps.verdictDir).sort()) {
+      if (THREAD_DECISION_RE.test(name) && await this.handleFile(name)) done.push(name);
+    }
+    return done;
+  }
+
+  private archive(name: string): void {
+    mkdirSync(this.processedDir, { recursive: true });
+    const ts = (this.deps.now ?? (() => new Date()))().toISOString().replace(/[:.]/g, "-");
+    try {
+      renameSync(join(this.deps.verdictDir, name), join(this.processedDir, `${ts}-${name}`));
+    } catch (err) {
+      this.deps.log?.(`pingpong: could not archive ${name}`, err);
+    }
+  }
+
+  async handleFile(name: string): Promise<boolean> {
+    const match = THREAD_DECISION_RE.exec(name);
+    if (!match || this.inFlight.has(name)) return false;
+    this.inFlight.add(name);
+    try {
+      const path = join(this.deps.verdictDir, name);
+      if (!existsSync(path)) return false;
+      let parsed: ReturnType<typeof validateThreadDecision>;
+      try {
+        parsed = validateThreadDecision(JSON.parse(readFileSync(path, "utf8")));
+      } catch (err) {
+        parsed = { ok: false, error: `unparseable: ${String(err)}` };
+      }
+      if (!parsed.ok) {
+        this.deps.store.logEvent("pingpong_decision_malformed", Number(match[1]), { file: name, error: parsed.error });
+        this.archive(name);
+        return true;
+      }
+      const d = parsed.value;
+      if (d.pr !== Number(match[1]) || d.thread_id !== Number(match[2]) || d.comment_id !== Number(match[3]) ||
+          !this.deps.ledger.hasClaim(d.pr, d.thread_id, d.comment_id)) {
+        this.deps.store.logEvent("pingpong_decision_rejected", d.pr, { file: name, reason: "ids do not match a claimed author message" });
+        this.archive(name);
+        return true;
+      }
+
+      const progress = this.deps.ledger.decisionProgress(d.comment_id);
+      if (!progress.reply_posted) {
+        if (d.reply.trim()) await postReply(this.deps, { pr: d.pr, thread_id: d.thread_id, body: d.reply.trim() });
+        this.deps.ledger.markDecisionStep(d.comment_id, "reply_posted");
+      }
+      if (d.resolution === "resolve" && !progress.thread_resolved) {
+        const resolution = await this.deps.adapter.resolveOwnReviewThread(d.pr, d.thread_id);
+        this.deps.ledger.markDecisionStep(d.comment_id, "thread_resolved");
+        this.deps.store.logEvent("pingpong_thread_resolved", d.pr, {
+          thread_id: d.thread_id,
+          comment_id: d.comment_id,
+          reason: d.reason ?? null,
+          skipped: resolution.skipped,
+        });
+      }
+      if (d.human_requested) await this.deps.onHumanRequested?.(d);
+      this.deps.store.logEvent("pingpong_decision_applied", d.pr, {
+        thread_id: d.thread_id,
+        comment_id: d.comment_id,
+        resolution: d.resolution,
+        human_requested: d.human_requested ?? false,
+      });
+      this.archive(name);
+      return true;
+    } catch (err) {
+      this.deps.log?.(`pingpong: ${name} failed`, err);
+      this.deps.store.logEvent("pingpong_decision_failed", Number(match[1]), { file: name, error: String(err) });
+      return false;
+    } finally {
+      this.inFlight.delete(name);
+    }
+  }
+}
+
+// ---- legacy human_requested wake response --------------------------------
 
 export interface WakeResponse {
   pr: number;

@@ -21,16 +21,16 @@ function dryGateResult(): GateResult {
   return { executed: false };
 }
 
-/** Offline staleness-wake simulation: an isolated in-memory store + a fake
- * adapter whose staleness scan returns the fixture; the real reconcile and
- * dispatch code paths run and must issue a staleness round order. */
+/** Offline push-with-old-approval simulation: the real reconcile and dispatch
+ * paths run against a moved head and must stay quiet without an explicit
+ * label/team review re-request. */
 function stalenessSimulation(cfg: Config) {
   const store = new StateStore(":memory:");
   const issued: RoundOrder[] = [];
   const fixture = { number: 999901, head_sha: "fixture-head-sha", approved_sha: "fixture-approved-sha" };
   const prRef: PrRef = {
     number: fixture.number,
-    title: "staleness fixture",
+    title: "pushed approved PR fixture",
     author: "someone",
     head_sha: fixture.head_sha,
     updated_at: new Date().toISOString(),
@@ -92,7 +92,7 @@ function pingPongSimulation(cfg: Config, root: string) {
         botLogin: cfg.github.bot_login,
         triggerLabel: cfg.github.trigger_label,
         reviewTeam: cfg.github.review_team,
-        isBotComment: (id) => store.isBotComment(id),
+        botCommentPr: (id) => store.botCommentPr(id),
       });
       await applyInterpretation(
         {

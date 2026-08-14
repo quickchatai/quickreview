@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
 import { StateStore } from "../src/state.js";
 import {
@@ -18,11 +18,11 @@ const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "config.toml
 const BOT = cfg.github.bot_login; // example-review[bot]
 const SECRET = "it's a secret to everybody";
 
-const deps = (isBotComment: (id: number) => boolean = () => false) => ({
+const deps = (botCommentPr: (id: number) => number | undefined = () => undefined) => ({
   botLogin: BOT,
   triggerLabel: cfg.github.trigger_label,
   reviewTeam: cfg.github.review_team,
-  isBotComment,
+  botCommentPr,
 });
 
 // ---- fixture payloads (shapes per findings §3.1) -----------------
@@ -225,28 +225,27 @@ describe("interpretEvent — pull_request", () => {
 });
 
 describe("interpretEvent — review comments", () => {
-  it("detects a human reply inside a bot thread via the registry", () => {
-    const i = interpretEvent("pull_request_review_comment", "created", reviewCommentPayload(), deps((id) => id === 800001));
+  it("detects a human reply inside this PR's bot thread via the registry", () => {
+    const i = interpretEvent("pull_request_review_comment", "created", reviewCommentPayload(), deps((id) => id === 800001 ? 4242 : undefined));
     expect(i).toMatchObject({ kind: "author_reply", pr: 4242, in_reply_to_id: 800001, via: "thread_reply", author: "alice" });
   });
 
-  it("ignores a reply in someone else's thread", () => {
-    const i = interpretEvent("pull_request_review_comment", "created", reviewCommentPayload(), deps(() => false));
-    expect(i.kind).toBe("ignored");
+  it("ignores another identity's thread and a bot thread registered to another PR", () => {
+    expect(interpretEvent("pull_request_review_comment", "created", reviewCommentPayload(), deps(() => undefined)).kind).toBe("ignored");
+    expect(interpretEvent("pull_request_review_comment", "created", reviewCommentPayload(), deps(() => 99)).kind).toBe("ignored");
   });
 
-  it("detects an @mention even outside a bot thread", () => {
+  it("ignores an @mention outside a bot-owned thread", () => {
     const payload = reviewCommentPayload({ comment: { in_reply_to_id: undefined, body: "hey @example-review what about nulls?" } });
-    expect(interpretEvent("pull_request_review_comment", "created", payload, deps(() => false))).toMatchObject({
-      kind: "author_reply",
-      via: "mention",
-      in_reply_to_id: null,
+    expect(interpretEvent("pull_request_review_comment", "created", payload, deps())).toMatchObject({
+      kind: "ignored",
+      reason: "not a reply in this PR's bot thread",
     });
   });
 
   it("registers the bot's own comments instead of replying to itself", () => {
     const payload = reviewCommentPayload({ comment: { id: 800002, user: { login: BOT, type: "Bot" } }, sender: { login: BOT, type: "Bot" } });
-    expect(interpretEvent("pull_request_review_comment", "created", payload, deps(() => true))).toMatchObject({
+    expect(interpretEvent("pull_request_review_comment", "created", payload, deps(() => 4242))).toMatchObject({
       kind: "bot_comment",
       comment_id: 800002,
       scope: "review_comment",
@@ -255,7 +254,7 @@ describe("interpretEvent — review comments", () => {
 
   it("ignores other bots", () => {
     const payload = reviewCommentPayload({ comment: { user: { login: "coderabbit[bot]", type: "Bot" } } });
-    expect(interpretEvent("pull_request_review_comment", "created", payload, deps(() => true))).toMatchObject({
+    expect(interpretEvent("pull_request_review_comment", "created", payload, deps(() => 4242))).toMatchObject({
       kind: "ignored",
       reason: "other-bot comment",
     });
@@ -263,14 +262,12 @@ describe("interpretEvent — review comments", () => {
 });
 
 describe("interpretEvent — issue comments", () => {
-  it("only handles comments on PRs", () => {
+  it("ignores top-level comments on issues and PRs", () => {
     expect(interpretEvent("issue_comment", "created", issueCommentPayload({ isPr: false }), deps()).kind).toBe("ignored");
     expect(interpretEvent("issue_comment", "created", issueCommentPayload(), deps())).toMatchObject({
-      kind: "author_reply",
+      kind: "ignored",
       pr: 4242,
-      via: "mention",
-      scope: "issue_comment",
-      in_reply_to_id: null,
+      reason: "top-level PR comment is outside bot review threads",
     });
   });
 
@@ -296,6 +293,16 @@ describe("mentionsBot", () => {
 // ---- applyInterpretation → store ----------------------------------------
 
 describe("applyInterpretation", () => {
+  it("refreshes a pushed head without queuing or pumping a review", async () => {
+    const store = new StateStore(":memory:");
+    store.upsertPr({ number: 4242, state: "awaiting_author", head_sha: "old", title: "T", author: "alice", trigger_ts: null, stale_recheck: 0, escalation_worthy: 0, migration_gate: 0 });
+    const touched = vi.fn();
+    await applyInterpretation({ cfg, store, onPrTouched: touched }, interpretEvent("pull_request", "synchronize", synchronizePayload(), deps()));
+    expect(store.getPr(4242)).toMatchObject({ state: "awaiting_author", head_sha: "2222222222" });
+    expect(touched).not.toHaveBeenCalled();
+    store.close();
+  });
+
   it("drives the state machine and the registry", async () => {
     const store = new StateStore(":memory:");
     const replies: number[] = [];
@@ -312,7 +319,7 @@ describe("applyInterpretation", () => {
     await apply(interpretEvent("pull_request_review_comment", "created", reviewCommentPayload({ comment: { id: 800003, user: { login: BOT, type: "Bot" } } }), deps()));
     expect(store.isBotComment(800003)).toBe(true);
 
-    await apply(interpretEvent("pull_request_review_comment", "created", reviewCommentPayload(), deps((id) => id === 800001)));
+    await apply(interpretEvent("pull_request_review_comment", "created", reviewCommentPayload(), deps((id) => id === 800001 ? 4242 : undefined)));
     expect(replies).toEqual([4242]);
     expect(store.getPr(4242)!.state).toBe("queued"); // ping-pong never moves the lifecycle
 

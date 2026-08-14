@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import Database from "better-sqlite3";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -8,6 +8,7 @@ import {
   MAX_EXCHANGES_PER_FINDING,
   PingPongLedger,
   postReply,
+  ThreadDecisionWatcher,
   threadIdOf,
   wakeResponsePath,
   writeWakeResponse,
@@ -157,6 +158,68 @@ describe("postReply", () => {
     expect(fn).not.toHaveBeenCalled();
     expect(out).toEqual({ posted: false, exchanges: 3, reason: "exchange-cap-reached" });
     expect(d.store.logEvent).toHaveBeenCalledWith("pingpong_reply_suppressed", 77, expect.objectContaining({ reason: "exchange-cap-reached" }));
+  });
+});
+
+describe("structured thread decision", () => {
+  let root: string;
+  beforeEach(() => (root = mkdtempSync(join(tmpdir(), "qcr-thread-decision-"))));
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  const harness = () => {
+    const createReviewCommentReply = vi.fn().mockResolvedValue({ executed: true, response: { id: 6001 } });
+    const resolveOwnReviewThread = vi.fn().mockResolvedValue({ skipped: null, result: { executed: true } });
+    const requestEscalationReview = vi.fn().mockResolvedValue({ skipped: null });
+    const store = { registerBotComment: vi.fn(), logEvent: vi.fn() };
+    const watcher = new ThreadDecisionWatcher({
+      adapter: { createReviewCommentReply, resolveOwnReviewThread, requestEscalationReview },
+      store,
+      ledger,
+      verdictDir: root,
+    });
+    return { watcher, createReviewCommentReply, resolveOwnReviewThread, store };
+  };
+
+  it("posts the checked response and resolves the claimed bot thread", async () => {
+    ledger.claimAuthorMessage(event);
+    const h = harness();
+    const name = "pr-77-thread-4000-comment-5001.json";
+    writeFileSync(join(root, name), JSON.stringify({
+      pr: 77, thread_id: 4000, comment_id: 5001, resolution: "resolve",
+      reply: "Agreed — the guard covers this case.", reason: "verified helpers.py guard",
+    }));
+
+    expect(await h.watcher.handleFile(name)).toBe(true);
+    expect(h.createReviewCommentReply).toHaveBeenCalledWith(77, 4000, "Agreed — the guard covers this case.");
+    expect(h.resolveOwnReviewThread).toHaveBeenCalledWith(77, 4000);
+    expect(h.store.logEvent).toHaveBeenCalledWith("pingpong_thread_resolved", 77, expect.objectContaining({ thread_id: 4000 }));
+  });
+
+  it("does not duplicate the reply when thread resolution retries", async () => {
+    ledger.claimAuthorMessage(event);
+    const h = harness();
+    h.resolveOwnReviewThread.mockRejectedValueOnce(new Error("graphql timeout")).mockResolvedValueOnce({ skipped: null });
+    const name = "pr-77-thread-4000-comment-5001.json";
+    writeFileSync(join(root, name), JSON.stringify({
+      pr: 77, thread_id: 4000, comment_id: 5001, resolution: "resolve", reply: "That addresses it.",
+    }));
+
+    expect(await h.watcher.handleFile(name)).toBe(false);
+    expect(await h.watcher.handleFile(name)).toBe(true);
+    expect(h.createReviewCommentReply).toHaveBeenCalledTimes(1);
+    expect(h.resolveOwnReviewThread).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a session file that does not match a claimed author message", async () => {
+    const h = harness();
+    const name = "pr-77-thread-4000-comment-9999.json";
+    writeFileSync(join(root, name), JSON.stringify({
+      pr: 77, thread_id: 4000, comment_id: 9999, resolution: "resolve", reply: "done",
+    }));
+    expect(await h.watcher.handleFile(name)).toBe(true);
+    expect(h.createReviewCommentReply).not.toHaveBeenCalled();
+    expect(h.resolveOwnReviewThread).not.toHaveBeenCalled();
+    expect(h.store.logEvent).toHaveBeenCalledWith("pingpong_decision_rejected", 77, expect.any(Object));
   });
 });
 

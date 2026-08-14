@@ -128,6 +128,13 @@ export class GitHubAdapter {
   /** The mutation executor wired into the gate when dry_run is off. */
   executeMutation = async (intent: MutationIntent): Promise<unknown> => {
     if (intent.method === "git") throw new Error("git pushes are executed by the caller, not the REST executor");
+    if (intent.path === "/graphql") {
+      const body = intent.body as { query?: unknown; variables?: unknown } | undefined;
+      if (typeof body?.query !== "string" || typeof body.variables !== "object" || body.variables === null) {
+        throw new Error(`invalid GraphQL mutation intent for ${intent.kind}`);
+      }
+      return this.graphql(body.query, body.variables as Record<string, unknown>);
+    }
     return this.request(intent.method, intent.path, intent.body);
   };
 
@@ -397,6 +404,66 @@ export class GitHubAdapter {
       note: `reply in thread ${commentId} on #${n}`,
       pr: n,
     });
+  }
+
+  /** Resolve one inline review thread, but only after a read verifies that the
+   * numeric root comment belongs to this PR and was authored by this app.
+   * There is intentionally no generic resolve-thread mutation surface. */
+  async resolveOwnReviewThread(
+    n: number,
+    rootCommentId: number,
+  ): Promise<{ skipped: "already-resolved" | null; result?: GateResult }> {
+    const query = `query ($owner: String!, $repo: String!, $number: Int!, $after: String) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $number) {
+          reviewThreads(first: 100, after: $after) {
+            nodes { id isResolved comments(first: 1) { nodes { databaseId author { login } } } }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }
+    }`;
+    type ThreadPage = {
+      repository?: { pullRequest?: { reviewThreads?: {
+        nodes: Array<{ id: string; isResolved: boolean; comments: { nodes: Array<{ databaseId: number; author?: { login?: string } }> } }>;
+        pageInfo: { hasNextPage: boolean; endCursor: string | null };
+      } } };
+    };
+    let after: string | null = null;
+    let found: { id: string; isResolved: boolean; author: string } | undefined;
+    do {
+      const data: ThreadPage = await this.graphql(query, { owner: this.owner, repo: this.repo, number: n, after });
+      const threads = data.repository?.pullRequest?.reviewThreads;
+      if (!threads) throw new Error(`review threads unavailable for #${n}`);
+      for (const thread of threads.nodes) {
+        const root = thread.comments.nodes[0];
+        if (root?.databaseId === rootCommentId) {
+          found = { id: thread.id, isResolved: thread.isResolved, author: root.author?.login ?? "" };
+          break;
+        }
+      }
+      if (found || !threads.pageInfo.hasNextPage) break;
+      after = threads.pageInfo.endCursor;
+    } while (after);
+
+    if (!found) throw new Error(`comment ${rootCommentId} is not a review-thread root on #${n}`);
+    if (found.author !== this.cfg.github.bot_login) {
+      throw new Error(`refusing to resolve thread ${rootCommentId} on #${n}: root author is ${found.author || "unknown"}`);
+    }
+    if (found.isResolved) return { skipped: "already-resolved" };
+
+    const mutation = `mutation ($threadId: ID!) {
+      resolveReviewThread(input: {threadId: $threadId}) { thread { id isResolved } }
+    }`;
+    const result = await this.gate.execute({
+      kind: "resolve_own_review_thread",
+      method: "POST",
+      path: "/graphql",
+      body: { query: mutation, variables: { threadId: found.id } },
+      note: `resolve own review thread ${rootCommentId} on #${n}`,
+      pr: n,
+    });
+    return { skipped: null, result };
   }
 
   async createIssue(title: string, body: string, labels: string[]): Promise<GateResult> {

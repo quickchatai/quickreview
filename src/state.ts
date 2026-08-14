@@ -208,8 +208,13 @@ export class StateStore {
       .run(commentId, pr, kind, this.ts());
   }
 
+  botCommentPr(commentId: number): number | undefined {
+    const row = this.db.prepare("SELECT pr FROM bot_comments WHERE comment_id = ?").get(commentId) as { pr: number } | undefined;
+    return row?.pr;
+  }
+
   isBotComment(commentId: number): boolean {
-    return this.db.prepare("SELECT 1 FROM bot_comments WHERE comment_id = ?").get(commentId) !== undefined;
+    return this.botCommentPr(commentId) !== undefined;
   }
 
   // ---- webhook delivery dedupe ------------------------------------------

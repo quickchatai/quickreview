@@ -28,7 +28,7 @@ const TABLE: Array<[SmEvent, PrLifecycleState[]]> = [
     ["awaiting_human", "awaiting_human", "awaiting_human", "awaiting_human", "awaiting_human", "closed"],
   ],
   [{ type: "author_reply" }, ["tracked", "queued", "reviewing", "awaiting_author", "awaiting_human", "closed"]],
-  [{ type: "synchronize" }, ["tracked", "queued", "reviewing", "queued", "awaiting_human", "closed"]],
+  [{ type: "synchronize" }, ["tracked", "queued", "reviewing", "awaiting_author", "awaiting_human", "closed"]],
   [
     { type: "escalation_detected" },
     ["awaiting_human", "queued", "reviewing", "awaiting_human", "awaiting_human", "closed"],
@@ -68,8 +68,8 @@ describe("invariants", () => {
     }
   });
 
-  it("a push only re-queues a PR that owes the author work", () => {
-    expect(transition("awaiting_author", { type: "synchronize" })).toBe("queued");
+  it("a push never queues a review, even when changes were previously requested", () => {
+    expect(transition("awaiting_author", { type: "synchronize" })).toBe("awaiting_author");
     expect(transition("tracked", { type: "synchronize" })).toBe("tracked");
   });
 });
