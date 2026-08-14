@@ -374,8 +374,7 @@ describe("runBackfill", () => {
     expect(graphql).toHaveLength(1);
     expect((graphql[0]!.body as { query: string }).query).toContain("timelineItems");
     expect((graphql[0]!.body as { query: string }).query).not.toContain("mutation");
-    // GraphQL Bot.login has no "[bot]" suffix — the importer strips it for the reviews author filter.
-    expect((graphql[0]!.body as { variables: { author: string } }).variables.author).toBe("example-review");
+    expect((graphql[0]!.body as { variables: { author: string } }).variables.author).toBe("example-review[bot]");
     expect(readdirSync(dryrunDir)).toEqual([]);
     s.close();
   });

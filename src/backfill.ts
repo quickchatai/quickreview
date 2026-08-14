@@ -289,9 +289,7 @@ export async function runBackfill(
   };
 
   const histories = await mapPool(prs, cfg.backfill.concurrency, async (n) => {
-    // GraphQL Bot.login carries no "[bot]" suffix (REST does) — the reviews
-    // author filter must use the bare slug or it matches nothing.
-    const history = await source.prReviewHistory(n, cfg.backfill.bot_login.replace(/\[bot\]$/, ""));
+    const history = await source.prReviewHistory(n, cfg.backfill.bot_login);
     return { n, history };
   });
 
