@@ -179,6 +179,26 @@ describe("CompanionLifecycle state machine", () => {
     expect(calls[1]).toEqual(["start", "qcr-companion"]);
   });
 
+  it("recreates an unstartable container (stale bind mounts after a reboot)", async () => {
+    // Live incident 2026-08-14: the ssh-agent socket path is random per boot;
+    // after a crash `docker start` fails forever on the recorded mount.
+    const { lc, calls } = lifecycle([
+      inspect(false),
+      (argv) =>
+        argv[0] === "start"
+          ? { ok: false, stdout: "", stderr: "error mounting /home/user/.ssh/agent/s.dead to rootfs: not a directory", code: 1 }
+          : undefined,
+      okFor("rm"),
+      okFor("image"),
+      okFor("run"),
+    ]);
+    const progress: string[] = [];
+    expect(await lc.ensureUp((l) => progress.push(l))).toBe("recreated");
+    expect(calls.map((c) => c[0])).toEqual(["inspect", "start", "rm", "image", "run"]);
+    expect(calls.find((c) => c[0] === "rm")).toEqual(["rm", "-f", "qcr-companion"]);
+    expect(progress.some((l) => l.includes("recreating"))).toBe(true);
+  });
+
   it("runs a fresh container when none exists (image already built)", async () => {
     const { lc, calls } = lifecycle([inspect("absent"), okFor("image"), okFor("run")]);
     expect(await lc.ensureUp()).toBe("created");
