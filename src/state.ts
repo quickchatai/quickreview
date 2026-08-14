@@ -184,6 +184,13 @@ export class StateStore {
       .run(verdict, spendUsd, duration, this.ts(), summary, id);
   }
 
+  /** A dispatch attempt creates its round row before handing the order to the
+   * session hook. If that handoff fails, remove the provisional row so it
+   * cannot consume capacity or inflate the round number on retry. */
+  discardRunningRound(id: number): void {
+    this.db.prepare("DELETE FROM rounds WHERE id = ? AND status = 'running'").run(id);
+  }
+
   markRoundOverdue(id: number): void {
     this.db.prepare("UPDATE rounds SET status = 'overdue' WHERE id = ?").run(id);
   }

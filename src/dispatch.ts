@@ -126,9 +126,29 @@ export function buildRoundOrder(args: {
   };
 }
 
-/** One dispatch pump: drain the queue up to the concurrency cap. Returns the
- * orders actually dispatched, in dispatch order. */
+// A reconcile, webhook and periodic tick may all ask for a pump at once. The
+// store is the daemon-instance identity; joiners wait for the active pump and
+// return no duplicate orders. This closes the race where two pumps both saw a
+// queued PR/capacity slot and created two rounds for it.
+const activePumps = new WeakMap<StateStore, Promise<RoundOrder[]>>();
+
+/** One serialized dispatch pump: drain the queue up to the concurrency cap. */
 export async function dispatchOnce(deps: DispatchDeps): Promise<RoundOrder[]> {
+  const active = activePumps.get(deps.store);
+  if (active) {
+    await active;
+    return [];
+  }
+  const pump = dispatchUnlocked(deps);
+  activePumps.set(deps.store, pump);
+  try {
+    return await pump;
+  } finally {
+    if (activePumps.get(deps.store) === pump) activePumps.delete(deps.store);
+  }
+}
+
+async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
   const { store, cfg } = deps;
   const now = deps.now ?? (() => new Date());
   const render = deps.renderPrompt ?? ((o: RoundOrder) => JSON.stringify(o, null, 2));
@@ -141,6 +161,7 @@ export async function dispatchOnce(deps: DispatchDeps): Promise<RoundOrder[]> {
 
   const dispatched: RoundOrder[] = [];
   for (const row of queuedInOrder(store).slice(0, slots)) {
+    let provisionalRoundId: number | undefined;
     try {
       const priorRounds = (
         store.db.prepare("SELECT COUNT(*) AS c FROM rounds WHERE pr = ?").get(row.number) as { c: number }
@@ -154,6 +175,7 @@ export async function dispatchOnce(deps: DispatchDeps): Promise<RoundOrder[]> {
       const lenses = [...selectLenses(files), "pass-validate"];
 
       const roundId = store.startRound(row.number, roundType, lenses, cfg.daemon.round_deadline_min);
+      provisionalRoundId = roundId;
       const roundNo = (store.db.prepare("SELECT round_no FROM rounds WHERE id = ?").get(roundId) as { round_no: number })
         .round_no;
 
@@ -168,6 +190,11 @@ export async function dispatchOnce(deps: DispatchDeps): Promise<RoundOrder[]> {
         issuedAt: now().toISOString(),
       });
 
+      // The round is provisional until the worktree/session/prompt handoff
+      // completes. Publishing reviewing/running state earlier created orphan
+      // rounds whenever worktree preparation failed.
+      await deps.hooks.dispatchRound(order, render(order));
+
       setPrGates(store, row.number, worthy, gate);
       applyEvent(store, row.number, { type: "dispatched" }, {}, { botLogin: cfg.github.bot_login, now });
       store.logEvent("round_dispatched", row.number, {
@@ -179,13 +206,14 @@ export async function dispatchOnce(deps: DispatchDeps): Promise<RoundOrder[]> {
         migration_gate: order.migration_gate,
         triggers_consumed: consumed,
       });
-
-      await deps.hooks.dispatchRound(order, render(order));
+      provisionalRoundId = undefined;
       dispatched.push(order);
     } catch (err) {
-      // One bad PR must never stall the pump.
+      // One bad PR must never stall the pump. A failed session handoff leaves
+      // the PR queued for retry and consumes no round-capacity slot.
+      if (provisionalRoundId !== undefined) store.discardRunningRound(provisionalRoundId);
       log(`dispatch: #${row.number} failed`, err);
-      store.logEvent("dispatch_failed", row.number, { error: String(err) });
+      store.logEvent("dispatch_failed", row.number, { round_id: provisionalRoundId ?? null, error: String(err) });
     }
   }
   return dispatched;

@@ -252,6 +252,43 @@ describe("dispatchOnce", () => {
     expect(adapter.calls).toHaveLength(0);
   });
 
+  it("serializes concurrent pumps so one PR gets one round and the cap holds", async () => {
+    const cfg = { ...baseCfg, daemon: { ...baseCfg.daemon, max_concurrent_rounds: 1 } };
+    queue(58, "2026-08-13T09:00:00Z");
+    queue(59, "2026-08-13T09:01:00Z");
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const { hooks, orders } = recordingHooks();
+    const original = hooks.dispatchRound;
+    hooks.dispatchRound = async (order, prompt) => {
+      await blocked;
+      await original(order, prompt);
+    };
+
+    const first = dispatchOnce({ cfg, store, adapter, hooks });
+    const joined = dispatchOnce({ cfg, store, adapter, hooks });
+    release();
+    expect((await first).map((o) => o.pr)).toEqual([58]);
+    expect(await joined).toEqual([]);
+    expect(orders.map((o) => o.order.pr)).toEqual([58]);
+    expect(store.runningRounds()).toHaveLength(1);
+    expect(store.getPr(59)!.state).toBe("queued");
+    expect(adapter.calls.filter((c) => c.fn === "removeLabel" && c.pr === 58)).toHaveLength(1);
+  });
+
+  it("discards a provisional round and leaves the PR queued when session dispatch fails", async () => {
+    queue(60, "2026-08-13T09:00:00Z");
+    const hooks = recordingHooks().hooks;
+    hooks.dispatchRound = async () => { throw new Error("worktree index.lock"); };
+
+    expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toEqual([]);
+    expect(store.getPr(60)!.state).toBe("queued");
+    expect(store.runningRounds()).toEqual([]);
+    expect(store.db.prepare("SELECT COUNT(*) AS c FROM rounds WHERE pr = 60").get()).toMatchObject({ c: 0 });
+    const failure = store.db.prepare("SELECT payload FROM events WHERE kind = 'dispatch_failed' AND pr = 60").get() as { payload: string };
+    expect(JSON.parse(failure.payload)).toMatchObject({ round_id: 1, error: expect.stringContaining("index.lock") });
+  });
+
   it("one failing PR does not stall the pump", async () => {
     queue(61, "2026-08-13T09:00:00Z");
     queue(62, "2026-08-13T09:30:00Z");
