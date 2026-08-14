@@ -25,9 +25,6 @@ import { FG, RESET, fmtAge, stateColor, verdictColor } from "./theme.js";
 
 // ---- chart primitives -------------------------------------------------------
 
-/** Widest a card may render — the single column stays a legible measure. */
-const READ_WIDTH = 92;
-
 const SPARK = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"] as const;
 
 /** Fixed card accents — five hues, assigned per card, never cycled. */
@@ -86,13 +83,13 @@ export function hbar(label: string, value: number, max: number, width: number, v
   const lw = labelWidth(w);
   const vt = valueText ?? String(value);
   const vw = Math.min(displayWidth(vt), Math.max(0, w - lw - 4));
-  const avail = w - lw - 2 - vw; // the two single-space gutters
+  const avail = w - lw - 3 - vw; // gutters + one cell of right margin
   if (avail < 3) return fit(`${label} ${vt}`, w);
-  const barW = Math.max(1, Math.min(Math.round(w * 0.6), 28, avail));
-  const filled = max > 0 ? Math.min(barW, Math.max(value > 0 ? 1 : 0, Math.round((value / max) * barW))) : 0;
-  const track = barW - filled;
-  const bar = `${filled > 0 ? `${color ?? ""}${"█".repeat(filled)}${color ? RESET : ""}` : ""}${track > 0 ? dim("░".repeat(track)) : ""}`;
-  return `${fit(label, lw)} ${bar} ${" ".repeat(Math.max(0, avail - barW))}${truncate(vt, vw)}`;
+  // The bar scales across the whole row and the value rides at its end —
+  // no cap, no track run-out to the far margin (the owner, 2026-08-14).
+  const filled = max > 0 ? Math.min(avail, Math.max(value > 0 ? 1 : 0, Math.round((value / max) * avail))) : 0;
+  const bar = filled > 0 ? `${color ?? ""}${"█".repeat(filled)}${color ? RESET : ""}` : dim("·");
+  return `${fit(label, lw)} ${bar} ${truncate(vt, vw)}`;
 }
 
 /** `median 5m · p90 16m · n=56` — the distribution's stats, for a card title. */
@@ -108,21 +105,36 @@ export function distStats(dist: Dist, fmt: (v: number) => string = String): stri
  * Stats live in the card title — see `distStats`.
  */
 export function histogramLines(dist: Dist, width: number, color: string = FG.accent): string[] {
-  if (dist.n === 0 || dist.histogram.length === 0) return [dim("no data yet")];
+  if (dist.n === 0 || dist.histogram.length === 0) return []; // the title already reads "no data yet"
   const w = Math.max(4, Math.floor(width));
   const buckets = dist.histogram;
-  const slot = Math.max(2, Math.min(4, Math.floor((w + 1) / buckets.length)));
+  // Slots widen with the terminal (up to 12 cells) and the bars get real
+  // height — a small column chart, not a row of nubs (the owner, 2026-08-14).
+  const slot = Math.max(2, Math.min(12, Math.floor((w + 1) / buckets.length)));
   const cell = slot - 1;
+  const height = 4;
   const max = buckets.reduce((m, b) => Math.max(m, b.count), 0);
-  const chart = buckets
-    .map((b) => {
-      if (b.count <= 0) return `${dim("·")}${" ".repeat(cell - 1)}`;
-      const level = max > 0 ? Math.min(SPARK.length, Math.max(1, Math.ceil((b.count / max) * SPARK.length))) : 1;
-      return `${color}${SPARK[level - 1]!.repeat(cell)}${RESET}`;
-    })
-    .join(" ");
+  const levels = buckets.map((b) =>
+    b.count <= 0 || max <= 0 ? 0 : Math.max(1, Math.ceil((b.count / max) * height * 8)),
+  );
+  const rows: string[] = [];
+  for (let r = height - 1; r >= 0; r--) {
+    const row = buckets
+      .map((b, i) => {
+        const rem = levels[i]! - r * 8;
+        if (rem >= 8) return `${color}${"█".repeat(cell)}${RESET}`;
+        if (rem > 0) return `${color}${SPARK[rem - 1]!.repeat(cell)}${RESET}`;
+        if (r === 0) return `${dim("·")}${" ".repeat(cell - 1)}`;
+        return " ".repeat(cell);
+      })
+      .join(" ");
+    rows.push(truncate(row, w));
+  }
+  const counts = buckets.map((b) => fit(b.count > 0 ? String(b.count) : "", slot)).join("").trimEnd();
   const axis = buckets.map((b) => fit(b.label.replace(/^</, ""), slot)).join("").trimEnd();
-  return [truncate(chart, w), truncate(dim(axis), w)];
+  if (counts) rows.push(truncate(dim(counts), w));
+  rows.push(truncate(dim(axis), w));
+  return rows;
 }
 
 /**
@@ -134,19 +146,22 @@ export function columnChart(values: number[], width: number, height: number, col
   const w = Math.max(1, Math.floor(width));
   const h = Math.max(1, Math.floor(height));
   if (values.length === 0) return [];
-  const slot = w >= values.length * 2 ? 2 : 1;
-  const n = Math.min(values.length, Math.max(1, Math.floor(w / slot)));
+  // Columns widen with the terminal — up to 5 cells of bar per value plus a
+  // one-space gap, so a wide pane fills instead of showing thin threads.
+  const slot = Math.max(1, Math.min(6, Math.floor((w + 1) / values.length)));
+  const cell = Math.max(1, slot - 1);
+  const n = Math.min(values.length, Math.max(1, Math.floor((w + 1) / slot)));
   const vals = bucketize(values, n);
   const max = Math.max(...vals, 0);
-  const gap = slot === 2 ? " " : "";
+  const gap = slot > 1 ? " " : "";
   const rows: string[] = [];
   for (let r = 0; r < h; r++) {
     const cells = vals.map((v) => {
       const eighths = max > 0 ? Math.round((v / max) * h * 8) : 0;
       const cellE = eighths - (h - 1 - r) * 8;
-      if (cellE >= 8) return `${color}█${RESET}${gap}`;
-      if (cellE > 0) return `${color}${SPARK[cellE - 1]!}${RESET}${gap}`;
-      return (r === h - 1 ? dim("·") : " ") + gap;
+      if (cellE >= 8) return `${color}${"█".repeat(cell)}${RESET}${gap}`;
+      if (cellE > 0) return `${color}${SPARK[cellE - 1]!.repeat(cell)}${RESET}${gap}`;
+      return (r === h - 1 ? `${dim("·")}${" ".repeat(cell - 1)}` : " ".repeat(cell)) + gap;
     });
     rows.push(truncate(cells.join(""), w));
   }
@@ -273,7 +288,7 @@ export function metricsCards(win: MetricsWindow, daily: DailyRow[], rows = 24): 
         const spend = daily.map((d) => d.spend_usd);
         const days = daily.map((d) => d.day);
         if (chartH > 0) {
-          const slot = w >= days.length * 2 ? 2 : 1;
+          const slot = Math.max(1, Math.min(6, Math.floor((w + 1) / days.length)));
           return [
             dim(`rounds/day · max ${Math.max(...rounds)}`),
             ...columnChart(rounds, w, chartH, ACCENTS.blue),
@@ -390,7 +405,7 @@ export function columnWidths(cols: number): number[] {
  */
 export function packColumns(cards: MetricsCard[], widths: number[], targetRows = 0): string[][] {
   const n = widths.length;
-  const measureW = Math.max(8, Math.min(READ_WIDTH, Math.min(...widths) - 1));
+  const measureW = Math.max(8, Math.min(...widths) - 1);
   const heights = new Array<number>(n).fill(0);
   const assign = new Array<number>(cards.length).fill(0);
   const sized = cards.map((card, i) => ({ i, h: card.body(measureW).length + 1 }));
@@ -407,26 +422,16 @@ export function packColumns(cards: MetricsCard[], widths: number[], targetRows =
   const blocks: string[][][] = widths.map(() => []);
   cards.forEach((card, i) => {
     const target = assign[i]!;
-    // Cap at a readable measure — a lone column on an ultrawide terminal
-    // reads like a document, not a wall (the owner, 2026-08-14).
-    const w = Math.max(8, Math.min(READ_WIDTH, widths[target]! - 1));
+    const w = Math.max(8, widths[target]! - 1);
     const block = [truncate(section(card.title, card.subtitle, card.accent), w)];
     for (const line of card.body(w)) block.push(truncate(line, w));
     blocks[target]!.push(block);
   });
-  // Join with one blank row; on a terminal taller than the content, spread the
-  // slack over the gaps (≤3 extra rows each) instead of stranding it at the
-  // bottom — the cards breathe rather than huddling under the stat strip.
+  // Exactly one blank row between cards — a tight report, no stranded slack.
   return blocks.map((column) => {
-    const content = column.reduce((a, b) => a + b.length, 0);
-    const gaps = Math.max(0, column.length - 1);
-    const slack = gaps > 0 ? Math.max(0, Math.min(gaps * 3, targetRows - content - gaps)) : 0;
     const out: string[] = [];
     column.forEach((block, i) => {
-      if (i > 0) {
-        const extra = Math.floor(slack / gaps) + (i <= slack % gaps ? 1 : 0);
-        for (let k = 0; k < 1 + extra; k++) out.push("");
-      }
+      if (i > 0) out.push("");
       out.push(...block);
     });
     return out;

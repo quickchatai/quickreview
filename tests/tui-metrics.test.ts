@@ -156,21 +156,21 @@ describe("chart primitives", () => {
     expect(sparkline(daily.map((d) => d.rounds), 10)).toHaveLength(4);
   });
 
-  it("hbar is a THIN bar on a dim track, value outside the bar", () => {
+  it("hbar scales across the row with the value riding at the bar's end", () => {
     const bar = hbar("queued", 5, 10, 30);
-    expect(displayWidth(bar)).toBe(30);
+    expect(displayWidth(bar)).toBeLessThanOrEqual(30);
     expect(stripAnsi(bar).startsWith("queued")).toBe(true);
     expect(bar).toContain("█");
-    expect(bar).toContain("░");
-    // the bar never eats more than ~60% of the row, and the value is last
+    expect(bar).not.toContain("░"); // no track run-out to the margin
+    // half the max → about half the available run, value directly after
     const plain = stripAnsi(hbar("queued", 5, 10, 60, "5"));
-    expect(plain.replace(/[^█░]/g, "").length).toBeLessThanOrEqual(Math.round(60 * 0.6));
-    expect(plain.trimEnd().endsWith("5")).toBe(true);
-    const full = hbar("queued", 10, 10, 30);
-    expect(full).not.toContain("░");
+    const half = plain.replace(/[^█]/g, "").length;
+    const fullRun = stripAnsi(hbar("queued", 10, 10, 60, "10")).replace(/[^█]/g, "").length;
+    expect(Math.abs(half * 2 - fullRun)).toBeLessThanOrEqual(2);
+    expect(/█ 5$/.test(plain.trimEnd())).toBe(true);
     const zero = hbar("queued", 0, 0, 30);
     expect(zero).not.toContain("█");
-    expect(displayWidth(zero)).toBe(30);
+    expect(stripAnsi(zero)).toContain("·");
   });
 
   it("hbar renders a custom value label (durations, usd) and a bar color", () => {
@@ -192,23 +192,26 @@ describe("chart primitives", () => {
     expect(distStats(emptyDist)).toBe("no data yet");
   });
 
-  it("histogramLines is ONE chart row plus ONE dim label row", () => {
+  it("histogramLines is a small column chart: 4 bar rows + counts + labels", () => {
     const lines = histogramLines(fullWindow.ttfv, 40, ACCENTS.blue);
-    expect(lines).toHaveLength(2);
-    const chart = stripAnsi(lines[0]!);
-    const axis = stripAnsi(lines[1]!);
-    // four buckets: 2, 4, 3, 0 → scaled glyph runs, the zero one a single dot
-    expect(chart).toBe("▄▄▄ ███ ▆▆▆ ·  ");
-    expect(axis).toBe("5m  15m 1h  1h+");
+    expect(lines).toHaveLength(6);
+    const plain = lines.map(stripAnsi);
+    // four buckets: 2, 4, 3, 0 → the max bucket reaches the top row
+    expect(plain[0]!).toContain("█");
+    expect(plain[3]!).toContain("·"); // zero bucket keeps a dim baseline dot
+    expect(plain[4]!).toContain("4"); // counts row
+    expect(plain[5]!).toContain("5m"); // axis row
     expect(lines[0]).toContain(ACCENTS.blue); // marks carry the card accent
-    expect(chart).not.toContain("median"); // stats moved to the title
+    expect(plain.join(" ")).not.toContain("median"); // stats live in the title
+    for (const l of plain) expect(displayWidth(l)).toBeLessThanOrEqual(40);
   });
 
-  it("histogramLines scales buckets to the max count and says so at n=0", () => {
-    const one = stripAnsi(histogramLines(dist(3, 1, 1, [{ label: "a", count: 3 }, { label: "b", count: 0 }]), 20)[0]!);
-    expect(one.startsWith("███")).toBe(true);
-    expect(one).toContain("·");
-    expect(stripAnsi(histogramLines(emptyDist, 40).join("\n"))).toBe("no data yet");
+  it("histogramLines scales to the max count and collapses at n=0", () => {
+    const lines = histogramLines(dist(3, 1, 1, [{ label: "a", count: 3 }, { label: "b", count: 0 }]), 20);
+    const bottom = stripAnsi(lines[3]!);
+    expect(bottom).toContain("█");
+    expect(bottom).toContain("·");
+    expect(histogramLines(emptyDist, 40)).toEqual([]); // title says "no data yet"
   });
 
   it("columnChart stacks block glyphs into a multi-row chart", () => {
@@ -288,7 +291,7 @@ describe("metrics dashboard", () => {
     const cards = metricsCards(fullWindow as never, daily, 24);
     for (const title of ["TIME TO FIRST VERDICT", "ROUND DURATION", "ROUNDS UNTIL RESOLUTION", "AUTHOR RESPONSE", "PING-PONG"]) {
       const card = cards.find((c) => c.title === title)!;
-      expect(card.body(60).length).toBeLessThanOrEqual(2);
+      expect(card.body(60).length).toBeLessThanOrEqual(6);
     }
     // ...and no card row is a solid block of filled cells with text inside it
     for (const card of cards) {
@@ -355,11 +358,12 @@ describe("metrics dashboard", () => {
     }
   });
 
-  it("caps every card at a readable measure even on an ultrawide terminal", () => {
+  it("uses the whole width on an ultrawide terminal, never overflowing it", () => {
     const cards = metricsCards(fullWindow as never, daily, 39);
-    for (const column of packColumns(cards, columnWidths(220))) {
-      for (const line of column) expect(displayWidth(line)).toBeLessThanOrEqual(92);
-    }
+    const column = packColumns(cards, columnWidths(220))[0]!;
+    for (const line of column) expect(displayWidth(line)).toBeLessThanOrEqual(217);
+    // at least one bar row actually reaches deep into the pane
+    expect(column.some((l) => stripAnsi(l).replace(/[^█]/g, "").length > 120)).toBe(true);
   });
 
   it("renders sparse distributions as 'no data yet' rather than empty charts", () => {
