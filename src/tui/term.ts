@@ -2,7 +2,12 @@
 // truecolor ANSI (§2/§4: xterm is a model, not a painter; the cell
 // walk is ours, cribbed from blessed-xterm but emitting 38;2 verbatim so pi's
 // colors survive end-to-end).
-import { Terminal } from "@xterm/headless";
+// @xterm/headless is CJS: named ESM imports fail at Node runtime (vitest and
+// tsc both accept them, which hides it) — go through the default export.
+import xterm from "@xterm/headless";
+import type { Terminal as XtermTerminal } from "@xterm/headless";
+
+const { Terminal } = xterm;
 
 const ESC = "\x1b[";
 
@@ -21,7 +26,7 @@ function bgSgr(cell: { isBgRGB(): boolean; isBgPalette(): boolean; isBgDefault()
 }
 
 export class TermPane {
-  readonly term: Terminal;
+  readonly term: XtermTerminal;
 
   constructor(cols: number, rows: number) {
     this.term = new Terminal({ cols, rows, allowProposedApi: true, scrollback: 0 });

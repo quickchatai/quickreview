@@ -3,7 +3,8 @@
 # Builds once if dist is missing so a fresh checkout still works.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# readlink -f: survive being invoked through a symlink (e.g. ~/.local/bin/qcr)
+ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 CLI="$ROOT/dist/src/cli.js"
 
 if [[ ! -f "$CLI" ]]; then
