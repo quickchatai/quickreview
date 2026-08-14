@@ -181,7 +181,26 @@
       ansible.posix.synchronize:
         src: "{{ sandbox_src }}/"
         dest: "{{ sandbox_root }}/sandbox/"
-        rsync_opts: ["--exclude=.git", "--exclude=node_modules", "--exclude=state", "--exclude=wt"]
+        # --delete keeps the VM tree a true mirror (renamed/removed files
+        # actually disappear); every runtime dir the daemon/pi writes under the
+        # sandbox root is excluded, which also protects it from the delete.
+        rsync_opts:
+          - "--delete"
+          - "--exclude=.git"
+          - "--exclude=.claude"
+          - "--exclude=node_modules"
+          - "--exclude=state"
+          - "--exclude=wt"
+          - "--exclude=archive"
+          - "--exclude=commands"
+          - "--exclude=digest"
+          - "--exclude=inject"
+          - "--exclude=verdict"
+          - "--exclude=memory"
+          - "--exclude=notes"
+          - "--exclude=ledger.md"
+          - "--exclude=example-app"
+          - "--exclude=pihome"
       when: sandbox_src is defined
 
     # rsync lands files with controller-side ownership; the container user
