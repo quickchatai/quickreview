@@ -180,7 +180,11 @@ describe("deploy tab keys", () => {
     const streams = fakeStreams();
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
     let deploys = 0;
-    app.hooks.deployRun = () => deploys++;
+    app.hooks.deployRun = (_a, _onData, onExit) => {
+      deploys++;
+      onExit(0);
+      return { kill: () => {} };
+    };
     let clock = 1000;
     const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [] }) }, () => clock);
     const run = app.run();
@@ -212,7 +216,11 @@ describe("deploy tab keys", () => {
     const streams = fakeStreams();
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
     let deploys = 0;
-    app.hooks.deployRun = () => deploys++;
+    app.hooks.deployRun = (_a, _onData, onExit) => {
+      deploys++;
+      onExit(0);
+      return { kill: () => {} };
+    };
     let clock = 1000;
     const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [] }) }, () => clock);
     const run = app.run();
@@ -233,6 +241,72 @@ describe("deploy tab keys", () => {
     click(st.buttonZone!.x2, st.buttonZone!.y2); // second click inside the window deploys
     expect(deploys).toBe(1);
     expect(st.armedAt).toBeUndefined();
+    app.quit();
+    await run;
+  });
+
+  it("streams deploy.sh output into the pane and x closes the finished log", async () => {
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    let exitFn: ((code: number | null) => void) | undefined;
+    let dataFn: ((chunk: string) => void) | undefined;
+    app.hooks.deployRun = (_a, onData, onExit) => {
+      dataFn = onData;
+      exitFn = onExit;
+      return { kill: () => {} };
+    };
+    let clock = 1000;
+    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [] }) }, () => clock);
+    const run = app.run();
+    streams.type("4");
+    await new Promise((r) => setTimeout(r, 0));
+
+    streams.type("D");
+    streams.type("D");
+    expect(st.run?.running).toBe(true);
+    dataFn!("plan — deploy.sh sync\nrsync st"); // chunk split mid-line
+    dataFn!("arted\x1b[32m ok\x1b[0m\n");
+    expect(st.run?.lines).toEqual(["plan — deploy.sh sync", "rsync started ok"]); // ANSI stripped
+    expect(stripAnsi(streams.written())).toContain("DEPLOYING…");
+    expect(stripAnsi(streams.written())).toContain("rsync started ok");
+
+    streams.type("D"); // ignored while running
+    expect(st.armedAt).toBeUndefined();
+
+    exitFn!(0);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(st.run?.running).toBe(false);
+    expect(st.run?.code).toBe(0);
+    expect(stripAnsi(streams.written())).toContain("DEPLOY OK");
+
+    streams.type("x"); // close the log — back to the plan view
+    expect(st.run).toBeUndefined();
+    app.quit();
+    await run;
+  });
+
+  it("x aborts a live run via the handle", async () => {
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    let killed = 0;
+    let exitFn: ((code: number | null) => void) | undefined;
+    app.hooks.deployRun = (_a, _onData, onExit) => {
+      exitFn = onExit;
+      return { kill: () => killed++ };
+    };
+    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [] }) }, () => 1000);
+    const run = app.run();
+    streams.type("4");
+    await new Promise((r) => setTimeout(r, 0));
+    streams.type("D");
+    streams.type("D");
+    expect(st.run?.running).toBe(true);
+    streams.type("x");
+    expect(killed).toBe(1);
+    exitFn!(null); // SIGTERM lands as a null code
+    await new Promise((r) => setTimeout(r, 0));
+    expect(st.run?.code).toBeNull();
+    expect(stripAnsi(streams.written())).toContain("DEPLOY FAILED (exit signal)");
     app.quit();
     await run;
   });

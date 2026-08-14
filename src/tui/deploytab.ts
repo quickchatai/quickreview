@@ -1,9 +1,10 @@
 // Deploy tab (key 4) — "what would a deploy ship?" plus the deploy button:
 // the commit the VM is running (the BUILD_SHA marker deploy.sh rsyncs along),
 // local HEAD, the pending commit list + diffstat between them, and deploy.sh's
-// own --dry-run plan verbatim. D D (armed confirm) runs `scripts/deploy.sh
-// sync` on the operator's real terminal via hooks.deployRun — deploy.sh's own
-// guardrails (clean tree, pin agreement) stay the only gate.
+// own --dry-run plan verbatim. Click ▶ (or D D) starts `scripts/deploy.sh
+// sync` via hooks.deployRun and streams its output live into the pane — the
+// TUI never suspends. deploy.sh's own guardrails (clean tree, pin agreement)
+// stay the only gate.
 import { execFile } from "node:child_process";
 import type { TuiConfig } from "../config.js";
 import type { App } from "./app.js";
@@ -78,6 +79,33 @@ export interface DeployState {
   armedAt?: number;
   /** Screen rect of the DEPLOY button (1-based), refreshed on every paint. */
   buttonZone?: { x1: number; y1: number; x2: number; y2: number };
+  /** A live (or just-finished) deploy run streamed into the tab. */
+  run?: DeployRun;
+}
+
+/** deploy.sh output streamed into the pane — the TUI never suspends. */
+export interface DeployRun {
+  lines: string[];
+  /** Trailing chunk fragment awaiting its newline. */
+  partial: string;
+  running: boolean;
+  /** Exit code once finished (null = killed by signal). */
+  code?: number | null;
+}
+
+const RUN_MAX_LINES = 5000;
+
+/** Fold a raw chunk into the run log: ANSI stripped (ansible colors would
+ * shred the frame), CR-progress collapsed, bounded backlog. */
+export function appendRunChunk(run: DeployRun, chunk: string): void {
+  const text = run.partial + chunk.replace(/\r\n/g, "\n");
+  const parts = text.split("\n");
+  run.partial = parts.pop() ?? "";
+  for (const p of parts) {
+    const line = stripAnsi(p).split("\r").pop() ?? "";
+    run.lines.push(line);
+  }
+  if (run.lines.length > RUN_MAX_LINES) run.lines.splice(0, run.lines.length - RUN_MAX_LINES);
 }
 
 export const DEPLOY_CONFIRM_MS = 5000;
@@ -172,20 +200,56 @@ export function renderDeployTab(st: DeployState, dryRun: boolean, cols: number, 
   frame.set(0, rule(cols, "┌", "┐", ["quickreview", dryRun ? "DRY-RUN" : `${SGR.bgRed}${SGR.bold} LIVE ${SGR.reset}`, "deploy"]));
 
   // THE button — always visible, pinned under the title, mouse-clickable.
+  // While a run streams it doubles as the status chip.
   const armed = st.armedAt !== undefined;
-  const label = armed ? " ⚠ CLICK AGAIN TO DEPLOY NOW " : " ▶ DEPLOY TO VM ";
-  const btn = armed ? `${SGR.bgRed}${SGR.bold}${label}${SGR.reset}` : `${SGR.inverse}${SGR.bold}${label}${SGR.reset}`;
-  const suffix = armed ? "  any other key/click cancels" : "  runs ./scripts/deploy.sh sync (also: D D)";
+  const run = st.run;
+  const label = run?.running
+    ? " ⟳ DEPLOYING… "
+    : run
+      ? run.code === 0
+        ? " ✔ DEPLOY OK "
+        : ` ✖ DEPLOY FAILED (exit ${run.code ?? "signal"}) `
+      : armed
+        ? " ⚠ CLICK AGAIN TO DEPLOY NOW "
+        : " ▶ DEPLOY TO VM ";
+  const btn =
+    run?.running || (run && run.code === 0)
+      ? `${SGR.inverse}${SGR.bold}${label}${SGR.reset}`
+      : run || armed
+        ? `${SGR.bgRed}${SGR.bold}${label}${SGR.reset}`
+        : `${SGR.inverse}${SGR.bold}${label}${SGR.reset}`;
+  const suffix = run?.running
+    ? "  streaming ./scripts/deploy.sh sync — j/k scroll · x abort"
+    : run
+      ? "  x close log · r refresh"
+      : armed
+        ? "  any other key/click cancels"
+        : "  runs ./scripts/deploy.sh sync (also: D D)";
   frame.boxRow(1, [{ text: ` ${btn}${FG.dim}${suffix}${RESET}`, width: cols - 2 }]);
-  st.buttonZone = { x1: 2, y1: 2, x2: 1 + displayWidth(stripAnsi(label)), y2: 2 };
+  st.buttonZone = run ? undefined : { x1: 2, y1: 2, x2: 1 + displayWidth(stripAnsi(label)), y2: 2 };
 
   const bodyRows = rows - 4; // top bar + button row + hints + bottom border
-  const lines = deployLines(st, cols - 4);
-  for (let r = 0; r < bodyRows; r++) {
-    frame.boxRow(2 + r, [{ text: ` ${lines[st.scroll + r] ?? ""}`, width: cols - 2 }]);
+  if (run) {
+    // Live log view: tail-follow; st.scroll counts lines BACK from the tail.
+    const all = run.partial ? [...run.lines, run.partial] : run.lines;
+    const maxOff = Math.max(0, all.length - bodyRows);
+    const off = Math.min(st.scroll, maxOff);
+    const start = Math.max(0, all.length - bodyRows - off);
+    for (let r = 0; r < bodyRows; r++) {
+      const line = all[start + r];
+      frame.boxRow(2 + r, [{ text: ` ${line === undefined ? "" : truncate(line, cols - 4)}`, width: cols - 2 }]);
+    }
+  } else {
+    const lines = deployLines(st, cols - 4);
+    for (let r = 0; r < bodyRows; r++) {
+      frame.boxRow(2 + r, [{ text: ` ${lines[st.scroll + r] ?? ""}`, width: cols - 2 }]);
+    }
   }
   const refreshing = st.loading ? "  refreshing…" : "";
-  frame.boxRow(rows - 2, [{ text: ` ${SGR.dim}[1]board [2]digest [4]deploy  click ▶ or D D deploy  j/k scroll  r refresh  q quit${refreshing}${SGR.reset}`, width: cols - 2 }]);
+  const hints = run
+    ? `[1]board [2]digest [4]deploy  j/k scroll log  ${run.running ? "x abort" : "x close log"}  q quit`
+    : `[1]board [2]digest [4]deploy  click ▶ or D D deploy  j/k scroll  r refresh  q quit`;
+  frame.boxRow(rows - 2, [{ text: ` ${SGR.dim}${hints}${refreshing}${SGR.reset}`, width: cols - 2 }]);
   frame.set(rows - 1, rule(cols, "└", "┘", []));
   return frame;
 }
@@ -213,20 +277,50 @@ export function installDeployHooks(app: App, fetcher?: DeployFetcher, now: () =>
     return renderDeployTab(st, theApp.view.dryRun, cols, rows).render();
   };
 
+  // The kill handle of the run in flight (undefined once it exits).
+  let handle: { kill(): void } | undefined;
+
+  const startRun = (theApp: App): void => {
+    if (!theApp.hooks.deployRun) {
+      theApp.notice("✖ deploy runner not wired");
+      return;
+    }
+    const run: DeployRun = { lines: [], partial: "", running: true };
+    st.run = run;
+    st.scroll = 0; // follow the tail
+    handle = theApp.hooks.deployRun(
+      theApp,
+      (chunk) => {
+        if (st.run !== run) return; // stale callback after a close
+        appendRunChunk(run, chunk);
+        theApp.repaint();
+      },
+      (code) => {
+        if (run.partial) {
+          run.lines.push(stripAnsi(run.partial));
+          run.partial = "";
+        }
+        run.running = false;
+        run.code = code;
+        handle = undefined;
+        st.loaded = false;
+        void load(); // re-read BUILD_SHA + plan against the new reality
+        theApp.repaint();
+      },
+    );
+    theApp.repaint();
+  };
+
   // One press = arm; a second press inside the confirm window = deploy.
-  // Shared by the D key and the mouse button.
+  // Shared by the D key and the mouse button. Ignored while a run streams.
   const press = (theApp: App): void => {
+    if (st.run?.running) return;
     const t = now();
     if (st.armedAt !== undefined && t - st.armedAt < DEPLOY_CONFIRM_MS) {
       st.armedAt = undefined;
-      if (theApp.hooks.deployRun) {
-        theApp.hooks.deployRun(theApp); // synchronous: TUI is suspended while deploy.sh runs
-        st.loaded = false;
-        void load(); // re-read BUILD_SHA + plan against the new reality
-      } else {
-        theApp.notice("✖ deploy runner not wired");
-      }
+      startRun(theApp);
     } else {
+      st.run = undefined; // arming clears a finished log
       st.armedAt = t;
     }
     theApp.repaint();
@@ -248,14 +342,35 @@ export function installDeployHooks(app: App, fetcher?: DeployFetcher, now: () =>
       return true;
     }
     if (st.armedAt !== undefined) st.armedAt = undefined; // any other key disarms
+    if (st.run && key.kind === "char" && key.ch === "x") {
+      if (st.run.running) {
+        handle?.kill(); // abort — onExit lands with the signal code
+        theApp.notice("deploy aborted (SIGTERM to deploy.sh)");
+      } else {
+        st.run = undefined; // close the finished log, back to the plan view
+        st.scroll = 0;
+      }
+      theApp.repaint();
+      return true;
+    }
     switch (key.kind) {
       case "down":
-      case "up":
-        if (key.kind === "down") st.scroll += 1;
-        else st.scroll = Math.max(0, st.scroll - 1);
+      case "up": {
+        // Plan view: scroll is lines from the top. Log view: lines back from
+        // the tail (0 = follow), so up/down invert.
+        const delta = key.kind === "down" ? 1 : -1;
+        if (st.run) {
+          const total = st.run.lines.length + (st.run.partial ? 1 : 0);
+          st.scroll = Math.max(0, Math.min(st.scroll - delta, total));
+        } else {
+          st.scroll = Math.max(0, st.scroll + delta);
+        }
         theApp.repaint();
         return true;
+      }
       case "refresh":
+        if (st.run?.running) return true; // never reload state under a live run
+        st.run = undefined;
         st.scroll = 0;
         void load();
         theApp.repaint();

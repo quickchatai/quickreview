@@ -1,6 +1,6 @@
 // `qcr tui [pr|overseer]` entry point. Wires the real ssh runner; the
 // optional target becomes the deep link.
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { loadConfig, sandboxRoot } from "../config.js";
 import { App } from "./app.js";
@@ -140,13 +140,32 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
     }
   };
   app.hooks.reconnect = () => onRealTerminal(() => ensureSshMaster(cfg));
-  app.hooks.deployRun = () =>
-    onRealTerminal(() => {
-      // deploy.sh's own guardrails (clean tree, pin agreement) are the gate;
-      // the pause keeps the ansible tail readable before the board repaints.
-      spawnSync("bash", ["scripts/deploy.sh", "sync"], { stdio: "inherit", cwd: sandboxRoot() });
-      spawnSync("bash", ["-c", "read -r -p 'deploy finished — press enter to return to the tui '"], { stdio: "inherit" });
+  app.hooks.deployRun = (_theApp, onData, onExit) => {
+    // Streamed into the deploy tab — the TUI never leaves the screen.
+    // deploy.sh's own guardrails (clean tree, pin agreement) are the gate.
+    // Colors off: the pane strips ANSI anyway, plain text diffs better.
+    const child = spawn("bash", ["scripts/deploy.sh", "sync"], {
+      cwd: sandboxRoot(),
+      env: { ...process.env, ANSIBLE_FORCE_COLOR: "0", PY_COLORS: "0", NO_COLOR: "1" },
+      stdio: ["ignore", "pipe", "pipe"],
     });
+    child.stdout.on("data", (b: Buffer) => onData(b.toString("utf8")));
+    child.stderr.on("data", (b: Buffer) => onData(b.toString("utf8")));
+    child.on("close", (code) => onExit(code));
+    child.on("error", (err) => {
+      onData(`\nspawn failed: ${String(err)}\n`);
+      onExit(1);
+    });
+    return {
+      kill: () => {
+        try {
+          child.kill("SIGTERM");
+        } catch {
+          /* already gone */
+        }
+      },
+    };
+  };
   app.view.repo = full.github.repo;
   const { spawn } = await import("node:child_process");
   const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");

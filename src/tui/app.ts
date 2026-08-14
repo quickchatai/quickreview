@@ -50,9 +50,15 @@ export interface AppHooks {
   metricsKey?: (app: App, key: ReturnType<typeof decodeKey>) => boolean;
   /** Metrics tab click routing (window switcher zones); true = consumed. */
   metricsClick?: (app: App, x: number, y: number) => boolean;
-  /** Run ./scripts/deploy.sh sync on the operator's terminal (D D on the
-   * deploy tab). The script's own guardrails are the only gate. */
-  deployRun?: (app: App) => void;
+  /** Start ./scripts/deploy.sh sync, streaming its output back into the
+   * deploy tab (the TUI stays up). onData receives raw chunks, onExit the
+   * exit code; the handle aborts a stuck run. The script's own guardrails
+   * (clean tree, pin agreement) are the only gate. */
+  deployRun?: (
+    app: App,
+    onData: (chunk: string) => void,
+    onExit: (code: number | null) => void,
+  ) => { kill(): void };
   /** Mouse click on the deploy tab (1-based terminal coords) — the button. */
   deployClick?: (app: App, x: number, y: number) => void;
   /** Re-establish the VM ssh master on the operator's terminal (key s) —
