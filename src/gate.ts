@@ -15,7 +15,12 @@ export type MutationKind =
   | "create_review_comment_reply"
   | "create_issue"
   | "create_pull"
-  | "push_branch";
+  | "push_branch"
+  // Post-review cleanup (the owner, 2026-08-13): the bot supersedes ITS OWN
+  // stale non-APPROVED reviews after posting a new one. The adapter enforces
+  // owner+state guards; dismissing an approval or another identity's review
+  // remains structurally impossible.
+  | "supersede_own_review";
 
 export interface MutationIntent {
   kind: MutationKind;
@@ -26,6 +31,10 @@ export interface MutationIntent {
   /** Human-readable one-liner for the dry-run record / event log. */
   note: string;
   pr?: number;
+  /** Execute even in dry-run. Only `supersede_own_review` may set this: the
+   * session-side posting leakage is accepted (the owner, 2026-08-13), so the
+   * cleanup of that leakage must be real too. Noise-reducing only. */
+  forceLive?: boolean;
 }
 
 export interface GateResult {
@@ -51,7 +60,10 @@ export class MutationGate {
   }
 
   async execute(intent: MutationIntent): Promise<GateResult> {
-    if (this.dryRun) {
+    if (intent.forceLive && intent.kind !== "supersede_own_review") {
+      throw new Error(`forceLive is not allowed for kind ${intent.kind}`);
+    }
+    if (this.dryRun && !intent.forceLive) {
       mkdirSync(this.dryrunDir, { recursive: true });
       const ts = this.now().toISOString().replace(/[:.]/g, "-");
       const file = join(this.dryrunDir, `${ts}-${String(seq++).padStart(4, "0")}-${intent.kind}.json`);

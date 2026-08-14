@@ -108,7 +108,50 @@ describe("the closed mutation vocabulary", () => {
         "push_branch",
         "remove_label",
         "request_reviewer",
+        // The one review-mutating kind, ratified by the owner 2026-08-13:
+        // the bot superseding ITS OWN stale non-APPROVED review. No kind
+        // for dismissing approvals or another identity's review exists.
+        "supersede_own_review",
       ].sort(),
     );
+  });
+});
+
+describe("forceLive (supersede_own_review only — the owner, 2026-08-13)", () => {
+  const supersede: MutationIntent = {
+    kind: "supersede_own_review",
+    method: "PUT",
+    path: "/repos/o/r/pulls/7/reviews/99/dismissals",
+    body: { message: "superseded by round 4 review" },
+    note: "supersede own stale RC review on #7",
+    pr: 7,
+    forceLive: true,
+  };
+
+  it("executes supersede_own_review for real even in dry-run (no dryrun record)", async () => {
+    const executor = vi.fn(async () => ({ ok: true }));
+    const gate = new MutationGate(true, join(dir, "dryrun"), executor);
+    const result = await gate.execute(supersede);
+    expect(executor).toHaveBeenCalledOnce();
+    expect(result.executed).toBe(true);
+    expect(existsSync(join(dir, "dryrun"))).toBe(false);
+  });
+
+  it("refuses forceLive on every other kind — the dry-run bypass cannot widen", async () => {
+    const executor = vi.fn(async () => ({ ok: true }));
+    const gate = new MutationGate(true, join(dir, "dryrun"), executor);
+    for (const kind of ["add_label", "create_review", "push_branch", "create_pull"] as const) {
+      await expect(gate.execute({ ...intent, kind, forceLive: true })).rejects.toThrow(/forceLive is not allowed/);
+    }
+    expect(executor).not.toHaveBeenCalled();
+  });
+
+  it("without forceLive, supersede_own_review dry-runs like everything else", async () => {
+    const executor = vi.fn(async () => ({ ok: true }));
+    const gate = new MutationGate(true, join(dir, "dryrun"), executor);
+    const result = await gate.execute({ ...supersede, forceLive: undefined });
+    expect(executor).not.toHaveBeenCalled();
+    expect(result.executed).toBe(false);
+    expect(readdirSync(join(dir, "dryrun"))).toHaveLength(1);
   });
 });
