@@ -12,12 +12,17 @@ import { rule, SGR, CLEAR } from "./paint.js";
 import { attachArgv } from "./remote.js";
 import { TermPane } from "./term.js";
 
-/** pi 0.84.1's built-in dark theme paints every successful tool panel with
- * #283228. Through the nested tmux/xterm pane that reads as a full-width green
- * flash. Neutralize that one background for already-running sessions; fresh
- * sessions (VM and companion alike) select the fleet muted theme at source. */
+/** pi 0.84.1's built-in dark theme paints tool panels green (#283228 success)
+ * and blue (pending). Through the nested tmux the truecolor gets downgraded to
+ * 256-color (48;5;22 green / 48;5;17 blue — observed live on the VM,
+ * 2026-08-14), and on the operator's screen that reads as full-width color
+ * flashes. Neutralize both encodings to the muted panel for already-running
+ * sessions; fresh sessions (VM and companion alike) select the fleet muted
+ * theme at source. Matches the codes standalone or inside compound SGRs. */
 export function muteCompanionToolFlash(data: string): string {
-  return data.replaceAll("\x1b[48;2;40;50;40m", "\x1b[48;2;32;35;42m");
+  return data
+    .replaceAll("\x1b[48;2;40;50;40m", "\x1b[48;2;32;35;42m")
+    .replace(/48;5;(?:17|22)m/g, "48;5;235m");
 }
 
 /** pi's /copy emits OSC 52 (clipboard write). The embedded terminal emulator

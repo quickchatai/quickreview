@@ -176,7 +176,7 @@ fi
 
 ANSIBLE_CMD=(ansible-playbook -i "$INVENTORY" "$PLAYBOOK")
 case "$MODE" in
-  sync)    ANSIBLE_CMD+=(--start-at-task "$SYNC_START_TASK") ;;
+  sync)    ANSIBLE_CMD+=(--start-at-task "$SYNC_START_TASK" -e force_restart=true) ;;
   rebuild) ANSIBLE_CMD+=(-e rebuild_image=true) ;;
   verify)  ANSIBLE_CMD=() ;;
 esac
