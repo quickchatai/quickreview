@@ -50,6 +50,13 @@ export function metricsPrArgv(cfg: TuiConfig, pr: number): string[] {
   return [...dockerPrefix(cfg), cfg.container, "node", "dist/src/cli.js", "metrics", "--pr", String(pr), "--json"];
 }
 
+/** Non-interactive snapshot of a live pi session for the board's mirror pane:
+ * `-e` keeps the pane's colors, `-p` writes to stdout, `-J` joins wrapped
+ * lines. Read-only — the mirror never writes a keystroke (that is attach). */
+export function captureArgv(cfg: TuiConfig, session: string): string[] {
+  return [...dockerPrefix(cfg), cfg.container, "tmux", "capture-pane", "-e", "-p", "-J", "-t", session];
+}
+
 /** The interactive attach argv — the whole remote command after `ssh`. */
 export function attachArgv(cfg: TuiConfig, session: string): string[] {
   return ["-tt", cfg.ssh_host, ...dockerPrefix(cfg), "-it", cfg.container, "tmux", "attach", "-t", session];

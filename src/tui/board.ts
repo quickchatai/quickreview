@@ -8,6 +8,7 @@ import type { StatusSnapshot } from "../state.js";
 import type { AlertBadge } from "./alerts.js";
 import { formatEvent, glyphFor, sortPrs, type EventLine, type SnapshotPr } from "./model.js";
 import { Frame, SGR, displayWidth, fit, rule, sanitizeText, stripAnsi, truncate, wrap } from "./paint.js";
+import type { PiPaneView } from "./pipane.js";
 import type { Health } from "./poll.js";
 import { FG, RESET, fmtAge, legendLine, osc8, prUrl, stateColor, verdictChip } from "./theme.js";
 
@@ -16,6 +17,7 @@ export type BoardAction =
   | { t: "select-pr"; pr: number }
   | { t: "open-github"; pr: number }
   | { t: "event-jump"; pr: number }
+  | { t: "attach" } // the live pi pane: clicking the mirror opens the real thing
   | { t: "tab"; tab: "board" | "digest" | "companion" | "deploy" | "metrics" }
   | { t: "key"; key: string }; // hint-bar button → synthesized keypress
 
@@ -27,12 +29,15 @@ export interface BoardView {
   selected: number;
   detail?: WhyPayload;
   detailFull: boolean;
+  /** The EVENTS overlay is open (and owns j/k) — `e` toggles it. */
   eventsFocus: boolean;
   eventsScroll: number;
   help: boolean;
-  /** Extra line rendered inside the events strip (quick-message state). */
+  /** Live mirror of the selected PR's pi session (board's lower region). */
+  pi?: PiPaneView;
+  /** Extra line rendered on the pi pane header (quick-message state). */
   noticeLine?: string;
-  /** Replaces the events strip when the message box is open. */
+  /** Replaces the pi pane while the message box is open. */
   inputBox?: { target: string; text: string };
   /** Wall clock for age rendering; injected for testability. */
   now?: Date;
@@ -60,10 +65,22 @@ export function listWidth(prs: SnapshotPr[], cols: number, now: Date = new Date(
   return Math.min(Math.max(24, widest + 3), Math.floor(cols * 0.45));
 }
 
-/** Events strip grows with terminal height: divider + header + lines +
- * hints; ~a quarter of the screen, 3–10 visible event lines. */
-export function eventsRows(rows: number): number {
-  return Math.min(Math.max(6, Math.floor(rows * 0.25)), 13);
+/**
+ * The live pi mirror owns the bottom half of the board — the region that used
+ * to sit empty under a short PR list (and, before that, under the EVENTS
+ * strip). Two rows are chrome (divider + header), the rest is session tail.
+ * Floors at 6 rows and never squeezes the list/detail body below 3.
+ */
+export function piRows(rows: number): number {
+  const usable = rows - 3; // top bar + hint bar + bottom border
+  return Math.max(0, Math.min(Math.max(6, Math.floor(usable * 0.5)), usable - 3));
+}
+
+/** Geometry of the floating EVENTS overlay: a centered band over the board,
+ * bordered top and bottom, ~60% of the height. */
+export function eventsOverlayBand(rows: number): { top: number; height: number } {
+  const height = Math.max(5, Math.min(Math.floor(rows * 0.6), rows - 4));
+  return { top: Math.max(1, Math.floor((rows - height) / 2)), height };
 }
 
 // ---- pieces ----------------------------------------------------------------
@@ -238,12 +255,12 @@ export const HELP_LINES = [
   "Ctrl-c ×3      kill the TUI from anywhere (terminal restored) — the un-stuck hatch",
   "               an alert in the top bar: click it or ⏎ to open the companion",
   "j/k ↓/↑        select PR (mouse: click a row; click again to attach)",
-  "⏎              attach selected PR (embedded pi session)",
+  "⏎              attach selected PR (the pane below the list mirrors it live; click it = ⏎)",
   "g              open the PR on GitHub (PR numbers are Ctrl+clickable links)",
   "w              toggle full-height detail",
   "m              quick-message selected PR",
   "o / M          attach overseer / main session",
-  "e              focus events strip (j/k scroll, Esc back; click an event → its PR)",
+  "e              events overlay (j/k scroll, e/Esc close; click an event → its PR)",
   "r              force refresh",
   "[ / ]          older / newer digest (digest tab)",
   "Ctrl-q         detach (inside attach; twice = literal)",
@@ -251,6 +268,52 @@ export const HELP_LINES = [
   "",
   "any key to close",
 ];
+
+// ---- live pi pane ----------------------------------------------------------
+
+/** Header of the mirror: which session, whether it is live, and the way in. */
+export function piHeader(pr: number | undefined, pane: PiPaneView | undefined): string {
+  if (pr === undefined) return `${FG.dim}PI — no PR selected${RESET}`;
+  const name = `${FG.dim}PI ${RESET}${FG.accent}pr-${pr}${RESET}`;
+  const mine = pane && pane.pr === pr ? pane : undefined;
+  if (!mine) return `${name}${FG.dim} · connecting…${RESET}`;
+  if (mine.missing) {
+    return `${name}${FG.dim} · no pi session for #${pr}${mine.stale ? " · (stale)" : ""}${RESET}`;
+  }
+  return `${name}${FG.dim} · live mirror · ⏎ attach${RESET}`;
+}
+
+/** The tail of the capture that fits the region, already width-clamped. */
+export function piBody(pr: number | undefined, pane: PiPaneView | undefined, width: number, height: number): string[] {
+  if (pr === undefined || height <= 0) return [];
+  const mine = pane && pane.pr === pr ? pane : undefined;
+  if (!mine) return [`${FG.dim}waiting for the first capture…${RESET}`];
+  if (mine.lines.length === 0) return mine.missing ? [] : [`${FG.dim}(pane empty)${RESET}`];
+  // Bottom-anchored, like the terminal it mirrors: new output lands on a
+  // stable edge instead of shifting the whole pane down.
+  const tail = mine.lines.slice(-height).map((l) => truncate(l, width));
+  return [...new Array<string>(Math.max(0, height - tail.length)).fill(""), ...tail];
+}
+
+// ---- events overlay ---------------------------------------------------------
+
+/** The demoted EVENTS strip: a floating, scrollable band over the board. */
+function renderEventsOverlay(frame: Frame, view: BoardView, cols: number, rows: number): void {
+  const { top, height } = eventsOverlayBand(rows);
+  const visible = Math.max(0, height - 2);
+  frame.set(top, rule(cols, "├", "┤", [`${FG.accent}${SGR.bold}EVENTS${RESET}`, `${FG.dim}what the daemon just did${RESET}`, `${FG.dim}j/k scroll · e/Esc close${RESET}`]));
+  const slice = view.events.slice(view.eventsScroll, view.eventsScroll + visible);
+  for (let i = 0; i < visible; i++) {
+    const e = slice[i];
+    const text = e ? (e.anomaly ? `${FG.anomaly}${truncate(e.text, cols - 4)}${RESET}` : truncate(e.text, cols - 4)) : "";
+    frame.boxRow(top + 1 + i, [{ text: ` ${text}`, width: cols - 2 }]);
+    const prMatch = e ? /#(\d+)/.exec(e.text) : null;
+    if (prMatch) {
+      frame.zones.push({ x1: 2, y1: top + 1 + i + 1, x2: cols - 1, y2: top + 1 + i + 1, action: { t: "event-jump", pr: Number(prMatch[1]) } satisfies BoardAction });
+    }
+  }
+  frame.set(top + height - 1, rule(cols, "├", "┤", []));
+}
 
 // ---- render ----------------------------------------------------------------
 
@@ -260,13 +323,13 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
   frame.set(0, topBar(view, cols));
   const az = alertZone(view, cols);
   if (az) frame.zones.push({ x1: az.x1, y1: 1, x2: az.x2, y2: 1, action: { t: "tab", tab: "companion" } satisfies BoardAction });
-  const evRows = eventsRows(rows);
-  const bodyRows = rows - 2 - evRows; // top bar + bottom border
+  const pRows = piRows(rows);
+  const bodyRows = rows - 3 - pRows; // top bar + hint bar + bottom border
   const sorted = view.snapshot ? sortPrs(view.snapshot.prs) : [];
   const listW = listWidth(sorted, cols, now);
   const detailW = cols - 2 - listW - 1;
   const selectedPr = sorted[view.selected];
-  frame.meta = { listW, bodyRows, stripTop: 1 + bodyRows, evRows };
+  frame.meta = { listW, bodyRows, piTop: 1 + bodyRows, piRows: pRows };
 
   if (view.help) {
     frame.boxRow(1, [{ text: ` ${FG.accent}${SGR.bold}KEYS${RESET} ${FG.dim}everything the TUI answers to${RESET}`, width: cols - 2 }]);
@@ -280,7 +343,7 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
 
   if (view.detailFull) {
     const lines = detailLines(view.detail, selectedPr, cols - 4, now);
-    for (let r = 0; r < bodyRows + evRows; r++) {
+    for (let r = 0; r < rows - 2; r++) {
       frame.boxRow(1 + r, [{ text: ` ${lines[r] ?? ""}`, width: cols - 2 }]);
     }
     frame.set(rows - 1, rule(cols, "└", "┘", ["w back"]));
@@ -304,37 +367,34 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
     ]);
   }
 
-  // Events strip (or the quick-message input box).
-  const stripTop = 1 + bodyRows;
-  const stripLines = evRows - 3; // minus divider, header, hints
-  frame.set(stripTop, `│${fit("─".repeat(listW), listW)}┴${"─".repeat(detailW)}│`);
+  // Live pi mirror (or the quick-message input box) — the lower region.
+  const piTop = 1 + bodyRows;
+  const piLines = Math.max(0, pRows - 2); // the region is divider + header + lines
+  if (pRows > 0) frame.set(piTop, `│${fit("─".repeat(listW), listW)}┴${"─".repeat(detailW)}│`);
   if (view.inputBox) {
-    frame.boxRow(stripTop + 1, [{ text: ` ${SGR.bold}MSG → ${view.inputBox.target}${SGR.reset}`, width: cols - 2 }]);
-    frame.boxRow(stripTop + 2, [{ text: ` > ${view.inputBox.text}▁`, width: cols - 2 }]);
-    frame.boxRow(stripTop + 3, [{ text: ` ⏎ send · Esc cancel · Alt-⏎ newline`, width: cols - 2 }]);
-    for (let i = 4; i <= stripLines + 1; i++) frame.boxRow(stripTop + i, [{ text: "", width: cols - 2 }]);
-  } else {
-    const header = view.eventsFocus
-      ? `${SGR.inverse}EVENTS${SGR.reset} ${FG.dim}(j/k scroll · Esc back)${RESET}`
-      : section("EVENTS", "what the daemon just did");
-    frame.boxRow(stripTop + 1, [{ text: ` ${header}${view.noticeLine ? `   ${view.noticeLine}` : ""}`, width: cols - 2 }]);
-    const visible = view.events.slice(view.eventsScroll, view.eventsScroll + stripLines);
-    for (let i = 0; i < stripLines; i++) {
-      const e = visible[i];
-      const text = e ? (e.anomaly ? `${FG.anomaly}${truncate(e.text, cols - 4)}${RESET}` : truncate(e.text, cols - 4)) : "";
-      frame.boxRow(stripTop + 2 + i, [{ text: ` ${text}`, width: cols - 2 }]);
-      const prMatch = e ? /#(\d+)/.exec(e.text) : null;
-      if (prMatch) {
-        frame.zones.push({ x1: 2, y1: stripTop + 2 + i + 1, x2: cols - 1, y2: stripTop + 2 + i + 1, action: { t: "event-jump", pr: Number(prMatch[1]) } satisfies BoardAction });
-      }
+    frame.boxRow(piTop + 1, [{ text: ` ${SGR.bold}MSG → ${view.inputBox.target}${SGR.reset}`, width: cols - 2 }]);
+    frame.boxRow(piTop + 2, [{ text: ` > ${view.inputBox.text}▁`, width: cols - 2 }]);
+    frame.boxRow(piTop + 3, [{ text: ` ⏎ send · Esc cancel · Alt-⏎ newline`, width: cols - 2 }]);
+    for (let i = 4; i <= piLines; i++) frame.boxRow(piTop + i, [{ text: "", width: cols - 2 }]);
+  } else if (pRows > 0) {
+    frame.boxRow(piTop + 1, [{ text: ` ${piHeader(selectedPr?.number, view.pi)}${view.noticeLine ? `   ${view.noticeLine}` : ""}`, width: cols - 2 }]);
+    const body = piBody(selectedPr?.number, view.pi, cols - 4, piLines);
+    for (let i = 0; i < piLines; i++) frame.boxRow(piTop + 2 + i, [{ text: ` ${body[i] ?? ""}`, width: cols - 2 }]);
+    // The whole mirror is one big "open the real session" button.
+    if (selectedPr) {
+      frame.zones.push({ x1: 2, y1: piTop + 2, x2: cols - 1, y2: piTop + pRows, action: { t: "attach" } satisfies BoardAction });
     }
   }
+
+  // EVENTS: no longer a permanent strip — a floating overlay on `e`.
+  if (view.eventsFocus) renderEventsOverlay(frame, view, cols, rows);
 
   // Hint bar as clickable buttons.
   let x = 2;
   const parts: string[] = [];
   for (const b of HINT_BUTTONS) {
-    const label = `[ ${b.label} ]`;
+    const text = b.key === "e" && view.eventsFocus ? "e close events" : b.label;
+    const label = `[ ${text} ]`;
     const action: BoardAction =
       b.key === "1"
         ? { t: "tab", tab: "board" }
@@ -346,7 +406,7 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
               ? { t: "tab", tab: "metrics" }
               : { t: "key", key: b.key };
     frame.zones.push({ x1: x, y1: rows - 1, x2: x + label.length - 1, y2: rows - 1, action });
-    parts.push(`${FG.dim}[${RESET} ${b.label} ${FG.dim}]${RESET}`);
+    parts.push(`${FG.dim}[${RESET} ${text} ${FG.dim}]${RESET}`);
     x += label.length + 1;
   }
   frame.boxRow(rows - 2, [{ text: ` ${parts.join(" ")}`, width: cols - 2 }]);

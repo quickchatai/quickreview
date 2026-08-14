@@ -177,25 +177,35 @@ describe("adaptive layout", () => {
     expect(listWidth(prs, 60)).toBe(27); // clamp: 45% of 60
   });
 
-  it("grows the events strip with terminal height", async () => {
-    const { eventsRows } = await import("../src/tui/board.js");
-    expect(eventsRows(24)).toBe(6); // floor: 3 visible lines
-    expect(eventsRows(40)).toBe(10);
-    expect(eventsRows(80)).toBe(13); // cap: 10 visible lines
+  it("gives the live pi mirror half the screen, never starving the body", async () => {
+    const { piRows } = await import("../src/tui/board.js");
+    expect(piRows(24)).toBe(10); // 21 usable / 2
+    expect(piRows(40)).toBe(18);
+    expect(piRows(14)).toBe(6); // floor
+    expect(piRows(11)).toBe(5); // squeezed: body keeps 3 rows
+  });
+
+  it("centers the events overlay band on the screen", async () => {
+    const { eventsOverlayBand } = await import("../src/tui/board.js");
+    expect(eventsOverlayBand(24)).toEqual({ top: 5, height: 14 });
+    expect(eventsOverlayBand(48)).toEqual({ top: 10, height: 28 });
   });
 
   it("shows full titles and more events on a tall wide terminal", () => {
     const events = Array.from({ length: 8 }, (_, i) => ({ ts: `t${i}`, text: `10:00:0${i} event_${i}`, anomaly: false }));
-    const text = renderBoard(view({ events }), 140, 48).lines.map(stripAnsi).join("\n");
+    const text = renderBoard(view({ events, eventsFocus: true }), 140, 48).lines.map(stripAnsi).join("\n");
     expect(text).toContain("fix(crm): retry send_message"); // uncropped title
     expect(text).toContain("event_7"); // more than 3 event lines visible
   });
 });
 
 describe("renderBoard", () => {
-  it("renders the full frame with list, detail and events", () => {
+  it("renders the full frame with list, detail and the live pi mirror", () => {
     const frame = renderBoard(
-      view({ events: [{ ts: "21:24:11", text: "21:24:11 verdict_applied #5049 (APPROVE)", anomaly: false }] }),
+      view({
+        events: [{ ts: "21:24:11", text: "21:24:11 verdict_applied #5049 (APPROVE)", anomaly: false }],
+        pi: { pr: 5012, lines: ["> reading tasks.py", "thinking…"], missing: false, stale: false },
+      }),
       100,
       24,
     );
@@ -204,16 +214,92 @@ describe("renderBoard", () => {
     expect(text).toContain("▶ #5012");
     expect(text).toContain("fix(crm)");
     expect(text).toContain("✎ #5049");
-    expect(text).toContain("EVENTS");
-    expect(text).toContain("verdict_applied #5049");
+    expect(text).toContain("PI pr-5012 · live mirror · ⏎ attach");
+    expect(text).toContain("> reading tasks.py");
     expect(text).toContain("1 board");
     expect(text).toContain("2 digest");
     expect(frame.lines.length).toBe(24);
+    // The demoted EVENTS strip is gone until `e` asks for it.
+    expect(text).not.toContain("EVENTS");
+    expect(text).not.toContain("verdict_applied #5049");
   });
 
   it("keeps every row at the terminal width", () => {
     const frame = renderBoard(view(), 90, 24);
     for (const line of frame.lines) expect(displayWidth(line)).toBe(90);
+  });
+
+  it("keeps every row at the terminal width at 30 / 100 / 220 cols, mirror and overlay included", () => {
+    const events = Array.from({ length: 20 }, (_, i) => ({ ts: `t${i}`, text: `10:00:0${i} verdict_applied #504${i % 10}`, anomaly: i % 3 === 0 }));
+    const pi = {
+      pr: 5012,
+      lines: ["\x1b[32mgreen line that runs on and on and on past any sane pane width\x1b[0m", "plain"],
+      missing: false,
+      stale: false,
+    };
+    for (const cols of [30, 100, 220]) {
+      for (const over of [{}, { eventsFocus: true }, { detailFull: true }]) {
+        const frame = renderBoard(view({ events, pi, ...over }), cols, 30);
+        for (const line of frame.lines) expect(displayWidth(line)).toBe(cols);
+      }
+    }
+  });
+
+  it("shows the tail of the capture and passes SGR colors through", () => {
+    const lines = Array.from({ length: 40 }, (_, i) => `line_${i}`);
+    lines[39] = "\x1b[31mlast line\x1b[0m";
+    const frame = renderBoard(view({ pi: { pr: 5012, lines, missing: false, stale: false } }), 100, 24);
+    const raw = frame.lines.join("\n");
+    expect(raw).toContain("\x1b[31mlast line");
+    const text = frame.lines.map(stripAnsi).join("\n");
+    expect(text).toContain("last line");
+    expect(text).toContain("line_32"); // tail, not head
+    expect(text).not.toContain("line_0 ");
+  });
+
+  it("falls back to a no-session line, keeping the last capture marked (stale)", () => {
+    const gone = renderBoard(view({ pi: { pr: 5012, lines: [], missing: true, stale: false } }), 100, 24).lines.map(stripAnsi).join("\n");
+    expect(gone).toContain("no pi session for #5012");
+    expect(gone).not.toContain("(stale)");
+
+    const stale = renderBoard(view({ pi: { pr: 5012, lines: ["old output"], missing: true, stale: true } }), 100, 24).lines.map(stripAnsi).join("\n");
+    expect(stale).toContain("no pi session for #5012 · (stale)");
+    expect(stale).toContain("old output");
+  });
+
+  it("ignores a mirror belonging to another PR (selection moved, capture in flight)", () => {
+    const text = renderBoard(view({ pi: { pr: 5049, lines: ["other pr"], missing: false, stale: false } }), 100, 24).lines.map(stripAnsi).join("\n");
+    expect(text).toContain("PI pr-5012 · connecting…");
+    expect(text).not.toContain("other pr");
+  });
+
+  it("declares the mirror region as one attach zone", () => {
+    const frame = renderBoard(view({ pi: { pr: 5012, lines: ["x"], missing: false, stale: false } }), 100, 24);
+    const piTop = frame.meta["piTop"]!;
+    const zone = frame.zones.find((z) => (z.action as { t: string }).t === "attach");
+    expect(zone).toBeDefined();
+    expect(zone!.y1).toBe(piTop + 2);
+    expect(zone!.y2).toBe(piTop + frame.meta["piRows"]!);
+  });
+
+  it("toggles the events overlay on e, with its own scroll and jump zones", () => {
+    const events = Array.from({ length: 6 }, (_, i) => ({ ts: `t${i}`, text: `10:00:0${i} verdict_applied #504${i}`, anomaly: false }));
+    const closed = renderBoard(view({ events }), 100, 24).lines.map(stripAnsi).join("\n");
+    expect(closed).not.toContain("EVENTS");
+
+    const frame = renderBoard(view({ events, eventsFocus: true }), 100, 24);
+    const text = frame.lines.map(stripAnsi).join("\n");
+    expect(text).toContain("EVENTS");
+    expect(text).toContain("j/k scroll · e/Esc close");
+    expect(text).toContain("verdict_applied #5040");
+    expect(frame.zones.some((z) => (z.action as { t: string; pr?: number }).t === "event-jump")).toBe(true);
+    // Footer hint flips while it is open (visible once the bar has room).
+    const wide = renderBoard(view({ events, eventsFocus: true }), 220, 24).lines.map(stripAnsi).join("\n");
+    expect(wide).toContain("close events");
+
+    const scrolled = renderBoard(view({ events, eventsFocus: true, eventsScroll: 2 }), 100, 24).lines.map(stripAnsi).join("\n");
+    expect(scrolled).not.toContain("verdict_applied #5040");
+    expect(scrolled).toContain("verdict_applied #5042");
   });
 
   it("renders the help overlay over the board", () => {

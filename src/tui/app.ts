@@ -11,6 +11,7 @@ import { formatEvent, moveSelection, reselect, sortPrs, type EventLine } from ".
 import { TripleCtrlC } from "./chord.js";
 import { MOUSE_OFF, MOUSE_ON, extractMouseEvents, hitTest, type MouseEvent, type Zone } from "./mouse.js";
 import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR, Frame } from "./paint.js";
+import { PiMirror } from "./pipane.js";
 import { Poller } from "./poll.js";
 import { prUrl } from "./theme.js";
 import { eventsArgv, whyArgv, type SshRunner } from "./remote.js";
@@ -81,6 +82,8 @@ export class App {
   };
   tab: Tab = "board";
   readonly poller: Poller;
+  /** Live mirror of the selected PR's pi session (board's lower region). */
+  readonly pi: PiMirror;
   /** Raw event rows behind view.events — the ambient feed writes these
    * verbatim, so the companion sees what the daemon logged, not our prose. */
   rawEvents: Array<{ ts: string; kind: string; pr: number | null; payload: string | null }> = [];
@@ -104,6 +107,22 @@ export class App {
     private readonly now: () => Date = () => new Date(),
   ) {
     this.poller = new Poller(cfg, ssh, () => this.onPoll(), now);
+    this.pi = new PiMirror(cfg, ssh, () => {
+      this.syncPiPane();
+      this.repaint();
+    });
+  }
+
+  /** Point the board's mirror at whatever is selected right now (cache first,
+   * so switching back paints instantly). */
+  private syncPiPane(): void {
+    this.view.pi = this.pi.view(this.selectedPr);
+  }
+
+  /** Selection moved: paint the cached mirror at once, capture behind it. */
+  private followSelection(): void {
+    this.syncPiPane();
+    this.pi.select(this.selectedPr);
   }
 
   // ---- lifecycle ---------------------------------------------------------
@@ -126,6 +145,7 @@ export class App {
 
   private teardown(): void {
     this.poller.stop();
+    this.pi.stop();
     this.input.off("data", this.onData);
     this.out.off("resize", this.onResize);
     if (this.input.isTTY) this.input.setRawMode(false);
@@ -166,6 +186,7 @@ export class App {
     this.input.on("data", this.onData);
     this.out.write(CLEAR + MOUSE_ON);
     void this.refreshDetail();
+    void this.pi.refresh(this.selectedPr); // the mirror caught up while attached
     this.repaint();
     this.hooks.onResume?.();
   }
@@ -200,6 +221,9 @@ export class App {
     this.view.health = this.poller.health();
     void this.refreshEvents();
     if (this.view.detail?.pr !== this.selectedPr) void this.refreshDetail();
+    // The mirror only costs an ssh while the board is the visible tab.
+    this.syncPiPane();
+    if (this.tab === "board" && !this.suspended) void this.pi.refresh(this.selectedPr);
     this.hooks.onPoll?.(this);
     this.repaint();
   }
@@ -262,6 +286,7 @@ export class App {
     const sorted = this.view.snapshot ? sortPrs(this.view.snapshot.prs) : [];
     this.view.selected = reselect(sorted, pr, this.view.selected);
     void this.refreshDetail();
+    this.followSelection();
   }
 
   selectedSession(): string | undefined {
@@ -354,14 +379,16 @@ export class App {
     }
     if (ev.kind === "wheel-up" || ev.kind === "wheel-down") {
       const delta = ev.kind === "wheel-down" ? 1 : -1;
-      const stripTop = (this.lastFrame?.meta["stripTop"] ?? Number.MAX_SAFE_INTEGER) + 1;
-      if (ev.y >= stripTop) {
+      // The events overlay owns the wheel while it is up; otherwise the wheel
+      // moves the selection (and the mirror follows it).
+      if (this.view.eventsFocus) {
         this.view.eventsScroll = Math.max(0, Math.min(this.view.eventsScroll + delta, Math.max(0, this.view.events.length - 1)));
       } else {
         const sorted = this.view.snapshot ? sortPrs(this.view.snapshot.prs) : [];
         this.view.selected = moveSelection(this.view.selected, delta, sorted.length);
         this.selectedPr = sorted[this.view.selected]?.number;
         void this.refreshDetail();
+        this.followSelection();
       }
       this.repaint();
       return;
@@ -384,6 +411,12 @@ export class App {
       case "event-jump":
         this.selectPr(action.pr);
         break;
+      case "attach": {
+        // Clicking the live mirror is the same as ⏎ on the selection.
+        const session = this.selectedSession();
+        if (session) this.startAttach(session);
+        return;
+      }
       case "tab":
         if (action.tab === "companion") {
           this.openCompanion();
@@ -478,6 +511,7 @@ export class App {
         this.selectedPr = sorted[this.view.selected]?.number;
         this.msgDraft = ""; // board navigation drops a cancelled draft
         void this.refreshDetail();
+        this.followSelection();
         break;
       }
       case "escape":
@@ -494,6 +528,7 @@ export class App {
       case "refresh":
         void this.poller.tick();
         void this.refreshDetail();
+        void this.pi.refresh(this.selectedPr);
         break;
       case "reconnect":
         if (this.hooks.reconnect) this.hooks.reconnect(this);

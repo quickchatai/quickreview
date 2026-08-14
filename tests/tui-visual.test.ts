@@ -181,6 +181,33 @@ describe("rich board", () => {
   });
 });
 
+describe("live pi mirror pane", () => {
+  const pane = { pr: 5277, lines: ["\x1b[36m▌ pi\x1b[0m reading src/tasks.py", "…thinking"], missing: false, stale: false };
+
+  it("fills the lower half with the selected session, colors intact", () => {
+    const frame = renderBoard(view({ pi: pane }), 140, 40);
+    const text = frame.lines.map(stripAnsi).join("\n");
+    expect(text).toContain("PI pr-5277 · live mirror · ⏎ attach"); // #5277 sorts first (reviewing)
+    expect(text).toContain("reading src/tasks.py");
+    expect(frame.lines.join("\n")).toContain("\x1b[36m▌ pi");
+    // The pane really is the lower half, not a strip.
+    expect(frame.meta["piRows"]).toBe(18);
+    expect(frame.meta["piTop"]).toBe(40 - 3 - 18 + 1);
+  });
+
+  it("clicking anywhere in the mirror is ⏎ attach", () => {
+    const zones = renderBoard(view({ pi: pane }), 140, 40).zones as Zone<BoardAction>[];
+    expect(hitTest(zones, 50, 30)).toEqual({ t: "attach" });
+    expect(hitTest(zones, 20, 3)).toEqual({ t: "select-pr", pr: 5277 }); // list untouched
+  });
+
+  it("the events overlay sits on top of the mirror and takes its clicks", () => {
+    const zones = renderBoard(view({ pi: pane, eventsFocus: true, events: [{ ts: "t", text: "10:00:00 round_done #5265", anomaly: false }] }), 140, 40)
+      .zones as Zone<BoardAction>[];
+    expect(hitTest(zones, 50, 10)).toEqual({ t: "event-jump", pr: 5265 }); // band top row 8 → first event on frame row 9
+  });
+});
+
 describe("enrichWhy", () => {
   it("degrades silently when GitHub is unreachable (no secrets locally)", async () => {
     const payload: WhyPayload = { pr: 1, known: false, spend_usd: 0, rounds: [], threads: { open: 0, total: 0 } };

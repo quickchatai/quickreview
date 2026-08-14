@@ -34,7 +34,7 @@ keys: 1/2/3/4/5 tabs (3 = companion, also c; 4 = deploy — click ▶ or D D dep
       j/k select · ⏎ attach ·
       Ctrl-q detach (twice = literal) · Ctrl-c ×3 hard-kill the TUI ·
       s reconnect ssh (GCP passphrase, once) ·
-      m quick-message · o overseer · M main · w detail · e events · r refresh ·
+      m quick-message · o overseer · M main · w detail · e events overlay · r refresh ·
       ? full key map · q quit
 
 troubleshooting:
