@@ -1,7 +1,7 @@
 // Typed access to config.toml — the single source of every runtime knob.
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { resolve, dirname } from "node:path";
+import { resolve, dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "smol-toml";
 import type { PassTier } from "./types.js";
@@ -90,6 +90,115 @@ export interface BackfillConfig {
   max_search_pages: number;
 }
 
+// ---- [slack] — the Slack concierge ------------------------------
+// TOKENS ARE NEVER IN CONFIG. `bot_token_file` / `app_token_file` name flat
+// files under [github].secrets_dir, read the way every other secret is
+// (PiSessionManager.secret / TokenMinter): the config carries the file NAME.
+
+/** One announcement cause: may it speak at all, and how often. */
+export interface SlackCausePolicy {
+  enabled: boolean;
+  /** 0 = no cooldown (every occurrence fires). */
+  cooldown_min: number;
+}
+
+export interface SlackPolicyConfig {
+  /** Channel-wide model turns per Warsaw day (RATIFIED at 80). */
+  daily_turns: number;
+  /** Per-person model turns per Warsaw day (RATIFIED at 20). */
+  per_user_daily_turns: number;
+  /** Daemon posts into any ONE thread per Warsaw day. */
+  thread_replies_per_day: number;
+  /** Author ping-pong courtesy limit before the bot goes quiet in-thread. */
+  soft_exchange_limit: number;
+  /** Rolling-hour ceiling on announcements (they bypass turn caps, not this). */
+  announcements_per_hour: number;
+  /** Cooldown for a cause with no explicit [slack.policy.causes] entry. */
+  default_cooldown_min: number;
+  /** The day boundary for every cap here — DST-correct via src/eod.ts. */
+  timezone: string;
+  pickup_grace_min: number;
+  downtime_notice_min: number;
+  heartbeat_interval_min: number;
+  storm_corrections: number;
+  awaiting_author_stale_h: number;
+  awaiting_human_stale_h: number;
+  /** RATIFIED "never": verdicts stay in-thread, never reply_broadcast. */
+  broadcast_verdicts: "never" | "always";
+  causes: Record<string, SlackCausePolicy>;
+}
+
+export interface SlackConfig {
+  enabled: boolean;
+  /** The ONE channel id the concierge lives in; empty ⇒ cannot enable. */
+  channel: string;
+  channel_kind: "public" | "private";
+  /** File name under [github].secrets_dir holding the xoxb- bot token. */
+  bot_token_file: string;
+  /** File name under [github].secrets_dir holding the xapp- socket token. */
+  app_token_file: string;
+  legacy_owner_slack_id: string;
+  post_min_interval_ms: number;
+  reconnect_backoff_ms: number[];
+  server_ping_timeout_ms: number;
+  catchup_max_age_s: number;
+  max_reply_chars: number;
+  name_cache_ttl_s: number;
+  /** Slack member id → GitHub login. The ONLY source of own-PR rights. */
+  users: Record<string, string>;
+  policy: SlackPolicyConfig;
+}
+
+/** Per-cause defaults. Absent causes fall back to `default_cooldown_min`. */
+export const SLACK_CAUSE_DEFAULTS: Record<string, SlackCausePolicy> = {
+  "round.overdue": { enabled: true, cooldown_min: 60 },
+  "round.malformed_verdict": { enabled: true, cooldown_min: 60 },
+  "pr.not_picked_up": { enabled: true, cooldown_min: 120 },
+  "daemon.up": { enabled: true, cooldown_min: 0 },
+  "daemon.stopping": { enabled: true, cooldown_min: 0 },
+  "slack.cap_reached": { enabled: true, cooldown_min: 0 },
+  "reconcile.storm": { enabled: false, cooldown_min: 180 },
+  "digest.eod": { enabled: false, cooldown_min: 0 },
+  "pr.awaiting_author_stale": { enabled: false, cooldown_min: 1440 },
+  "pr.awaiting_human_stale": { enabled: false, cooldown_min: 1440 },
+};
+
+export const SLACK_POLICY_DEFAULTS: SlackPolicyConfig = {
+  daily_turns: 80,
+  per_user_daily_turns: 20,
+  thread_replies_per_day: 6,
+  soft_exchange_limit: 3,
+  announcements_per_hour: 20,
+  default_cooldown_min: 60,
+  timezone: "Europe/Warsaw",
+  pickup_grace_min: 20,
+  downtime_notice_min: 5,
+  heartbeat_interval_min: 5,
+  storm_corrections: 5,
+  awaiting_author_stale_h: 48,
+  awaiting_human_stale_h: 72,
+  broadcast_verdicts: "never",
+  causes: SLACK_CAUSE_DEFAULTS,
+};
+
+/** [slack] is optional in config.toml, exactly like [tui] / [companion]. */
+export const SLACK_DEFAULTS: SlackConfig = {
+  enabled: false,
+  channel: "",
+  channel_kind: "public",
+  bot_token_file: "slack_bot_token",
+  app_token_file: "slack_app_token",
+  legacy_owner_slack_id: "",
+  post_min_interval_ms: 1100,
+  reconnect_backoff_ms: [1000, 2000, 5000, 15000, 30000],
+  server_ping_timeout_ms: 30000,
+  catchup_max_age_s: 300,
+  max_reply_chars: 3000,
+  name_cache_ttl_s: 86400,
+  users: {},
+  policy: SLACK_POLICY_DEFAULTS,
+};
+
 /** Per-model spend rates, keyed by bare model id (e.g. "gpt-5.6-sol"). */
 export interface ModelPricing {
   input_per_mtok: number;
@@ -153,6 +262,7 @@ export interface Config {
   tui: TuiConfig;
   companion: CompanionConfig;
   backfill: BackfillConfig;
+  slack: SlackConfig;
 }
 
 /** Defaults for [backfill], derived from the already-parsed [github] block. */
@@ -250,6 +360,7 @@ export function parseConfig(toml: string): Config {
     tui: { ...TUI_DEFAULTS, ...((raw.tui ?? {}) as Partial<TuiConfig>) },
     companion: resolveCompanionPaths({ ...COMPANION_DEFAULTS, ...((raw.companion ?? {}) as Partial<CompanionConfig>) }),
     backfill: { ...backfillDefaults(github), ...((raw.backfill ?? {}) as Partial<BackfillConfig>) },
+    slack: parseSlack((raw.slack ?? {}) as Record<string, any>),
   };
   for (const k of [
     "repo", "app_slug", "bot_login", "review_team", "escalation_reviewer",
@@ -257,7 +368,87 @@ export function parseConfig(toml: string): Config {
     "issue_label", "secrets_dir",
   ] as const) req(cfg.github as unknown as Record<string, unknown>, k);
   cfg.github.secrets_dir = expandHome(cfg.github.secrets_dir);
+  // Shape checks are pure, so they fire on every parse (tests included);
+  // the token-file check is I/O and lives in validateSlackConfig.
+  checkSlackShape(cfg.slack);
   return cfg;
+}
+
+function parseSlack(raw: Record<string, any>): SlackConfig {
+  const rawPolicy = (raw.policy ?? {}) as Record<string, any>;
+  const causes: Record<string, SlackCausePolicy> = { ...SLACK_CAUSE_DEFAULTS };
+  for (const [cause, v] of Object.entries((rawPolicy.causes ?? {}) as Record<string, Partial<SlackCausePolicy>>)) {
+    causes[cause] = {
+      enabled: v.enabled ?? causes[cause]?.enabled ?? true,
+      cooldown_min: Number(v.cooldown_min ?? causes[cause]?.cooldown_min ?? SLACK_POLICY_DEFAULTS.default_cooldown_min),
+    };
+  }
+  const { causes: _drop, ...policyScalars } = rawPolicy;
+  const slack: SlackConfig = {
+    ...SLACK_DEFAULTS,
+    ...(raw as Partial<SlackConfig>),
+    users: { ...((raw.users ?? {}) as Record<string, string>) },
+    policy: { ...SLACK_POLICY_DEFAULTS, ...(policyScalars as Partial<SlackPolicyConfig>), causes },
+  };
+  // Token *files* are names under secrets_dir, but an absolute or ~-rooted
+  // override must still work — expand here so every reader sees one shape.
+  slack.bot_token_file = expandHome(slack.bot_token_file);
+  slack.app_token_file = expandHome(slack.app_token_file);
+  return slack;
+}
+
+/** Absolute path of a Slack token file: a bare name resolves under
+ * [github].secrets_dir, an absolute/~ path is taken as given. */
+export function slackTokenPath(cfg: Config, which: "bot" | "app"): string {
+  const name = which === "bot" ? cfg.slack.bot_token_file : cfg.slack.app_token_file;
+  return isAbsolute(name) ? name : join(cfg.github.secrets_dir, name);
+}
+
+/** Pure (I/O-free) part of Slack boot validation. When disabled, nothing at
+ * all is required — the concierge is simply not there. */
+function checkSlackShape(slack: SlackConfig): void {
+  if (!slack.enabled) return;
+  const fail = (msg: string): never => {
+    throw new Error(`config.toml [slack]: ${msg}`);
+  };
+  if (!slack.channel.trim()) fail("enabled = true requires a non-empty `channel`");
+  if (slack.channel_kind !== "public" && slack.channel_kind !== "private") {
+    fail(`channel_kind must be "public" or "private" (got ${JSON.stringify(slack.channel_kind)})`);
+  }
+  if (!slack.legacy_owner_slack_id.trim()) fail("enabled = true requires a non-empty `legacy_owner_slack_id`");
+  if (!(slack.legacy_owner_slack_id in slack.users)) {
+    fail(`legacy_owner_slack_id '${slack.legacy_owner_slack_id}' must appear as a key in [slack.users] (it is the only source of own-PR rights)`);
+  }
+}
+
+/** How validation reads a secret file. Injectable so tests never need real
+ * files; the default is the same read-and-trim every other secret gets. */
+export type SecretReader = (path: string) => string | undefined;
+
+export const fsSecretReader: SecretReader = (path) => {
+  try {
+    const v = readFileSync(path, "utf8").trim();
+    return v.length > 0 ? v : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * Full Slack boot validation — shape plus token-file presence. A missing or
+ * empty token is a HARD startup error: the concierge never degrades silently
+ * into a read-only half-presence in the channel. Disabled ⇒ nothing is read.
+ */
+export function validateSlackConfig(cfg: Config, deps: { readSecret?: SecretReader } = {}): void {
+  checkSlackShape(cfg.slack);
+  if (!cfg.slack.enabled) return;
+  const read = deps.readSecret ?? fsSecretReader;
+  for (const which of ["bot", "app"] as const) {
+    const path = slackTokenPath(cfg, which);
+    if (!read(path)) {
+      throw new Error(`config.toml [slack]: ${which} token file '${path}' is missing or empty — Slack cannot start`);
+    }
+  }
 }
 
 let cached: Config | null = null;
@@ -266,6 +457,7 @@ export function loadConfig(path?: string): Config {
   if (cached && !path) return cached;
   const p = path ?? resolve(sandboxRoot(), "config.toml");
   const cfg = parseConfig(readFileSync(p, "utf8"));
+  validateSlackConfig(cfg);
   if (!path) cached = cfg;
   return cfg;
 }

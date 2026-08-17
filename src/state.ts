@@ -79,6 +79,73 @@ export interface BackfillPrMetaRow {
   imported_at: string;
 }
 
+// ---- Slack concierge rows ---------------------------------------
+// Slack `ts` values are TEXT ALWAYS ("1755431234.001900"): they are opaque
+// message ids whose precision a float would destroy.
+
+/** Who a Slack message came from, in rights terms (resolved by the router). */
+export type SlackTier = "anyone" | "author" | "owner_legacy" | "ignored";
+
+/** What the router did with a Slack message. Everything that is not
+ * `injected` names the reason it never reached a session. */
+export type SlackDisposition =
+  | "injected"
+  | "dropped_echo"
+  | "dropped_stale"
+  | "dropped_cap"
+  | "dropped_subtype"
+  | "dropped_dupe"
+  | "dropped_channel";
+
+/** What the daemon posts into Slack. `kind` drives the caps in slack/policy. */
+export type SlackPostKind = "reply" | "pickup" | "verdict" | "announce";
+
+/** One PR ⇄ one Slack thread (the root message the daemon opened for it). */
+export interface SlackThreadRow {
+  pr: number;
+  channel: string;
+  root_ts: string;
+  created_at: string;
+  last_post_at: string | null;
+  post_count: number;
+}
+
+export interface SlackEventRow {
+  event_id: string;
+  channel: string;
+  ts: string;
+  thread_ts: string | null;
+  slack_user: string | null;
+  tier: SlackTier;
+  disposition: SlackDisposition;
+  received_at: string;
+  injected_at: string | null;
+}
+
+export interface SlackPostRow {
+  id: number;
+  idem_key: string;
+  kind: SlackPostKind;
+  pr: number | null;
+  thread_ts: string | null;
+  ts: string | null;
+  chars: number;
+  posted_at: string;
+  ok: number;
+  error: string | null;
+}
+
+export interface SlackCooldownRow {
+  key: string;
+  last_fired_at: string;
+  warsaw_day: string;
+  fire_count: number;
+  /** Repeats swallowed inside the cooldown window (AlertPolicy fold counter). */
+  fold_count: number;
+  /** 1 once the one-per-Warsaw-day escalation bypass has been spent. */
+  bypassed: number;
+}
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS pr_state (
   number INTEGER PRIMARY KEY,
@@ -142,6 +209,47 @@ CREATE TABLE IF NOT EXISTS filed_items (
   ref TEXT,
   filed_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS slack_threads (
+  pr           INTEGER PRIMARY KEY,
+  channel      TEXT NOT NULL,
+  root_ts      TEXT NOT NULL,
+  created_at   TEXT NOT NULL,
+  last_post_at TEXT,
+  post_count   INTEGER NOT NULL DEFAULT 0
+);
+CREATE UNIQUE INDEX IF NOT EXISTS slack_threads_root ON slack_threads(channel, root_ts);
+CREATE TABLE IF NOT EXISTS slack_events (
+  event_id     TEXT PRIMARY KEY,
+  channel      TEXT NOT NULL,
+  ts           TEXT NOT NULL,
+  thread_ts    TEXT,
+  slack_user   TEXT,
+  tier         TEXT NOT NULL,
+  disposition  TEXT NOT NULL,
+  received_at  TEXT NOT NULL,
+  injected_at  TEXT
+);
+CREATE TABLE IF NOT EXISTS slack_posts (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  idem_key   TEXT NOT NULL UNIQUE,
+  kind       TEXT NOT NULL,
+  pr         INTEGER,
+  thread_ts  TEXT,
+  ts         TEXT,
+  chars      INTEGER NOT NULL DEFAULT 0,
+  posted_at  TEXT NOT NULL,
+  ok         INTEGER NOT NULL DEFAULT 1,
+  error      TEXT
+);
+CREATE INDEX IF NOT EXISTS slack_posts_day ON slack_posts(posted_at);
+CREATE TABLE IF NOT EXISTS slack_cooldowns (
+  key           TEXT PRIMARY KEY,
+  last_fired_at TEXT NOT NULL,
+  warsaw_day    TEXT NOT NULL,
+  fire_count    INTEGER NOT NULL DEFAULT 1,
+  fold_count    INTEGER NOT NULL DEFAULT 0,
+  bypassed      INTEGER NOT NULL DEFAULT 0
+);
 `;
 
 /** Optional per-round facts recorded at (or just after) round start. */
@@ -187,6 +295,10 @@ export class StateStore {
       "ALTER TABLE rounds ADD COLUMN tokens_out INTEGER",
       "ALTER TABLE rounds ADD COLUMN tokens_cache_read INTEGER",
       "ALTER TABLE rounds ADD COLUMN est_usd REAL",
+      // Slack concierge — cooldown fold/bypass memory, additive so a
+      // store created by an earlier slice converges.
+      "ALTER TABLE slack_cooldowns ADD COLUMN fold_count INTEGER NOT NULL DEFAULT 0",
+      "ALTER TABLE slack_cooldowns ADD COLUMN bypassed INTEGER NOT NULL DEFAULT 0",
     ]) {
       try {
         this.db.exec(ddl);
@@ -513,6 +625,200 @@ export class StateStore {
     return (
       this.db.prepare("SELECT COUNT(*) AS c FROM filed_items WHERE kind = ? AND filed_at >= ?").get(kind, sinceIso) as { c: number }
     ).c;
+  }
+
+  // ---- Slack: PR ⇄ thread map -------------------------------------------
+
+  /** Bind a PR to its Slack thread root. Re-binding the same PR (a rebuilt
+   * thread) overwrites channel/root_ts and resets the per-thread counters. */
+  upsertSlackThread(row: { pr: number; channel: string; root_ts: string }): void {
+    this.db
+      .prepare(
+        `INSERT INTO slack_threads (pr, channel, root_ts, created_at, last_post_at, post_count)
+         VALUES (@pr, @channel, @root_ts, @created_at, NULL, 0)
+         ON CONFLICT(pr) DO UPDATE SET channel=@channel, root_ts=@root_ts`,
+      )
+      .run({ ...row, created_at: this.ts() });
+  }
+
+  slackThreadForPr(pr: number): SlackThreadRow | undefined {
+    return this.db.prepare("SELECT * FROM slack_threads WHERE pr = ?").get(pr) as SlackThreadRow | undefined;
+  }
+
+  /** The reverse lookup the router needs: an inbound reply carries a
+   * thread_ts, and that is the only thing tying it to a PR. */
+  slackThreadByRoot(channel: string, rootTs: string): SlackThreadRow | undefined {
+    return this.db.prepare("SELECT * FROM slack_threads WHERE channel = ? AND root_ts = ?").get(channel, rootTs) as
+      | SlackThreadRow
+      | undefined;
+  }
+
+  allSlackThreads(): SlackThreadRow[] {
+    return this.db.prepare("SELECT * FROM slack_threads ORDER BY pr").all() as SlackThreadRow[];
+  }
+
+  /** Stamp a successful post against the PR's thread (counter + last time). */
+  touchSlackThread(pr: number): void {
+    this.db.prepare("UPDATE slack_threads SET post_count = post_count + 1, last_post_at = ? WHERE pr = ?").run(this.ts(), pr);
+  }
+
+  // ---- Slack: inbound event ledger (dedupe + turn accounting) ------------
+
+  /** Returns false when `event_id` was already recorded — Slack redelivers on
+   * every missed ack, exactly like a webhook X-GitHub-Delivery replay. */
+  recordSlackEvent(row: {
+    event_id: string;
+    channel: string;
+    ts: string;
+    thread_ts?: string | null;
+    slack_user?: string | null;
+    tier: SlackTier;
+    disposition: SlackDisposition;
+    injected_at?: string | null;
+  }): boolean {
+    const info = this.db
+      .prepare(
+        `INSERT OR IGNORE INTO slack_events
+           (event_id, channel, ts, thread_ts, slack_user, tier, disposition, received_at, injected_at)
+         VALUES (@event_id, @channel, @ts, @thread_ts, @slack_user, @tier, @disposition, @received_at, @injected_at)`,
+      )
+      .run({
+        ...row,
+        thread_ts: row.thread_ts ?? null,
+        slack_user: row.slack_user ?? null,
+        injected_at: row.injected_at ?? null,
+        received_at: this.ts(),
+      });
+    return info.changes === 1;
+  }
+
+  /** The row is written the moment the event lands; the disposition is settled
+   * once the router has decided (and stamps injected_at when it injected). */
+  setSlackEventDisposition(eventId: string, disposition: SlackDisposition, injected = disposition === "injected"): void {
+    this.db
+      .prepare("UPDATE slack_events SET disposition = ?, injected_at = ? WHERE event_id = ?")
+      .run(disposition, injected ? this.ts() : null, eventId);
+  }
+
+  slackEvent(eventId: string): SlackEventRow | undefined {
+    return this.db.prepare("SELECT * FROM slack_events WHERE event_id = ?").get(eventId) as SlackEventRow | undefined;
+  }
+
+  /** Injected turns inside a half-open [since, until) window; `slackUser`
+   * narrows it to one person. Windows are ISO instants — the Warsaw-day
+   * boundaries are computed by slack/policy from the eod.ts zone helpers,
+   * never re-derived here (mirrors filedSince/improvementRateReason). */
+  slackTurnsBetween(sinceIso: string, untilIso: string, slackUser?: string | null): number {
+    const sql =
+      "SELECT COUNT(*) AS c FROM slack_events WHERE disposition = 'injected' AND received_at >= ? AND received_at < ?" +
+      (slackUser ? " AND slack_user = ?" : "");
+    const args: Array<string> = slackUser ? [sinceIso, untilIso, slackUser] : [sinceIso, untilIso];
+    return (this.db.prepare(sql).get(...args) as { c: number }).c;
+  }
+
+  // ---- Slack: outbound post ledger (idempotence + caps) ------------------
+
+  /**
+   * The idempotence guarantee: `idem_key` is UNIQUE, so a retried post is
+   * rejected here rather than duplicated in the channel. Returns false when
+   * the key was already spent — the caller must then NOT post.
+   */
+  recordSlackPost(row: {
+    idem_key: string;
+    kind: SlackPostKind;
+    pr?: number | null;
+    thread_ts?: string | null;
+    ts?: string | null;
+    chars?: number;
+    ok?: boolean;
+    error?: string | null;
+  }): boolean {
+    const info = this.db
+      .prepare(
+        `INSERT OR IGNORE INTO slack_posts (idem_key, kind, pr, thread_ts, ts, chars, posted_at, ok, error)
+         VALUES (@idem_key, @kind, @pr, @thread_ts, @ts, @chars, @posted_at, @ok, @error)`,
+      )
+      .run({
+        idem_key: row.idem_key,
+        kind: row.kind,
+        pr: row.pr ?? null,
+        thread_ts: row.thread_ts ?? null,
+        ts: row.ts ?? null,
+        chars: row.chars ?? 0,
+        posted_at: this.ts(),
+        ok: row.ok === false ? 0 : 1,
+        error: row.error ?? null,
+      });
+    return info.changes === 1;
+  }
+
+  /** Fill in the Slack-assigned message ts (and outcome) after the API call. */
+  settleSlackPost(idemKey: string, result: { ts?: string | null; ok: boolean; error?: string | null }): void {
+    this.db
+      .prepare("UPDATE slack_posts SET ts = ?, ok = ?, error = ? WHERE idem_key = ?")
+      .run(result.ts ?? null, result.ok ? 1 : 0, result.error ?? null, idemKey);
+  }
+
+  slackPost(idemKey: string): SlackPostRow | undefined {
+    return this.db.prepare("SELECT * FROM slack_posts WHERE idem_key = ?").get(idemKey) as SlackPostRow | undefined;
+  }
+
+  /** Successful posts in [since, until), optionally of one kind. */
+  slackPostsBetween(sinceIso: string, untilIso: string, kind?: SlackPostKind): number {
+    const sql =
+      "SELECT COUNT(*) AS c FROM slack_posts WHERE ok = 1 AND posted_at >= ? AND posted_at < ?" + (kind ? " AND kind = ?" : "");
+    const args: Array<string> = kind ? [sinceIso, untilIso, kind] : [sinceIso, untilIso];
+    return (this.db.prepare(sql).get(...args) as { c: number }).c;
+  }
+
+  /** Successful posts into one thread in [since, until) — the per-thread cap. */
+  slackThreadPostsBetween(threadTs: string, sinceIso: string, untilIso: string): number {
+    return (
+      this.db
+        .prepare("SELECT COUNT(*) AS c FROM slack_posts WHERE ok = 1 AND thread_ts = ? AND posted_at >= ? AND posted_at < ?")
+        .get(threadTs, sinceIso, untilIso) as { c: number }
+    ).c;
+  }
+
+  /** Announcements posted since an instant — the per-hour limiter's window is
+   * rolling, not calendar-aligned. */
+  slackPostsSince(sinceIso: string, kind?: SlackPostKind): number {
+    const sql = "SELECT COUNT(*) AS c FROM slack_posts WHERE ok = 1 AND posted_at >= ?" + (kind ? " AND kind = ?" : "");
+    const args: Array<string> = kind ? [sinceIso, kind] : [sinceIso];
+    return (this.db.prepare(sql).get(...args) as { c: number }).c;
+  }
+
+  // ---- Slack: announcement cooldowns ------------------------------------
+
+  slackCooldown(key: string): SlackCooldownRow | undefined {
+    return this.db.prepare("SELECT * FROM slack_cooldowns WHERE key = ?").get(key) as SlackCooldownRow | undefined;
+  }
+
+  /** Record a fire. A fire in a new Warsaw day resets the fold counter and the
+   * daily bypass; `bypass` marks the one escalation allowed per day. */
+  recordSlackCooldownFire(key: string, warsawDay: string, bypass = false): void {
+    const prev = this.slackCooldown(key);
+    const sameDay = prev?.warsaw_day === warsawDay;
+    this.db
+      .prepare(
+        `INSERT INTO slack_cooldowns (key, last_fired_at, warsaw_day, fire_count, fold_count, bypassed)
+         VALUES (@key, @last_fired_at, @warsaw_day, @fire_count, 0, @bypassed)
+         ON CONFLICT(key) DO UPDATE SET
+           last_fired_at=@last_fired_at, warsaw_day=@warsaw_day, fire_count=@fire_count, fold_count=0, bypassed=@bypassed`,
+      )
+      .run({
+        key,
+        last_fired_at: this.ts(),
+        warsaw_day: warsawDay,
+        fire_count: sameDay ? prev!.fire_count + 1 : 1,
+        bypassed: (sameDay && prev!.bypassed === 1) || bypass ? 1 : 0,
+      });
+  }
+
+  /** A repeat swallowed inside the cooldown window; returns the new fold count. */
+  foldSlackCooldown(key: string): number {
+    this.db.prepare("UPDATE slack_cooldowns SET fold_count = fold_count + 1 WHERE key = ?").run(key);
+    return this.slackCooldown(key)?.fold_count ?? 0;
   }
 }
 
