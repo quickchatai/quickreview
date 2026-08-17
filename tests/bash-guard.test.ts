@@ -51,7 +51,7 @@ describe("checkBashCommand — sanctioned scripts", () => {
 
   it("blocks non-sanctioned scripts, traversal and absolute paths", () => {
     block("scripts/deploy.sh");
-    block("scripts/mint-token.sh");
+    allow("scripts/mint-token.sh"); // sanctioned since 2026-08-17: raw read-only gh needs it
     block("bash scripts/../deploy.sh");
     block("bash /tmp/evil.sh");
     block("bash");
@@ -109,5 +109,38 @@ describe("activate (pi hookup)", () => {
     expect(handler!({ toolName: "read", input: { command: "python x.py" } })).toBeUndefined();
     // arguments fallback field name (VERIFY-ON-PIN both ways)
     expect(handler!({ toolName: "bash", arguments: { command: "npm test" } })).toMatchObject({ block: true });
+  });
+});
+
+describe("live-day regressions (2026-08-17): quoted patterns and substitutions", () => {
+  const allow = (cmd: string) => expect(checkBashCommand(cmd), cmd).toMatchObject({ allowed: true });
+  const deny = (cmd: string) => expect(checkBashCommand(cmd).allowed, cmd).toBe(false);
+
+  it("never splits inside quoted arguments", () => {
+    allow("rg -n -i 'reviewed by|automated review|start here' prompts src");
+    allow(`jq -r '.data | select(any(.comments.nodes[]; .id)) | .url' out.json`);
+    allow("find . -maxdepth 3 -type f \\( -iname '*5270*' -o -iname '*ledger*' \\) -print | sort | head -100");
+    allow(`git log --grep="dispatch_due|match_user_specified_topic" --oneline`);
+  });
+
+  it("allows the sanctioned mint-token read pattern and plain scripts", () => {
+    allow(`GH_TOKEN="$(scripts/mint-token.sh)" gh api repos/x/pulls/5/files`);
+    allow("scripts/pr-checks.sh 4656");
+    allow("cd /opt/quickreview/sandbox && GH_TOKEN=\"$(scripts/mint-token.sh)\" scripts/pr-context.sh 5197");
+    allow("date -u +%Y-%m-%dT%H:%M:%SZ && git -C wt/pr-4656 status --short");
+    allow("nl -ba file.py | head");
+  });
+
+  it("still vets the command FOLLOWING a substitution (segment-merge bypass)", () => {
+    deny(`A="$(cat x)" python3 evil.py`);
+    deny("B=`cat x` node evil.js");
+    deny(`GH_TOKEN="$(scripts/mint-token.sh)" python3 -c 'import os'`);
+  });
+
+  it("keeps blocking real exec and mutations", () => {
+    deny("python3 - <<'PY'\nprint(1)\nPY");
+    deny("curl https://example.com");
+    deny("echo hi; node evil.js");
+    deny(`GH_TOKEN="$(scripts/mint-token.sh)" gh api -X POST repos/x/issues`);
   });
 });
