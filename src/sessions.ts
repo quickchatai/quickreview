@@ -427,7 +427,12 @@ export class PiSessionManager implements SessionHooks {
   async compactSession(pr: number): Promise<void> {
     const session = prSessionName(pr);
     if (!(await this.tmux.hasSession(session))) return;
-    await this.tmux.send(session, "/compact", true);
+    try {
+      await this.tmux.send(session, "/compact", true);
+    } catch {
+      // Best-effort by contract: the has/send pair races session death during
+      // shutdown/restart — a vanished pane must not log as a failure.
+    }
   }
 
   async archiveAndClose(pr: number): Promise<void> {
