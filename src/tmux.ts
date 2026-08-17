@@ -126,9 +126,12 @@ export class Tmux {
     await this.exec(this.bin, ["kill-session", "-t", `=${name}`]);
   }
 
-  /** Literal text into the session's active pane; `enter` appends Enter. */
+  /** Literal text into the session's active pane; `enter` appends Enter.
+   * Target is `=name:` — tmux 3.5 rejects a bare `=name` as a PANE target
+   * ("can't find pane"), while the trailing colon keeps exact-match session
+   * semantics and resolves to the active window's active pane. */
   async send(name: string, text: string, enter = true): Promise<void> {
-    await runOrThrow(this.exec, this.bin, ["send-keys", "-t", `=${name}`, "-l", text]);
-    if (enter) await runOrThrow(this.exec, this.bin, ["send-keys", "-t", `=${name}`, "Enter"]);
+    await runOrThrow(this.exec, this.bin, ["send-keys", "-t", `=${name}:`, "-l", text]);
+    if (enter) await runOrThrow(this.exec, this.bin, ["send-keys", "-t", `=${name}:`, "Enter"]);
   }
 }
