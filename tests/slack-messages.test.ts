@@ -190,6 +190,13 @@ describe("re-round, pre-flag, superseded", () => {
     );
   });
 
+  it("drops the reasons line entirely when there are none (never a bare '__')", () => {
+    const flag = "🚩 #7 is escalation-worthy — a human will be asked to review whatever the verdict says";
+    expect(escalationWorthyMessage({ pr: 7, reasons: [] })).toBe(flag);
+    expect(escalationWorthyMessage({ pr: 7, reasons: ["  "] })).toBe(flag);
+    expect(escalationWorthyMessage({ pr: 7, reasons: [] })).not.toContain("__");
+  });
+
   it("truncates the reasons at 160 chars and escapes them", () => {
     const text = escalationWorthyMessage({ pr: 1, reasons: [`${"x".repeat(200)} <b>`] });
     const italic = text.split("\n")[1];

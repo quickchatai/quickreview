@@ -320,7 +320,7 @@ describe("announcements own the thread", () => {
       author: "alice-gh",
       head_sha: "0f1e2d3c",
       round_no: 1,
-      round_type: "initial",
+      round_type: "first",
       lenses: ["pass-baseline", "pass-validate"],
       additions: 18,
       deletions: 4,
@@ -329,7 +329,13 @@ describe("announcements own the thread", () => {
 
     const pickup = transport.posts.at(-1)!;
     expect(pickup.thread_ts).toBeUndefined(); // root-on-first-event
-    expect(pickup.text).toContain(`#${PR}`);
+    // The WHOLE message, not a substring: a broken round-type label used to
+    // render `· undefined ·` here and still contain "#4242".
+    expect(pickup.text).toBe(
+      `👀 *<https://github.com/${cfg.github.repo}/pull/${PR}|#${PR} fix(webhooks): stop dropping retries on 5xx>*` +
+        ` — review started for <@${ALICE}>\n` +
+        "_round 1 · first review · 2 files, +18/−4 · lenses: pass-baseline, pass-validate_",
+    );
     const rootTs = store.slackThreadForPr(PR)?.root_ts;
     expect(rootTs).toBeTypeOf("string");
 

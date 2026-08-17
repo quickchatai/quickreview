@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -150,6 +150,19 @@ describe("SlackRouter dispositions", () => {
     expect(injected).toHaveLength(0);
   });
 
+  it("drops a user-less event BEFORE injecting: no turn, no origin, but a row (G3)", async () => {
+    const r = await router().handle(event({ event_id: "EvNoUser", user: undefined }));
+    expect(r.disposition).toBe("dropped_echo");
+    expect(r.tier).toBe("ignored");
+    // Recorded — "why did the bot ignore me?" stays answerable from sqlite.
+    expect(disposition("EvNoUser")).toBe("dropped_echo");
+    expect(store.slackEvent("EvNoUser")?.tier).toBe("ignored");
+    // Nothing was injected and NO rights record exists: tier `ignored` is not a
+    // tier the command path documents, and its turns bypass the per-user cap.
+    expect(injected).toHaveLength(0);
+    expect(origins.latestAny()).toBeNull();
+  });
+
   it("never re-answers an edit, a deletion or any other subtype", async () => {
     for (const [i, subtype] of ["message_changed", "message_deleted", "thread_broadcast", "message_replied", "channel_join"].entries()) {
       await router().handle(event({ event_id: `Ev${i}`, subtype }));
@@ -209,6 +222,39 @@ describe("SlackRouter dispositions", () => {
       },
     }).handle(event({ event_id: "EvCap2" }));
     expect(r.disposition).toBe("dropped_cap");
+  });
+
+  it("writes the rights BEFORE the wake file exists, and binds them to it after (G4)", async () => {
+    let originAtInjectTime: unknown = "the injector never ran";
+    const r = await router({
+      inject: async (body: string) => {
+        // The moment the overseer could see a wake file, the record is already
+        // on disk. The other order fails OPEN: `origin === null` reads as a
+        // daemon turn, i.e. full tier M in the legacy dir.
+        originAtInjectTime = origins.latestAny();
+        injected.push(body);
+        return "/tmp/inject/overseer/2026-08-17T09-12-33-0007.md";
+      },
+    }).handle(event());
+    expect(r.disposition).toBe("injected");
+    expect(originAtInjectTime).toMatchObject({ event_id: "Ev09ABCDEF", tier: "author", source: "slack" });
+    // …and once the file landed, the record carries ITS basename (the audit join).
+    expect(r.injectBasename).toBe("2026-08-17T09-12-33-0007.md");
+    expect(existsSync(join(dir, "origin", "2026-08-17T09-12-33-0007.json"))).toBe(true);
+    expect(existsSync(join(dir, "origin", "event-Ev09ABCDEF.json"))).toBe(false);
+    expect(origins.latest()?.event_id).toBe("Ev09ABCDEF");
+  });
+
+  it("removes the rights again when the wake file never lands", async () => {
+    const r = router({
+      inject: async () => {
+        throw new Error("tmux is gone");
+      },
+    }).handle(event({ event_id: "EvBoom" }));
+    await expect(r).rejects.toThrow(/tmux is gone/);
+    // An origin with no turn would authorise a command nobody asked for.
+    expect(origins.latestAny()).toBeNull();
+    expect(disposition("EvBoom")).toBe("dropped_stale"); // fail closed
   });
 
   it("survives a failing name lookup (the turn is not blocked on cosmetics)", async () => {

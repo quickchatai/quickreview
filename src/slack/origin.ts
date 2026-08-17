@@ -7,9 +7,15 @@
 // and the command path reads them from disk. The inject body's `tier` line is
 // decoration for the model; THIS file is what the gate consults.
 //
-// Attribution (ratified D5): a command is attributed to the most recent
-// UNEXPIRED origin. The window is short by design — an origin is a "a human is
-// mid-conversation with you right now" marker, not a session-long grant.
+// Attribution (ratified D5): a command in `commands/slack/` is attributed to
+// the most recent UNEXPIRED origin. The window is short by design — an origin
+// is a "a human is mid-conversation with you right now" marker, not a
+// session-long grant, and no origin means no rights (fail closed).
+//
+// The legacy `commands/` belt asks a DIFFERENT question — "who caused the turn
+// I am serving?" — and answers it from `latestAny()`, ignoring expiry: waiting
+// out a TTL must never turn a guest's turn into a tier-M one. Only a daemon
+// wake (`writeLocal`) supersedes a Slack origin there.
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { SlackTier } from "../state.js";
@@ -25,6 +31,18 @@ export const ORIGIN_TTL_MS = 15 * 60 * 1000;
 
 /** What the router recorded about the turn it just injected. */
 export interface OriginRecord {
+  /**
+   * WHO CAUSED THIS TURN, explicitly — never inferred from wall-clock recency.
+   *
+   * `slack` — a channel message became an overseer turn (the router wrote it).
+   * `local` — the DAEMON woke the overseer itself (EOD sweep, anomaly wake,
+   *           connections signal). Full autonomy, tier `owner_legacy`, no user.
+   *
+   * A record read off disk with no `source` is treated as `slack`: old files
+   * predate the field, and the safe reading of "unknown cause" is "a human in
+   * the channel", which is the one that restricts.
+   */
+  source: "slack" | "local";
   /** Slack event id that caused the turn — the forensic join key. */
   event_id: string;
   /** Slack member id of the human who spoke. */
@@ -44,14 +62,16 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 /** Parse + shape-check a record read off disk; unknown shapes are ignored. */
 export function parseOriginRecord(raw: unknown): OriginRecord | null {
   if (!isRecord(raw)) return null;
-  const { event_id, slack_user, tier, authorized_prs, expires_at } = raw;
+  const { source, event_id, slack_user, tier, authorized_prs, expires_at } = raw;
   if (typeof event_id !== "string" || typeof slack_user !== "string") return null;
   if (tier !== "anyone" && tier !== "author" && tier !== "owner_legacy" && tier !== "ignored") return null;
   if (typeof expires_at !== "string" || Number.isNaN(Date.parse(expires_at))) return null;
   const prs = Array.isArray(authorized_prs)
     ? authorized_prs.filter((n): n is number => typeof n === "number" && Number.isInteger(n) && n > 0)
     : [];
-  return { event_id, slack_user, tier, authorized_prs: prs, expires_at };
+  // Anything that is not literally "local" — missing, misspelled, non-string —
+  // reads as a Slack-caused turn, i.e. the restricting value.
+  return { source: source === "local" ? "local" : "slack", event_id, slack_user, tier, authorized_prs: prs, expires_at };
 }
 
 /**
@@ -80,11 +100,38 @@ export class OriginStore {
 
   /**
    * Record the rights of the turn just injected. `expires_at` is stamped here
-   * (never taken from a caller) so the TTL cannot be widened from outside.
+   * (never taken from a caller) so the TTL cannot be widened from outside, and
+   * `source` is stamped `slack` — this method exists for exactly one caller,
+   * the inbound router, and a Slack turn is what it records.
    */
-  write(injectBasename: string, rec: Omit<OriginRecord, "expires_at">): OriginRecord {
+  write(injectBasename: string, rec: Omit<OriginRecord, "expires_at" | "source">): OriginRecord {
+    return this.put(injectBasename, { ...rec, source: "slack" });
+  }
+
+  /**
+   * Stamp a DAEMON-caused turn (EOD sweep, anomaly wake, connections signal).
+   *
+   * This is the other half of "who caused this turn": without it, a daemon wake
+   * during a stale Slack origin would still look like the Slack user's turn, so
+   * the legacy-dir belt would refuse the daemon's OWN commands (one guest
+   * message every 15 minutes would have blocked the EOD pipeline forever).
+   * Tier `owner_legacy` with no user: the daemon keeps the autonomy it always had.
+   */
+  writeLocal(reason: string): OriginRecord {
+    const slug = (reason || "wake").replace(/[^a-zA-Z0-9._-]+/g, "-").slice(0, 48).replace(/^-+|-+$/g, "") || "wake";
+    const stamp = this.now().toISOString().replace(/[:.]/g, "-");
+    return this.put(`local-${stamp}-${this.seq}-${slug}`, {
+      source: "local",
+      event_id: `local:${slug}`,
+      slack_user: "",
+      tier: "owner_legacy",
+      authorized_prs: [],
+    });
+  }
+
+  private put(basename: string, rec: Omit<OriginRecord, "expires_at">): OriginRecord {
     const full: OriginRecord = { ...rec, expires_at: new Date(this.now().getTime() + ORIGIN_TTL_MS).toISOString() };
-    const path = this.path(injectBasename);
+    const path = this.path(basename);
     mkdirSync(this.dir, { recursive: true });
     const tmp = `${path}.tmp-${process.pid}-${this.seq++}`;
     writeFileSync(tmp, `${JSON.stringify(full, null, 2)}\n`);
@@ -93,10 +140,50 @@ export class OriginStore {
     return full;
   }
 
+  /** Move a record to its final name (the router binds it to the inject file
+   * only once that file exists). Missing source ⇒ no-op. */
+  rename(fromBasename: string, toBasename: string): void {
+    const from = this.path(fromBasename);
+    const to = this.path(toBasename);
+    if (from === to || !existsSync(from)) return;
+    try {
+      renameSync(from, to);
+    } catch {
+      /* best effort — the record under the old name still carries the rights */
+    }
+  }
+
+  /** Drop a record (the inject it was written for never landed). */
+  remove(basename: string): void {
+    rmSync(this.path(basename), { force: true });
+  }
+
   /** Every unexpired record, newest first. */
   all(): OriginRecord[] {
-    if (!existsSync(this.dir)) return [];
     const now = this.now().getTime();
+    return this.scan()
+      .filter((o) => Date.parse(o.rec.expires_at) > now)
+      .map((o) => o.rec);
+  }
+
+  /** The most recent unexpired origin, or null when no Slack turn is live. */
+  latest(): OriginRecord | null {
+    return this.all()[0] ?? null;
+  }
+
+  /**
+   * The most recent origin REGARDLESS OF AGE — "what caused the last overseer
+   * turn", not "is a turn live". The legacy-dir belt reads this one: expiry
+   * must not be an escalation, so an old Slack origin keeps the belt on until a
+   * daemon wake (a `local` record) supersedes it.
+   */
+  latestAny(): OriginRecord | null {
+    return this.scan()[0]?.rec ?? null;
+  }
+
+  /** Newest-first scan of every parseable record on disk. */
+  private scan(): Array<{ rec: OriginRecord; mtime: number; name: string }> {
+    if (!existsSync(this.dir)) return [];
     const out: Array<{ rec: OriginRecord; mtime: number; name: string }> = [];
     for (const entry of readdirSync(this.dir, { withFileTypes: true })) {
       if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
@@ -108,7 +195,6 @@ export class OriginStore {
         rec = null; // unreadable/garbage grants authorise nothing
       }
       if (!rec) continue;
-      if (Date.parse(rec.expires_at) <= now) continue;
       let mtime = 0;
       try {
         mtime = statSync(path).mtimeMs;
@@ -125,18 +211,20 @@ export class OriginStore {
       if (b.mtime !== a.mtime) return b.mtime - a.mtime;
       return b.name.localeCompare(a.name);
     });
-    return out.map((o) => o.rec);
+    return out;
   }
 
-  /** The most recent unexpired origin, or null when no Slack turn is live. */
-  latest(): OriginRecord | null {
-    return this.all()[0] ?? null;
-  }
-
-  /** Best-effort removal of expired records (opportunistic, never throws). */
+  /**
+   * Best-effort removal of expired records (opportunistic, never throws).
+   *
+   * The NEWEST record is always kept, expired or not: `latestAny()` is what the
+   * legacy-dir belt consults, and deleting the last expired Slack origin would
+   * silently release the belt — patience would once again buy rights.
+   */
   prune(): void {
     if (!existsSync(this.dir)) return;
     const now = this.now().getTime();
+    const keep = this.scan()[0]?.name;
     for (const entry of readdirSync(this.dir, { withFileTypes: true })) {
       if (!entry.isFile()) continue;
       const path = join(this.dir, entry.name);
@@ -146,6 +234,7 @@ export class OriginStore {
           continue;
         }
         if (!entry.name.endsWith(".json")) continue;
+        if (entry.name === keep) continue;
         const rec = parseOriginRecord(JSON.parse(readFileSync(path, "utf8")) as unknown);
         if (!rec || Date.parse(rec.expires_at) <= now) rmSync(path, { force: true });
       } catch {

@@ -4,7 +4,9 @@
 //
 // The checks run in a fixed order and each has exactly one disposition:
 //   1. channel   -> dropped_channel   (only cfg.slack.channel is ever handled)
-//   2. echo      -> dropped_echo      (three independent layers, see below)
+//   2. echo      -> dropped_echo      (three independent layers, see below;
+//                                      a user-less event lands here too — it is
+//                                      machine text, not a person)
 //   3. subtype   -> dropped_subtype   (only the plain message is a turn)
 //   4. dedupe    -> dropped_dupe      (Slack redelivers on every missed ack)
 //   5. stale     -> dropped_stale     (backlog older than catchup_max_age_s)
@@ -33,7 +35,7 @@ function isPlainMessage(ev: SlackInboundEvent): boolean {
 }
 
 /** Has the daemon itself posted a message with this ts? (echo layer b) */
-export function isOwnPostedTs(store: StateStore, ts: string): boolean {
+function isOwnPostedTs(store: StateStore, ts: string): boolean {
   // slack_posts has no by-ts accessor on StateStore; this is a read-only probe
   // over the same table the post ledger owns.
   const row = store.db.prepare("SELECT 1 AS hit FROM slack_posts WHERE ts = ? LIMIT 1").get(ts) as
@@ -213,6 +215,15 @@ export class SlackRouter {
       return this.record(event, "ignored", "dropped_echo", "message was posted by a bot (or by us)");
     }
 
+    // (2b) no Slack user id ⇒ nobody asked anything. Such an event has no tier
+    //      (`computeTier` says `ignored`), so injecting it would hand the model
+    //      a turn whose rights are undocumented and whose per-user cap cannot
+    //      be counted (policy.decideTurn only counts a user it can name). It is
+    //      machine-emitted text, which is exactly what `dropped_echo` means.
+    if (tier === "ignored") {
+      return this.record(event, "ignored", "dropped_echo", "message carries no Slack user — not a person asking");
+    }
+
     // (3) subtype allowlist — edits, deletions, joins and broadcasts are logged,
     //     never answered.
     if (!isPlainMessage(event)) {
@@ -283,16 +294,30 @@ export class SlackRouter {
       receivedAt: this.now(),
     });
 
-    const returned = await this.deps.inject(body);
-    const injectBasename = typeof returned === "string" && returned.length > 0 ? baseName(returned) : `event-${event.event_id}`;
-    // The origin is written AFTER the inject file exists: an origin without a
-    // turn would authorise a command nobody asked for.
-    this.deps.origins.write(injectBasename, {
+    // ORDER MATTERS, and it is origin-then-inject. The other order leaves a
+    // window — however short — in which a wake file exists with no rights
+    // record, and a model that acts inside it would be read as `origin === null`
+    // = a daemon turn = full tier M. The failure direction must be closed, so
+    // the record goes down FIRST, under a provisional name, and is renamed onto
+    // the inject file once that file exists (the name is the audit join). If the
+    // inject never lands, the record is removed again — an origin with no turn
+    // would authorise a command nobody asked for.
+    const provisional = `event-${event.event_id}`;
+    this.deps.origins.write(provisional, {
       event_id: event.event_id,
       slack_user: event.user ?? "",
       tier,
       authorized_prs: prs,
     });
+    let returned: string | void;
+    try {
+      returned = await this.deps.inject(body);
+    } catch (err) {
+      this.deps.origins.remove(provisional);
+      throw err;
+    }
+    const injectBasename = typeof returned === "string" && returned.length > 0 ? baseName(returned) : provisional;
+    this.deps.origins.rename(provisional, injectBasename);
     store.setSlackEventDisposition(event.event_id, "injected");
     return { disposition: "injected", tier, injectBasename };
   }

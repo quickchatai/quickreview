@@ -252,6 +252,7 @@ describe("CommandWatcher", () => {
   // ---- tier enforcement (S3) --------------------------------------
 
   const origin = (over: Partial<OriginRecord> = {}): OriginRecord => ({
+    source: "slack",
     event_id: "Ev1",
     slack_user: "U0ALICE",
     tier: "author",
@@ -376,9 +377,32 @@ describe("CommandWatcher", () => {
     await tierWatcher(deps, "local", () => origin({ tier: "author" })).sweep();
     const r = result("sneak");
     expect(r.ok).toBe(false);
-    expect(r.reason).toMatch(/^tier: a Slack turn from U0ALICE/);
+    expect(r.reason).toMatch(/^tier: this turn was caused by a Slack message from U0ALICE/);
     expect(r.reason).toContain("commands/slack/");
     expect(deps.fileIssue).not.toHaveBeenCalled();
+  });
+
+  it("the belt does NOT lift when the Slack origin expires — patience is not an escalation", async () => {
+    const deps = makeDeps();
+    // The gate for the legacy dir reads `latestAny()`: age is irrelevant, cause
+    // is everything. A turn that simply ran past the 15-minute TTL (channel text
+    // can ask for exactly that) must not become tier M.
+    const expired = origin({ tier: "anyone", expires_at: new Date(Date.now() - 60 * 60_000).toISOString() });
+    writeFileSync(join(cmdDir(), "patient.json"), JSON.stringify({ command: "file-issue", title: "t", body: "b" }));
+    await tierWatcher(deps, "local", () => expired).sweep();
+    const r = result("patient");
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/^tier: this turn was caused by a Slack message/);
+    expect(deps.fileIssue).not.toHaveBeenCalled();
+  });
+
+  it("a daemon wake (source: local) clears the belt — the EOD pipeline cannot be DoSed", async () => {
+    const deps = makeDeps();
+    const local = origin({ source: "local", event_id: "local:eod-sweep", slack_user: "", tier: "owner_legacy" });
+    writeFileSync(join(cmdDir(), "eod-issue.json"), JSON.stringify({ command: "file-issue", title: "t", body: "b" }));
+    await tierWatcher(deps, "local", () => local).sweep();
+    expect(result("eod-issue")).toMatchObject({ ok: true });
+    expect(deps.fileIssue).toHaveBeenCalled();
   });
 
   it("legacy commands/ still runs during a the owner Slack turn", async () => {
@@ -403,6 +427,7 @@ describe("CommandWatcher", () => {
 
 describe("authorizeCommand (pure)", () => {
   const rec = (tier: OriginRecord["tier"], prs: number[] = []): OriginRecord => ({
+    source: "slack",
     event_id: "Ev",
     slack_user: "U",
     tier,

@@ -106,14 +106,37 @@ export function decideTurn(
 
 export type ReplyCap = "daily_posts" | "thread_replies_per_day" | "idempotent";
 
+// The post taxonomy, in one place: `kind = 'reply'` is the ONLY conversational
+// post (a model turn stands behind it) and the only one the reply budgets
+// count. `pickup` / `verdict` / `announce` are daemon-authored, cost nothing,
+// and are bounded by `announcements_per_hour` instead.
+
+/**
+ * Successful `kind = 'reply'` posts into one thread inside the window — the
+ * per-thread conversational cap.
+ *
+ * StateStore.slackThreadPostsBetween cannot express the kind filter (and
+ * src/state.ts is owned elsewhere), so this reads the same table directly, the
+ * way slack/reply.ts's `threadIsKnown` already does. It stays a pure read.
+ */
+export function threadReplyCount(store: StateStore, threadTs: string, sinceIso: string, untilIso: string): number {
+  return (
+    store.db
+      .prepare(
+        "SELECT COUNT(*) AS c FROM slack_posts WHERE ok = 1 AND kind = 'reply' AND thread_ts = ? AND posted_at >= ? AND posted_at < ?",
+      )
+      .get(threadTs, sinceIso, untilIso) as { c: number }
+  ).c;
+}
+
 export interface ReplyDecision {
   allow: boolean;
   cap?: ReplyCap;
   reason?: string;
   day: string;
-  /** Non-announcement posts already made today, channel-wide. */
+  /** Conversational replies already made today, channel-wide. */
   used: number;
-  /** Posts already made into this thread today. */
+  /** Conversational replies already made into this thread today. */
   threadUsed: number;
 }
 
@@ -123,6 +146,12 @@ export interface ReplyDecision {
  * — a retry must never double-post), the channel-wide daily post ceiling
  * (`daily_turns`, since every conversational post follows a turn), and the
  * per-thread `thread_replies_per_day`.
+ *
+ * BOTH budgets count `kind = 'reply'` ONLY. Lifecycle posts are labelled
+ * `pickup` / `verdict` / `announce`; letting them in would mean a PR that runs
+ * `thread_replies_per_day` rounds silently loses the ability to answer a human
+ * in its own thread for the rest of the day. Daemon-authored posts are bounded
+ * by `announcements_per_hour` instead (see decideAnnouncement).
  */
 export function decideReply(
   store: StateStore,
@@ -132,10 +161,8 @@ export function decideReply(
 ): ReplyDecision {
   const { daily_turns, thread_replies_per_day } = cfg.slack.policy;
   const w = policyWindow(cfg, now);
-  const total = store.slackPostsBetween(w.startIso, w.endIso);
-  const announces = store.slackPostsBetween(w.startIso, w.endIso, "announce");
-  const used = total - announces; // announcements never consume the reply budget
-  const threadUsed = input.threadTs ? store.slackThreadPostsBetween(input.threadTs, w.startIso, w.endIso) : 0;
+  const used = store.slackPostsBetween(w.startIso, w.endIso, "reply");
+  const threadUsed = input.threadTs ? threadReplyCount(store, input.threadTs, w.startIso, w.endIso) : 0;
   const base = { day: w.day, used, threadUsed };
   if (input.idemKey && store.slackPost(input.idemKey)) {
     return { ...base, allow: false, cap: "idempotent", reason: `already posted (idem_key ${input.idemKey})` };
@@ -201,7 +228,12 @@ export function decideAnnouncement(
 
   const perHour = cfg.slack.policy.announcements_per_hour;
   const hourAgo = new Date(now.getTime() - 3_600_000).toISOString();
-  const recent = store.slackPostsSince(hourAgo, "announce");
+  // EVERY daemon-authored post counts here — `pickup` and `verdict` are as
+  // visible in the channel as an `announce`, and this ceiling is their only
+  // back-stop now that they no longer touch the conversational budget.
+  // Expressed as "all posts minus replies" so a kind added later is bounded by
+  // default rather than silently exempt.
+  const recent = store.slackPostsSince(hourAgo) - store.slackPostsSince(hourAgo, "reply");
   if (recent >= perHour) {
     return {
       allow: false,

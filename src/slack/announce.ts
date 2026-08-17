@@ -143,6 +143,18 @@ export interface AnnouncerDeps {
   onAnomalySignal?: (message: string) => void | Promise<void>;
   /** Bound on the shutdown announcement so it can never delay an exit. */
   stopTimeoutMs?: number;
+  /** Timer seam, identical in shape to the one src/slack/api.ts and
+   * src/slack/socket.ts expose: tests drive the heartbeat interval and the
+   * shutdown budget without real timers. Defaults to the globals. */
+  setTimeoutFn?: (fn: () => void, ms: number) => unknown;
+  clearTimeoutFn?: (handle: unknown) => void;
+  setIntervalFn?: (fn: () => void, ms: number) => unknown;
+  clearIntervalFn?: (handle: unknown) => void;
+}
+
+/** Node timers are unref-able; an injected fake usually is not. */
+function unref(handle: unknown): void {
+  (handle as { unref?: () => void } | undefined)?.unref?.();
 }
 
 interface PostRequest {
@@ -188,10 +200,19 @@ export function scanNotPickedUp(store: StateStore, cfg: Config, now: Date = new 
 }
 
 export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
-  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private heartbeatTimer: unknown = null;
   private lastConnections = 1;
+  private readonly setTimeoutFn: (fn: () => void, ms: number) => unknown;
+  private readonly clearTimeoutFn: (handle: unknown) => void;
+  private readonly setIntervalFn: (fn: () => void, ms: number) => unknown;
+  private readonly clearIntervalFn: (handle: unknown) => void;
 
-  constructor(private readonly deps: AnnouncerDeps) {}
+  constructor(private readonly deps: AnnouncerDeps) {
+    this.setTimeoutFn = deps.setTimeoutFn ?? ((fn, ms) => setTimeout(fn, ms));
+    this.clearTimeoutFn = deps.clearTimeoutFn ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
+    this.setIntervalFn = deps.setIntervalFn ?? ((fn, ms) => setInterval(fn, ms));
+    this.clearIntervalFn = deps.clearIntervalFn ?? ((h) => clearInterval(h as ReturnType<typeof setInterval>));
+  }
 
   /** Inert when `[slack] enabled = false`: zero posts, zero state writes. */
   get enabled(): boolean {
@@ -283,15 +304,27 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
   // ---- thread lifecycle --------------------------------------------------
 
   /**
-   * A round was created. Opens the PR's thread with the ratified pickup root
-   * the first time, and posts the 🔄 line in-thread on every later round.
-   * Also fires the one-per-PR escalation-worthy pre-flag when it applies.
+   * A round was created. Says the ratified pickup message the first time — as
+   * the thread ROOT when nothing has spoken for this PR yet, or as the first
+   * REPLY when a `pr.not_picked_up` notice already opened the thread (DP-2a is
+   * root-on-first-event, NOT pickup-only-if-first) — and the 🔄 line in-thread
+   * on every genuinely later round. Also fires the one-per-PR
+   * escalation-worthy pre-flag when it applies.
+   *
+   * The branch is on the PICKUP POST, never on thread existence: a thread the
+   * 🐢 notice opened must still receive the pickup template, and a 🔄 line
+   * ("you pushed new commits") about a PR that was merely queued would be a
+   * lie. `round_no` is MAX+1 per PR (StateStore.startRound), so round 1 can
+   * never be a re-round — that guard keeps a replayed first round silent
+   * instead of inventing a 🔄 line for it.
    */
   async roundStarted(a: RoundAnnouncement): Promise<void> {
     if (!this.enabled) return;
     const { store, cfg } = this.deps;
-    const known = store.slackThreadForPr(a.pr) !== undefined;
-    if (!known) {
+    // A previously FAILED pickup (ok = 0) is retried by `post`, so it does not
+    // count as said.
+    const pickupSaid = store.slackPost(`pickup:${a.pr}`)?.ok === 1;
+    if (!pickupSaid) {
       if (this.lifecycleEnabled(LIFECYCLE_CAUSES.pickup)) {
         await this.post({
           idemKey: `pickup:${a.pr}`,
@@ -310,7 +343,7 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
           }),
         });
       }
-    } else if (this.lifecycleEnabled(LIFECYCLE_CAUSES.reRound)) {
+    } else if (a.round_no > 1 && this.lifecycleEnabled(LIFECYCLE_CAUSES.reRound)) {
       const reason: ReRoundReason = a.reason ?? (a.round_type === "staleness" ? { kind: "base_moved" } : { kind: "pushed" });
       await this.post({
         idemKey: `reround:${a.pr}:${a.round_no}`,
@@ -324,14 +357,28 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     }
   }
 
-  /** The pre-flag, once per PR (the idem key is the whole enforcement). */
+  /**
+   * The pre-flag, once per PR (the idem key is the whole enforcement).
+   *
+   * SAFE TO CALL FROM ANY PATH (dispatch, or the overseer's
+   * `mark-escalation-worthy` command — §1.4):
+   *   * idempotent per PR — the `escalation_worthy:<pr>` ledger key is claimed
+   *     before the API call, so the second caller posts nothing whichever
+   *     fires first;
+   *   * safe with no thread — `post` promotes it to the PR's thread ROOT
+   *     (root-on-first-event) instead of dropping it in the channel loose;
+   *   * safe with an empty (or all-blank) `reasons` — the reasons line is
+   *     dropped rather than rendered as a stray `__`;
+   *   * never throws: every failure is recorded `ok = 0` and swallowed.
+   */
   async escalationWorthy(a: { pr: number; reasons: string[] }): Promise<void> {
     if (!this.lifecycleEnabled(LIFECYCLE_CAUSES.escalationWorthy)) return;
+    const reasons = (a.reasons ?? []).map((r) => r.trim()).filter((r) => r.length > 0);
     await this.post({
       idemKey: `escalation_worthy:${a.pr}`,
       kind: "announce",
       pr: a.pr,
-      text: escalationWorthyMessage(a),
+      text: escalationWorthyMessage({ pr: a.pr, reasons }),
     });
   }
 
@@ -481,19 +528,19 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
       kind: "announce",
       text: causeMessage(this.deps.cfg, { cause: "daemon.stopping", reason }),
     });
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timer: unknown;
     try {
       await Promise.race([
         post,
         new Promise<void>((resolve) => {
-          timer = setTimeout(resolve, budget);
-          timer.unref?.();
+          timer = this.setTimeoutFn(() => resolve(), budget);
+          unref(timer);
         }),
       ]);
     } catch (err) {
       this.log("slack: stopping announcement failed", err);
     } finally {
-      if (timer) clearTimeout(timer);
+      if (timer !== undefined) this.clearTimeoutFn(timer);
     }
   }
 
@@ -542,12 +589,12 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     if (!this.enabled || this.heartbeatTimer) return;
     void this.heartbeat();
     const every = Math.max(1, this.deps.cfg.slack.policy.heartbeat_interval_min) * 60_000;
-    this.heartbeatTimer = setInterval(() => void this.heartbeat(), every);
-    this.heartbeatTimer.unref?.();
+    this.heartbeatTimer = this.setIntervalFn(() => void this.heartbeat(), every);
+    unref(this.heartbeatTimer);
   }
 
   stopHeartbeat(): void {
-    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    if (this.heartbeatTimer) this.clearIntervalFn(this.heartbeatTimer);
     this.heartbeatTimer = null;
   }
 

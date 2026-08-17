@@ -4,15 +4,8 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
 import { StateStore } from "../src/state.js";
-import {
-  escapeSlackText,
-  makeSlackReply,
-  mentionFor,
-  replyIdemKey,
-  threadIsKnown,
-  truncateReply,
-  TRUNCATION_SUFFIX,
-} from "../src/slack/reply.js";
+import { makeSlackReply, replyIdemKey, threadIsKnown, truncateReply, TRUNCATION_SUFFIX } from "../src/slack/reply.js";
+import * as replyModule from "../src/slack/reply.js";
 import type { SlackPostResult } from "../src/slack/types.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -191,19 +184,41 @@ describe("slack_reply execution", () => {
 });
 
 describe("reply helpers", () => {
-  it("escapes only Slack's three control characters, ampersand first", () => {
-    expect(escapeSlackText("a & b < c > d")).toBe("a &amp; b &lt; c &gt; d");
-    expect(escapeSlackText("&lt;")).toBe("&amp;lt;");
-  });
-
-  it("mentions only ids the daemon itself knows", () => {
-    expect(mentionFor(cfg, "U0ALICE")).toBe("<@U0ALICE>");
-    expect(mentionFor(cfg, "U0STRANGER")).toBe("");
+  it("escapes via the ONE implementation in messages.ts (no second spelling)", () => {
+    expect(truncateReply("a & b < c > d", 100)).toBe("a &amp; b &lt; c &gt; d");
+    expect(truncateReply("&lt;", 100)).toBe("&amp;lt;");
+    // reply.ts must not re-export an escaper of its own.
+    expect(Object.keys(replyModule)).not.toContain("escapeSlackText");
+    // …nor a third spelling of messages.ts's mention/userRef.
+    expect(Object.keys(replyModule)).not.toContain("mentionFor");
   });
 
   it("truncateReply is a no-op below the limit", () => {
     expect(truncateReply("short", 100)).toBe("short");
     expect(truncateReply("abcdef", 4)).toHaveLength(4);
+  });
+
+  it("never splits an HTML entity: truncation slices the RAW text, escaping comes after", () => {
+    const out = truncateReply("&".repeat(200), 40);
+    expect(out.length).toBeLessThanOrEqual(40);
+    expect(out.endsWith(TRUNCATION_SUFFIX)).toBe(true);
+    // Every ampersand in the payload is a WHOLE `&amp;` — no `&am`, no `&a`.
+    const body = out.slice(0, -TRUNCATION_SUFFIX.length);
+    expect(body).toBe("&amp;".repeat(body.length / 5));
+    expect(body).toMatch(/^(?:&amp;)*$/);
+  });
+
+  it("keeps max_reply_chars as the hard limit even when escaping inflates the text", () => {
+    for (const max of [1, 5, 12, 13, 14, 20, 37, 40, 41]) {
+      const out = truncateReply("&<>".repeat(100), max);
+      expect(out.length).toBeLessThanOrEqual(max);
+      expect(out.replace(/&amp;|&lt;|&gt;|…\(truncated\)/g, "")).toBe("");
+    }
+  });
+
+  it("truncates a real reply exactly at the boundary, marker included", () => {
+    expect(truncateReply("x".repeat(200), 40)).toBe("x".repeat(28) + TRUNCATION_SUFFIX);
+    expect(truncateReply("x".repeat(40), 40)).toBe("x".repeat(40)); // exactly at the limit: untouched
   });
 
   it("the idem key is the command file basename, with a stable fallback", () => {

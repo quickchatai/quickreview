@@ -295,7 +295,10 @@ export class PiSessionManager implements SessionHooks {
 
   /** Slack concierge appendix, or "" when Slack is off. */
   private slackAppendix(): string {
-    if (!(this.cfg as { slack?: { enabled?: boolean } }).slack?.enabled) return "";
+    // Typed access, not a cast: rename `slack` or `enabled` in Config and this
+    // FAILS THE BUILD instead of silently dropping the appendix. (The `?.`
+    // survives hand-rolled test configs that omit the block entirely.)
+    if (!this.cfg.slack?.enabled) return "";
     const path = join(this.root, "prompts", "slack-overseer-appendix.md");
     if (!existsSync(path))
       throw new Error(`slack.enabled = true but the overseer Slack appendix is missing: ${path}`);

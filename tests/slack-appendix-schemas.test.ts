@@ -14,6 +14,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { COMMAND_WHITELIST, validateCommand, type CommandName } from "../src/commands.js";
+import { buildInjectBody, SLACK_INJECT_MARKER } from "../src/slack/router.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const appendix = readFileSync(join(repoRoot, "prompts/slack-overseer-appendix.md"), "utf8");
@@ -142,6 +143,118 @@ describe("slack overseer appendix — corrected command schemas", () => {
   });
 
   it("carries no unfinished slice placeholder", () => {
+    expect(appendix).not.toMatch(/land in slice S5|<!-- S3: confirm path -->|TODO/);
+  });
+});
+
+// ---- the origin header, pinned to what buildInjectBody actually emits -------
+//
+// This is the one artifact that joins the daemon to the model, and the model is
+// told to TRUST it. Documenting a shape the code never emits teaches the model
+// to trust a shape an attacker can forge in message text (`quoteUserText`
+// hardens the table form only). So the appendix is generated-against-code here:
+// a real sample is built, and every field it emits must appear as a table row.
+
+/** A sample envelope, from the real builder. */
+const sample = buildInjectBody({
+  event: {
+    event_id: "Ev0PARITY",
+    type: "message",
+    channel: "C0CONCIERGE",
+    ts: "1712345678.123456",
+    user: "U0ALICE",
+    text: "any news on #1234?",
+    event_ts: "1712345678.123456",
+  },
+  threadTs: "1712345678.123456",
+  threadPr: 1234,
+  displayName: "Alice Nowak",
+  githubLogin: "alice-gh",
+  tier: "author",
+  authorizedPrs: [1234],
+  receivedAt: new Date("2026-08-17T09:12:33.000Z"),
+});
+
+/** Field names of the emitted header table, in emission order. */
+function emittedFields(body: string): string[] {
+  const out: string[] = [];
+  for (const line of body.split("\n")) {
+    const m = /^\| ([a-z_]+) \| (.*) \|$/.exec(line);
+    if (!m?.[1] || m[1] === "field") continue;
+    out.push(m[1]);
+  }
+  return out;
+}
+
+/** Field names the appendix documents as table rows. */
+function documentedFields(): string[] {
+  return appendix
+    .split("\n")
+    .map((l) => /^\| ([a-z_]+) \|/.exec(l.trim())?.[1])
+    .filter((f): f is string => f !== undefined && f !== "field" && f !== "---");
+}
+
+describe("slack overseer appendix — the origin header", () => {
+  it("documents the MARKER and the literal table header row, not a colon list", () => {
+    expect(appendix).toContain(SLACK_INJECT_MARKER);
+    expect(appendix).toContain("| field | value |");
+    expect(appendix).toContain("| --- | --- |");
+    // The pre-fix appendix taught `source: slack` colon lines. Nothing emits that.
+    expect(appendix).not.toMatch(/^\s*source:\s*slack\s*$/m);
+    expect(appendix).not.toMatch(/^\s*event_id:\s/m);
+  });
+
+  it("documents exactly the fields buildInjectBody emits, in the same order", () => {
+    const emitted = emittedFields(sample);
+    expect(emitted).toEqual([
+      "source",
+      "event_id",
+      "channel",
+      "thread",
+      "thread_pr",
+      "slack_user",
+      "display_name",
+      "github_login",
+      "tier",
+      "authorized_prs",
+      "received_at",
+    ]);
+    expect(
+      documentedFields(),
+      "prompts/slack-overseer-appendix.md must document the header table exactly as " +
+        "buildInjectBody emits it — the model is told to trust this shape.",
+    ).toEqual(emitted);
+  });
+
+  it("documents the em-dash empty-value convention the builder uses", () => {
+    const dashed = buildInjectBody({
+      event: { event_id: "E", type: "message", channel: "C", ts: "1.1", user: "U", text: "", event_ts: "1.1" },
+      threadTs: "1.1",
+      threadPr: null,
+      displayName: "U",
+      githubLogin: null,
+      tier: "anyone",
+      authorizedPrs: [],
+      receivedAt: new Date("2026-08-17T09:12:33.000Z"),
+    });
+    expect(dashed).toContain("| thread_pr | — |");
+    expect(dashed).toContain("| github_login | — |");
+    expect(dashed).toContain("| authorized_prs | — |");
+    expect(appendix).toContain("—");
+  });
+
+  it("documents only tiers the router can actually inject", () => {
+    // A user-less event is dropped before injection (G3), so `ignored` never
+    // reaches the model and must not be advertised as a tier it might see.
+    const tierRow = appendix.split("\n").find((l) => l.trim().startsWith("| tier |"));
+    expect(tierRow).toBeDefined();
+    expect(tierRow).toContain("anyone");
+    expect(tierRow).toContain("author");
+    expect(tierRow).toContain("owner_legacy");
+    expect(tierRow).not.toContain("ignored");
+  });
+
+  it("keeps the never-finished check", () => {
     expect(appendix).not.toMatch(/land in slice S5|<!-- S3: confirm path -->|TODO/);
   });
 });

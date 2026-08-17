@@ -35,7 +35,7 @@ import type { SlackTransport } from "./slack/types.js";
 import type { StateStore } from "./state.js";
 import { renderRoundPrompt, roundTemplateFile } from "./templates.js";
 import { nodeExec } from "./tmux.js";
-import type { RoundOrder } from "./types.js";
+import type { RoundOrder, SessionHooks } from "./types.js";
 
 export interface ProductionParts {
   cfg: Config;
@@ -108,6 +108,13 @@ export interface SlackWiringOptions {
   readSecret?: SecretReader;
   /** Test seam: how the transport is built from the two tokens. */
   makeTransport?: (opts: { cfg: Config; botToken: string; appToken: string }) => SlackTransport;
+  /**
+   * The origin store, when the caller already owns one. `createProductionDaemon`
+   * builds it BEFORE the daemon so daemon-originated overseer wakes can stamp a
+   * `local` origin through the very same store the belt reads. Omitted ⇒ built
+   * here (tests, and any caller with no wake path of its own).
+   */
+  origins?: OriginStore;
 }
 
 /** The live Slack subsystem, as `onStop` needs to see it. */
@@ -177,7 +184,7 @@ export async function startSlack(opts: SlackWiringOptions): Promise<SlackRuntime
   }
   log(`slack: connected as ${identity.user_id} in ${cfg.slack.channel}`);
 
-  const origins = new OriginStore(join(root, "state", "slack", "origin"), now);
+  const origins = opts.origins ?? new OriginStore(join(root, "state", "slack", "origin"), now);
   const announcer = makeAnnouncer({
     cfg,
     store,
@@ -229,7 +236,15 @@ export async function startSlack(opts: SlackWiringOptions): Promise<SlackRuntime
   every(Math.max(1, Math.round(cfg.slack.policy.pickup_grace_min / 2)) * 60_000, () => {
     void announcer.announceNotPickedUp().catch((err) => log("slack: not-picked-up sweep failed", err));
   });
-  every(SLACK_CONNECTIONS_TICK_MS, () => announcer.noteConnections(transport.numConnections));
+  // Every timer body is its own try/catch: a throw inside setInterval is an
+  // uncaught exception, and a duplicate-consumer probe must never kill the daemon.
+  every(SLACK_CONNECTIONS_TICK_MS, () => {
+    try {
+      announcer.noteConnections(transport.numConnections);
+    } catch (err) {
+      log("slack: connections probe failed", err);
+    }
+  });
 
   await announcer.daemonUp();
   announcer.startHeartbeat();
@@ -258,10 +273,15 @@ export async function startSlack(opts: SlackWiringOptions): Promise<SlackRuntime
 /**
  * The legacy `commands/` watcher. Two things change when Slack is live, and
  * only those two: `slack_reply` becomes executable from this dir as well, and
- * the BELT gate is installed — while a non-owner Slack turn is live, the
- * legacy dir refuses, so a tier-checked command cannot slip past by being
- * written to the wrong place. Slack off ⇒ no tier gate at all, i.e. exactly the
- * legacy watcher.
+ * the BELT gate is installed — when the turn being served was caused by a
+ * non-owner Slack message, the legacy dir refuses, so a tier-checked command
+ * cannot slip past by being written to the wrong place. Slack off ⇒ no tier
+ * gate at all, i.e. exactly the legacy watcher.
+ *
+ * The gate reads `latestAny()`, NOT `latest()`: the belt must not lift merely
+ * because a turn ran past the 15-minute TTL (text in the channel can ask for
+ * exactly that — "take your time"). Only a daemon wake, which stamps a `local`
+ * origin, supersedes a Slack origin here.
  */
 export function buildLocalCommandWatcher(opts: {
   root: string;
@@ -273,11 +293,54 @@ export function buildLocalCommandWatcher(opts: {
   const { slack } = opts;
   return new CommandWatcher({
     dir: join(opts.root, "commands"),
-    ...(slack ? { tier: { dir: "local" as const, currentOrigin: () => slack.origins.latest() } } : {}),
+    ...(slack ? { tier: { dir: "local" as const, currentOrigin: () => slack.origins.latestAny() } } : {}),
     deps: slack ? { ...opts.deps, slackReply: slack.slackReply } : opts.deps,
     store: opts.store,
     log: opts.log,
   });
+}
+
+/**
+ * The OTHER half of "who caused this turn": every daemon-originated overseer
+ * wake stamps a `local` origin before it injects.
+ *
+ * One wrapper, one seam. The daemon is handed the returned `hooks`, so the EOD
+ * sweep, the verdict anomalies, the ping-pong follow-ups and the connections
+ * signal all stamp — without any of those modules knowing Slack exists. The
+ * Slack router deliberately keeps the UNWRAPPED inject path: its turns must
+ * stamp a Slack origin.
+ *
+ * Stamping is best-effort and never blocks a wake; with Slack off nothing is
+ * written at all.
+ */
+export function daemonOriginWakes(opts: {
+  hooks: SessionHooks;
+  origins: OriginStore;
+  enabled: boolean;
+  log?: (msg: string, extra?: unknown) => void;
+}): { hooks: SessionHooks; wake: (reason: string, message: string) => Promise<void> } {
+  const { hooks, origins, enabled } = opts;
+  const log = opts.log ?? (() => {});
+  const wake = async (reason: string, message: string): Promise<void> => {
+    if (enabled) {
+      try {
+        origins.writeLocal(reason);
+      } catch (err) {
+        log("slack: could not stamp a local origin for a daemon wake", err);
+      }
+    }
+    await hooks.injectOverseer(message);
+  };
+  return {
+    wake,
+    hooks: {
+      dispatchRound: (order, prompt) => hooks.dispatchRound(order, prompt),
+      inject: (pr, message) => hooks.inject(pr, message),
+      archiveAndClose: (pr) => hooks.archiveAndClose(pr),
+      ...(hooks.compactSession ? { compactSession: (pr: number) => hooks.compactSession!(pr) } : {}),
+      injectOverseer: (message) => wake("overseer-wake", message),
+    },
+  };
 }
 
 export function createProductionDaemon(parts: ProductionParts = buildParts()): Daemon {
@@ -291,11 +354,26 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   let commands: CommandWatcher | null = null;
   let slack: SlackRuntime | null = null;
 
+  // The origin store is built HERE, before the daemon, because both halves of
+  // "who caused this turn" write to it: the router (Slack turns) and every
+  // daemon-originated overseer wake below (local turns).
+  const origins = new OriginStore(join(root, "state", "slack", "origin"));
+
+  // The daemon sees a WRAPPED SessionHooks (see `daemonOriginWakes`): every
+  // autonomous overseer wake stamps a `local` origin, so the legacy-dir belt
+  // knows the turn is the daemon's own.
+  const { hooks, wake: wakeOverseerAsDaemon } = daemonOriginWakes({
+    hooks: sessions,
+    origins,
+    enabled: cfg.slack.enabled,
+    log,
+  });
+
   const daemon = createDaemon({
     cfg,
     root,
     adapter,
-    hooks: sessions,
+    hooks,
     renderPrompt,
     log,
     // Lazy on purpose: the Slack subsystem is built in onStart, after the
@@ -359,11 +437,21 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           }
           return { ok: true, restarted: `pr-${target}` };
         },
-        markEscalationWorthy(pr, reason) {
+        async markEscalationWorthy(pr, reason) {
           const row = d.store.getPr(pr);
           if (!row) return { ok: false, reason: `unknown PR #${pr}` };
           d.store.upsertPr({ ...row, escalation_worthy: 1 });
           d.store.logEvent("marked_escalation_worthy", pr, { reason });
+          // §1.4: the 🚩 pre-flag belongs on THIS path too — a person
+          // who asked for a human review must see it confirmed in the channel,
+          // not only in the next verdict. Idempotent per PR (the announcer's
+          // ledger key is the enforcement) and swallowed on failure: Slack never
+          // blocks a command.
+          try {
+            await slack?.announcer.escalationWorthy({ pr, reasons: [reason] });
+          } catch (err) {
+            log("slack: escalation pre-flag failed (command still succeeded)", err);
+          }
           return { ok: true };
         },
         pausePr(pr, reason) {
@@ -412,7 +500,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         store: d.store,
         commandDeps,
         injectOverseerFile: (m) => sessions.injectOverseerFile(m),
-        injectOverseer: (m) => sessions.injectOverseer(m),
+        injectOverseer: (m) => wakeOverseerAsDaemon("slack-anomaly", m),
+        origins,
         log,
         version: packageVersion(root),
       })) ?? null;
@@ -426,7 +515,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         timeHHMM: cfg.eod.time,
         timeZone: cfg.eod.timezone,
         readPrompt: promptReader(join(root, "prompts", "eod-sweep.md")),
-        injectOverseer: (m) => sessions.injectOverseer(m),
+        injectOverseer: (m) => wakeOverseerAsDaemon("eod-sweep", m),
         onFire: (date) => log(`EOD sweep injected for ${date}`),
         onError: (err) => log("EOD injection failed", err),
       });

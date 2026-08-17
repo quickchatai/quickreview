@@ -174,10 +174,10 @@ export const ESCALATION_REASONS_MAX = 160;
 
 export function escalationWorthyMessage(m: { pr: number; reasons: string[] }): string {
   const reasons = truncate(m.reasons.join(" · "), ESCALATION_REASONS_MAX);
-  return (
-    `🚩 #${m.pr} is escalation-worthy — a human will be asked to review whatever the verdict says\n` +
-    `_${escapeMrkdwn(reasons)}_`
-  );
+  const flag = `🚩 #${m.pr} is escalation-worthy — a human will be asked to review whatever the verdict says`;
+  // No reasons ⇒ no reasons line. An empty italic run renders as a literal
+  // `__`, which is noise, and inventing a reason would be worse.
+  return reasons.trim() === "" ? flag : `${flag}\n_${escapeMrkdwn(reasons)}_`;
 }
 
 /**

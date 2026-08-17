@@ -18,6 +18,9 @@
 import type { Config } from "../config.js";
 import type { FileOutcome } from "../improvements.js";
 import type { StateStore } from "../state.js";
+// src/slack/messages.ts is the declared wording owner and owns the ONE
+// escaping implementation (`&` first, or the other two double-escape).
+import { escapeMrkdwn } from "./messages.js";
 import { claimPost, decideReply } from "./policy.js";
 import type { SlackWebApi } from "./types.js";
 
@@ -27,25 +30,40 @@ export const SLACK_TS_RE = /^\d{10}\.\d{6}$/;
 export const TRUNCATION_SUFFIX = "…(truncated)";
 
 /**
- * Escape Slack's three control characters in model-produced text. Slack's own
- * rule (and the only one): `&` first, then `<` and `>`. This is what makes a
- * pasted `<@U0OWNER>` render as literal text instead of pinging a human.
+ * Escape + truncate RAW model text into a Slack-safe string of at most `max`
+ * characters.
+ *
+ * ORDER IS LOAD-BEARING: escaping first and slicing after can cut a `&amp;` in
+ * half and leave a literal `&am` in the channel, so the raw text is sliced
+ * first and escaped after — an entity is therefore always whole.
+ *
+ * PRECEDENCE, when escaping inflates the text back over the limit (a text of
+ * all `&` grows 5×): `max` WINS. `cfg.slack.max_reply_chars` is a hard channel
+ * budget, so the slice point is chosen against the ESCAPED length — the longest
+ * raw prefix whose escaped form plus the marker still fits. That costs
+ * characters of content, never correctness of the limit.
  */
-export function escapeSlackText(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-/** `<@U…>` for an id the DAEMON resolved from config; never from model text. */
-export function mentionFor(cfg: Config, slackUser: string): string {
-  return Object.prototype.hasOwnProperty.call(cfg.slack.users, slackUser) ? `<@${slackUser}>` : "";
-}
-
-/** Truncate to `max` characters, leaving room for the marker. */
 export function truncateReply(text: string, max: number): string {
-  if (max <= 0 || text.length <= max) return text;
-  // The result NEVER exceeds `max`, even for a limit shorter than the marker.
-  if (max <= TRUNCATION_SUFFIX.length) return text.slice(0, max);
-  return text.slice(0, max - TRUNCATION_SUFFIX.length) + TRUNCATION_SUFFIX;
+  if (max <= 0) return "";
+  const whole = escapeMrkdwn(text);
+  if (whole.length <= max) return whole;
+  // A limit too small for the marker keeps the marker off entirely rather than
+  // spending the whole budget saying "truncated".
+  const budget = max <= TRUNCATION_SUFFIX.length ? max : max - TRUNCATION_SUFFIX.length;
+  const suffix = max <= TRUNCATION_SUFFIX.length ? "" : TRUNCATION_SUFFIX;
+  // Longest raw prefix that fits AFTER escaping. Escaping is monotonic in the
+  // prefix length, so a binary search is exact.
+  let lo = 0;
+  let hi = text.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (escapeMrkdwn(text.slice(0, mid)).length <= budget) lo = mid;
+    else hi = mid - 1;
+  }
+  // Never cut a surrogate pair in half either — half an emoji is a mojibake
+  // box, for the same reason half an entity is a stray `&am`.
+  const cut = lo > 0 && lo < text.length && text.charCodeAt(lo - 1) >= 0xd800 && text.charCodeAt(lo - 1) <= 0xdbff ? lo - 1 : lo;
+  return escapeMrkdwn(text.slice(0, cut)) + suffix;
 }
 
 /**
@@ -120,7 +138,7 @@ export function makeSlackReply(deps: SlackReplyDeps): (input: SlackReplyInput) =
       return { ok: false, reason: decision.reason ?? "slack reply refused", cap: decision.cap ?? null };
     }
 
-    const text = truncateReply(escapeSlackText(input.text), cfg.slack.max_reply_chars);
+    const text = truncateReply(input.text, cfg.slack.max_reply_chars);
     if (!claimPost(store, { idem_key: idemKey, kind: "reply", thread_ts: thread, chars: text.length })) {
       return { ok: false, reason: `already replied for this command (idem_key ${idemKey})` };
     }

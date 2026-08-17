@@ -127,20 +127,39 @@ describe("decideReply", () => {
     expect(claimPost(store, { idem_key: "reply:c1.json", kind: "reply", pr: 5, thread_ts: "1.1" })).toBe(false);
   });
 
-  it("enforces the per-thread daily cap without silencing other threads", () => {
+  it("enforces the per-thread daily cap on REPLIES only, without silencing other threads", () => {
     cfg.slack.policy.thread_replies_per_day = 2;
-    claimPost(store, { idem_key: "p1", kind: "reply", thread_ts: "1.1" });
+    // A pickup and a verdict in the same thread are daemon-authored: free.
+    claimPost(store, { idem_key: "p0", kind: "pickup", thread_ts: "1.1" });
     claimPost(store, { idem_key: "p2", kind: "verdict", thread_ts: "1.1" });
+    expect(decideReply(store, cfg, { threadTs: "1.1" }, clock)).toMatchObject({ allow: true, threadUsed: 0 });
+    claimPost(store, { idem_key: "p1", kind: "reply", thread_ts: "1.1" });
+    claimPost(store, { idem_key: "p3", kind: "reply", thread_ts: "1.1" });
     expect(decideReply(store, cfg, { threadTs: "1.1" }, clock)).toMatchObject({ allow: false, cap: "thread_replies_per_day", threadUsed: 2 });
     expect(decideReply(store, cfg, { threadTs: "2.2" }, clock).allow).toBe(true);
   });
 
-  it("enforces the channel-wide daily post cap, announcements excluded", () => {
+  it("a busy PR can never silence its own thread — 6 rounds of lifecycle posts cost nothing", () => {
+    // The shipped thread cap is 6; a PR that runs 6 rounds writes 1 pickup +
+    // 6 verdicts into its thread. If those counted, the concierge could never
+    // answer a human in that thread again that day.
+    expect(cfg.slack.policy.thread_replies_per_day).toBe(6);
+    claimPost(store, { idem_key: "pickup:5263", kind: "pickup", pr: 5263, thread_ts: "1.1" });
+    for (let round = 1; round <= 6; round++) {
+      claimPost(store, { idem_key: `verdict:5263:${round}`, kind: "verdict", pr: 5263, thread_ts: "1.1" });
+      claimPost(store, { idem_key: `reround:5263:${round}`, kind: "announce", pr: 5263, thread_ts: "1.1" });
+    }
+    expect(decideReply(store, cfg, { threadTs: "1.1" }, clock)).toMatchObject({ allow: true, threadUsed: 0, used: 0 });
+  });
+
+  it("enforces the channel-wide daily post cap on REPLIES only", () => {
     cfg.slack.policy.daily_turns = 2;
     cfg.slack.policy.thread_replies_per_day = 99;
     claimPost(store, { idem_key: "a1", kind: "announce" });
     claimPost(store, { idem_key: "a2", kind: "announce" });
-    expect(decideReply(store, cfg, { threadTs: "1.1" }, clock).allow).toBe(true);
+    claimPost(store, { idem_key: "k1", kind: "pickup", thread_ts: "1.1" });
+    claimPost(store, { idem_key: "v1", kind: "verdict", thread_ts: "1.1" });
+    expect(decideReply(store, cfg, { threadTs: "1.1" }, clock)).toMatchObject({ allow: true, used: 0 });
     claimPost(store, { idem_key: "r1", kind: "reply", thread_ts: "1.1" });
     claimPost(store, { idem_key: "r2", kind: "reply", thread_ts: "1.1" });
     expect(decideReply(store, cfg, { threadTs: "1.1" }, clock)).toMatchObject({ allow: false, cap: "daily_posts", used: 2 });
@@ -231,6 +250,21 @@ describe("decideAnnouncement", () => {
     expect(store.slackCooldown("daemon.up")).toBeUndefined();
     // One hour later the rolling window has emptied.
     at("2026-08-17T10:01:00Z");
+    expect(decideAnnouncement(store, cfg, { cause: "daemon.up" }, clock).allow).toBe(true);
+  });
+
+  it("the per-hour ceiling counts EVERY daemon-authored post, not just kind='announce'", () => {
+    cfg.slack.policy.announcements_per_hour = 2;
+    claimPost(store, { idem_key: "pickup:1", kind: "pickup", pr: 1, thread_ts: "1.1" });
+    claimPost(store, { idem_key: "verdict:1:1", kind: "verdict", pr: 1, thread_ts: "1.1" });
+    expect(decideAnnouncement(store, cfg, { cause: "daemon.up" }, clock)).toMatchObject({ allow: false, block: "per_hour" });
+  });
+
+  it("conversational replies are NOT daemon announcements and never eat that ceiling", () => {
+    cfg.slack.policy.announcements_per_hour = 2;
+    claimPost(store, { idem_key: "reply:c1", kind: "reply", thread_ts: "1.1" });
+    claimPost(store, { idem_key: "reply:c2", kind: "reply", thread_ts: "1.1" });
+    claimPost(store, { idem_key: "reply:c3", kind: "reply", thread_ts: "1.1" });
     expect(decideAnnouncement(store, cfg, { cause: "daemon.up" }, clock).allow).toBe(true);
   });
 

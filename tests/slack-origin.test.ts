@@ -57,14 +57,68 @@ describe("OriginStore", () => {
     expect(origins.all()).toHaveLength(2);
   });
 
-  it("an expired record authorises nothing and is pruned", () => {
+  it("an expired record authorises nothing", () => {
     origins.write("a.md", { event_id: "EvA", slack_user: "U0A", tier: "owner_legacy", authorized_prs: [] });
     at(ORIGIN_TTL_MS - 1);
     expect(origins.latest()?.event_id).toBe("EvA");
     at(ORIGIN_TTL_MS + 1);
     expect(origins.latest()).toBeNull();
     origins.prune();
-    expect(readdirSync(dir)).toHaveLength(0);
+    // …but it is still THERE: `latestAny()` (the legacy-dir belt) must keep
+    // seeing what caused the last turn, or waiting out the TTL would be an
+    // escalation. Only the newest record is kept.
+    expect(origins.latestAny()?.event_id).toBe("EvA");
+    expect(readdirSync(dir)).toHaveLength(1);
+  });
+
+  it("prune keeps only the newest expired record, never a stale pile", () => {
+    origins.write("a.md", { event_id: "EvA", slack_user: "U0A", tier: "anyone", authorized_prs: [] });
+    at(60_000);
+    origins.write("b.md", { event_id: "EvB", slack_user: "U0B", tier: "author", authorized_prs: [] });
+    at(ORIGIN_TTL_MS + 120_000);
+    origins.prune();
+    expect(readdirSync(dir).filter((n) => n.endsWith(".json"))).toEqual(["b.json"]);
+    expect(origins.latestAny()?.event_id).toBe("EvB");
+    expect(origins.latest()).toBeNull();
+  });
+
+  it("a router write is a `slack` source; writeLocal stamps a daemon turn", () => {
+    const slack = origins.write("a.md", { event_id: "EvA", slack_user: "U0A", tier: "author", authorized_prs: [9] });
+    expect(slack.source).toBe("slack");
+    at(ORIGIN_TTL_MS * 3); // the Slack turn is long expired
+    const local = origins.writeLocal("eod-sweep");
+    expect(local).toMatchObject({ source: "local", tier: "owner_legacy", slack_user: "", authorized_prs: [] });
+    expect(local.event_id).toBe("local:eod-sweep");
+    // The daemon wake supersedes the Slack origin for the belt…
+    expect(origins.latestAny()).toMatchObject({ source: "local", tier: "owner_legacy" });
+    // …and it is a live origin like any other for the Slack dir.
+    expect(origins.latest()?.source).toBe("local");
+  });
+
+  it("a record with no `source` on disk reads as `slack` — the restricting value", () => {
+    writeFileSync(
+      join(dir, "old.json"),
+      JSON.stringify({
+        event_id: "EvOld",
+        slack_user: "U0A",
+        tier: "anyone",
+        authorized_prs: [],
+        expires_at: new Date(T0.getTime() + 60_000).toISOString(),
+      }),
+    );
+    expect(origins.latest()?.source).toBe("slack");
+    expect(parseOriginRecord({ source: "nonsense", event_id: "E", slack_user: "U", tier: "anyone", authorized_prs: [], expires_at: T0.toISOString() })?.source).toBe("slack");
+  });
+
+  it("remove() drops a record and rename() moves it to the inject basename", () => {
+    origins.write("event-Ev1", { event_id: "Ev1", slack_user: "U0A", tier: "author", authorized_prs: [] });
+    origins.rename("event-Ev1", "wake-0007.md");
+    expect(existsSync(join(dir, "wake-0007.json"))).toBe(true);
+    expect(existsSync(join(dir, "event-Ev1.json"))).toBe(false);
+    expect(origins.latest()?.event_id).toBe("Ev1");
+    origins.remove("wake-0007.md");
+    expect(origins.latestAny()).toBeNull();
+    origins.rename("gone", "also-gone"); // missing source is a no-op, never a throw
   });
 
   it("latest() is null when the directory does not exist yet", () => {

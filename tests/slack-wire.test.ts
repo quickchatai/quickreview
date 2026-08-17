@@ -10,17 +10,19 @@
 //   enabled   ⇒ two command watchers, right dirs, right tier gates
 //   shutdown  ⇒ the goodbye is posted, the socket stops, the heartbeat stops
 //   off       ⇒ the daemon still starts and stops exactly as before
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseConfig, type Config, type SecretReader } from "../src/config.js";
 import { createDaemon, type DaemonAdapter } from "../src/daemon.js";
-import type { CommandDeps } from "../src/commands.js";
+import { CommandWatcher, type CommandDeps } from "../src/commands.js";
 import { StateStore } from "../src/state.js";
+import { OriginStore } from "../src/slack/origin.js";
 import type { SlackInboundHandler, SlackTransport } from "../src/slack/types.js";
-import { buildLocalCommandWatcher, startSlack, type SlackRuntime } from "../src/wire.js";
+import type { SessionHooks } from "../src/types.js";
+import { buildLocalCommandWatcher, daemonOriginWakes, startSlack, type SlackRuntime } from "../src/wire.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const shipped = readFileSync(join(root, "config.toml"), "utf8");
@@ -281,5 +283,173 @@ describe("state layout", () => {
 
   it("ships config.toml with [slack] enabled = false", () => {
     expect(parseConfig(shipped).slack.enabled).toBe(false);
+  });
+});
+
+// ---- G1: who caused this turn, on BOTH sides -------------------------------
+//
+// The legacy-dir belt used to fire on wall-clock recency: an unexpired non-M
+// origin refused `commands/`, an expired one released it. Both edges were bugs
+// — waiting out 15 minutes was an escalation to tier M, and one guest message
+// every 15 minutes blocked the daemon's OWN pipeline (EOD improvements/issues,
+// anomaly wakes). Cause is now explicit on both sides.
+
+describe("origin cause, not recency (the belt)", () => {
+  const noHooks: SessionHooks = {
+    dispatchRound: async () => {},
+    inject: async () => {},
+    archiveAndClose: async () => {},
+    injectOverseer: async () => {},
+  };
+
+  /** The legacy watcher as production builds it, over a given runtime. */
+  function legacy(runtime: SlackRuntime, deps: CommandDeps): CommandWatcher {
+    return buildLocalCommandWatcher({ root: dir, deps, store, slack: runtime, log: () => {} });
+  }
+
+  const legacyResult = (name: string): Record<string, unknown> =>
+    JSON.parse(readFileSync(join(dir, "commands", "results", `${name}.result.json`), "utf8"));
+
+  function writeLegacyCommand(name: string, body: Record<string, unknown>): void {
+    mkdirSync(join(dir, "commands"), { recursive: true });
+    writeFileSync(join(dir, "commands", `${name}.json`), JSON.stringify(body));
+  }
+
+  it("the legacy gate reads the latest origin REGARDLESS of expiry", async () => {
+    const runtime = (await startSlack(wiring()))!;
+    runtime.origins.write("wake.md", { event_id: "Ev1", slack_user: "U0GUEST", tier: "anyone", authorized_prs: [] });
+    clock = new Date("2026-08-17T09:20:00.000Z"); // +20 min: the TTL is 15
+    expect(runtime.origins.latest()).toBeNull(); // the Slack dir sees nothing live…
+    const watcher = legacy(runtime, noopCommandDeps);
+    const gate = (watcher as unknown as { opts: { tier: { currentOrigin: () => unknown } } }).opts.tier;
+    expect(gate.currentOrigin()).toMatchObject({ event_id: "Ev1", source: "slack", tier: "anyone" });
+    await runtime.stop("test");
+  });
+
+  it("an EXPIRED slack origin still refuses a tier-M command in the legacy dir", async () => {
+    const runtime = (await startSlack(wiring()))!;
+    runtime.origins.write("wake.md", { event_id: "Ev1", slack_user: "U0GUEST", tier: "anyone", authorized_prs: [] });
+    clock = new Date("2026-08-17T09:31:00.000Z"); // long past the TTL
+
+    const fileIssue = vi.fn(() => ({ ok: true }));
+    writeLegacyCommand("late", { command: "file-issue", title: "t", body: "b" });
+    await legacy(runtime, { ...noopCommandDeps, fileIssue }).sweep();
+
+    const r = legacyResult("late");
+    expect(r.ok).toBe(false);
+    expect(String(r.reason)).toMatch(/^tier: this turn was caused by a Slack message from U0GUEST/);
+    expect(fileIssue).not.toHaveBeenCalled();
+    await runtime.stop("test");
+  });
+
+  it("a daemon wake clears the belt, and the very same command then runs", async () => {
+    const runtime = (await startSlack(wiring()))!;
+    runtime.origins.write("wake.md", { event_id: "Ev1", slack_user: "U0GUEST", tier: "anyone", authorized_prs: [] });
+    clock = new Date("2026-08-17T09:20:00.000Z");
+
+    const fileIssue = vi.fn(() => ({ ok: true }));
+    writeLegacyCommand("blocked", { command: "file-issue", title: "t", body: "b" });
+    await legacy(runtime, { ...noopCommandDeps, fileIssue }).sweep();
+    expect(legacyResult("blocked").ok).toBe(false);
+
+    // The daemon wakes the overseer itself — through the wrapped hooks, exactly
+    // as createProductionDaemon hands them to the daemon.
+    const wakes: string[] = [];
+    const { hooks } = daemonOriginWakes({
+      hooks: { ...noHooks, injectOverseer: async (m) => void wakes.push(m) },
+      origins: runtime.origins,
+      enabled: true,
+    });
+    await hooks.injectOverseer("anomaly: verdict file is malformed");
+    expect(wakes).toHaveLength(1);
+    expect(runtime.origins.latestAny()).toMatchObject({ source: "local", tier: "owner_legacy", slack_user: "" });
+
+    writeLegacyCommand("blocked", { command: "file-issue", title: "t", body: "b" });
+    await legacy(runtime, { ...noopCommandDeps, fileIssue }).sweep();
+    expect(legacyResult("blocked")).toMatchObject({ ok: true });
+    expect(fileIssue).toHaveBeenCalledTimes(1);
+    await runtime.stop("test");
+  });
+
+  it("the EOD sweep cannot be DoSed by one cheap message every 15 minutes", async () => {
+    const runtime = (await startSlack(wiring()))!;
+    const fileIssue = vi.fn(() => ({ ok: true }));
+    const fileImprovementPr = vi.fn(() => ({ ok: true }));
+    const deps = { ...noopCommandDeps, fileIssue, fileImprovementPr };
+
+    // A guest keeps the channel warm all afternoon.
+    for (let i = 0; i < 8; i++) {
+      clock = new Date(Date.parse("2026-08-17T14:00:00.000Z") + i * 14 * 60_000);
+      runtime.origins.write(`chat-${i}.md`, {
+        event_id: `Ev${i}`,
+        slack_user: "U0GUEST",
+        tier: "anyone",
+        authorized_prs: [],
+      });
+    }
+
+    // 18:00 Warsaw: the EOD timer wakes the overseer through the wrapped hooks…
+    clock = new Date("2026-08-17T16:00:00.000Z");
+    const { wake } = daemonOriginWakes({ hooks: noHooks, origins: runtime.origins, enabled: true });
+    await wake("eod-sweep", "run the EOD sweep");
+
+    // …and its improvement/issue commands land in the legacy dir and RUN.
+    writeLegacyCommand("eod-issue", { command: "file-issue", title: "flaky test", body: "…" });
+    writeLegacyCommand("eod-pr", { command: "file-improvement-pr", branch: "bot/improve-x", title: "t", body: "b", slug: "x" });
+    await legacy(runtime, deps).sweep();
+
+    expect(legacyResult("eod-issue")).toMatchObject({ ok: true });
+    expect(legacyResult("eod-pr")).toMatchObject({ ok: true });
+    expect(fileIssue).toHaveBeenCalledTimes(1);
+    expect(fileImprovementPr).toHaveBeenCalledTimes(1);
+    await runtime.stop("test");
+  });
+
+  it("a Slack turn stamps a SLACK origin — the router keeps the un-wrapped inject path", async () => {
+    const origins = new OriginStore(join(dir, "state", "slack", "origin"), now);
+    const runtime = (await startSlack(wiring({ origins })))!;
+    const ts = "1755431234.000100";
+    await runtime.router.handle({
+      event_id: "EvRouted",
+      type: "message",
+      channel: CHANNEL,
+      ts,
+      user: "U0GUEST",
+      text: "any news?",
+      event_ts: `${Math.floor(clock.getTime() / 1000)}.000100`,
+    });
+    expect(origins.latestAny()).toMatchObject({ source: "slack", slack_user: "U0GUEST", tier: "anyone" });
+    // …and the belt is on for the legacy dir while that turn is the cause.
+    const watcher = legacy(runtime, noopCommandDeps);
+    const gate = (watcher as unknown as { opts: { tier: { currentOrigin: () => unknown } } }).opts.tier;
+    expect(gate.currentOrigin()).toMatchObject({ source: "slack" });
+    await runtime.stop("test");
+  });
+
+  it("the Slack dir still fails closed with no origin, and with an expired one", async () => {
+    const runtime = (await startSlack(wiring()))!;
+    const gate = (runtime.commands as unknown as { opts: { tier: { currentOrigin: () => unknown } } }).opts.tier;
+    expect(gate.currentOrigin()).toBeNull();
+    runtime.origins.write("wake.md", { event_id: "Ev1", slack_user: "U0GUEST", tier: "anyone", authorized_prs: [] });
+    expect(gate.currentOrigin()).not.toBeNull();
+    clock = new Date("2026-08-17T09:20:00.000Z");
+    expect(gate.currentOrigin()).toBeNull(); // expiry still denies HERE
+
+    const deps = { ...noopCommandDeps, fileIssue: vi.fn(() => ({ ok: true })) };
+    mkdirSync(join(dir, "commands", "slack"), { recursive: true });
+    writeFileSync(join(dir, "commands", "slack", "x.json"), JSON.stringify({ command: "file-issue", title: "t", body: "b" }));
+    const watcher = new CommandWatcher({
+      dir: join(dir, "commands", "slack"),
+      tier: { dir: "slack", currentOrigin: () => runtime.origins.latest() },
+      deps,
+      store,
+      log: () => {},
+    });
+    await watcher.sweep();
+    const r = JSON.parse(readFileSync(join(dir, "commands", "slack", "results", "x.result.json"), "utf8"));
+    expect(r.ok).toBe(false);
+    expect(String(r.reason)).toMatch(/^tier: no live Slack origin/);
+    expect(deps.fileIssue).not.toHaveBeenCalled();
+    await runtime.stop("test");
   });
 });

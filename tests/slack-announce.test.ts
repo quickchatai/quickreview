@@ -143,7 +143,20 @@ describe("root-on-first-event (DP-2a)", () => {
     expect(store.slackThreadForPr(5263)!.post_count).toBe(2);
   });
 
-  it("a not-picked-up notice can open the thread, and the later pickup lands as the first REPLY", async () => {
+  it("pickup opens the root, and only a GENUINELY later round speaks the 🔄 line", async () => {
+    const a = announcer();
+    await a.roundStarted(round);
+    expect(slack.posts[0].thread_ts).toBeUndefined();
+    expect(slack.posts[0].text).toContain("👀");
+    const root = store.slackThreadForPr(5263)!.root_ts;
+
+    await a.roundStarted({ ...round, round_no: 2, round_type: "re-review" });
+    expect(slack.posts).toHaveLength(2);
+    expect(slack.posts[1].thread_ts).toBe(root);
+    expect(slack.posts[1].text).toBe("🔄 round 2 started — you pushed new commits (`abcdef1`)");
+  });
+
+  it("a not-picked-up notice can open the thread, and the pickup TEMPLATE lands as the first REPLY", async () => {
     queuedPr(5263, "2026-08-17T08:00:00.000Z");
     const a = announcer();
     await a.announceNotPickedUp();
@@ -152,11 +165,40 @@ describe("root-on-first-event (DP-2a)", () => {
     expect(slack.posts[0].text).toContain("🐢 #5263 has been waiting 60 min");
     const root = store.slackThreadForPr(5263)!.root_ts;
 
+    // The thread exists but the PICKUP was never said: round 1 must still say
+    // it (in-thread), and must NOT claim "you pushed new commits".
     await a.roundStarted(round);
     expect(slack.posts).toHaveLength(2);
     expect(slack.posts[1].thread_ts).toBe(root);
-    // The thread already exists, so the later round speaks the 🔄 line.
-    expect(slack.posts[1].text).toBe("🔄 round 1 started — you pushed new commits (`abcdef1`)");
+    expect(slack.posts[1].text).toBe(
+      "👀 *<https://github.com/example-org/example-app/pull/5263|#5263 Add rate limiting>* — review started for <@U_ALICE>\n" +
+        "_round 1 · first review · 7 files, +120/−34 · lenses: pass-baseline, pass-validate_",
+    );
+    expect(slack.posts[1].text).not.toContain("🔄");
+    expect(store.slackPost("pickup:5263")).toMatchObject({ ok: 1 });
+
+    // …and the round AFTER that is the first genuine re-round.
+    await a.roundStarted({ ...round, round_no: 2, round_type: "re-review" });
+    expect(slack.posts).toHaveLength(3);
+    expect(slack.posts[2]).toMatchObject({ thread_ts: root, text: "🔄 round 2 started — you pushed new commits (`abcdef1`)" });
+  });
+
+  it("a replayed round 1 says nothing at all — never a 🔄 line for the first round", async () => {
+    const a = announcer();
+    await a.roundStarted(round);
+    await a.roundStarted(round); // restart mid-dispatch, thread row intact
+    expect(slack.posts).toHaveLength(1);
+    expect(store.slackPost("reround:5263:1")).toBeUndefined();
+  });
+
+  it("retries a FAILED pickup with the pickup template, not a re-round line", async () => {
+    slack.failNext = true;
+    const a = announcer();
+    await a.roundStarted(round);
+    expect(slack.posts).toHaveLength(0);
+    await a.roundStarted(round);
+    expect(slack.posts).toHaveLength(1);
+    expect(slack.posts[0].text).toContain("👀");
   });
 
   it("promotes a reply to a root when the PR has no thread yet", async () => {
@@ -192,6 +234,25 @@ describe("idempotence", () => {
     await a.roundStarted({ ...round, escalation_worthy: true, escalation_reasons: ["touches auth"] });
     await a.escalationWorthy({ pr: 5263, reasons: ["touches auth"] });
     expect(slack.posts.filter((p) => p.text.startsWith("🚩"))).toHaveLength(1);
+  });
+
+  // The overseer's `mark-escalation-worthy` command calls this DIRECTLY, off
+  // the dispatch path (§1.4) — these are the guarantees that call
+  // relies on.
+  it("escalationWorthy is safe called cold: no thread, empty reasons, twice over", async () => {
+    const a = announcer();
+    await a.escalationWorthy({ pr: 991, reasons: [] });
+    expect(slack.posts).toHaveLength(1);
+    // With no thread it becomes the ROOT rather than a loose channel post…
+    expect(slack.posts[0].thread_ts).toBeUndefined();
+    expect(store.slackThreadForPr(991)!.root_ts).toBe("1700000001.0001");
+    // …and an empty reasons list drops the line instead of rendering `__`.
+    expect(slack.posts[0].text).toBe("🚩 #991 is escalation-worthy — a human will be asked to review whatever the verdict says");
+    // Idempotent per PR, whichever path fires second.
+    await a.escalationWorthy({ pr: 991, reasons: ["  ", "touches auth"] });
+    await a.roundStarted({ ...round, pr: 991, escalation_worthy: true, escalation_reasons: ["touches auth"] });
+    expect(slack.posts.filter((p) => p.text.startsWith("🚩"))).toHaveLength(1);
+    expect(store.slackPost("escalation_worthy:991")).toMatchObject({ ok: 1 });
   });
 });
 
@@ -362,6 +423,28 @@ describe("pinned heartbeat", () => {
     expect(slack.posts).toHaveLength(1);
     expect(slack.updates).toEqual([{ ts: ts!, text: expect.stringContaining("💓") }]);
     expect(store.slackPost(HEARTBEAT_IDEM_KEY)!.ts).toBe(ts);
+  });
+
+  it("drives the interval through the injected timer seam (same shape as api.ts/socket.ts)", async () => {
+    const ticks: Array<{ fn: () => void; ms: number }> = [];
+    const cleared: unknown[] = [];
+    const a = announcer({
+      setIntervalFn: (fn, ms) => {
+        ticks.push({ fn, ms });
+        return ticks.length;
+      },
+      clearIntervalFn: (h) => void cleared.push(h),
+    });
+    const flush = () => new Promise<void>((r) => setImmediate(r));
+    a.startHeartbeat();
+    expect(ticks[0].ms).toBe(cfg.slack.policy.heartbeat_interval_min * 60_000);
+    await flush(); // the initial post
+    at("2026-08-17T09:05:00.000Z");
+    ticks[0].fn();
+    await flush();
+    expect(slack.updates.map((u) => u.ts)).toEqual(["1700000001.0001"]);
+    a.stopHeartbeat();
+    expect(cleared).toEqual([1]);
   });
 
   it("start/stop drive the interval and are idempotent", async () => {

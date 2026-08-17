@@ -310,17 +310,26 @@ export async function executeCommand(
  *
  *   `local`  — the legacy `commands/` dir. Behaves exactly as it always has, so
  *              EOD sweeps, anomaly wakes and the owner at the tmux pane lose no
- *              autonomy. The one BELT: while a Slack turn from a non-owner
- *              user is live, this dir refuses — the overseer wrote to the wrong
- *              place mid-turn, and a tier-checked command must not slip past by
- *              choosing a filename.
+ *              autonomy. The one BELT: when the turn being served was CAUSED by
+ *              a non-owner Slack message, this dir refuses — the overseer
+ *              wrote to the wrong place mid-turn, and a tier-checked command
+ *              must not slip past by choosing a filename.
  *   `slack`  — the tier-checked `commands/slack/` dir. No live origin ⇒ DENY.
  *
  * Omit the gate entirely and the watcher behaves as it did before.
  */
 export interface CommandTierGate {
   dir: "local" | "slack";
-  /** Most recent unexpired origin, or null when no Slack turn is live. */
+  /**
+   * What this gate reads, and it differs by dir — both directions fail closed:
+   *
+   *   `slack` — the most recent UNEXPIRED origin (`OriginStore.latest()`).
+   *             Null ⇒ deny: rights need a live turn.
+   *   `local` — the most recent origin REGARDLESS OF AGE
+   *             (`OriginStore.latestAny()`). Expiry is not an escalation: a
+   *             Slack turn that simply ran long must not become tier M here,
+   *             and only a daemon wake (a `local` record) clears the belt.
+   */
   currentOrigin(): OriginRecord | null;
 }
 
@@ -491,10 +500,12 @@ export class CommandWatcher {
       const auth = authorizeCommand(command, origin);
       return auth.ok ? null : auth.reason;
     }
-    // Legacy dir: only the belt applies.
-    if (origin && origin.tier !== "owner_legacy") {
+    // Legacy dir: only the belt applies. It fires on CAUSE, not on recency —
+    // a daemon-caused turn (`source: "local"`) always passes, and a Slack-caused
+    // one from a non-owner user always refuses, however old the record is.
+    if (origin && origin.source === "slack" && origin.tier !== "owner_legacy") {
       return (
-        `tier: a Slack turn from ${origin.slack_user} (tier ${origin.tier}) is live — ` +
+        `tier: this turn was caused by a Slack message from ${origin.slack_user} (tier ${origin.tier}) — ` +
         `write '${command.command}' to commands/slack/ so it can be tier-checked`
       );
     }
