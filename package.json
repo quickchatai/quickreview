@@ -12,6 +12,7 @@
     "test": "vitest run",
     "daemon": "npm run build && node dist/src/wire.js",
     "smoke:session": "npm run build && node dist/src/smoke-session.js",
+    "slack:setup": "node deploy/collect-slack-secrets.mjs",
     "smoke:companion": "bash scripts/smoke-companion.sh",
     "e2e:companion": "bash scripts/companion-e2e.sh"
   },

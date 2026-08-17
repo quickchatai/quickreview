@@ -141,6 +141,23 @@ npm run smoke:companion         # the real companion checklist (up/adopt/down,
 npm run smoke:companion -- --live   # ... and actually inject into the overseer
 ```
 
+### Slack concierge setup
+
+```sh
+npm run slack:setup             # node deploy/collect-slack-secrets.mjs
+npm run slack:setup -- --force  # offer to replace tokens that already exist
+npm run slack:setup -- --no-verify   # offline: skip every Slack API call
+```
+
+One interactive pass from "nothing" to "the concierge can start": it prints the
+app manifest, collects the bot (`xoxb-`) and app-level (`xapp-`) tokens into
+`[github].secrets_dir` as `chmod 600` flat files, checks the channel with
+`conversations.info` (including `is_member` — an uninvited bot makes the daemon
+silently deaf), builds `[slack.users]`, and patches only the `[slack]` scalars
+plus the users table in `config.toml` after showing you the diff. Every Slack
+call is read-only; it never posts, never deploys and never starts anything.
+`enabled = true` and `scripts/deploy.sh` stay separate, deliberate acts.
+
 ### Deploy
 
 ```sh
