@@ -48,7 +48,10 @@ node <<'PI_EXT_MERGE'
 const fs = require("fs");
 const path = process.env.HOME + "/.pi/agent/settings.json";
 let memoryMain = null;
-try { memoryMain = require.resolve("pi-memory"); } catch {}
+try {
+  const globalRoot = require("child_process").execSync("npm root -g").toString().trim();
+  memoryMain = require.resolve("pi-memory", { paths: [globalRoot] });
+} catch {}
 if (memoryMain) {
   let cfg = {};
   try { cfg = JSON.parse(fs.readFileSync(path, "utf8")); } catch {}
