@@ -1,0 +1,20 @@
+{
+  "_comment": "CLAUDE.md hard rule 6: these files are SEEDED and canonical - byte-identical to the assets. Never edit them; per-pass model overrides go through config.toml [models.passes]. Regenerate this manifest ONLY when re-seeding from the assets dir.",
+  "source": "seeds/ (lineage: the seeding)",
+  "algorithm": "sha256",
+  "files": {
+    "agents/pass-baseline.md": "266fe62d7cf700489c80b74a1fb17fcab0ba4b30a449c7460ed5d3d7e17c8459",
+    "agents/pass-contracts.md": "cdb7ceb9912c68d334db15cac49aac3c81d3e183e25a8b1cd2f2864efafc5ae3",
+    "agents/pass-data-safety.md": "7d5ece40beafab6faeab9a8af405e2525d5768fe7c6f8d3851ac67c3006a2253",
+    "agents/pass-delivery.md": "8eb1c7cd1b854d74bebada178a34ab7f8920124cdf7e6f95084740fd4f0138d7",
+    "agents/pass-prod-risk.md": "3c780832d6b8dd80b3fbaf55267e128113eeea64ad3e131afef96360f1155968",
+    "agents/pass-security.md": "69d5222c48082e7e799357ca6d5e22cac4345b9a6619ae16d32e7177bef0880e",
+    "agents/pass-statelessness.md": "28b5f482c2b7ef94750be3add392c0d0f99f2c691d9c31a40f625e3b136fd2c4",
+    "agents/pass-ui.md": "116a0ce70461be3299108f8acbda91f5d3d011f968da63ec0b2e5ae845aa1b1c",
+    "agents/pass-validate.md": "95b8a786c4cf5a81bf122fdfaddf628a29d2fbac9b81de6812da138bafc4eb96",
+    "prompts/conversation-system.md": "6c2c910e62ba5e721ca94e0838eb7f8581a89be58eb6e5a58e7bece51d0a8848",
+    "prompts/eod-sweep.md": "7ecb10b411a5e74ca9f692d0a7bb4bb4e2409fa6e43832504101622cb131af83",
+    "prompts/overseer-system.md": "517d2b8a9353bd05e27aec6f684dbc295d5b5922129c41ab1d5f185e51ebe12b",
+    "prompts/pass-common.md": "251b224408953ae096366d3b9741ef87bc4dda8310d4cf9664a1bc97f6e10a5a"
+  }
+}
