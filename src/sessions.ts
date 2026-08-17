@@ -355,10 +355,21 @@ export class PiSessionManager implements SessionHooks {
     this.injectFile(session, message);
   }
 
+  /**
+   * Wake the overseer and return the PATH of the wake file just written.
+   *
+   * The Slack router binds its origin record to the inject file's
+   * basename, so it needs the name back; `injectOverseer` below keeps the
+   * void-returning SessionHooks shape every other caller is typed against.
+   */
+  async injectOverseerFile(message: string): Promise<string> {
+    await this.ensureOverseerSession();
+    return this.injectFile(OVERSEER_SESSION, message);
+  }
+
   /** SessionHooks: wake the overseer (anomalies, EOD sweep). */
   async injectOverseer(message: string): Promise<void> {
-    await this.ensureOverseerSession();
-    this.injectFile(OVERSEER_SESSION, message);
+    await this.injectOverseerFile(message);
   }
 
   // ---- archival / death --------------------------------------------------

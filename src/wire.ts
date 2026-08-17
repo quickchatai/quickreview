@@ -5,7 +5,15 @@
 // stub-wired, test-friendly core.
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadConfig, sandboxRoot, type Config } from "./config.js";
+import {
+  fsSecretReader,
+  loadConfig,
+  sandboxRoot,
+  slackTokenPath,
+  validateSlackConfig,
+  type Config,
+  type SecretReader,
+} from "./config.js";
 import { CommandWatcher, type CommandDeps } from "./commands.js";
 import { createDaemon, type Daemon } from "./daemon.js";
 import { latestDigestHeadline } from "./digest.js";
@@ -17,6 +25,14 @@ import { buildAgents } from "./include.js";
 import { fileImprovementPr, fileIssue, type Run } from "./improvements.js";
 import { reconcileOrphanedRounds } from "./reconcile.js";
 import { PiSessionManager } from "./sessions.js";
+import { SlackApiClient } from "./slack/api.js";
+import { makeAnnouncer, type SlackAnnouncer } from "./slack/announce.js";
+import { OriginStore } from "./slack/origin.js";
+import { makeSlackReply } from "./slack/reply.js";
+import { SlackRouter } from "./slack/router.js";
+import { SlackSocketClient } from "./slack/socket.js";
+import type { SlackTransport } from "./slack/types.js";
+import type { StateStore } from "./state.js";
 import { renderRoundPrompt, roundTemplateFile } from "./templates.js";
 import { nodeExec } from "./tmux.js";
 import type { RoundOrder } from "./types.js";
@@ -42,6 +58,228 @@ export function buildParts(root = sandboxRoot(), cfg = loadConfig()): Production
 
 const gitRun: Run = async (args, cwd) => (await nodeExec("git", args, cwd ? { cwd } : {})).stdout;
 
+/** package.json version for the `daemon.up` line; never worth failing a boot. */
+function packageVersion(root: string): string | undefined {
+  try {
+    const raw = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version?: unknown };
+    return typeof raw.version === "string" ? raw.version : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// ---- the Slack concierge (S5b) ------------------------------------
+//
+// Everything Slack is assembled HERE and nowhere else, because this is the one
+// module allowed to read the two tokens off disk. Three properties the shape
+// enforces rather than documents:
+//
+//   * `[slack] enabled = false` ⇒ this function returns before it touches a
+//     secret reader, a socket or a clock. Nothing is constructed, so nothing
+//     can post, and the daemon is byte-for-byte its legacy self.
+//   * A missing token, a malformed [slack] block or an auth.test that cannot
+//     name us is a HARD boot error. A bot that cannot identify itself cannot
+//     filter its own echoes — running anyway is a loop risk, not a degraded
+//     mode.
+//   * Socket Mode is the ONLY inbound transport. There is no HTTP route here
+//     and none in src/webhook.ts (tests/slack-no-route.test.ts makes that
+//     structural).
+
+/** How often the duplicate-consumer check reads `hello.num_connections`. The
+ * socket exposes the count, not an event; `noteConnections` only fires on a
+ * CHANGE, so polling it is equivalent to hooking the frame. */
+const SLACK_CONNECTIONS_TICK_MS = 60_000;
+
+export interface SlackWiringOptions {
+  cfg: Config;
+  root: string;
+  store: StateStore;
+  /** The daemon's command handlers; the Slack dir gets these plus slackReply. */
+  commandDeps: CommandDeps;
+  /** Wake the overseer and return the wake file's PATH (origin binding). */
+  injectOverseerFile: (message: string) => Promise<string>;
+  /** The existing overseer-inject anomaly path — where ops signals go. Never
+   * the channel: v1 ships ops causes off. */
+  injectOverseer: (message: string) => Promise<void>;
+  log: (msg: string, extra?: unknown) => void;
+  version?: string;
+  now?: () => Date;
+  /** Test seam: how a token file is read. Default is the shared fs reader. */
+  readSecret?: SecretReader;
+  /** Test seam: how the transport is built from the two tokens. */
+  makeTransport?: (opts: { cfg: Config; botToken: string; appToken: string }) => SlackTransport;
+}
+
+/** The live Slack subsystem, as `onStop` needs to see it. */
+export interface SlackRuntime {
+  announcer: SlackAnnouncer;
+  router: SlackRouter;
+  origins: OriginStore;
+  transport: SlackTransport;
+  /** The tier-checked `commands/slack/` watcher. */
+  commands: CommandWatcher;
+  /** `CommandDeps.slackReply` — also handed to the legacy-dir watcher. */
+  slackReply: NonNullable<CommandDeps["slackReply"]>;
+  stop(reason: string): Promise<void>;
+}
+
+/** The real transport: Web API out, Socket Mode in, composed into one object. */
+function defaultTransport(opts: { cfg: Config; botToken: string; appToken: string }): SlackTransport {
+  const { cfg } = opts;
+  const api = new SlackApiClient({
+    botToken: opts.botToken,
+    postMinIntervalMs: cfg.slack.post_min_interval_ms,
+    userCacheTtlSec: cfg.slack.name_cache_ttl_s,
+  });
+  const socket = new SlackSocketClient({
+    appToken: opts.appToken,
+    backoffMs: cfg.slack.reconnect_backoff_ms,
+    serverPingTimeoutMs: cfg.slack.server_ping_timeout_ms,
+  });
+  return {
+    postMessage: (a) => api.postMessage(a),
+    updateMessage: (a) => api.updateMessage(a),
+    usersInfo: (id) => api.usersInfo(id),
+    authTest: () => api.authTest(),
+    pinsAdd: (a) => api.pinsAdd(a),
+    startSocket: (h) => socket.startSocket(h),
+    stopSocket: () => socket.stopSocket(),
+    get numConnections(): number {
+      return socket.numConnections;
+    },
+  };
+}
+
+/**
+ * Build + start the concierge. Returns undefined when Slack is off — callers
+ * pass that straight through, which is why nothing downstream needs a flag.
+ */
+export async function startSlack(opts: SlackWiringOptions): Promise<SlackRuntime | undefined> {
+  const { cfg, root, store, log } = opts;
+  if (!cfg.slack.enabled) return undefined;
+  const now = opts.now ?? (() => new Date());
+  const readSecret = opts.readSecret ?? fsSecretReader;
+
+  // Fail loud, at boot, on a missing token or a half-filled [slack] block.
+  validateSlackConfig(cfg, { readSecret });
+  const botToken = readSecret(slackTokenPath(cfg, "bot"));
+  const appToken = readSecret(slackTokenPath(cfg, "app"));
+  if (!botToken || !appToken) throw new Error("slack: token files vanished between validation and read");
+
+  const transport = (opts.makeTransport ?? defaultTransport)({ cfg, botToken, appToken });
+
+  // Who are we? Resolved ONCE, and required: the router's echo filter is built
+  // on this identity, and a bot that cannot recognise its own messages will
+  // answer itself forever.
+  const identity = await transport.authTest();
+  if (!identity) {
+    throw new Error("slack: auth.test failed — refusing to start (a bot that cannot identify itself will answer its own echoes)");
+  }
+  log(`slack: connected as ${identity.user_id} in ${cfg.slack.channel}`);
+
+  const origins = new OriginStore(join(root, "state", "slack", "origin"), now);
+  const announcer = makeAnnouncer({
+    cfg,
+    store,
+    slack: transport,
+    now,
+    log,
+    version: opts.version,
+    statusPath: join(root, "state", "status.json"),
+    onAnomalySignal: (message) => opts.injectOverseer(message),
+  });
+  if (!announcer) throw new Error("slack: announcer not built despite enabled = true");
+
+  const router = new SlackRouter({
+    cfg,
+    store,
+    origins,
+    inject: opts.injectOverseerFile,
+    users: transport,
+    identity,
+    onCapReached: async (decision) => {
+      const cap = decision.cap === "per_user_daily_turns" ? cfg.slack.policy.per_user_daily_turns : cfg.slack.policy.daily_turns;
+      await announcer.capReached(cap);
+    },
+    now,
+    log: (line) => log(line),
+  });
+
+  const slackReply = makeSlackReply({ cfg, store, api: transport, now, log: (line) => log(line) });
+  const commands = new CommandWatcher({
+    dir: join(root, "commands", "slack"),
+    tier: { dir: "slack", currentOrigin: () => origins.latest() },
+    deps: { ...opts.commandDeps, slackReply },
+    store,
+    log: (line) => log(line),
+  });
+  await commands.start();
+
+  await transport.startSocket((event) => {
+    void router.handle(event).catch((err) => log("slack: router threw (event dropped)", err));
+  });
+
+  const timers: Array<ReturnType<typeof setInterval>> = [];
+  const every = (ms: number, fn: () => void): void => {
+    const t = setInterval(fn, ms);
+    t.unref?.();
+    timers.push(t);
+  };
+  // Half the grace window, so a PR is noticed roughly when it goes overdue.
+  every(Math.max(1, Math.round(cfg.slack.policy.pickup_grace_min / 2)) * 60_000, () => {
+    void announcer.announceNotPickedUp().catch((err) => log("slack: not-picked-up sweep failed", err));
+  });
+  every(SLACK_CONNECTIONS_TICK_MS, () => announcer.noteConnections(transport.numConnections));
+
+  await announcer.daemonUp();
+  announcer.startHeartbeat();
+
+  return {
+    announcer,
+    router,
+    origins,
+    transport,
+    commands,
+    slackReply,
+    async stop(reason: string): Promise<void> {
+      for (const t of timers) clearInterval(t);
+      timers.length = 0;
+      announcer.stopHeartbeat();
+      commands.stop();
+      // The store is still open here (onStop runs before teardown), so the
+      // post is ledgered; `daemonStopping` is bounded internally, so awaiting
+      // it can never hold the exit open.
+      await announcer.daemonStopping(reason);
+      await transport.stopSocket().catch((err) => log("slack: socket stop failed", err));
+    },
+  };
+}
+
+/**
+ * The legacy `commands/` watcher. Two things change when Slack is live, and
+ * only those two: `slack_reply` becomes executable from this dir as well, and
+ * the BELT gate is installed — while a non-owner Slack turn is live, the
+ * legacy dir refuses, so a tier-checked command cannot slip past by being
+ * written to the wrong place. Slack off ⇒ no tier gate at all, i.e. exactly the
+ * legacy watcher.
+ */
+export function buildLocalCommandWatcher(opts: {
+  root: string;
+  deps: CommandDeps;
+  store: StateStore;
+  slack: SlackRuntime | null;
+  log: (line: string) => void;
+}): CommandWatcher {
+  const { slack } = opts;
+  return new CommandWatcher({
+    dir: join(opts.root, "commands"),
+    ...(slack ? { tier: { dir: "local" as const, currentOrigin: () => slack.origins.latest() } } : {}),
+    deps: slack ? { ...opts.deps, slackReply: slack.slackReply } : opts.deps,
+    store: opts.store,
+    log: opts.log,
+  });
+}
+
 export function createProductionDaemon(parts: ProductionParts = buildParts()): Daemon {
   const { cfg, root, gate, adapter, sessions } = parts;
   const log = (msg: string, extra?: unknown) => console.log(`[quickreviewd] ${msg}`, extra ?? "");
@@ -51,6 +289,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
 
   let eod: EodTimer | null = null;
   let commands: CommandWatcher | null = null;
+  let slack: SlackRuntime | null = null;
 
   const daemon = createDaemon({
     cfg,
@@ -59,6 +298,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     hooks: sessions,
     renderPrompt,
     log,
+    // Lazy on purpose: the Slack subsystem is built in onStart, after the
+    // store exists. Off ⇒ this resolves undefined forever and dispatch/verdicts
+    // never see an announcer.
+    announce: () => slack?.announcer,
     digestHeadline: () => latestDigestHeadline(join(root, "digest")),
 
     async onStart(d) {
@@ -159,7 +402,23 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           return fileIssue(payload, { cfg, adapter, gate, store: d.store });
         },
       };
-      commands = new CommandWatcher({ dir: join(root, "commands"), deps: commandDeps, store: d.store, log: (l) => log(l) });
+      // The Slack concierge. Off by default; when on it owns its own
+      // tier-checked command dir, the socket, and every unprompted post. It is
+      // started BEFORE the legacy watcher because that watcher borrows two
+      // things from it: the reply handler and the origin lookup.
+      slack = (await startSlack({
+        cfg,
+        root,
+        store: d.store,
+        commandDeps,
+        injectOverseerFile: (m) => sessions.injectOverseerFile(m),
+        injectOverseer: (m) => sessions.injectOverseer(m),
+        log,
+        version: packageVersion(root),
+      })) ?? null;
+      if (slack) log("slack: concierge live (socket mode; commands/slack tier-checked)");
+
+      commands = buildLocalCommandWatcher({ root, deps: commandDeps, store: d.store, slack, log: (l) => log(l) });
       await commands.start();
 
       // Daemon-clock EOD (Warsaw wall time; pi schedulers deliberately unused).
@@ -182,9 +441,19 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       rotation.unref?.();
     },
 
-    async onStop() {
+    async onStop(reason = "shutdown") {
       eod?.stop();
       commands?.stop();
+      // Runs before the store closes, so the goodbye is ledgered; bounded by
+      // the announcer itself, so it can never delay the exit.
+      if (slack) {
+        try {
+          await slack.stop(reason);
+        } catch (err) {
+          log("slack: shutdown failed", err);
+        }
+        slack = null;
+      }
     },
   });
 
