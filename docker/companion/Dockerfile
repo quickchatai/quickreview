@@ -60,7 +60,11 @@ ARG PI_MEMORY_SPEC=github:jayzeng/pi-memory#v0.4.2
 # skipping lifecycle scripts costs nothing here. VERIFY-ON-PIN: that the
 # extension still loads with its scripts skipped (the e2e's pi step and the
 # first real /login exercise it).
-RUN npm install -g --ignore-scripts ${PI_MEMORY_SPEC}
+RUN npm install -g --ignore-scripts ${PI_MEMORY_SPEC} \
+  # git-sourced tarballs keep their restrictive modes (registry ones are
+  # normalized) — without this the non-root companion user cannot even
+  # resolve the package, and pi-memory silently never loads.
+  && chmod -R a+rX /usr/local/lib/node_modules/pi-memory
 
 # Non-root, and the uid MUST match the invoking host user: every interesting
 # mount here is a host bind mount the companion writes (/alerts, /feed,
