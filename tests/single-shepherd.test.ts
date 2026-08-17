@@ -52,6 +52,36 @@ describe("daemon topology", () => {
   });
 });
 
+describe("S4: every PR-session wake goes through wakes.ts", () => {
+  const src = join(import.meta.dirname, "..", "src");
+
+  it("the author-reply path calls wakeOrHold, never inject directly", () => {
+    const text = readFileSync(join(src, "daemon.ts"), "utf8");
+    const start = text.indexOf("onAuthorReply:");
+    const end = text.indexOf("onClosed:", start);
+    expect(start).toBeGreaterThan(-1);
+    const block = text.slice(start, end);
+    expect(block).toContain("wakeOrHold(");
+    expect(block).not.toMatch(/await\s+hooks\.inject\(/);
+  });
+
+  it("no other module wakes a PR session behind wakes.ts's back", () => {
+    // Allowed: wakes.ts itself; the two call sites that hand it an inject seam
+    // (daemon author replies, verdict/anomaly flush); wire.ts's pass-through
+    // decorator. Anything else is a second instruction channel to the one main
+    // pi — exactly what S4 forbids.
+    const allowed = new Set(["wakes.ts", "daemon.ts", "verdicts.ts", "wire.ts"]);
+    const offenders = srcFiles(src)
+      .filter((f) => !allowed.has(f.slice(f.lastIndexOf("/") + 1)))
+      .filter((f) => {
+        const text = readFileSync(f, "utf8");
+        // A PR-session wake takes (pr, message); overseer injects take one arg.
+        return /\.inject\(\s*[a-zA-Z_][\w.]*\s*,/.test(text);
+      });
+    expect(offenders).toEqual([]);
+  });
+});
+
 // ---- S3: passes are leaves ------------------------------------------------
 
 describe("stripAgentSpawnTools", () => {

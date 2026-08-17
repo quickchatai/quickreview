@@ -389,6 +389,45 @@ describe("anomaly paths", () => {
   });
 });
 
+// Single-shepherd S4 wiring (docs/single-shepherd-invariant.md): a wake held
+// while the round ran must actually reach the session once the round ends.
+// wakes.ts is unit-tested on its own; these prove the WATCHER calls it.
+describe("held wakes are flushed at round end", () => {
+  it("delivers them after a verdict is applied", async () => {
+    const roundId = reviewingRound(100);
+    store.holdWake(100, "author says: fixed in abc123", "author_reply");
+    const { hooks, injects } = recordingHooks();
+
+    write(100, 1, verdictFile({ verdict: "APPROVE" }));
+    await watcher({}, hooks).sweep();
+
+    expect((store.db.prepare("SELECT status FROM rounds WHERE id = ?").get(roundId) as { status: string }).status).toBe("done");
+    expect(injects).toEqual(["100:author says: fixed in abc123"]);
+    expect(store.heldWakes(100)).toHaveLength(0);
+  });
+
+  it("delivers them when the round is abandoned as overdue", async () => {
+    const later = new Date(Date.now() + (cfg.daemon.round_deadline_min + 10) * 60_000);
+    reviewingRound(101);
+    store.holdWake(101, "author says: ping", "author_reply");
+    const { hooks, injects } = recordingHooks();
+    const w = new VerdictWatcher({ cfg, store, adapter, hooks, verdictDir: dir, now: () => later });
+
+    expect(await w.checkDeadlines()).toEqual([101]);
+    expect(injects).toEqual(["101:author says: ping"]);
+    expect(store.heldWakes(101)).toHaveLength(0);
+  });
+
+  it("leaves a wake held while the round is still running", async () => {
+    reviewingRound(102);
+    store.holdWake(102, "author says: ping", "author_reply");
+    const { hooks, injects } = recordingHooks();
+    expect(await watcher({}, hooks).checkDeadlines()).toEqual([]);
+    expect(injects).toHaveLength(0);
+    expect(store.heldWakes(102)).toHaveLength(1);
+  });
+});
+
 describe("structural invariant: no review-retraction path", () => {
   // The forbidden token is assembled at runtime so this guard test does not
   // itself contain the string it forbids.

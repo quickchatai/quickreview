@@ -49,8 +49,8 @@ prompt-side reinforcement below goes through the build-time addendum in
 ### G1 — passes are leaves, enforced at build time
 
 `buildAgents()` normalizes each built variant's `tools:` frontmatter, dropping
-any agent-spawning tool (`subagent`, `subagents`, `task`, `agent`, `dispatch`)
-should a seed ever grow one, and the execution-policy addendum appended to
+any agent-spawning tool (`subagent`, `subagents`, `task`, `agent`, `agents`,
+`dispatch`) should a seed ever grow one, and the addendum appended to
 every built agent states the leaf rule outright. The seeds stay byte-identical;
 only `state/agents/*.md` — what pi-subagents actually reads — carries the
 enforcement.
@@ -70,6 +70,14 @@ whose round is running, the rendered wake is stored instead of injected; the
 verdict path and the overdue/anomaly path flush it once the round is over and
 the session has been compacted. Per-PR cap of 5 held wakes — the oldest is
 dropped with an event-log line, never silently.
+
+Verified end to end: `tests/verdicts.test.ts` proves the watcher actually
+flushes on both round-end paths (verdict applied, round abandoned as overdue)
+and leaves a wake held while the round still runs; `tests/single-shepherd.test.ts`
+adds source-level guards that the author-reply path goes through `wakeOrHold`
+and that no other module opens a second wake channel to a PR session. The Slack
+router and the TUI alert sink inject into the **overseer** only, so neither can
+interrupt a round.
 
 Known and accepted: the wake is *rendered* at claim time, so its ping-pong
 discipline counter reflects the moment the reply arrived. That counter only
