@@ -3,8 +3,9 @@
 // inspects every bash tool call and blocks any segment whose program is not on
 // the read-only allowlist, plus mutating `gh` verbs (sanctioned mutations go
 // through the repo's own scripts/*.sh surface, which IS allowed for the
-// specific script basenames below — approve-pr.sh and the pr-*/post-review/
-// reply-thread helpers; deploy.sh and mint-token.sh stay unreachable).
+// specific script basenames below — approve-pr.sh, mint-token.sh (read-only
+// gh needs it) and the pr-*/post-review/reply-thread helpers; deploy.sh
+// stays unreachable).
 //
 // The checker is pure (checkBashCommand) so tests need no pi. The pi hookup
 // (`pi.on("tool_call", …)` returning {block, reason}) is a VERIFIED capability
@@ -16,13 +17,16 @@ import type { Pi, ToolCallEvent } from "@earendil-works/pi-coding-agent";
 const ALLOWED = new Set([
   "git", "rg", "grep", "cat", "ls", "find", "head", "tail", "wc", "jq", "sed",
   "awk", "sort", "uniq", "diff", "gh", "echo", "printf", "cut", "tr", "xargs",
-  "dirname", "basename", "test", "true",
+  "dirname", "basename", "test", "true", "false", "date", "nl", "stat",
 ]);
 
 /** Sanctioned sandbox scripts — the controlled surface for routine GitHub
- * reads and gate-mirrored posting. Deliberately NOT deploy.sh/mint-token.sh. */
+ * reads and gate-mirrored posting. mint-token.sh is sanctioned because the
+ * templates allow raw READ-ONLY `gh`, which needs `GH_TOKEN="$(…)"` (first
+ * live day blocked 9 legitimate reads on it). deploy.sh stays unreachable. */
 const SANCTIONED_SCRIPTS = new Set([
   "approve-pr.sh",
+  "mint-token.sh",
   "pr-context.sh",
   "pr-checks.sh",
   "pr-threads.sh",
@@ -123,14 +127,87 @@ function checkProgram(prog: string, args: string[]): BashCheck {
   return block(`exec policy: '${base}' is not an allowed read-only command`);
 }
 
-/** Pure policy check over a full bash command string. Splits on shell
- * separators (;, &&, ||, |, &, newline, $(, `) and vets each segment's first
- * program token. Quote-blind splitting can only over-block, never under. */
+/** Quote/substitution-aware segment splitter. The first live day proved
+ * quote-blind splitting unusable: `rg 'a|b'` shredded on the quoted pipe and
+ * pattern fragments were vetted as programs. Rules:
+ *  - single quotes: everything inside is literal;
+ *  - double quotes: separators are literal, but `$(` and backticks still
+ *    execute, so they still split (quote state restored at the matching `)`);
+ *  - backslash escapes the next char (outside single quotes);
+ *  - unquoted `; & | && || newline ( )` split; `$(`/`)` track nesting so the
+ *    command FOLLOWING a substitution lands in its own segment and is vetted
+ *    (the old segment-merge was a bypass: `A="$(cat x)" python3 e.py`). */
+export function splitShellSegments(cmd: string): string[] {
+  const segs: string[] = [];
+  let cur = "";
+  let q: "'" | '"' | null = null;
+  const substStack: Array<"'" | '"' | null> = [];
+  const push = (): void => {
+    segs.push(cur);
+    cur = "";
+  };
+  for (let i = 0; i < cmd.length; i++) {
+    const ch = cmd[i]!;
+    if (ch === "\\" && q !== "'") {
+      cur += ch + (cmd[i + 1] ?? "");
+      i++;
+      continue;
+    }
+    if (q === "'") {
+      if (ch === "'") q = null;
+      cur += ch;
+      continue;
+    }
+    if (ch === "'") {
+      q = "'";
+      cur += ch;
+      continue;
+    }
+    if (ch === '"') {
+      q = q === '"' ? null : '"';
+      cur += ch;
+      continue;
+    }
+    if (ch === "$" && cmd[i + 1] === "(") {
+      substStack.push(q);
+      q = null;
+      push();
+      i++;
+      continue;
+    }
+    if (ch === ")" && substStack.length > 0) {
+      q = substStack.pop()!;
+      push();
+      continue;
+    }
+    if (ch === "`") {
+      push();
+      continue;
+    }
+    if (q === '"') {
+      cur += ch; // separators are literal inside double quotes
+      continue;
+    }
+    if (ch === "\n" || ch === ";" || ch === "(" || ch === ")") {
+      push();
+      continue;
+    }
+    if (ch === "&" || ch === "|") {
+      push();
+      if (cmd[i + 1] === ch) i++;
+      continue;
+    }
+    cur += ch;
+  }
+  segs.push(cur);
+  return segs;
+}
+
+/** Pure policy check over a full bash command string: split into segments
+ * (quote-aware) and vet each segment's first program token. */
 export function checkBashCommand(cmd: string): BashCheck {
-  const normalized = cmd
-    .replace(/\d*>&\d*/g, " ") // 2>&1 etc. — not separators
-    .replace(/\$\(/g, ";"); // command substitution starts a new segment
-  for (const segment of normalized.split(/[\n;&|`]+/)) {
+  const normalized = cmd.replace(/\d*>&\d*/g, " "); // 2>&1 etc. — not separators
+  for (const segment of splitShellSegments(normalized)) {
     const tokens = segment.trim().split(/\s+/).filter((t) => t.length > 0);
     if (tokens.length === 0) continue;
     const res = checkSegment(tokens);
