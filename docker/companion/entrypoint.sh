@@ -36,18 +36,32 @@ set -g pane-border-style 'fg=colour238'
 set -g pane-active-border-style 'fg=colour245'
 TMUXCONF
 
-# Extension discovery for pi-memory. Seeded only when absent: ~/.pi lives on a
-# named volume, so a hand-edited settings.json survives restarts and wins.
-# VERIFY-ON-PIN: the "extensions" array key and that a global npm package path
-# is an acceptable entry (§5 documents discovery dirs + a settings.json
-# array; nothing in this repo has exercised either against 0.84.1).
+# Extension discovery for pi-memory. ~/.pi lives on a named volume; the merge
+# below preserves every existing key (hand edits win, append-only extensions).
+# The "extensions" array is VERIFIED live on the VM (2026-08-14: pi-memory,
+# pi-subagents and bash-guard all load from it on 0.84.1).
 SETTINGS="$PI_HOME_DIR/agent/settings.json"
-if [[ ! -f "$SETTINGS" ]]; then
-  memory_main="$(node -e 'try{process.stdout.write(require.resolve("pi-memory"))}catch{}' 2>/dev/null || true)"
-  if [[ -n "$memory_main" ]]; then
-    printf '{\n  "extensions": ["%s"]\n}\n' "$memory_main" > "$SETTINGS"
-  fi
-fi
+mkdir -p "$PI_HOME_DIR/agent"
+# Idempotent MERGE (mirrors the VM entrypoint): seed-only-if-absent silently
+# skipped pi-memory forever once pi itself had written settings.json.
+node <<'PI_EXT_MERGE'
+const fs = require("fs");
+const path = process.env.HOME + "/.pi/agent/settings.json";
+let memoryMain = null;
+try { memoryMain = require.resolve("pi-memory"); } catch {}
+if (memoryMain) {
+  let cfg = {};
+  try { cfg = JSON.parse(fs.readFileSync(path, "utf8")); } catch {}
+  if (!Array.isArray(cfg.extensions)) cfg.extensions = [];
+  if (!cfg.extensions.includes(memoryMain)) {
+    cfg.extensions.push(memoryMain);
+    fs.writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n");
+  }
+  console.log("pi extensions registered:", cfg.extensions.join(", "));
+} else {
+  console.error("WARNING: pi-memory not resolvable — companion runs without memory");
+}
+PI_EXT_MERGE
 
 # OpenAI auth: the OAuth route (`/login` once inside a pi session) persists in
 # $PI_HOME_DIR/agent/auth.json on the volume and takes precedence over the env
