@@ -22,6 +22,16 @@ export function buildShaArgv(cfg: TuiConfig): string[] {
   return dockerSh(cfg, `cat '${cfg.remote_sandbox_root}/BUILD_SHA' 2>/dev/null || true`);
 }
 
+/** Container status straight from docker — works while it is stopped too. */
+export function containerStatusArgv(cfg: TuiConfig): string[] {
+  return [...(cfg.sudo_docker ? ["sudo"] : []), "docker", "ps", "-a", "--filter", `name=${cfg.container}`, "--format", "{{.Status}}"];
+}
+
+/** The remote shell line hooks.powerRun streams: docker stop/start. */
+export function powerCommand(cfg: TuiConfig, action: "stop" | "start"): string {
+  return `${cfg.sudo_docker ? "sudo " : ""}docker ${action} ${cfg.container}`;
+}
+
 // ---- local (laptop-side) commands — all read-only ---------------------------
 
 export const HEAD_ARGV = ["git", "rev-parse", "--short", "HEAD"];
@@ -79,12 +89,23 @@ export interface DeployState {
   armedAt?: number;
   /** Screen rect of the DEPLOY button (1-based), refreshed on every paint. */
   buttonZone?: { x1: number; y1: number; x2: number; y2: number };
-  /** A live (or just-finished) deploy run streamed into the tab. */
+  /** `docker ps` Status line for the container ("Up 2 hours" / "Exited (0) …");
+   * undefined until fetched, "" when docker listed nothing. */
+  containerStatus?: string;
+  /** A live (or just-finished) deploy/stop/start run streamed into the tab. */
   run?: DeployRun;
+  /** Screen rect of the STOP/START power button, refreshed on every paint. */
+  powerZone?: { x1: number; y1: number; x2: number; y2: number };
+  /** Which button is armed — the two never arm together. */
+  armedKind?: RunKind;
 }
 
-/** deploy.sh output streamed into the pane — the TUI never suspends. */
+export type RunKind = "deploy" | "stop" | "start";
+
+/** deploy.sh / docker stop / docker start output streamed into the pane —
+ * the TUI never suspends. */
 export interface DeployRun {
+  kind: RunKind;
   lines: string[];
   /** Trailing chunk fragment awaiting its newline. */
   partial: string;
@@ -122,8 +143,9 @@ export class RealDeployFetcher implements DeployFetcher {
   ) {}
 
   async load(): Promise<Omit<DeployState, "loaded" | "loading" | "scroll">> {
-    const [marker, head, dirty, plan] = await Promise.all([
+    const [marker, status, head, dirty, plan] = await Promise.all([
       this.ssh(this.cfg.ssh_host, buildShaArgv(this.cfg)),
+      this.ssh(this.cfg.ssh_host, containerStatusArgv(this.cfg)),
       this.local(HEAD_ARGV),
       this.local(DIRTY_ARGV),
       this.local(PLAN_ARGV),
@@ -131,6 +153,7 @@ export class RealDeployFetcher implements DeployFetcher {
     const deployed = marker.ok ? parseBuildSha(marker.stdout) : undefined;
     const out: Omit<DeployState, "loaded" | "loading" | "scroll"> = {
       deployed,
+      containerStatus: status.ok ? status.stdout.trim() : undefined,
       head: head.ok ? head.stdout.trim() : undefined,
       dirty: dirty.ok ? dirty.stdout.split("\n").filter((l) => l.trim() !== "") : [],
       // A refusal exits non-zero with the reason on stderr — that IS the plan.
@@ -199,34 +222,55 @@ export function renderDeployTab(st: DeployState, dryRun: boolean, cols: number, 
   const frame = new Frame(cols, rows);
   frame.set(0, rule(cols, "┌", "┐", ["quickreview", dryRun ? "DRY-RUN" : `${SGR.bgRed}${SGR.bold} LIVE ${SGR.reset}`, "deploy"]));
 
-  // THE button — always visible, pinned under the title, mouse-clickable.
-  // While a run streams it doubles as the status chip.
-  const armed = st.armedAt !== undefined;
+  // The button row — deploy + power, both mouse-clickable, pinned under the
+  // title. While a run streams, the row becomes its status chip.
   const run = st.run;
-  const label = run?.running
-    ? " ⟳ DEPLOYING… "
-    : run
-      ? run.code === 0
-        ? " ✔ DEPLOY OK "
-        : ` ✖ DEPLOY FAILED (exit ${run.code ?? "signal"}) `
-      : armed
-        ? " ⚠ CLICK AGAIN TO DEPLOY NOW "
-        : " ▶ DEPLOY TO VM ";
-  const btn =
-    run?.running || (run && run.code === 0)
-      ? `${SGR.inverse}${SGR.bold}${label}${SGR.reset}`
-      : run || armed
-        ? `${SGR.bgRed}${SGR.bold}${label}${SGR.reset}`
-        : `${SGR.inverse}${SGR.bold}${label}${SGR.reset}`;
-  const suffix = run?.running
-    ? "  streaming ./scripts/deploy.sh sync — j/k scroll · x abort"
-    : run
-      ? "  x close log · r refresh"
-      : armed
-        ? "  any other key/click cancels"
-        : "  runs ./scripts/deploy.sh sync (also: D D)";
-  frame.boxRow(1, [{ text: ` ${btn}${FG.dim}${suffix}${RESET}`, width: cols - 2 }]);
-  st.buttonZone = run ? undefined : { x1: 2, y1: 2, x2: 1 + displayWidth(stripAnsi(label)), y2: 2 };
+  const RUN_VERBS: Record<RunKind, [string, string, string]> = {
+    deploy: [" ⟳ DEPLOYING… ", " ✔ DEPLOY OK ", " ✖ DEPLOY FAILED"],
+    stop: [" ⟳ STOPPING VM APP… ", " ■ STOPPED ", " ✖ STOP FAILED"],
+    start: [" ⟳ STARTING VM APP… ", " ✔ STARTED ", " ✖ START FAILED"],
+  };
+  if (run) {
+    const [busy, ok, bad] = RUN_VERBS[run.kind];
+    const label = run.running ? busy : run.code === 0 ? ok : `${bad} (exit ${run.code ?? "signal"}) `;
+    const chip =
+      run.running || run.code === 0
+        ? `${SGR.inverse}${SGR.bold}${label}${SGR.reset}`
+        : `${SGR.bgRed}${SGR.bold}${label}${SGR.reset}`;
+    const suffix = run.running ? "  streaming — j/k scroll · x abort" : "  x close log · r refresh";
+    frame.boxRow(1, [{ text: ` ${chip}${FG.dim}${suffix}${RESET}`, width: cols - 2 }]);
+    st.buttonZone = undefined;
+    st.powerZone = undefined;
+  } else {
+    const running = st.containerStatus === undefined ? undefined : /^Up /.test(st.containerStatus);
+    const deployArmed = st.armedKind === "deploy";
+    const powerKind: RunKind = running === false ? "start" : "stop";
+    const powerArmed = st.armedKind === powerKind;
+    const dLabel = deployArmed ? " ⚠ CLICK AGAIN TO DEPLOY NOW " : " ▶ DEPLOY TO VM ";
+    const pLabel = powerArmed
+      ? powerKind === "stop"
+        ? " ⚠ CLICK AGAIN TO STOP NOW "
+        : " ⚠ CLICK AGAIN TO START NOW "
+      : powerKind === "stop"
+        ? " ■ STOP VM APP "
+        : " ▶ START VM APP ";
+    const dBtn = deployArmed ? `${SGR.bgRed}${SGR.bold}${dLabel}${SGR.reset}` : `${SGR.inverse}${SGR.bold}${dLabel}${SGR.reset}`;
+    const pBtn = powerArmed ? `${SGR.bgRed}${SGR.bold}${pLabel}${SGR.reset}` : `${SGR.inverse}${SGR.bold}${pLabel}${SGR.reset}`;
+    const vm =
+      st.containerStatus === undefined
+        ? `${FG.dim}VM: …${RESET}`
+        : st.containerStatus === ""
+          ? `${FG.dim}VM: no container${RESET}`
+          : running
+            ? `VM: ${st.containerStatus}`
+            : `${SGR.bold}VM: ${st.containerStatus}${SGR.reset}`;
+    const suffix = st.armedKind !== undefined ? "  any other key/click cancels" : "  (also: D D deploy · S S stop/start)";
+    frame.boxRow(1, [{ text: ` ${dBtn}  ${pBtn}  ${vm}${FG.dim}${suffix}${RESET}`, width: cols - 2 }]);
+    const dW = displayWidth(stripAnsi(dLabel));
+    st.buttonZone = { x1: 2, y1: 2, x2: 1 + dW, y2: 2 };
+    const pX = 2 + dW + 2;
+    st.powerZone = { x1: pX, y1: 2, x2: pX + displayWidth(stripAnsi(pLabel)) - 1, y2: 2 };
+  }
 
   const bodyRows = rows - 4; // top bar + button row + hints + bottom border
   if (run) {
@@ -280,15 +324,22 @@ export function installDeployHooks(app: App, fetcher?: DeployFetcher, now: () =>
   // The kill handle of the run in flight (undefined once it exits).
   let handle: { kill(): void } | undefined;
 
-  const startRun = (theApp: App): void => {
-    if (!theApp.hooks.deployRun) {
-      theApp.notice("✖ deploy runner not wired");
+  type StreamRunner = (a: App, onData: (chunk: string) => void, onExit: (code: number | null) => void) => { kill(): void };
+
+  const startRun = (theApp: App, kind: RunKind): void => {
+    const power = theApp.hooks.powerRun;
+    const runner: StreamRunner | undefined =
+      kind === "deploy"
+        ? theApp.hooks.deployRun
+        : power && ((a, onData, onExit) => power(a, kind, onData, onExit));
+    if (!runner) {
+      theApp.notice(`✖ ${kind} runner not wired`);
       return;
     }
-    const run: DeployRun = { lines: [], partial: "", running: true };
+    const run: DeployRun = { kind, lines: [], partial: "", running: true };
     st.run = run;
     st.scroll = 0; // follow the tail
-    handle = theApp.hooks.deployRun(
+    handle = runner(
       theApp,
       (chunk) => {
         if (st.run !== run) return; // stale callback after a close
@@ -304,48 +355,64 @@ export function installDeployHooks(app: App, fetcher?: DeployFetcher, now: () =>
         run.code = code;
         handle = undefined;
         st.loaded = false;
-        void load(); // re-read BUILD_SHA + plan against the new reality
+        void load(); // re-read BUILD_SHA/status/plan against the new reality
         theApp.repaint();
       },
     );
     theApp.repaint();
   };
 
-  // One press = arm; a second press inside the confirm window = deploy.
-  // Shared by the D key and the mouse button. Ignored while a run streams.
-  const press = (theApp: App): void => {
+  // One press = arm; a second press of the SAME button inside the confirm
+  // window = run. Shared by keys (D/S) and the mouse. Ignored mid-run.
+  const press = (theApp: App, kind: RunKind): void => {
     if (st.run?.running) return;
     const t = now();
-    if (st.armedAt !== undefined && t - st.armedAt < DEPLOY_CONFIRM_MS) {
+    if (st.armedKind === kind && st.armedAt !== undefined && t - st.armedAt < DEPLOY_CONFIRM_MS) {
       st.armedAt = undefined;
-      startRun(theApp);
+      st.armedKind = undefined;
+      startRun(theApp, kind);
     } else {
       st.run = undefined; // arming clears a finished log
       st.armedAt = t;
+      st.armedKind = kind;
     }
     theApp.repaint();
   };
 
+  /** The power button's action follows the container's observed state:
+   * running (or unknown — a stop of a stopped container is a no-op) → stop,
+   * definitely stopped → start. */
+  const powerKind = (): RunKind => (st.containerStatus !== undefined && !/^Up /.test(st.containerStatus) ? "start" : "stop");
+
+  const disarm = (theApp: App): void => {
+    if (st.armedAt === undefined) return;
+    st.armedAt = undefined;
+    st.armedKind = undefined;
+    theApp.repaint();
+  };
+
   app.hooks.deployClick = (theApp, x, y): void => {
-    const z = st.buttonZone;
-    if (z && x >= z.x1 && x <= z.x2 && y >= z.y1 && y <= z.y2) {
-      press(theApp);
-    } else if (st.armedAt !== undefined) {
-      st.armedAt = undefined; // a click anywhere else cancels
-      theApp.repaint();
-    }
+    const inside = (z?: { x1: number; y1: number; x2: number; y2: number }): boolean =>
+      z !== undefined && x >= z.x1 && x <= z.x2 && y >= z.y1 && y <= z.y2;
+    if (inside(st.buttonZone)) press(theApp, "deploy");
+    else if (inside(st.powerZone)) press(theApp, powerKind());
+    else disarm(theApp); // a click anywhere else cancels
   };
 
   app.hooks.deployKey = (theApp, key: BoardKey): boolean => {
     if (key.kind === "char" && key.ch === "D") {
-      press(theApp);
+      press(theApp, "deploy");
       return true;
     }
-    if (st.armedAt !== undefined) st.armedAt = undefined; // any other key disarms
+    if (key.kind === "char" && key.ch === "S") {
+      press(theApp, powerKind());
+      return true;
+    }
+    if (st.armedAt !== undefined) disarm(theApp); // any other key disarms
     if (st.run && key.kind === "char" && key.ch === "x") {
       if (st.run.running) {
         handle?.kill(); // abort — onExit lands with the signal code
-        theApp.notice("deploy aborted (SIGTERM to deploy.sh)");
+        theApp.notice(`${st.run.kind} aborted (SIGTERM)`);
       } else {
         st.run = undefined; // close the finished log, back to the plan view
         st.scroll = 0;

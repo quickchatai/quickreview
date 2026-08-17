@@ -59,8 +59,16 @@ export interface AppHooks {
     onData: (chunk: string) => void,
     onExit: (code: number | null) => void,
   ) => { kill(): void };
-  /** Mouse click on the deploy tab (1-based terminal coords) — the button. */
+  /** Mouse click on the deploy tab (1-based terminal coords) — the buttons. */
   deployClick?: (app: App, x: number, y: number) => void;
+  /** Stop/start the VM app container, streamed like deployRun (S S or the
+   * power button on the deploy tab). */
+  powerRun?: (
+    app: App,
+    action: "stop" | "start",
+    onData: (chunk: string) => void,
+    onExit: (code: number | null) => void,
+  ) => { kill(): void };
   /** Re-establish the VM ssh master on the operator's terminal (key s) —
    * the one native GCP-passphrase prompt. */
   reconnect?: (app: App) => void;

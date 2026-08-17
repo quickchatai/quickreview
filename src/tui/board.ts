@@ -233,7 +233,7 @@ export const HINT_BUTTONS: Array<{ label: string; key: string }> = [
 export const HELP_LINES = [
   "1/2/3/4/5     board / digest / companion / deploy / metrics tab (c = companion too)",
   "               metrics tab: 7 / 0 / a switch the 7d / 30d / all window; # <pr> ⏎ opens a PR timeline (Esc back)",
-  "               deploy tab: click ▶ DEPLOY TO VM (or D D) to run scripts/deploy.sh sync",
+  "               deploy tab: click ▶ DEPLOY TO VM (or D D) to deploy · ■ STOP/▶ START VM APP (or S S) to power the container",
   "s              reconnect VM ssh (the one ssh key-passphrase prompt, shared 4h)",
   "Ctrl-c ×3      kill the TUI from anywhere (terminal restored) — the un-stuck hatch",
   "               an alert in the top bar: click it or ⏎ to open the companion",
