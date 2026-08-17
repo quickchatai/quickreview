@@ -311,3 +311,74 @@ describe("deploy tab keys", () => {
     await run;
   });
 });
+
+describe("power button (stop/start the VM app)", () => {
+  it("builds status + power commands from config", async () => {
+    const { containerStatusArgv, powerCommand } = await import("../src/tui/deploytab.js");
+    expect(containerStatusArgv(TUI_DEFAULTS)).toEqual([
+      "sudo", "docker", "ps", "-a", "--filter", "name=quickreview-sandbox", "--format", "{{.Status}}",
+    ]);
+    expect(powerCommand(TUI_DEFAULTS, "stop")).toBe("sudo docker stop quickreview-sandbox");
+    expect(powerCommand(TUI_DEFAULTS, "start")).toBe("sudo docker start quickreview-sandbox");
+  });
+
+  it("S S stops a running container; the button flips to START when stopped", async () => {
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    const actions: string[] = [];
+    let status = "Up 2 hours";
+    app.hooks.powerRun = (_a, action, _onData, onExit) => {
+      actions.push(action);
+      status = action === "stop" ? "Exited (0) 1 second ago" : "Up 1 second";
+      onExit(0);
+      return { kill: () => {} };
+    };
+    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], containerStatus: status }) }, () => 1000);
+    const run = app.run();
+    streams.type("4");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(stripAnsi(streams.written())).toContain("■ STOP VM APP");
+    expect(stripAnsi(streams.written())).toContain("VM: Up 2 hours");
+
+    streams.type("S");
+    expect(st.armedKind).toBe("stop");
+    expect(stripAnsi(streams.written())).toContain("CLICK AGAIN TO STOP NOW");
+    streams.type("S");
+    expect(actions).toEqual(["stop"]);
+    expect(stripAnsi(streams.written())).toContain("■ STOPPED");
+    await new Promise((r) => setTimeout(r, 0)); // reload settles → status refreshed
+
+    streams.type("x"); // close the log — plan view now shows START
+    expect(stripAnsi(streams.written())).toContain("▶ START VM APP");
+    streams.type("S");
+    streams.type("S");
+    expect(actions).toEqual(["stop", "start"]);
+    app.quit();
+    await run;
+  });
+
+  it("clicking the power zone arms it; arming one button disarms the other", async () => {
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    let powers = 0;
+    app.hooks.powerRun = (_a, _action, _d, onExit) => (powers++, onExit(0), { kill: () => {} });
+    app.hooks.deployRun = (_a, _d, onExit) => (onExit(0), { kill: () => {} });
+    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], containerStatus: "Up 5 minutes" }) }, () => 1000);
+    const run = app.run();
+    streams.type("4");
+    await new Promise((r) => setTimeout(r, 0));
+    const click = (x: number, y: number) => streams.type(`\x1b[<0;${x};${y}M`);
+
+    expect(st.powerZone).toBeDefined();
+    click(st.powerZone!.x1, st.powerZone!.y1); // arms stop
+    expect(st.armedKind).toBe("stop");
+    streams.type("D"); // pressing the OTHER button re-arms, never confirms
+    expect(st.armedKind).toBe("deploy");
+    expect(powers).toBe(0);
+    click(st.powerZone!.x1, st.powerZone!.y1); // arm stop again
+    click(st.powerZone!.x2, st.powerZone!.y2); // confirm inside the zone
+    expect(powers).toBe(1);
+    app.quit();
+    await run;
+  });
+});

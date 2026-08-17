@@ -29,7 +29,7 @@ usage: qcr tui [<pr> | overseer | main] [--no-companion] [--no-reload]
                     feed, alert pipeline and the companion tab)
   --no-reload       do not re-exec when a new dist/ build lands
 
-keys: 1/2/3/4/5 tabs (3 = companion, also c; 4 = deploy — click ▶ or D D deploys;
+keys: 1/2/3/4/5 tabs (3 = companion, also c; 4 = deploy — click ▶/■ buttons (D D deploy, S S stop/start);
       5 = metrics — 7/0/a window, # <pr> ⏎ for a PR timeline) ·
       j/k select · ⏎ attach ·
       Ctrl-q detach (twice = literal) · Ctrl-c ×3 hard-kill the TUI ·
@@ -186,8 +186,30 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
   installMessageHooks(app);
   const { installDigestHooks } = await import("./digesttab.js");
   installDigestHooks(app);
-  const { RealDeployFetcher, installDeployHooks, realLocalRunner } = await import("./deploytab.js");
+  const { RealDeployFetcher, installDeployHooks, powerCommand, realLocalRunner } = await import("./deploytab.js");
   const localRunner = realLocalRunner(sandboxRoot());
+  app.hooks.powerRun = (_theApp, action, onData, onExit) => {
+    // docker stop/start on the VM, streamed into the tab like a deploy.
+    const child = spawn("ssh", [cfg.ssh_host, powerCommand(cfg, action)], { stdio: ["ignore", "pipe", "pipe"] });
+    onData(`$ ssh ${cfg.ssh_host} ${powerCommand(cfg, action)}\n`);
+    child.stdout.on("data", (b: Buffer) => onData(b.toString("utf8")));
+    child.stderr.on("data", (b: Buffer) => onData(b.toString("utf8")));
+    child.on("close", (code) => onExit(code));
+    child.on("error", (err) => {
+      onData(`\nspawn failed: ${String(err)}\n`);
+      onExit(1);
+    });
+    return {
+      kill: () => {
+        try {
+          child.kill("SIGTERM");
+        } catch {
+          /* already gone */
+        }
+      },
+    };
+  };
+
   installDeployHooks(app, new RealDeployFetcher(cfg, realSshRunner, localRunner));
   const { installMetricsHooks, localHeadProbe } = await import("./metricstab.js");
   // The metrics OPERATIONS card answers "deploy needed?" through the same
