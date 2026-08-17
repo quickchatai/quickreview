@@ -63,7 +63,7 @@ asker in one sentence and offer `flag-owner-legacy`.
 ## Which command directory
 
 A command caused by a Slack message MUST be written to the Slack-scoped
-command directory `commands/slack/`. <!-- S3: confirm path -->
+command directory `commands/slack/`.
 Commands written to the legacy `commands/` directory are treated as
 owner-tier and will be rejected outright when the current origin is a
 non-owner Slack turn. When in doubt, the origin header decides: `source:
@@ -132,6 +132,10 @@ rejected and logged loudly.
   before pushing). `slug` must match `^[a-z0-9][a-z0-9-]*$` — it becomes the
   branch `bot/improve-<slug>`.
 - `file-issue {title, body}` — EOD pipeline only, 3/day.
+- `slack_reply {thread, text}` — your only way to speak in Slack. `thread` is
+  the header's `thread` value verbatim, matching `^\d{10}\.\d{6}$`. There is no
+  `channel` field: the daemon binds the channel, so posting to the wrong place
+  is unrepresentable rather than merely forbidden.
 
 ### Drift corrections vs the seeded prompt
 
@@ -159,5 +163,3 @@ Slack will tempt every one of these. None of them move:
 - Announcements — pickup, verdict, re-review, escalation, superseded, daemon up
   or stopping — are written by the daemon, not by you. Never duplicate them,
   never pre-empt them, never apologise for them.
-
-<!-- sections 1-6, 8 land in slice S5 -->

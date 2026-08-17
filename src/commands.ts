@@ -10,6 +10,8 @@ import { basename, join } from "node:path";
 import type { StateStore } from "./state.js";
 import type { FileOutcome, ImprovementPayload, IssuePayload } from "./improvements.js";
 import { SLUG_RE } from "./improvements.js";
+import type { OriginRecord } from "./slack/origin.js";
+import { SLACK_TS_RE } from "./slack/reply.js";
 
 export type CommandName =
   | "rerun-round"
@@ -19,7 +21,8 @@ export type CommandName =
   | "resume-pr"
   | "flag-owner-legacy"
   | "file-improvement-pr"
-  | "file-issue";
+  | "file-issue"
+  | "slack_reply";
 
 export const COMMAND_WHITELIST: readonly CommandName[] = [
   "rerun-round",
@@ -30,6 +33,7 @@ export const COMMAND_WHITELIST: readonly CommandName[] = [
   "flag-owner-legacy",
   "file-improvement-pr",
   "file-issue",
+  "slack_reply",
 ] as const;
 
 export type Command =
@@ -40,7 +44,14 @@ export type Command =
   | { command: "resume-pr"; pr: number }
   | { command: "flag-owner-legacy"; message: string }
   | ({ command: "file-improvement-pr" } & ImprovementPayload)
-  | ({ command: "file-issue" } & IssuePayload);
+  | ({ command: "file-issue" } & IssuePayload)
+  | { command: "slack_reply"; thread: string; text: string };
+
+/** Context a command file carries with it (its own name, for idempotence). */
+export interface CommandContext {
+  /** Basename of the command file, "" for a direct executeCommand call. */
+  file: string;
+}
 
 /** Handlers the daemon wires; each may reject by returning {ok:false, reason}. */
 export interface CommandDeps {
@@ -52,6 +63,11 @@ export interface CommandDeps {
   flagOwnerLegacy(message: string): Promise<FileOutcome | void> | FileOutcome | void;
   fileImprovementPr(payload: ImprovementPayload): Promise<FileOutcome | void> | FileOutcome | void;
   fileIssue(payload: IssuePayload): Promise<FileOutcome | void> | FileOutcome | void;
+  /** Optional: absent when Slack is disabled, in which case `slack_reply` is
+   * rejected with a reason instead of silently succeeding. */
+  slackReply?(
+    payload: { thread: string; text: string; file: string },
+  ): Promise<FileOutcome | void> | FileOutcome | void;
 }
 
 export type ValidationResult = { ok: true; command: Command } | { ok: false; reason: string };
@@ -154,6 +170,94 @@ export function validateCommand(raw: unknown): ValidationResult {
       }
       return { ok: true, command: { command: "file-issue", title: obj["title"] as string, body: obj["body"] as string } };
     }
+    case "slack_reply": {
+      const err = fieldError(obj, ["thread", "text"]);
+      if (err) return { ok: false, reason: err };
+      // No `channel` field, by construction: the daemon binds every reply to
+      // cfg.slack.channel, so posting in the wrong place is unrepresentable.
+      if (!isNonEmptyString(obj["thread"]) || !SLACK_TS_RE.test(obj["thread"])) {
+        return { ok: false, reason: "'thread' must be a Slack message ts like \"1712345678.123456\"" };
+      }
+      if (!isNonEmptyString(obj["text"])) return { ok: false, reason: "'text' must be a non-empty string" };
+      return { ok: true, command: { command: "slack_reply", thread: obj["thread"], text: obj["text"] as string } };
+    }
+  }
+}
+
+// ---- tier enforcement (S3) ----------------------------------------
+
+/**
+ * Commands a Slack turn may run, by tier. The table is data on purpose: adding
+ * a command without deciding its tier is then impossible to do by accident.
+ *
+ * `own` = allowed for tier `author` only when the target PR is in the origin's
+ * `authorized_prs` (recomputed by the router from `pr_state.author`, NEVER read
+ * out of the inject body).
+ *
+ * Nothing here can reach the dry_run flag, a deploy, an approval or anything
+ * review-dismissing: those are not commands at all, and this feature adds no
+ * GitHub mutation — every write still goes through the MutationGate.
+ */
+const TIER_TABLE: Record<CommandName, { anyone: boolean; author: "own" | boolean; owner_legacy: boolean }> = {
+  "rerun-round": { anyone: false, author: "own", owner_legacy: true },
+  "mark-escalation-worthy": { anyone: false, author: "own", owner_legacy: true },
+  "pause-pr": { anyone: false, author: "own", owner_legacy: true },
+  "resume-pr": { anyone: false, author: "own", owner_legacy: true },
+  // The safety valve: anyone may always reach a human.
+  "flag-owner-legacy": { anyone: true, author: true, owner_legacy: true },
+  "restart-session": { anyone: false, author: false, owner_legacy: true },
+  // improvements.ts caps still apply ON TOP — a tier never lifts a cap.
+  "file-improvement-pr": { anyone: false, author: false, owner_legacy: true },
+  "file-issue": { anyone: false, author: false, owner_legacy: true },
+  // Not user-tiered: gated by channel binding, thread, caps, cooldown, length.
+  slack_reply: { anyone: true, author: true, owner_legacy: true },
+};
+
+/** Target PR of a command, when it has one. */
+function targetPr(command: Command): number | null {
+  if (command.command === "restart-session") return typeof command.pr === "number" ? command.pr : null;
+  return "pr" in command && typeof command.pr === "number" ? command.pr : null;
+}
+
+export type AuthorizationResult = { ok: true } | { ok: false; reason: string };
+
+/**
+ * May this command run on behalf of `origin`?
+ *
+ * `origin === null` means "no Slack turn is live" — the command came from the
+ * daemon itself (EOD sweep, anomaly wake) or from the owner at the tmux pane, and
+ * keeps today's full autonomy (tier M). A caller that must fail closed (the
+ * Slack command directory) checks for a missing origin BEFORE calling this.
+ *
+ * Every rejection reason starts with `tier: ` so the overseer — and the
+ * `command_rejected` event stream — can tell a rights refusal from a cap.
+ */
+export function authorizeCommand(command: Command, origin: OriginRecord | null): AuthorizationResult {
+  if (origin === null) return { ok: true };
+  const row = TIER_TABLE[command.command];
+  const pr = targetPr(command);
+  switch (origin.tier) {
+    case "owner_legacy":
+      return row.owner_legacy ? { ok: true } : { ok: false, reason: `tier: '${command.command}' is not available` };
+    case "author": {
+      if (row.author === true) return { ok: true };
+      if (row.author === false) {
+        return { ok: false, reason: `tier: '${command.command}' requires tier owner_legacy (this turn is tier author)` };
+      }
+      if (pr === null) return { ok: false, reason: `tier: '${command.command}' needs a PR number to check ownership` };
+      if (origin.authorized_prs.includes(pr)) return { ok: true };
+      return {
+        ok: false,
+        reason: `tier: PR #${pr} is not authored by this Slack user (authorized: ${
+          origin.authorized_prs.length ? origin.authorized_prs.join(", ") : "none"
+        })`,
+      };
+    }
+    default:
+      // `anyone` and `ignored` alike: read-only plus the two ungated commands.
+      return row.anyone
+        ? { ok: true }
+        : { ok: false, reason: `tier: '${command.command}' is not available at tier ${origin.tier}` };
   }
 }
 
@@ -162,7 +266,11 @@ function normalize(outcome: FileOutcome | void): FileOutcome {
 }
 
 /** Dispatch a validated command to the injected handlers. */
-export async function executeCommand(command: Command, deps: CommandDeps): Promise<FileOutcome> {
+export async function executeCommand(
+  command: Command,
+  deps: CommandDeps,
+  ctx: CommandContext = { file: "" },
+): Promise<FileOutcome> {
   switch (command.command) {
     case "rerun-round":
       return normalize(await deps.rerunRound(command.pr));
@@ -187,14 +295,40 @@ export async function executeCommand(command: Command, deps: CommandDeps): Promi
       );
     case "file-issue":
       return normalize(await deps.fileIssue({ title: command.title, body: command.body }));
+    case "slack_reply": {
+      if (!deps.slackReply) return { ok: false, reason: "slack_reply is not wired (Slack is disabled)" };
+      return normalize(await deps.slackReply({ thread: command.thread, text: command.text, file: ctx.file }));
+    }
   }
 }
 
 // ---- the watcher -----------------------------------------------------------
 
+/**
+ * Which command directory this watcher serves, and how to find the live Slack
+ * origin (ratified D5(c) — TWO directories, one gate).
+ *
+ *   `local`  — the legacy `commands/` dir. Behaves exactly as it always has, so
+ *              EOD sweeps, anomaly wakes and the owner at the tmux pane lose no
+ *              autonomy. The one BELT: while a Slack turn from a non-owner
+ *              user is live, this dir refuses — the overseer wrote to the wrong
+ *              place mid-turn, and a tier-checked command must not slip past by
+ *              choosing a filename.
+ *   `slack`  — the tier-checked `commands/slack/` dir. No live origin ⇒ DENY.
+ *
+ * Omit the gate entirely and the watcher behaves as it did before.
+ */
+export interface CommandTierGate {
+  dir: "local" | "slack";
+  /** Most recent unexpired origin, or null when no Slack turn is live. */
+  currentOrigin(): OriginRecord | null;
+}
+
 export interface CommandWatcherOptions {
   /** commands/ directory. Results land in <dir>/results, handled files in <dir>/processed. */
   dir: string;
+  /** Tier enforcement for this directory. Absent ⇒ legacy behaviour. */
+  tier?: CommandTierGate;
   deps: CommandDeps;
   store: StateStore;
   now?: () => Date;
@@ -325,9 +459,11 @@ export class CommandWatcher {
           true,
         );
       }
+      const denial = this.tierCheck(validation.command);
+      if (denial) return this.finish(path, name, validation.command.command, { ok: false, reason: denial }, true);
       let outcome: FileOutcome;
       try {
-        outcome = await executeCommand(validation.command, this.opts.deps);
+        outcome = await executeCommand(validation.command, this.opts.deps, { file: name });
       } catch (err) {
         outcome = { ok: false, reason: `handler threw: ${(err as Error).message}` };
       }
@@ -335,6 +471,34 @@ export class CommandWatcher {
     } finally {
       this.inFlight.delete(path);
     }
+  }
+
+  /** Rights check between validation and execution. Returns a reason to deny. */
+  private tierCheck(command: Command): string | null {
+    const gate = this.opts.tier;
+    if (!gate) return null;
+    let origin: OriginRecord | null = null;
+    try {
+      origin = gate.currentOrigin();
+    } catch (err) {
+      // A gate that cannot answer denies — never fails open.
+      return `tier: origin lookup failed (${(err as Error).message})`;
+    }
+    if (gate.dir === "slack") {
+      if (!origin) {
+        return "tier: no live Slack origin for this turn — a tier-checked command needs one (fail closed)";
+      }
+      const auth = authorizeCommand(command, origin);
+      return auth.ok ? null : auth.reason;
+    }
+    // Legacy dir: only the belt applies.
+    if (origin && origin.tier !== "owner_legacy") {
+      return (
+        `tier: a Slack turn from ${origin.slack_user} (tier ${origin.tier}) is live — ` +
+        `write '${command.command}' to commands/slack/ so it can be tier-checked`
+      );
+    }
+    return null;
   }
 
   private finish(

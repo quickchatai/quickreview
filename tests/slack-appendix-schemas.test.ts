@@ -35,6 +35,9 @@ const CANDIDATE_FIELDS = [
   "rationale",
   "target",
   "note",
+  "thread",
+  "text",
+  "channel",
   "__control_never_valid__",
 ] as const;
 
@@ -54,7 +57,7 @@ function acceptedFields(command: CommandName): string[] {
 function appendixSchemas(): Map<string, string[]> {
   const out = new Map<string, string[]>();
   for (const line of appendix.split("\n")) {
-    const m = /^-\s+`([a-z][a-z0-9-]*)\s*\{([^}]*)\}`/.exec(line.trim());
+    const m = /^-\s+`([a-z][a-z0-9_-]*)\s*\{([^}]*)\}`/.exec(line.trim());
     const name = m?.[1];
     const raw = m?.[2];
     if (name === undefined || raw === undefined) continue;
@@ -130,7 +133,15 @@ describe("slack overseer appendix — corrected command schemas", () => {
     expect(appendix.toLowerCase()).toMatch(/reject/);
   });
 
-  it("carries the S5 placeholder so the later slice has an anchor", () => {
-    expect(appendix).toContain("<!-- sections 1-6, 8 land in slice S5 -->");
+  it("documents slack_reply with no channel field — the channel is unrepresentable", () => {
+    expect(documented.get("slack_reply")).toEqual(["text", "thread"]);
+    expect(validateCommand({ command: "slack_reply", thread: "1712345678.123456", text: "hi", channel: "C1" })).toEqual({
+      ok: false,
+      reason: "unknown field(s): channel",
+    });
+  });
+
+  it("carries no unfinished slice placeholder", () => {
+    expect(appendix).not.toMatch(/land in slice S5|<!-- S3: confirm path -->|TODO/);
   });
 });

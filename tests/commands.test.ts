@@ -2,11 +2,20 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CommandWatcher, COMMAND_WHITELIST, executeCommand, validateCommand } from "../src/commands.js";
+import {
+  authorizeCommand,
+  CommandWatcher,
+  COMMAND_WHITELIST,
+  executeCommand,
+  validateCommand,
+  type Command,
+} from "../src/commands.js";
+import type { OriginRecord } from "../src/slack/origin.js";
 import { StateStore } from "../src/state.js";
 
 function makeDeps() {
   return {
+    slackReply: vi.fn(async () => ({ ok: true, ts: "1712345678.000100" })),
     rerunRound: vi.fn(async () => ({ ok: true, redispatched: true })),
     restartSession: vi.fn(async () => undefined),
     markEscalationWorthy: vi.fn(async () => undefined),
@@ -30,12 +39,29 @@ describe("validateCommand — whitelist", () => {
       { command: "flag-owner-legacy", message: "webhook signature failures spiking" },
       { command: "file-improvement-pr", branch: "wip/fix-docs", title: "t", body: "b", slug: "fix-docs" },
       { command: "file-issue", title: "t", body: "b" },
+      { command: "slack_reply", thread: "1712345678.123456", text: "on it" },
     ];
     for (const v of valid) {
       const res = validateCommand(v);
       expect(res.ok, JSON.stringify(v)).toBe(true);
     }
-    expect(COMMAND_WHITELIST).toHaveLength(8);
+    expect(COMMAND_WHITELIST).toHaveLength(9);
+  });
+
+  it("slack_reply: strict shape, ts format, and no channel field", () => {
+    expect(validateCommand({ command: "slack_reply", thread: "1712345678.123456" }).ok).toBe(false);
+    expect(validateCommand({ command: "slack_reply", thread: "1712345678.123456", text: "  " }).ok).toBe(false);
+    expect(validateCommand({ command: "slack_reply", thread: "nope", text: "hi" }).ok).toBe(false);
+    expect(validateCommand({ command: "slack_reply", thread: "1712345678.12345", text: "hi" }).ok).toBe(false);
+    // A channel can never be named by the overseer — the daemon binds it.
+    const withChannel = validateCommand({
+      command: "slack_reply",
+      thread: "1712345678.123456",
+      text: "hi",
+      channel: "C0EVIL",
+    });
+    expect(withChannel.ok).toBe(false);
+    if (!withChannel.ok) expect(withChannel.reason).toContain("unknown field");
   });
 
   it("rejects a command that is not whitelisted — no escape hatch", () => {
@@ -92,6 +118,19 @@ describe("executeCommand", () => {
     expect(deps.fileImprovementPr).toHaveBeenCalledWith({ branch: "wip/x", title: "t", body: "b", slug: "x" });
     await executeCommand({ command: "file-issue", title: "t", body: "b" }, deps);
     expect(deps.fileIssue).toHaveBeenCalledWith({ title: "t", body: "b" });
+    await executeCommand(
+      { command: "slack_reply", thread: "1712345678.123456", text: "on it" },
+      deps,
+      { file: "c9" },
+    );
+    expect(deps.slackReply).toHaveBeenCalledWith({ thread: "1712345678.123456", text: "on it", file: "c9" });
+  });
+
+  it("rejects slack_reply when Slack is not wired", async () => {
+    const { slackReply: _drop, ...deps } = makeDeps();
+    const out = await executeCommand({ command: "slack_reply", thread: "1712345678.123456", text: "x" }, deps);
+    expect(out).toMatchObject({ ok: false });
+    expect(out.reason).toContain("not wired");
   });
 
   it("treats a void return as success", async () => {
@@ -115,6 +154,7 @@ describe("CommandWatcher", () => {
   });
 
   const cmdDir = (): string => join(dir, "commands");
+  const slackDir = (): string => join(dir, "commands", "slack");
   const result = (name: string): any => JSON.parse(readFileSync(join(cmdDir(), "results", `${name}.result.json`), "utf8"));
 
   function watcher(deps: ReturnType<typeof makeDeps>, log: string[] = []): CommandWatcher {
@@ -207,5 +247,197 @@ describe("CommandWatcher", () => {
     }
     w.stop();
     expect(deps.flagOwnerLegacy).toHaveBeenCalledWith("hello");
+  });
+
+  // ---- tier enforcement (S3) --------------------------------------
+
+  const origin = (over: Partial<OriginRecord> = {}): OriginRecord => ({
+    event_id: "Ev1",
+    slack_user: "U0ALICE",
+    tier: "author",
+    authorized_prs: [1234],
+    expires_at: new Date(Date.now() + 60_000).toISOString(),
+    ...over,
+  });
+
+  function tierWatcher(
+    deps: ReturnType<typeof makeDeps>,
+    dirKind: "local" | "slack",
+    current: () => OriginRecord | null,
+  ): CommandWatcher {
+    const target = dirKind === "slack" ? slackDir() : cmdDir();
+    mkdirSync(target, { recursive: true });
+    return new CommandWatcher({
+      dir: target,
+      deps,
+      store,
+      parseAttempts: 2,
+      parseRetryMs: 1,
+      log: () => {},
+      tier: { dir: dirKind, currentOrigin: current },
+    });
+  }
+
+  const slackResult = (name: string): any =>
+    JSON.parse(readFileSync(join(slackDir(), "results", `${name}.result.json`), "utf8"));
+
+  async function runSlack(deps: ReturnType<typeof makeDeps>, cmd: unknown, o: OriginRecord | null): Promise<any> {
+    mkdirSync(slackDir(), { recursive: true });
+    writeFileSync(join(slackDir(), "t.json"), JSON.stringify(cmd));
+    await tierWatcher(deps, "slack", () => o).sweep();
+    return slackResult("t");
+  }
+
+  it("commands/slack/ denies every tier-restricted command at tier anyone", async () => {
+    const anyone = origin({ tier: "anyone", authorized_prs: [] });
+    for (const cmd of [
+      { command: "rerun-round", pr: 1234 },
+      { command: "mark-escalation-worthy", pr: 1234, reason: "r" },
+      { command: "pause-pr", pr: 1234, reason: "r" },
+      { command: "resume-pr", pr: 1234 },
+      { command: "restart-session", pr: "overseer" },
+      { command: "file-improvement-pr", branch: "wip/x", title: "t", body: "b", slug: "x" },
+      { command: "file-issue", title: "t", body: "b" },
+    ]) {
+      const deps = makeDeps();
+      const r = await runSlack(deps, cmd, anyone);
+      expect(r.ok, JSON.stringify(cmd)).toBe(false);
+      expect(r.reason).toMatch(/^tier: /);
+      expect(Object.values(deps).every((fn) => fn.mock.calls.length === 0)).toBe(true);
+    }
+  });
+
+  it("the safety valve and slack_reply are tier-free", async () => {
+    const anyone = origin({ tier: "anyone", authorized_prs: [] });
+    const d1 = makeDeps();
+    expect((await runSlack(d1, { command: "flag-owner-legacy", message: "help" }, anyone)).ok).toBe(true);
+    const d2 = makeDeps();
+    expect((await runSlack(d2, { command: "slack_reply", thread: "1712345678.123456", text: "hi" }, anyone)).ok).toBe(true);
+  });
+
+  it("tier author acts on an own PR and is refused on someone else's", async () => {
+    const alice = origin({ tier: "author", authorized_prs: [1234] });
+    const ok = makeDeps();
+    expect((await runSlack(ok, { command: "rerun-round", pr: 1234 }, alice)).ok).toBe(true);
+    expect(ok.rerunRound).toHaveBeenCalledWith(1234);
+    const nope = makeDeps();
+    const r = await runSlack(nope, { command: "pause-pr", pr: 9999, reason: "r" }, alice);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/^tier: PR #9999 is not authored/);
+    expect(nope.pausePr).not.toHaveBeenCalled();
+  });
+
+  it("tier author cannot restart sessions or file improvement PRs/issues", async () => {
+    const alice = origin({ tier: "author", authorized_prs: [1234] });
+    for (const cmd of [
+      { command: "restart-session", pr: 1234 },
+      { command: "file-issue", title: "t", body: "b" },
+      { command: "file-improvement-pr", branch: "wip/x", title: "t", body: "b", slug: "x" },
+    ]) {
+      const r = await runSlack(makeDeps(), cmd, alice);
+      expect(r.ok, JSON.stringify(cmd)).toBe(false);
+      expect(r.reason).toContain("requires tier owner_legacy");
+    }
+  });
+
+  it("tier owner_legacy runs every command on any PR", async () => {
+    const m = origin({ tier: "owner_legacy", slack_user: "U0MAT", authorized_prs: [] });
+    for (const cmd of [
+      { command: "rerun-round", pr: 42 },
+      { command: "restart-session", pr: "overseer" },
+      { command: "file-issue", title: "t", body: "b" },
+    ]) {
+      const r = await runSlack(makeDeps(), cmd, m);
+      expect(r.ok, JSON.stringify(cmd)).toBe(true);
+    }
+  });
+
+  it("commands/slack/ with no live origin denies (fail closed)", async () => {
+    const deps = makeDeps();
+    const r = await runSlack(deps, { command: "rerun-round", pr: 1 }, null);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/^tier: no live Slack origin/);
+    expect(deps.rerunRound).not.toHaveBeenCalled();
+    const rejected = store.eventsOn(new Date().toISOString().slice(0, 10)).filter((e) => e.kind === "command_rejected");
+    expect(rejected).toHaveLength(1);
+  });
+
+  it("legacy commands/ keeps full autonomy when no Slack turn is live", async () => {
+    const deps = makeDeps();
+    writeFileSync(join(cmdDir(), "eod.json"), JSON.stringify({ command: "file-issue", title: "t", body: "b" }));
+    await tierWatcher(deps, "local", () => null).sweep();
+    expect(result("eod")).toMatchObject({ ok: true });
+    expect(deps.fileIssue).toHaveBeenCalled();
+  });
+
+  it("legacy commands/ refuses mid-turn for a non-owner Slack origin (the belt)", async () => {
+    const deps = makeDeps();
+    writeFileSync(join(cmdDir(), "sneak.json"), JSON.stringify({ command: "file-issue", title: "t", body: "b" }));
+    await tierWatcher(deps, "local", () => origin({ tier: "author" })).sweep();
+    const r = result("sneak");
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/^tier: a Slack turn from U0ALICE/);
+    expect(r.reason).toContain("commands/slack/");
+    expect(deps.fileIssue).not.toHaveBeenCalled();
+  });
+
+  it("legacy commands/ still runs during a the owner Slack turn", async () => {
+    const deps = makeDeps();
+    writeFileSync(join(cmdDir(), "mat.json"), JSON.stringify({ command: "rerun-round", pr: 7 }));
+    await tierWatcher(deps, "local", () => origin({ tier: "owner_legacy" })).sweep();
+    expect(result("mat")).toMatchObject({ ok: true });
+    expect(deps.rerunRound).toHaveBeenCalledWith(7);
+  });
+
+  it("slack_reply gets the command file basename as its idempotence scope", async () => {
+    const deps = makeDeps();
+    mkdirSync(slackDir(), { recursive: true });
+    writeFileSync(
+      join(slackDir(), "reply-01.json"),
+      JSON.stringify({ command: "slack_reply", thread: "1712345678.123456", text: "hi" }),
+    );
+    await tierWatcher(deps, "slack", () => origin()).sweep();
+    expect(deps.slackReply).toHaveBeenCalledWith({ thread: "1712345678.123456", text: "hi", file: "reply-01" });
+  });
+});
+
+describe("authorizeCommand (pure)", () => {
+  const rec = (tier: OriginRecord["tier"], prs: number[] = []): OriginRecord => ({
+    event_id: "Ev",
+    slack_user: "U",
+    tier,
+    authorized_prs: prs,
+    expires_at: new Date(Date.now() + 60_000).toISOString(),
+  });
+
+  it("a null origin is a local turn — full tier-M autonomy", () => {
+    const cmds: Command[] = [
+      { command: "restart-session", pr: "overseer" },
+      { command: "file-issue", title: "t", body: "b" },
+    ];
+    for (const c of cmds) expect(authorizeCommand(c, null)).toEqual({ ok: true });
+  });
+
+  it("every rejection reason starts with 'tier: '", () => {
+    const denials = [
+      authorizeCommand({ command: "rerun-round", pr: 1 }, rec("anyone")),
+      authorizeCommand({ command: "file-issue", title: "t", body: "b" }, rec("author", [1])),
+      authorizeCommand({ command: "pause-pr", pr: 2, reason: "r" }, rec("author", [1])),
+      authorizeCommand({ command: "restart-session", pr: 1 }, rec("anyone")),
+    ];
+    for (const d of denials) {
+      expect(d.ok).toBe(false);
+      if (!d.ok) expect(d.reason.startsWith("tier: ")).toBe(true);
+    }
+  });
+
+  it("tier 'ignored' is treated as read-only, like 'anyone'", () => {
+    expect(authorizeCommand({ command: "flag-owner-legacy", message: "m" }, rec("ignored")).ok).toBe(true);
+    expect(authorizeCommand({ command: "rerun-round", pr: 1 }, rec("ignored")).ok).toBe(false);
+  });
+
+  it("restart-session on 'overseer' is owner_legacy-only and needs no PR", () => {
+    expect(authorizeCommand({ command: "restart-session", pr: "overseer" }, rec("owner_legacy")).ok).toBe(true);
+    expect(authorizeCommand({ command: "restart-session", pr: "overseer" }, rec("author", [1])).ok).toBe(false);
   });
 });
