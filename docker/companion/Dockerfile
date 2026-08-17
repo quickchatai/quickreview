@@ -52,18 +52,15 @@ RUN npm install -g ${PI_PACKAGE}@${PI_VERSION}
 # path) is documented only second-hand (§5) and must be confirmed
 # against the real package. If the array route is wrong, the fallback is a
 # symlink into the discovery dir — no image rebuild needed.
-ARG PI_MEMORY_SPEC=github:jayzeng/pi-memory#v0.4.2
-# --ignore-scripts: without it npm 10 dies installing this git dep
-# ("enoent spawn sh" while running a transitive dep's lifecycle script inside a
-# node_modules dir it has already moved — found this with the first
-# real `docker build`). pi-memory ships plain JS/TS and needs no build step, so
-# skipping lifecycle scripts costs nothing here. VERIFY-ON-PIN: that the
-# extension still loads with its scripts skipped (the e2e's pi step and the
-# first real /login exercise it).
+ARG PI_MEMORY_SPEC=pi-memory@0.4.2
+# Registry install, NOT github: — npm installs git specs for global packages
+# as a SYMLINK into /root/.npm/_cacache/tmp (0700, ephemeral), so the
+# non-root companion user could never load it (found live 2026-08-17). The
+# registry name is collided (jayzeng vs josephkern/catlain/@chendpoc), so the
+# build hard-fails unless the INSTALLED package's repository resolves to
+# github.com/jayzeng/pi-memory — same discipline as the VM image.
 RUN npm install -g --ignore-scripts ${PI_MEMORY_SPEC} \
-  # git-sourced tarballs keep their restrictive modes (registry ones are
-  # normalized) — without this the non-root companion user cannot even
-  # resolve the package, and pi-memory silently never loads.
+  && node -e "const p=require('/usr/local/lib/node_modules/pi-memory/package.json'); const r=(p.repository&&(p.repository.url||p.repository))||''; if(!/github\.com[:\/]jayzeng\/pi-memory/.test(r)) { console.error('pi-memory is NOT jayzeng/pi-memory:', r); process.exit(1); }" \
   && chmod -R a+rX /usr/local/lib/node_modules/pi-memory
 
 # Non-root, and the uid MUST match the invoking host user: every interesting
