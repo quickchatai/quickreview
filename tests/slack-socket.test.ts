@@ -1,0 +1,248 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SlackSocketClient, type SlackWebSocketLike } from "../src/slack/socket.js";
+import type { SlackFetchFn, SlackInboundEvent } from "../src/slack/types.js";
+
+/** A scriptable WebSocket: the test pushes frames, the client pushes acks. */
+class FakeWs implements SlackWebSocketLike {
+  onopen: ((ev: unknown) => void) | null = null;
+  onmessage: ((ev: { data: unknown }) => void) | null = null;
+  onclose: ((ev: unknown) => void) | null = null;
+  onerror: ((ev: unknown) => void) | null = null;
+  readonly sent: string[] = [];
+  closed = false;
+
+  constructor(readonly url: string) {}
+
+  send(data: string): void {
+    this.sent.push(data);
+  }
+  close(): void {
+    this.closed = true;
+    this.onclose?.({});
+  }
+  /** Deliver a server frame. */
+  push(frame: unknown): void {
+    this.onmessage?.({ data: JSON.stringify(frame) });
+  }
+  acks(): string[] {
+    return this.sent.map((s) => (JSON.parse(s) as { envelope_id?: string }).envelope_id ?? "");
+  }
+}
+
+function harness(opts: { pingTimeoutMs?: number } = {}) {
+  const sockets: FakeWs[] = [];
+  const openCalls: string[] = [];
+  const fetchFn = (async (url: string | URL) => {
+    openCalls.push(String(url));
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true, url: `wss://fake/${openCalls.length}` }),
+    } as unknown as Response;
+  }) as unknown as SlackFetchFn;
+
+  const events: SlackInboundEvent[] = [];
+  const client = new SlackSocketClient({
+    appToken: "xapp-test",
+    fetchFn,
+    apiBase: "https://slack.test/api",
+    webSocketFactory: (url) => {
+      const ws = new FakeWs(url);
+      sockets.push(ws);
+      return ws;
+    },
+    backoffMs: [1000, 2000],
+    serverPingTimeoutMs: opts.pingTimeoutMs ?? 30_000,
+    random: () => 1, // full-jitter upper bound: delay === the ladder rung
+  });
+  return { client, sockets, openCalls, events };
+}
+
+function messageEnvelope(envelopeId: string, over: Record<string, unknown> = {}) {
+  return {
+    type: "events_api",
+    envelope_id: envelopeId,
+    payload: {
+      event_id: `Ev${envelopeId}`,
+      event: {
+        type: "message",
+        channel: "C123",
+        ts: "1712345678.123456",
+        user: "U1",
+        text: "hello there",
+        event_ts: "1712345678.123456",
+        ...over,
+      },
+    },
+  };
+}
+
+beforeEach(() => vi.useFakeTimers());
+afterEach(() => vi.useRealTimers());
+
+describe("Socket Mode envelopes", () => {
+  it("acks an envelope with its envelope_id, before processing it", async () => {
+    const h = harness();
+    const order: string[] = [];
+    await h.client.startSocket((ev) => {
+      order.push(`handled:${ev.event_id}`);
+    });
+    const ws = h.sockets[0]!;
+    ws.push(messageEnvelope("env-1"));
+
+    // The ack is synchronous with frame receipt; processing runs async after —
+    // so at this point the ack is already on the wire and nothing was handled.
+    expect(ws.acks()).toEqual(["env-1"]);
+    expect(order).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(order).toEqual(["handled:Evenv-1"]);
+  });
+
+  it("normalizes a message event, keeping every ts a string", async () => {
+    const h = harness();
+    const seen: SlackInboundEvent[] = [];
+    await h.client.startSocket((ev) => void seen.push(ev));
+    h.sockets[0]!.push(messageEnvelope("env-2", { thread_ts: "1712345600.000100", subtype: "bot_message", bot_id: "B9" }));
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(seen).toHaveLength(1);
+    const ev = seen[0]!;
+    expect(ev).toMatchObject({
+      event_id: "Evenv-2",
+      type: "message",
+      channel: "C123",
+      user: "U1",
+      text: "hello there",
+      subtype: "bot_message",
+      bot_id: "B9",
+    });
+    expect(typeof ev.ts).toBe("string");
+    expect(ev.ts).toBe("1712345678.123456");
+    expect(ev.thread_ts).toBe("1712345600.000100");
+    expect(typeof ev.event_ts).toBe("string");
+  });
+
+  it("ignores non-message events and non-events_api envelopes, but still acks them", async () => {
+    const h = harness();
+    const seen: SlackInboundEvent[] = [];
+    await h.client.startSocket((ev) => void seen.push(ev));
+    const ws = h.sockets[0]!;
+    ws.push({ type: "events_api", envelope_id: "env-a", payload: { event_id: "Eva", event: { type: "reaction_added" } } });
+    ws.push({ type: "slash_commands", envelope_id: "env-b", payload: { command: "/qcr" } });
+    ws.push({ type: "interactive", envelope_id: "env-c", payload: {} });
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(seen).toEqual([]);
+    expect(ws.acks()).toEqual(["env-a", "env-b", "env-c"]);
+  });
+
+  it("does not ack frames that carry no envelope_id", async () => {
+    const h = harness();
+    await h.client.startSocket(() => {});
+    const ws = h.sockets[0]!;
+    ws.push({ type: "hello", num_connections: 1 });
+    expect(ws.sent).toEqual([]);
+  });
+});
+
+describe("hello frame", () => {
+  it("exposes num_connections from the last hello", async () => {
+    const h = harness();
+    await h.client.startSocket(() => {});
+    expect(h.client.numConnections).toBe(0);
+    h.sockets[0]!.push({ type: "hello", num_connections: 1 });
+    expect(h.client.numConnections).toBe(1);
+    h.sockets[0]!.push({ type: "hello", num_connections: 3 });
+    expect(h.client.numConnections).toBe(3);
+  });
+});
+
+describe("reconnect", () => {
+  it("reconnects on a `disconnect: refresh` frame, reopening a fresh socket url", async () => {
+    const h = harness();
+    await h.client.startSocket(() => {});
+    expect(h.openCalls).toHaveLength(1);
+    expect(h.openCalls[0]).toBe("https://slack.test/api/apps.connections.open");
+
+    h.sockets[0]!.push({ type: "disconnect", reason: "refresh" });
+    expect(h.sockets[0]!.closed).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(1000); // first ladder rung, jitter pinned to max
+    expect(h.openCalls).toHaveLength(2);
+    expect(h.sockets).toHaveLength(2);
+    await h.client.stopSocket();
+  });
+
+  it("reconnects on `disconnect: link_disabled` too", async () => {
+    const h = harness();
+    await h.client.startSocket(() => {});
+    h.sockets[0]!.push({ type: "disconnect", reason: "link_disabled" });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(h.openCalls).toHaveLength(2);
+    await h.client.stopSocket();
+  });
+
+  it("walks the backoff ladder when apps.connections.open keeps failing", async () => {
+    const openCalls: string[] = [];
+    const fetchFn = (async (url: string | URL) => {
+      openCalls.push(String(url));
+      return { ok: true, status: 200, json: async () => ({ ok: false, error: "invalid_auth" }) } as unknown as Response;
+    }) as unknown as SlackFetchFn;
+    const client = new SlackSocketClient({
+      appToken: "xapp-test",
+      fetchFn,
+      apiBase: "https://slack.test/api",
+      webSocketFactory: () => new FakeWs("wss://never"),
+      backoffMs: [1000, 2000],
+      random: () => 1,
+    });
+    await client.startSocket(() => {});
+    expect(openCalls).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(openCalls).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(openCalls).toHaveLength(2); // second rung is 2000ms
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(openCalls).toHaveLength(3);
+    await client.stopSocket();
+  });
+
+  it("stopSocket halts reconnection", async () => {
+    const h = harness();
+    await h.client.startSocket(() => {});
+    await h.client.stopSocket();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(h.openCalls).toHaveLength(1);
+  });
+});
+
+describe("server-ping watchdog", () => {
+  it("tears down and reconnects when no frame arrives within the timeout", async () => {
+    const h = harness({ pingTimeoutMs: 5000 });
+    await h.client.startSocket(() => {});
+    expect(h.openCalls).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(4999);
+    expect(h.sockets[0]!.closed).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1); // watchdog fires
+    expect(h.sockets[0]!.closed).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(1000); // reconnect delay
+    expect(h.openCalls).toHaveLength(2);
+    await h.client.stopSocket();
+  });
+
+  it("each frame from the server rearms the watchdog", async () => {
+    const h = harness({ pingTimeoutMs: 5000 });
+    await h.client.startSocket(() => {});
+    for (let i = 0; i < 4; i += 1) {
+      await vi.advanceTimersByTimeAsync(4000);
+      h.sockets[0]!.push({ type: "hello", num_connections: 1 });
+    }
+    expect(h.sockets[0]!.closed).toBe(false);
+    expect(h.openCalls).toHaveLength(1);
+    await h.client.stopSocket();
+  });
+});
