@@ -202,6 +202,17 @@ CREATE TABLE IF NOT EXISTS events (
   pr INTEGER,
   payload TEXT
 );
+-- Wakes held while their PR's round was in flight (single-shepherd invariant
+-- S4: the PR's ONE main pi is never given two instructions at once). Flushed
+-- in insertion order once the round ends.
+CREATE TABLE IF NOT EXISTS pending_wakes (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  pr         INTEGER NOT NULL,
+  payload    TEXT NOT NULL,
+  reason     TEXT NOT NULL,
+  held_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS pending_wakes_pr ON pending_wakes(pr, id);
 CREATE TABLE IF NOT EXISTS filed_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   kind TEXT NOT NULL,           -- 'improvement_pr' | 'issue'
@@ -251,6 +262,19 @@ CREATE TABLE IF NOT EXISTS slack_cooldowns (
   bypassed      INTEGER NOT NULL DEFAULT 0
 );
 `;
+
+/** A wake held while its PR's round was in flight (single-shepherd S4). */
+export interface PendingWakeRow {
+  id: number;
+  pr: number;
+  payload: string;
+  reason: string;
+  held_at: string;
+}
+
+/** Per-PR ceiling on held wakes. A PR whose author writes more than this while
+ * one round runs loses the oldest holds — logged, never silent. */
+export const MAX_HELD_WAKES = 5;
 
 /** Optional per-round facts recorded at (or just after) round start. */
 export interface RoundStartMeta {
@@ -461,6 +485,43 @@ export class StateStore {
 
   runningRounds(): RoundRow[] {
     return this.db.prepare("SELECT * FROM rounds WHERE status = 'running' ORDER BY started_at").all() as RoundRow[];
+  }
+
+  /** True while this PR has a round in flight — the S4 test before any wake. */
+  hasRunningRound(pr: number): boolean {
+    const row = this.db.prepare("SELECT COUNT(*) AS c FROM rounds WHERE pr = ? AND status = 'running'").get(pr) as { c: number };
+    return row.c > 0;
+  }
+
+  // ---- held wakes (single-shepherd S4) -----------------------------------
+
+  /** Hold a rendered wake until this PR's round ends. Returns the ids dropped
+   * to stay under `cap` (oldest first) so the caller can log them — a silently
+   * dropped author reply is worse than a late one. */
+  holdWake(pr: number, payload: string, reason: string, cap = MAX_HELD_WAKES): number[] {
+    this.db
+      .prepare("INSERT INTO pending_wakes (pr, payload, reason, held_at) VALUES (?, ?, ?, ?)")
+      .run(pr, payload, reason, this.now().toISOString());
+    const overflow = this.db
+      .prepare("SELECT id FROM pending_wakes WHERE pr = ? ORDER BY id DESC LIMIT -1 OFFSET ?")
+      .all(pr, cap) as Array<{ id: number }>;
+    for (const row of overflow) this.db.prepare("DELETE FROM pending_wakes WHERE id = ?").run(row.id);
+    return overflow.map((r) => r.id);
+  }
+
+  heldWakes(pr: number): PendingWakeRow[] {
+    return this.db.prepare("SELECT * FROM pending_wakes WHERE pr = ? ORDER BY id").all(pr) as PendingWakeRow[];
+  }
+
+  /** Take every held wake for a PR, oldest first, removing them atomically so
+   * a concurrent flush cannot deliver the same wake twice. */
+  takeHeldWakes(pr: number): PendingWakeRow[] {
+    const take = this.db.transaction((n: number): PendingWakeRow[] => {
+      const rows = this.db.prepare("SELECT * FROM pending_wakes WHERE pr = ? ORDER BY id").all(n) as PendingWakeRow[];
+      if (rows.length > 0) this.db.prepare("DELETE FROM pending_wakes WHERE pr = ?").run(n);
+      return rows;
+    });
+    return take(pr);
   }
 
   roundsOn(dateIso: string): RoundRow[] {

@@ -23,6 +23,7 @@ import { stubSessionHooks } from "./stubs.js";
 import type { SessionHooks } from "./types.js";
 import { VerdictWatcher, type VerdictAdapter } from "./verdicts.js";
 import { applyInterpretation, createWebhookServer, type Interpretation } from "./webhook.js";
+import { wakeOrHold } from "./wakes.js";
 
 export type DaemonAdapter = DispatchAdapter & ReconcileAdapter & VerdictAdapter;
 
@@ -160,13 +161,18 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
           };
           if (!pingpong.claimAuthorMessage(event)) return;
           const row = store.getPr(reply.pr);
-          await hooks.inject(
+          // S4: the PR's one main pi never gets a second instruction while its
+          // round is in flight — the wake is held and flushed at round end.
+          const disposition = await wakeOrHold(
+            { store, inject: (pr, message) => hooks.inject(pr, message), log },
             reply.pr,
             buildWakeMessage(event, {
               head_sha: row?.head_sha,
               worktree: join(root, "wt", `pr-${reply.pr}`),
             }, pingpong.discipline(reply.in_reply_to_id)),
+            "author_reply",
           );
+          if (disposition === "held") log(`pingpong: #${reply.pr} reply held — round in flight`);
         },
         onClosed: async (pr) => {
           await hooks.archiveAndClose(pr);

@@ -16,6 +16,11 @@ The author handed this PR back. Run the full 7-step round — but step 1 comes
 first and is non-negotiable: **verify every prior open finding at the new head
 before hunting anything new.**
 
+> **You are this PR's only shepherd.** Author replies that arrive while this
+> round runs are held by the daemon and delivered after your verdict lands —
+> nothing else will be asked of you until you finish. Every agent you need
+> comes from the `subagent` tool; you never launch one any other way.
+
 ## GitHub routine — use the scripts
 
 Routine GitHub work goes through the repo's contained scripts, never

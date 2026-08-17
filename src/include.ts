@@ -119,6 +119,32 @@ export function applyThinkingOverride(frontmatter: string, thinking: string): st
   return applyField(frontmatter, "thinking", thinking);
 }
 
+/** Tool names that would let a pass launch another agent. Passes are LEAVES
+ * (single-shepherd invariant S3): the PR's main pi is the only scheduler of
+ * agents, so a nested fan-out is a topology violation, not a capability. */
+const AGENT_SPAWN_TOOLS = new Set(["subagent", "subagents", "task", "agent", "agents", "dispatch"]);
+
+/**
+ * Strip agent-spawning tools from a built variant's `tools:` list.
+ *
+ * The seeds under `agents/` are canonical (CLAUDE.md rule 6) and today list
+ * only read-only tools — this is the enforcement that keeps that true no
+ * matter what a future seed says, applied to the files pi-subagents actually
+ * reads. A `tools:` line that names nothing else is dropped entirely rather
+ * than left empty (an empty list is not the same statement as no list).
+ */
+export function stripAgentSpawnTools(frontmatter: string): string {
+  const re = /^tools:[ \t]*(.*)$/m;
+  const m = re.exec(frontmatter);
+  if (!m) return frontmatter;
+  const kept = (m[1] ?? "")
+    .split(",")
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0 && !AGENT_SPAWN_TOOLS.has(t.toLowerCase()));
+  if (kept.length === 0) return frontmatter.replace(re, "").replace(/\n{2,}/g, "\n");
+  return frontmatter.replace(re, `tools: ${kept.join(", ")}`);
+}
+
 /** Split a "provider/model:thinking" spec into pi-subagents' SEPARATE
  * `model` and `thinking` frontmatter fields. Only a recognized thinking
  * level after the last colon is treated as a suffix. */
@@ -134,7 +160,7 @@ export const PASS_TIERS: readonly PassTier[] = ["terra-med", "sol-med", "sol-hig
 
 /** Appended to every BUILT agent body (never to the seeds). */
 export const EXECUTION_POLICY_ADDENDUM =
-  "\n\n## Execution policy (sandbox rule, enforced)\nYou are a read-only reviewer. Never execute project code, tests, builds, scripts, or package managers (no python/pytest/uv/npm/node/make or similar). Allowed commands: git, rg, grep, cat, ls, find, head, tail, wc, jq, sed, awk, sort, uniq, diff, and read-only gh. CI results are READ via `gh pr checks` / `gh api` — never re-run or trigger anything.\n";
+  "\n\n## Execution policy (sandbox rule, enforced)\nYou are a read-only reviewer. Never execute project code, tests, builds, scripts, or package managers (no python/pytest/uv/npm/node/make or similar). Allowed commands: git, rg, grep, cat, ls, find, head, tail, wc, jq, sed, awk, sort, uniq, diff, and read-only gh. CI results are READ via `gh pr checks` / `gh api` — never re-run or trigger anything.\n\n## You are a leaf (sandbox rule, enforced)\nYou never launch another agent: no `subagent` call, no nested pass, no `pi`/`codex`/`claude` process from bash. The PR's main session is the only scheduler of agents — it dispatched you and it merges your findings. Everything you need is in your task string; if something is missing, say so in your findings block and stop.\n";
 
 export interface BuildAgentsOptions {
   /** Sandbox root for include resolution. Defaults to `srcDir`'s parent. */
@@ -199,6 +225,7 @@ export function buildAgents(srcDir: string, outDir: string, opts: BuildAgentsOpt
       const spec = opts.models?.[name] ?? tiers[tier];
       const { model, thinking } = splitModelSpec(spec);
       let frontmatter = applyNameOverride(doc.frontmatter, name);
+      frontmatter = stripAgentSpawnTools(frontmatter);
       frontmatter = applyModelOverride(frontmatter, model);
       if (thinking !== null) frontmatter = applyThinkingOverride(frontmatter, thinking);
       const out = join(outDir, `${name}.md`);

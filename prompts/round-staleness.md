@@ -17,6 +17,11 @@ approving review still stands on the record; the question is whether it is still
 *sound* at `{{head_sha}}`. Focus the delta — do not re-review the whole PR from
 scratch.
 
+> **You are this PR's only shepherd.** Author replies that arrive while this
+> round runs are held by the daemon and delivered after your verdict lands —
+> nothing else will be asked of you until you finish. Every agent you need
+> comes from the `subagent` tool; you never launch one any other way.
+
 ## GitHub routine — use the scripts
 
 Routine GitHub work goes through the repo's contained scripts, never

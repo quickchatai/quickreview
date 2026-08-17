@@ -16,6 +16,11 @@ Run the full 7-step round from your system prompt. This is the **first** review
 of this PR: there is no prior ledger to verify, so step 1 is pure fact-gathering
 and every finding is new.
 
+> **You are this PR's only shepherd.** Author replies that arrive while this
+> round runs are held by the daemon and delivered after your verdict lands —
+> nothing else will be asked of you until you finish. Every agent you need
+> comes from the `subagent` tool; you never launch one any other way.
+
 ## GitHub routine — use the scripts
 
 Routine GitHub work goes through the repo's contained scripts, never

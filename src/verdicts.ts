@@ -19,6 +19,7 @@ import { applyEvent } from "./statemachine.js";
 import type { VerdictAnnouncer } from "./slack/announce.js";
 import type { RoundRow, StateStore } from "./state.js";
 import type { SessionHooks, VerdictFile } from "./types.js";
+import { flushHeldWakes } from "./wakes.js";
 
 export interface VerdictAdapter {
   addLabel(n: number, label: string): Promise<GateResult>;
@@ -253,6 +254,9 @@ export class VerdictWatcher {
     // ever-growing prefix were 41% of measured cost; the continuity that
     // matters (SETTLED digest, ledger) survives compaction by design.
     await this.safe(() => this.deps.hooks.compactSession?.(v.pr) ?? Promise.resolve(), `compact pr-${v.pr}`);
+    // The round is over, so the PR's one main pi is free again (S4): deliver
+    // whatever arrived while it was busy, in arrival order.
+    await this.flushWakes(v.pr);
     this.log(`verdicts: #${v.pr} round ${v.round_no} → ${v.verdict}`);
   }
 
@@ -355,7 +359,23 @@ export class VerdictWatcher {
         ),
       "inject overseer anomaly",
     );
+    // The round is abandoned, not running: an author reply held behind it must
+    // not be stranded (S4). The session may be wedged — flushHeldWakes logs a
+    // failed delivery per wake rather than throwing here.
+    await this.flushWakes(pr);
     this.log(`verdicts: anomaly (${kind}) on #${pr}`, message);
+  }
+
+  /** Deliver the wakes held while this PR's round was in flight (S4). */
+  private async flushWakes(pr: number): Promise<void> {
+    await this.safe(
+      () =>
+        flushHeldWakes(
+          { store: this.deps.store, inject: (n, message) => this.deps.hooks.inject(n, message), log: this.log.bind(this) },
+          pr,
+        ),
+      `flush held wakes on #${pr}`,
+    );
   }
 
   /** Deadline sweep — a running round past `deadline_at` is an anomaly.

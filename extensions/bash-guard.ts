@@ -34,6 +34,18 @@ const SANCTIONED_SCRIPTS = new Set([
   "reply-thread.sh",
 ]);
 
+/** Agent-spawning programs. These already fell off ALLOWED, but the generic
+ * "not an allowed read-only command" reason never told the model what to do
+ * instead — and the single-shepherd invariant (S3) deserves a rule that greps.
+ * The PR's main pi is the only scheduler of agents, and the `subagent` tool is
+ * its only launcher. */
+const AGENT_SPAWNERS = new Set([
+  "pi", "claude", "codex", "node", "npm", "npx", "pnpm", "yarn", "bun", "bunx", "deno", "tsx", "ts-node",
+]);
+
+const AGENT_SPAWN_REASON =
+  "exec policy: never spawn an agent or a runtime from bash — the `subagent` tool is the only launcher (single-shepherd invariant)";
+
 /** Relative under scripts/ only: no `..`, no absolute paths, exactly one
  * path segment after scripts/. */
 const SCRIPT_PATH_RE = /^(?:\.\/)?scripts\/([A-Za-z0-9._-]+\.sh)$/;
@@ -102,6 +114,9 @@ function checkProgram(prog: string, args: string[]): BashCheck {
   }
   const base = prog.slice(prog.lastIndexOf("/") + 1);
   if (base === "cd") return { allowed: true }; // builtin, argument is a path not a program
+  // Checked before the allowlist so the reason is the directive one, and
+  // before `sh`/`bash`, which have their own narrower rules below.
+  if (AGENT_SPAWNERS.has(base)) return block(`${AGENT_SPAWN_REASON} — '${base}' is blocked`);
   if (base === "sh") {
     // Only the `sh -n <file>` syntax check is sanctioned.
     return args[0] === "-n" ? { allowed: true } : block("exec policy: 'sh' is only allowed as 'sh -n' (syntax check)");
