@@ -293,10 +293,23 @@ export class PiSessionManager implements SessionHooks {
     return session;
   }
 
+  /** Slack concierge appendix, or "" when Slack is off. */
+  private slackAppendix(): string {
+    if (!(this.cfg as { slack?: { enabled?: boolean } }).slack?.enabled) return "";
+    const path = join(this.root, "prompts", "slack-overseer-appendix.md");
+    if (!existsSync(path))
+      throw new Error(`slack.enabled = true but the overseer Slack appendix is missing: ${path}`);
+    return `\n\n${readFileSync(path, "utf8").trimEnd()}\n`;
+  }
+
   async ensureOverseerSession(): Promise<string> {
     if (await this.tmux.hasSession(OVERSEER_SESSION)) return OVERSEER_SESSION;
     const template = readFileSync(join(this.root, "prompts", "overseer-system.md"), "utf8");
-    await this.spawnSession(OVERSEER_SESSION, renderOverseerSystemPrompt(template), this.cfg.models.overseer);
+    // The seeded overseer prompt is canonical and unmodifiable (CLAUDE.md rule
+    // 6), so the Slack contract rides as a spawn-time appendix — same shape as
+    // EXECUTION_POLICY_ADDENDUM in include.ts. Slack off = byte-identical prompt.
+    const body = renderOverseerSystemPrompt(template) + this.slackAppendix();
+    await this.spawnSession(OVERSEER_SESSION, body, this.cfg.models.overseer);
     return OVERSEER_SESSION;
   }
 
@@ -342,10 +355,21 @@ export class PiSessionManager implements SessionHooks {
     this.injectFile(session, message);
   }
 
+  /**
+   * Wake the overseer and return the PATH of the wake file just written.
+   *
+   * The Slack router binds its origin record to the inject file's
+   * basename, so it needs the name back; `injectOverseer` below keeps the
+   * void-returning SessionHooks shape every other caller is typed against.
+   */
+  async injectOverseerFile(message: string): Promise<string> {
+    await this.ensureOverseerSession();
+    return this.injectFile(OVERSEER_SESSION, message);
+  }
+
   /** SessionHooks: wake the overseer (anomalies, EOD sweep). */
   async injectOverseer(message: string): Promise<void> {
-    await this.ensureOverseerSession();
-    this.injectFile(OVERSEER_SESSION, message);
+    await this.injectOverseerFile(message);
   }
 
   // ---- archival / death --------------------------------------------------

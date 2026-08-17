@@ -1,0 +1,147 @@
+// drift correction, kept honest in both directions.
+//
+// The seeded overseer prompt advertises command schemas that `validateCommand`
+// rejects (`flag-owner-legacy {reason}`, `file-improvement-pr {branch, rationale}`).
+// The seed is unmodifiable (hard rule 6), so the correction lives in the
+// non-seeded `prompts/slack-overseer-appendix.md`. This test pins the appendix
+// to the CODE: field lists are derived by probing the real `validateCommand`
+// (never by reading the appendix or the seed), then compared set-for-set.
+//
+// It fails if either side drifts: a new/renamed field in src/commands.ts that
+// the appendix doesn't document, or an appendix entry the validator won't take.
+import { readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+import { COMMAND_WHITELIST, validateCommand, type CommandName } from "../src/commands.js";
+
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const appendix = readFileSync(join(repoRoot, "prompts/slack-overseer-appendix.md"), "utf8");
+
+/**
+ * Field names to probe. A superset of everything any command takes, plus the
+ * two stale spellings and a control that no command may accept — so a field
+ * added to src/commands.ts without being added here still can't slip past
+ * silently (the control assertions below would have to change).
+ */
+const CANDIDATE_FIELDS = [
+  "pr",
+  "reason",
+  "message",
+  "branch",
+  "title",
+  "body",
+  "slug",
+  "rationale",
+  "target",
+  "note",
+  "thread",
+  "text",
+  "channel",
+  "__control_never_valid__",
+] as const;
+
+/**
+ * Derive a command's accepted field set from the validator itself: a field is
+ * accepted iff probing it does NOT produce the strict unknown-field rejection.
+ * (Type/format complaints mean the field IS in the schema.)
+ */
+function acceptedFields(command: CommandName): string[] {
+  return CANDIDATE_FIELDS.filter((field) => {
+    const res = validateCommand({ command, [field]: "probe" });
+    return !(res.ok === false && res.reason.startsWith("unknown field(s)"));
+  }).sort();
+}
+
+/** Parse the appendix's schema bullets: "- `name {a, b}` — prose". */
+function appendixSchemas(): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const line of appendix.split("\n")) {
+    const m = /^-\s+`([a-z][a-z0-9_-]*)\s*\{([^}]*)\}`/.exec(line.trim());
+    const name = m?.[1];
+    const raw = m?.[2];
+    if (name === undefined || raw === undefined) continue;
+    const fields = raw
+      .split(",")
+      .map((f) => f.trim())
+      .filter((f) => f.length > 0)
+      .sort();
+    out.set(name, fields);
+  }
+  return out;
+}
+
+const documented = appendixSchemas();
+
+describe("slack overseer appendix — corrected command schemas", () => {
+  it("the probe harness is sound: the control field is never accepted", () => {
+    for (const command of COMMAND_WHITELIST) {
+      expect(acceptedFields(command), `${command} accepted the control field`).not.toContain(
+        "__control_never_valid__",
+      );
+    }
+  });
+
+  it("documents every whitelisted command, and nothing that isn't whitelisted", () => {
+    expect([...documented.keys()].sort()).toEqual([...COMMAND_WHITELIST].sort());
+  });
+
+  it.each([...COMMAND_WHITELIST])("%s: appendix field list matches validateCommand", (command) => {
+    const actual = acceptedFields(command);
+    expect(
+      documented.get(command),
+      `prompts/slack-overseer-appendix.md documents '${command}' as ` +
+        `{${documented.get(command)?.join(", ") ?? "<missing>"}} but src/commands.ts accepts ` +
+        `{${actual.join(", ")}}. Update the appendix (it is non-seeded and ours to edit).`,
+    ).toEqual(actual);
+  });
+
+  it("names each command and each of its required fields in prose form too", () => {
+    for (const command of COMMAND_WHITELIST) {
+      expect(appendix, `appendix never mentions '${command}'`).toContain(command);
+      for (const field of acceptedFields(command)) {
+        expect(appendix, `appendix never mentions field '${field}' (of ${command})`).toContain(field);
+      }
+    }
+  });
+
+  // ---- the two drifts, pinned from both ends ------------------------
+
+  it("flag-owner-legacy takes 'message', not the seeded 'reason'", () => {
+    expect(acceptedFields("flag-owner-legacy")).toEqual(["message"]);
+    expect(validateCommand({ command: "flag-owner-legacy", reason: "x" })).toEqual({
+      ok: false,
+      reason: "unknown field(s): reason",
+    });
+    expect(documented.get("flag-owner-legacy")).toEqual(["message"]);
+    // The stale schema must not be advertised anywhere in the appendix.
+    expect(/flag-owner-legacy\s*\{[^}]*\breason\b/.test(appendix)).toBe(false);
+  });
+
+  it("file-improvement-pr takes branch/title/body/slug, not the seeded 'rationale'", () => {
+    expect(acceptedFields("file-improvement-pr")).toEqual(["body", "branch", "slug", "title"]);
+    expect(validateCommand({ command: "file-improvement-pr", branch: "b", rationale: "why" })).toEqual({
+      ok: false,
+      reason: "unknown field(s): rationale",
+    });
+    expect(documented.get("file-improvement-pr")).toEqual(["body", "branch", "slug", "title"]);
+    expect(/file-improvement-pr\s*\{[^}]*\brationale\b/.test(appendix)).toBe(false);
+  });
+
+  it("states that unknown fields are rejected outright", () => {
+    expect(appendix.toLowerCase()).toMatch(/unknown field/);
+    expect(appendix.toLowerCase()).toMatch(/reject/);
+  });
+
+  it("documents slack_reply with no channel field — the channel is unrepresentable", () => {
+    expect(documented.get("slack_reply")).toEqual(["text", "thread"]);
+    expect(validateCommand({ command: "slack_reply", thread: "1712345678.123456", text: "hi", channel: "C1" })).toEqual({
+      ok: false,
+      reason: "unknown field(s): channel",
+    });
+  });
+
+  it("carries no unfinished slice placeholder", () => {
+    expect(appendix).not.toMatch(/land in slice S5|<!-- S3: confirm path -->|TODO/);
+  });
+});

@@ -16,6 +16,7 @@ import { sandboxRoot, type Config } from "./config.js";
 import { auditExecViolations, collectWindowLines, estimateUsd, measureRoundUsage, type ModelPricing, type UsageFs } from "./usage.js";
 import type { GateResult } from "./gate.js";
 import { applyEvent } from "./statemachine.js";
+import type { VerdictAnnouncer } from "./slack/announce.js";
 import type { RoundRow, StateStore } from "./state.js";
 import type { SessionHooks, VerdictFile } from "./types.js";
 
@@ -32,6 +33,9 @@ export interface VerdictDeps {
   hooks: SessionHooks;
   /** Directory the sessions write into (sandbox `verdict/`). */
   verdictDir: string;
+  /** Slack announcer (S4). Optional: absent ⇒ no Slack, exactly as
+   * every existing caller and test sees it. Never allowed to throw in here. */
+  announce?: VerdictAnnouncer;
   /** Sandbox root — anchors the default pi-session dir. */
   root?: string;
   /** Usage-measurement seams; every field defaults from cfg/root. */
@@ -232,6 +236,18 @@ export class VerdictWatcher {
       ai_approved: v.ai_approved ?? null,
       escalation_skipped: escalation?.skipped ?? null,
     });
+    // Slack (S4), in-thread and never broadcast. duration_s is computed
+    // inside finishRound, so it is read back off the row rather than recomputed.
+    const finished = round ? store.roundsFor(v.pr).find((r) => r.id === round.id) : undefined;
+    await this.announceSafe((a) =>
+      a.verdict({
+        pr: v.pr,
+        round_no: v.round_no,
+        verdict: v.verdict,
+        summary: finished?.summary ?? v.summary ?? null,
+        duration_s: finished?.duration_s ?? null,
+      }),
+    );
     if (round) this.measureUsage(v.pr, round.id, round.started_at, this.now().toISOString());
     // Round is over: compact the sticky conversation. Cache re-reads of the
     // ever-growing prefix were 41% of measured cost; the continuity that
@@ -319,6 +335,9 @@ export class VerdictWatcher {
     });
     // Piggyback pending exec-policy findings on an inject that happens anyway;
     // violations by themselves never trigger an inject (no spam).
+    await this.announceSafe((a) =>
+      a.anomaly({ pr, round_no: roundNo, kind, deadline_min: cfg.daemon.round_deadline_min }),
+    );
     const pendingViolations = this.execViolations.get(pr);
     this.execViolations.delete(pr);
     await this.safe(
@@ -352,6 +371,17 @@ export class VerdictWatcher {
       if (store.hasLaterRound(round.pr, round.round_no)) {
         store.markRoundCancelled(round.id, `superseded — round ${round.round_no} outlived by a newer round`);
         store.logEvent("round_superseded", round.pr, { round_id: round.id, round_no: round.round_no });
+        // Slack: "read the newest one" — no existing review is touched, ever
+        // (CLAUDE.md hard rule 2); the wording invariant lives in messages.ts.
+        const newest = store.roundsFor(round.pr).reduce((a, b) => (b.round_no > a.round_no ? b : a), round);
+        await this.announceSafe((a) =>
+          a.superseded({
+            pr: round.pr,
+            old_round_no: round.round_no,
+            new_round_no: newest.round_no,
+            head_sha: store.getPr(round.pr)?.head_sha ?? "",
+          }),
+        );
         this.log(`verdicts: #${round.pr} round ${round.round_no} cancelled (superseded)`);
         continue;
       }
@@ -364,6 +394,18 @@ export class VerdictWatcher {
       );
     }
     return overdue;
+  }
+
+  /** Slack is a side channel: absent announcer ⇒ nothing happens, and a Slack
+   * failure is logged, never propagated into the verdict path. */
+  private async announceSafe(fn: (a: VerdictAnnouncer) => Promise<void>): Promise<void> {
+    const announcer = this.deps.announce;
+    if (!announcer) return;
+    try {
+      await fn(announcer);
+    } catch (err) {
+      this.log("verdicts: slack announcement failed", err);
+    }
   }
 
   private async safe<T>(fn: () => Promise<T>, what: string): Promise<T | undefined> {

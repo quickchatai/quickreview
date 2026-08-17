@@ -16,6 +16,7 @@ import { GitHubAdapter } from "./github.js";
 import { TokenMinter } from "./githubAuth.js";
 import { PingPongLedger, ThreadDecisionWatcher, buildWakeMessage, type AuthorReplyEvent } from "./pingpong.js";
 import { reconcileOnce, type ReconcileAdapter } from "./reconcile.js";
+import type { DispatchAnnouncer, VerdictAnnouncer } from "./slack/announce.js";
 import { applyEvent } from "./statemachine.js";
 import { buildStatusSnapshot, StateStore, writeStatusJson } from "./state.js";
 import { stubSessionHooks } from "./stubs.js";
@@ -39,6 +40,14 @@ export interface DaemonDeps {
   listen?: boolean;
   /** Latest digest headline for status.json (B5's digest module). */
   digestHeadline?: () => string | undefined;
+  /**
+   * Slack announcer (S5b), resolved LAZILY: wire.ts builds the Slack
+   * subsystem in `onStart`, i.e. after the store exists and after this deps
+   * object was assembled, so the seam is a getter rather than a value. Absent
+   * ⇒ no announcer is ever passed to dispatch or the verdict watcher and the
+   * daemon behaves exactly as it did before Slack.
+   */
+  announce?: () => (DispatchAnnouncer & VerdictAnnouncer) | undefined;
   /** Extra periodic work (EOD timer arm, command watcher, overseer rotation)
    * started after the core loops; wired by src/wire.ts. */
   onStart?: (daemon: Daemon) => Promise<void> | void;
@@ -85,12 +94,26 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
 
   const gh: DaemonAdapter = deps.adapter ?? buildGitHubAdapter(cfg, stateDir);
 
+  // The lazy announcer seam: a thin forwarder so the verdict watcher (built
+  // once, here) reaches whatever wire.ts assembles later — and swallows the
+  // gap before it exists. Absent `deps.announce` ⇒ undefined, i.e. no Slack.
+  const resolveAnnounce = deps.announce;
+  const announce: (DispatchAnnouncer & VerdictAnnouncer) | undefined = resolveAnnounce
+    ? {
+        roundStarted: async (a) => void (await resolveAnnounce()?.roundStarted(a)),
+        verdict: async (a) => void (await resolveAnnounce()?.verdict(a)),
+        anomaly: async (a) => void (await resolveAnnounce()?.anomaly(a)),
+        superseded: async (a) => void (await resolveAnnounce()?.superseded(a)),
+      }
+    : undefined;
+
   const verdictDir = join(root, "verdict");
   const verdicts = new VerdictWatcher({
     cfg,
     store,
     adapter: gh,
     hooks,
+    announce,
     verdictDir,
     root, // anchors the default pi-session dir for round usage measurement
     log,
@@ -175,7 +198,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
 
   const pump = async (): Promise<void> => {
     await guard("dispatch", async () => {
-      const orders = await dispatchOnce({ cfg, store, adapter: gh, hooks, renderPrompt: deps.renderPrompt, log });
+      const orders = await dispatchOnce({ cfg, store, adapter: gh, hooks, renderPrompt: deps.renderPrompt, announce, log });
       for (const o of orders) log(`dispatched #${o.pr} round ${o.round_no} (${o.round_type}) lenses=${o.lenses.join(",")}`);
     });
   };
