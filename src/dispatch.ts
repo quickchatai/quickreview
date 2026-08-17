@@ -9,6 +9,7 @@ import type { Config } from "./config.js";
 import type { GateResult } from "./gate.js";
 import type { PrFileEntry } from "./github.js";
 import { escalationWorthy, migrationGate, passTier, selectLenses } from "./heuristics.js";
+import type { DispatchAnnouncer } from "./slack/announce.js";
 import { applyEvent, setPrGates } from "./statemachine.js";
 import type { PrStateRow, StateStore } from "./state.js";
 import type { PassPlanEntry, PassTier, RoundOrder, RoundType, SessionHooks } from "./types.js";
@@ -32,6 +33,9 @@ export interface DispatchDeps {
   /** SETTLED digest carried from the session ledger (B3/B4). */
   settledDigest?: (pr: number) => string;
   worktreeFor?: (pr: number) => string;
+  /** Slack announcer (S4). Optional: absent ⇒ no Slack at all, which
+   * is what the stub-wired daemon core and every non-Slack test see. */
+  announce?: DispatchAnnouncer;
   now?: () => Date;
   log?: (msg: string, extra?: unknown) => void;
 }
@@ -267,8 +271,9 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // Diffstat comes free off the files list dispatch already fetched — no
       // extra GitHub call in the hot path. trigger_ts is copied off pr_state
       // here because the `dispatched` transition clears it moments later.
+      const diffstat = diffstatOf(files);
       const roundId = store.startRound(row.number, roundType, lenses, cfg.daemon.round_deadline_min, {
-        ...diffstatOf(files),
+        ...diffstat,
         trigger_ts: row.trigger_ts,
       });
       provisionalRoundId = roundId;
@@ -303,6 +308,30 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         migration_gate: order.migration_gate,
         triggers_consumed: consumed,
       });
+      // Slack (S4): the PR's thread root on the first round we see, a
+      // 🔄 line in-thread on later ones. The announcer swallows its own
+      // failures; the try/catch here is belt-and-braces — a Slack outage must
+      // never stall the pump or leave a dispatched round unrecorded.
+      if (deps.announce) {
+        try {
+          await deps.announce.roundStarted({
+            pr: row.number,
+            title: row.title,
+            author: row.author,
+            head_sha: row.head_sha,
+            round_no: roundNo,
+            round_type: roundType,
+            lenses: order.lenses,
+            additions: diffstat.additions,
+            deletions: diffstat.deletions,
+            changed_files: diffstat.changed_files,
+            escalation_worthy: order.escalation_worthy,
+            escalation_reasons: order.escalation_reasons,
+          });
+        } catch (err) {
+          log(`dispatch: slack announcement failed on #${row.number}`, err);
+        }
+      }
       provisionalRoundId = undefined;
       dispatched.push(order);
     } catch (err) {
