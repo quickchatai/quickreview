@@ -33,7 +33,7 @@
     "version": "0.84.1",
     "extensions": {
       "pi-subagents": "github:amosblomqvist/pi-subagents",
-      "pi-memory": "github:jayzeng/pi-memory#v0.4.2"
+      "pi-memory": "pi-memory@0.4.2"
     }
   }
 }
