@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -272,5 +272,25 @@ describe("the real seeded content", () => {
     } finally {
       rmSync(out, { recursive: true, force: true });
     }
+  });
+});
+
+describe("stale definition sweep", () => {
+  it("removes .md files a rebuild no longer produces (pre-tier leftovers)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-agents-"));
+    const src = join(dir, "src");
+    const out = join(dir, "out");
+    mkdirSync(src, { recursive: true });
+    mkdirSync(out, { recursive: true });
+    writeFileSync(join(src, "pass-baseline.md"), "---\nname: pass-baseline\n---\nbody");
+    writeFileSync(join(out, "pass-baseline.md"), "stale un-tiered build");
+    writeFileSync(join(out, "pass-removed--sol-med.md"), "stale variant of a deleted pass");
+    writeFileSync(join(out, "notes.txt"), "non-md survives");
+    const built = buildAgents(src, out);
+    const left = readdirSync(out).sort();
+    expect(left).toEqual([...built.map((b) => `${b.name}.md`).sort(), "notes.txt"].sort());
+    expect(left).not.toContain("pass-baseline.md");
+    expect(left).not.toContain("pass-removed--sol-med.md");
+    rmSync(dir, { recursive: true, force: true });
   });
 });

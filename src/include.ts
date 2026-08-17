@@ -21,7 +21,7 @@
 // model spec ("provider/model:thinking") is split into the SEPARATE
 // pi-subagents `model` and `thinking` frontmatter fields. The read-only
 // execution-policy addendum is appended to every BUILT body — seeds untouched.
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, resolve, join } from "node:path";
 import { MODELS_TIER_DEFAULTS } from "./config.js";
 import type { PassTier } from "./types.js";
@@ -205,6 +205,13 @@ export function buildAgents(srcDir: string, outDir: string, opts: BuildAgentsOpt
       writeFileSync(out, joinFrontmatter({ ...doc, frontmatter, body }));
       built.push({ name, pass, tier, source: src, output: out, model, thinking });
     }
+  }
+  // Sweep stale definitions (e.g. the pre-tier un-suffixed builds): anything
+  // pi-subagents could list that this build did not produce would bypass the
+  // tier scheme entirely.
+  const produced = new Set(built.map((b) => `${b.name}.md`));
+  for (const f of readdirSync(outDir)) {
+    if (f.endsWith(".md") && !produced.has(f)) rmSync(join(outDir, f));
   }
   return built;
 }
