@@ -3,6 +3,34 @@
 
 export type RoundType = "first" | "re-review" | "staleness";
 
+/**
+ * Round outcomes. The escalation mechanics were scrapped on 2026-08-18
+ * (the owner): the daemon no longer scores PRs for "escalation-worthiness" and
+ * never requests a human reviewer on GitHub. What survives is the park:
+ * NEEDS_HUMAN means the session could not decide, so the PR stops on
+ * `awaiting_human` and waits for a person. No GitHub mutation is involved —
+ * the state is daemon-side only, surfaced through the TUI and Slack.
+ */
+export type Verdict = "APPROVE" | "REQUEST_CHANGES" | "NEEDS_HUMAN";
+
+export const VERDICTS: readonly Verdict[] = ["APPROVE", "REQUEST_CHANGES", "NEEDS_HUMAN"];
+
+/**
+ * Accept a verdict string, tolerating the retired `ESCALATE` spelling.
+ *
+ * This alias is load-bearing, not just rollout slack: `prompts/
+ * conversation-system.md` is frozen seeded content (CLAUDE.md rule 6) and its
+ * steps 5/7 still say ESCALATE. Until the owner ratifies a reseed, a session
+ * following its system prompt writes ESCALATE and must still park correctly.
+ * Returns null for anything else.
+ */
+export function normalizeVerdict(raw: unknown): Verdict | null {
+  if (typeof raw !== "string") return null;
+  const v = raw.trim().toUpperCase();
+  if (v === "ESCALATE") return "NEEDS_HUMAN";
+  return (VERDICTS as readonly string[]).includes(v) ? (v as Verdict) : null;
+}
+
 /** Pass model tiers, ascending by capability/cost. */
 export type PassTier = "terra-med" | "sol-med" | "sol-high";
 
@@ -28,10 +56,18 @@ export interface RoundOrder {
   pass_plan: PassPlanEntry[];
   /** Lenses NOT selected for this round that the session may add. */
   addable_lenses: string[];
-  escalation_worthy: boolean;
-  escalation_reasons: string[];
   migration_gate: boolean;
+  /** The sha the worktree is ACTUALLY at — reconciled against the fetched
+   * `refs/pull/<n>/head` before the order is built, not the webhook snapshot. */
   head_sha: string;
+  /** The branch this PR targets (GitHub `base.ref`), fetched fresh each round
+   * into `refs/remotes/origin/<base_ref>` in the base clone. */
+  base_ref: string;
+  /** Tip of `base_ref` at fetch time — what "against master" means this round. */
+  base_sha: string;
+  /** merge-base(base_sha, head_sha): where this PR left the base branch.
+   * Empty when git could not compute one (shallow/unrelated histories). */
+  merge_base: string;
   worktree: string;
   /** SETTLED digest carried from the last verdict's ledger snapshot. */
   settled_digest: string;
@@ -42,8 +78,9 @@ export interface RoundOrder {
 export interface VerdictFile {
   pr: number;
   round_no: number;
-  verdict: "APPROVE" | "REQUEST_CHANGES" | "ESCALATE";
-  /** AI_APPROVED soundness marker on ESCALATE (spec §5). */
+  verdict: Verdict;
+  /** Soundness marker on NEEDS_HUMAN: "the PR looks otherwise sound, I just
+   * cannot decide". Recorded, never acted on. */
   ai_approved?: boolean;
   head_sha: string;
   spend_usd?: number;

@@ -18,13 +18,12 @@ import type { GateResult } from "./gate.js";
 import { applyEvent } from "./statemachine.js";
 import type { VerdictAnnouncer } from "./slack/announce.js";
 import type { RoundRow, StateStore } from "./state.js";
-import type { SessionHooks, VerdictFile } from "./types.js";
+import { normalizeVerdict, type SessionHooks, type VerdictFile } from "./types.js";
 import { flushHeldWakes } from "./wakes.js";
 
 export interface VerdictAdapter {
   addLabel(n: number, label: string): Promise<GateResult>;
   removeLabel(n: number, label: string): Promise<GateResult>;
-  requestEscalationReview(n: number): Promise<{ skipped: string | null; result?: GateResult }>;
 }
 
 export interface VerdictDeps {
@@ -77,8 +76,11 @@ export function validateVerdict(raw: unknown): ParsedVerdict {
   }
   if (typeof v.pr !== "number" || !Number.isInteger(v.pr)) return bad("pr must be an integer");
   if (typeof v.round_no !== "number" || !Number.isInteger(v.round_no)) return bad("round_no must be an integer");
-  if (v.verdict !== "APPROVE" && v.verdict !== "REQUEST_CHANGES" && v.verdict !== "ESCALATE")
-    return bad(`bad verdict: ${String(v.verdict)}`);
+  // normalizeVerdict also folds the retired "ESCALATE" spelling into
+  // NEEDS_HUMAN — the frozen conversation-system.md seed still emits it.
+  const verdict = normalizeVerdict(v.verdict);
+  if (verdict === null) return bad(`bad verdict: ${String(v.verdict)}`);
+  v.verdict = verdict;
   if (typeof v.head_sha !== "string" || v.head_sha.length === 0) return bad("head_sha must be a non-empty string");
   if (typeof v.finished_at !== "string" || v.finished_at.length === 0) return bad("finished_at must be a non-empty string");
   // spend_usd: legacy self-reported field — accepted in any shape and IGNORED
@@ -211,18 +213,13 @@ export class VerdictWatcher {
     }
   }
 
-  /** The handoff: labels, escalation request, round record, transition. */
+  /** The handoff: labels, round record, transition. */
   private async apply(v: VerdictFile, name: string): Promise<void> {
     const { cfg, store, adapter } = this.deps;
     const round = this.runningRound(v.pr, v.round_no);
 
     await this.safe(() => adapter.removeLabel(v.pr, cfg.github.in_progress_label), `remove ${cfg.github.in_progress_label} on #${v.pr}`);
     await this.safe(() => adapter.addLabel(v.pr, cfg.github.reviewed_label), `add ${cfg.github.reviewed_label} on #${v.pr}`);
-
-    let escalation: { skipped: string | null } | null = null;
-    if (v.verdict === "ESCALATE") {
-      escalation = (await this.safe(() => adapter.requestEscalationReview(v.pr), `escalate #${v.pr}`)) ?? null;
-    }
 
     // spend_usd from the file is fiction (template echo) — never stored; the
     // measured figures land via recordRoundUsage below.
@@ -235,7 +232,6 @@ export class VerdictWatcher {
       head_sha: v.head_sha,
       verdict: v.verdict,
       ai_approved: v.ai_approved ?? null,
-      escalation_skipped: escalation?.skipped ?? null,
     });
     // Slack (S4), in-thread and never broadcast. duration_s is computed
     // inside finishRound, so it is read back off the row rather than recomputed.
@@ -328,14 +324,12 @@ export class VerdictWatcher {
     // The in-progress label must not stick, but the "Automatic Review" label is
     // deliberately NOT applied — no review was soundly produced.
     await this.safe(() => adapter.removeLabel(pr, cfg.github.in_progress_label), `remove ${cfg.github.in_progress_label} on #${pr}`);
-    const escalation = await this.safe(() => adapter.requestEscalationReview(pr), `escalate #${pr}`);
 
     applyEvent(store, pr, { type: "round_overdue" }, {}, { botLogin: cfg.github.bot_login, now: () => this.now(), reason: `anomaly:${kind}` });
     store.logEvent(kind === "overdue" ? "round_overdue" : "verdict_malformed", pr, {
       round_id: round?.id ?? null,
       round_no: roundNo,
       message,
-      escalation_skipped: escalation?.skipped ?? null,
     });
     // Piggyback pending exec-policy findings on an inject that happens anyway;
     // violations by themselves never trigger an inject (no spam).
@@ -350,7 +344,7 @@ export class VerdictWatcher {
           [
             `ANOMALY (${kind}) — PR #${pr}${roundNo !== null ? ` round ${roundNo}` : ""}`,
             message,
-            "Treated as ESCALATE / no-approve: the in-progress label was cleared, the human reviewer was requested, and the PR is parked on awaiting_human.",
+            "Treated as NEEDS_HUMAN / no-approve: the in-progress label was cleared and the PR is parked on awaiting_human. No reviewer was requested on GitHub — parking is daemon-side only.",
             "Investigate the session and decide whether to rerun the round (commands/rerun-round) or restart the session.",
             ...(pendingViolations && pendingViolations.length > 0
               ? [`Also: exec-policy violations were audited on this PR — ${pendingViolations.join(" · ")}`]

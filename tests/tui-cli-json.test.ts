@@ -29,7 +29,6 @@ const seedPr = (n: number) =>
     author: "someone",
     trigger_ts: "2026-08-13T14:02:00Z",
     stale_recheck: 0,
-    escalation_worthy: 1,
     migration_gate: 0,
   });
 
@@ -51,7 +50,7 @@ describe("whyJson", () => {
     const payload = whyJson(store, 5012, join(tmp, "none"));
     expect(payload.known).toBe(true);
     expect(payload.state).toBe("reviewing");
-    expect(payload.escalation_worthy).toBe(true);
+    expect(payload).not.toHaveProperty("escalation_worthy"); // scrapped 2026-08-18
     expect(payload.stale_recheck).toBe(false);
     expect(payload.trigger_ts).toBe("2026-08-13T14:02:00Z");
     expect(payload.spend_usd).toBeCloseTo(0.8);
@@ -113,7 +112,7 @@ describe("buildStatusSnapshot enrichment", () => {
     expect(snap.max_concurrent_rounds).toBe(12);
     expect(snap.today_spend_usd).toBeCloseTo(2.5);
     const pr = snap.prs[0]!;
-    expect(pr.escalation_worthy).toBe(1);
+    expect(pr).not.toHaveProperty("escalation_worthy"); // scrapped 2026-08-18
     expect(pr.trigger_ts).toBe("2026-08-13T14:02:00Z");
     expect(typeof pr.updated_at).toBe("string");
   });

@@ -21,7 +21,6 @@ export interface PrStateRow {
   author: string;
   trigger_ts: string | null;
   stale_recheck: number;
-  escalation_worthy: number;
   migration_gate: number;
   /** Overseer pause-pr: no dispatch/re-trigger until resumed (or closed). */
   paused: number;
@@ -155,6 +154,9 @@ CREATE TABLE IF NOT EXISTS pr_state (
   author TEXT NOT NULL DEFAULT '',
   trigger_ts TEXT,
   stale_recheck INTEGER NOT NULL DEFAULT 0,
+  -- LEGACY (escalation scrapped 2026-08-18): no longer read or written. Kept
+  -- in the DDL so live databases, which cannot drop it without a table
+  -- rebuild, keep satisfying its NOT NULL via the default.
   escalation_worthy INTEGER NOT NULL DEFAULT 0,
   migration_gate INTEGER NOT NULL DEFAULT 0,
   updated_at TEXT NOT NULL
@@ -355,11 +357,11 @@ export class StateStore {
   upsertPr(row: Omit<PrStateRow, "updated_at" | "paused"> & { paused?: number }): void {
     this.db
       .prepare(
-        `INSERT INTO pr_state (number, state, head_sha, title, author, trigger_ts, stale_recheck, escalation_worthy, migration_gate, updated_at)
-         VALUES (@number, @state, @head_sha, @title, @author, @trigger_ts, @stale_recheck, @escalation_worthy, @migration_gate, @updated_at)
+        `INSERT INTO pr_state (number, state, head_sha, title, author, trigger_ts, stale_recheck, migration_gate, updated_at)
+         VALUES (@number, @state, @head_sha, @title, @author, @trigger_ts, @stale_recheck, @migration_gate, @updated_at)
          ON CONFLICT(number) DO UPDATE SET
            state=@state, head_sha=@head_sha, title=@title, author=@author, trigger_ts=@trigger_ts,
-           stale_recheck=@stale_recheck, escalation_worthy=@escalation_worthy, migration_gate=@migration_gate, updated_at=@updated_at`,
+           stale_recheck=@stale_recheck, migration_gate=@migration_gate, updated_at=@updated_at`,
       )
       .run((({ paused: _paused, ...cols }) => ({ ...cols, updated_at: this.ts() }))(row));
   }
@@ -890,7 +892,7 @@ export interface StatusSnapshot {
   dry_run: boolean;
   prs: Array<
     Pick<PrStateRow, "number" | "state" | "title" | "head_sha" | "stale_recheck"> &
-      Partial<Pick<PrStateRow, "escalation_worthy" | "trigger_ts" | "updated_at" | "author" | "paused">> & {
+      Partial<Pick<PrStateRow, "trigger_ts" | "updated_at" | "author" | "paused">> & {
         rounds?: number;
         last_verdict?: string | null;
       }
@@ -936,7 +938,6 @@ export function buildStatusSnapshot(
       title: p.title,
       head_sha: p.head_sha,
       stale_recheck: p.stale_recheck,
-      escalation_worthy: p.escalation_worthy,
       trigger_ts: p.trigger_ts,
       updated_at: p.updated_at,
       author: p.author,

@@ -36,6 +36,13 @@ export interface DaemonDeps {
   webhookSecret?: string;
   /** B4's prompt renderer; default is the round order as JSON. */
   renderPrompt?: (order: import("./types.js").RoundOrder) => string;
+  /** Fetch head + base and materialise the worktree before the order is built
+   * (wire.ts passes the real WorktreeManager). Absent ⇒ no git: the order
+   * falls back to the PR row's sha with no base facts. */
+  prepareWorktree?: (
+    pr: number,
+    baseRef: string,
+  ) => Promise<{ head_sha: string; base_ref: string; base_sha: string; merge_base: string }>;
   log?: (msg: string, extra?: unknown) => void;
   /** Skip binding the HTTP port (tests). */
   listen?: boolean;
@@ -126,9 +133,10 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     ledger: pingpong,
     verdictDir,
     log,
+    // The author asked for a person. Park the PR locally — no reviewer is
+    // requested on GitHub (escalation mechanics scrapped 2026-08-18).
     onHumanRequested: async (decision) => {
-      await gh.requestEscalationReview(decision.pr);
-      applyEvent(store, decision.pr, { type: "escalation_detected" }, {}, {
+      applyEvent(store, decision.pr, { type: "human_requested" }, {}, {
         botLogin: cfg.github.bot_login,
         reason: "pingpong:human-requested",
       });
@@ -204,7 +212,16 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
 
   const pump = async (): Promise<void> => {
     await guard("dispatch", async () => {
-      const orders = await dispatchOnce({ cfg, store, adapter: gh, hooks, renderPrompt: deps.renderPrompt, announce, log });
+      const orders = await dispatchOnce({
+        cfg,
+        store,
+        adapter: gh,
+        hooks,
+        renderPrompt: deps.renderPrompt,
+        prepareWorktree: deps.prepareWorktree,
+        announce,
+        log,
+      });
       for (const o of orders) log(`dispatched #${o.pr} round ${o.round_no} (${o.round_type}) lenses=${o.lenses.join(",")}`);
     });
   };

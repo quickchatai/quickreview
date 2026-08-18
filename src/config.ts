@@ -11,7 +11,6 @@ export interface GithubConfig {
   app_slug: string;
   bot_login: string;
   review_team: string;
-  escalation_reviewer: string;
   trigger_label: string;
   in_progress_label: string;
   reviewed_label: string;
@@ -363,7 +362,7 @@ export function parseConfig(toml: string): Config {
     slack: parseSlack((raw.slack ?? {}) as Record<string, any>),
   };
   for (const k of [
-    "repo", "app_slug", "bot_login", "review_team", "escalation_reviewer",
+    "repo", "app_slug", "bot_login", "review_team",
     "trigger_label", "in_progress_label", "reviewed_label", "improvement_label",
     "issue_label", "secrets_dir",
   ] as const) req(cfg.github as unknown as Record<string, unknown>, k);

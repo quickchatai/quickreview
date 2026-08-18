@@ -212,11 +212,11 @@ describe("dry-run fixture round", () => {
     const review = assembleReview({
       pr: PR.number,
       head_sha: PR.head_sha,
-      verdict: "ESCALATE",
+      verdict: "NEEDS_HUMAN",
       lenses: ["pass-baseline"],
       patches: PATCHES,
       findings: FINDINGS.slice(0, 1),
-      escalation_reasons: ["prod_lines 612 > 500"],
+      needs_human_reasons: ["cannot confirm the backfill is bounded"],
       ai_approved: true,
     });
     await submitReview({ adapter, store }, review);

@@ -63,7 +63,7 @@ export function formatEvent(e: { ts: string; kind: string; pr: number | null; pa
   return { ts: hhmmss, text: `${hhmmss} ${kind}${e.pr ? ` #${e.pr}` : ""}${detail}`, anomaly };
 }
 
-/** Awaiting-you rows: escalated PRs oldest-first with age in whole days. */
+/** Awaiting-you rows: parked PRs oldest-first with age in whole days. */
 export function awaitingRows(prs: SnapshotPr[], now: Date): Array<{ pr: SnapshotPr; ageDays: number }> {
   return prs
     .filter((p) => p.state === "awaiting_human")

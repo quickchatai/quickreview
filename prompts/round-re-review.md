@@ -3,13 +3,19 @@
 > Sandbox file: `prompts/round-re-review.md`. Rendered by `src/templates.ts` and
 > injected into the PR session (`pr-{{n}}`) by the daemon. Placeholders:
 > `{{n}} {{title}} {{worktree}} {{head_sha}} {{lenses}} {{pass_plan}}
-> {{addable_lenses}} {{escalation_criteria}} {{migration_gate_note}}
+> {{addable_lenses}} {{base_ref}} {{base_sha}} {{merge_base}} {{migration_gate_note}}
 > {{settled_digest}} {{round_type}} {{round_no}}`.
 
 ---
 
 **ROUND: {{round_type}}** — PR #{{n}} ("{{title}}")
 **Worktree**: `{{worktree}}` @ `{{head_sha}}`
+**Base branch**: `{{base_ref}}` @ `{{base_sha}}` (merge-base `{{merge_base}}`) —
+fetched fresh this round, so `origin/{{base_ref}}` is the branch's real tip. Use
+it for every check defined against the base (migration numbering and
+`dependencies`, "is this already fixed on the base", sibling divergence). This
+PR is `{{merge_base}}..{{head_sha}}`; later commits on the base are not yours to
+review.
 **Lenses this round**: {{lenses}}
 
 The author handed this PR back. Run the full 7-step round — but step 1 comes
@@ -111,18 +117,23 @@ all candidates + the SETTLED list. Only survivors post. Log the kills.
 
 ## 5. Decide
 
+> **This section supersedes steps 5 and 7 of your system prompt.** That text
+> predates the 2026-08-18 change and still describes ESCALATE and escalation
+> criteria. There are none. Use the three verdicts below.
+
 - any `[blocker]` (new **or** still-open from a prior round) ⇒ **REQUEST_CHANGES**
-- escalation criteria below, or your own judgment ⇒ **ESCALATE**
-  (`ai_approved` per your confidence in soundness)
+- you cannot decide confidently ⇒ **NEEDS_HUMAN** (`ai_approved` per your
+  confidence in soundness)
 - otherwise ⇒ **APPROVE**
 
 Nits and questions never block. Never dismiss anyone's approved review — not
 yours, not a human's, under any theory.
 
-**ESCALATION CRITERIA**
-{{escalation_criteria}}
+**NEEDS_HUMAN is a park, not a handoff.** The daemon no longer nominates a
+reviewer on GitHub; it stops the PR and shows it to the owner. Post the complete
+review either way — never a shortened one.
 
-**When in doubt, escalate.**
+**When in doubt, park.** Never approve a PR you have not convinced yourself of.
 
 ## 6. Post
 
@@ -130,7 +141,9 @@ One review, anchored inline comments inside changed-line runs (50 inline,
 overflow to body), summary with verdict + lenses lines (including any
 raises/adds with their one-line reasons), `### Blockers / Nits / Questions`, a
 **"Previously deferred, unchanged"** section listing prior findings that are
-still open and unaddressed, "Start here" on ESCALATE, standard footer.
+still open and unaddressed, "Start here" on NEEDS_HUMAN (what you could not
+decide, and where a person should look first), standard footer. NEEDS_HUMAN
+posts as a COMMENT — the merge call is not yours.
 REQUEST_CHANGES/COMMENT posts **only** through `scripts/post-review.sh`;
 APPROVE goes through `scripts/approve-pr.sh`.
 
@@ -144,7 +157,7 @@ are not):
 {
   "pr": {{n}},
   "round_no": {{round_no}},
-  "verdict": "APPROVE" | "REQUEST_CHANGES" | "ESCALATE",
+  "verdict": "APPROVE" | "REQUEST_CHANGES" | "NEEDS_HUMAN",
   "ai_approved": true,
   "head_sha": "{{head_sha}}",
   "summary": "<3-4 plain sentences for the owner>",
@@ -152,7 +165,7 @@ are not):
 }
 ```
 
-`pr` and `round_no` are numbers. `ai_approved` (soundness marker, ESCALATE
+`pr` and `round_no` are numbers. `ai_approved` (soundness marker, NEEDS_HUMAN
 only) and `summary` are optional — but always write `summary`: 3-4 plain
 sentences telling the owner what is going on with this PR right now (what the
 change does, what this round found, where it stands), plus any tier raises or
@@ -160,4 +173,5 @@ added lenses with their reasons. No markdown, no lens jargon; it renders
 verbatim in his TUI detail pane. Never report spend or cost figures — the
 daemon measures usage itself. Update the ledger — every prior finding must end
 this round marked `fixed@<sha>`, `open`, `conceded`, or `settled`, never
-silently dropped. Labels and the escalation request are the daemon's.
+silently dropped. Labels and the PR's lifecycle state are the daemon's; never
+request a reviewer on GitHub.

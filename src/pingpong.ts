@@ -326,7 +326,7 @@ export function validateThreadDecision(raw: unknown): { ok: true; value: ThreadD
 }
 
 export interface ThreadDecisionDeps extends ReplyDeps {
-  adapter: Pick<GitHubAdapter, "createReviewCommentReply" | "resolveOwnReviewThread" | "requestEscalationReview">;
+  adapter: Pick<GitHubAdapter, "createReviewCommentReply" | "resolveOwnReviewThread">;
   verdictDir: string;
   onHumanRequested?: (decision: ThreadDecision) => void | Promise<void>;
   now?: () => Date;

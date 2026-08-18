@@ -22,7 +22,6 @@ export interface ReconcileSearchItem {
 export interface ReconcileAdapter {
   searchLabelTriggered(): Promise<ReconcileSearchItem[]>;
   searchTeamTriggered(): Promise<ReconcileSearchItem[]>;
-  searchAwaitingEscalationReviewer(): Promise<ReconcileSearchItem[]>;
   listOpenPrs(): Promise<PrRef[]>;
   getPr(n: number): Promise<PrRef>;
   listBotReviewComments(n: number): Promise<number[]>;
@@ -225,26 +224,12 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
     });
   }
 
-  // ---- 6. awaiting-owner scan ------------------------------------------
-  await step("awaiting-human", async () => {
-    const items = await adapter.searchAwaitingEscalationReviewer();
-    for (const item of items) {
-      let requested: { users: string[]; teams: string[] };
-      try {
-        requested = await adapter.getRequestedReviewers(item.number);
-      } catch (err) {
-        report.errors.push(`requested_reviewers #${item.number}: ${String(err)}`);
-        continue;
-      }
-      if (!requested.users.includes(cfg.github.escalation_reviewer)) continue;
-      report.awaiting_human.push(item.number);
-      const local = store.getPr(item.number);
-      if (!local || local.state === "closed" || local.state === "awaiting_human") continue;
-      if (local.state === "queued" || local.state === "reviewing") continue; // let the round land first
-      correction(deps, item.number, "awaiting-human", { local: local.state }, report);
-      applyEvent(store, item.number, { type: "escalation_detected" }, {}, { botLogin, now, reason: "reconcile:awaiting-human" });
-    }
-  });
+  // ---- 6. parked-PR census -----------------------------------------------
+  // Until 2026-08-18 this step searched GitHub for PRs where the escalation
+  // reviewer was awaited and parked them locally. With escalation scrapped,
+  // nothing requests a reviewer, so the GitHub side carries no such signal:
+  // awaiting_human is now purely a local state and the report just counts it.
+  report.awaiting_human.push(...store.allPrs().filter((p) => p.state === "awaiting_human").map((p) => p.number));
 
   store.logEvent("reconcile_pass", null, {
     open_prs: report.open_prs,

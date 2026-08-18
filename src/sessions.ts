@@ -342,9 +342,21 @@ export class PiSessionManager implements SessionHooks {
     return path;
   }
 
-  /** SessionHooks: ensure worktree + session, then inject the round prompt. */
+  /**
+   * SessionHooks: ensure worktree + session, then inject the round prompt.
+   *
+   * The worktree is checked out at the ORDER's sha, without a fetch: dispatch
+   * already fetched and pinned it (`prepareWorktree`). Re-fetching here would
+   * reintroduce the drift the pinning exists to remove — a push landing
+   * between the two calls would leave the tree ahead of the prompt. Only if
+   * the sha is not in the clone at all (no prepare hook ran) do we fetch.
+   */
   async dispatchRound(order: RoundOrder, renderedPrompt: string): Promise<void> {
-    await this.worktrees.ensureWorktree(order.pr);
+    if (order.head_sha && (await this.worktrees.hasCommit(order.head_sha))) {
+      await this.worktrees.checkoutAt(order.pr, order.head_sha);
+    } else {
+      await this.worktrees.ensureWorktree(order.pr, { baseRef: order.base_ref });
+    }
     await this.ensurePrSession(order.pr, order.title, order.worktree);
     this.injectFile(prSessionName(order.pr), renderedPrompt);
   }

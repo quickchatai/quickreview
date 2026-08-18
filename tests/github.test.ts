@@ -83,12 +83,9 @@ describe("triggered-set queries", () => {
     expect(q).toContain("-author:app/example-review");
   });
 
-  it("replaces the @me qualifier with the named escalation reviewer", async () => {
-    const { adapter, calls } = build(() => ({ items: [] }));
-    await adapter.searchAwaitingEscalationReviewer();
-    const q = queryOf(calls[0]!.url);
-    expect(q).toContain("review-requested:mhale");
-    expect(q).not.toContain("@me");
+  it("no longer exposes the awaiting-reviewer search (scrapped 2026-08-18)", () => {
+    const { adapter } = build(() => ({ items: [] }));
+    expect((adapter as unknown as Record<string, unknown>).searchAwaitingEscalationReviewer).toBeUndefined();
   });
 
   it("searches open bot-filed issues by label", async () => {
@@ -103,7 +100,7 @@ describe("authoritative per-PR reads", () => {
     const { adapter } = build((url) => {
       if (url.endsWith("/pulls/12")) {
         return {
-          number: 12, title: "T", user: { login: "alice" }, head: { sha: "abc" },
+          number: 12, title: "T", user: { login: "alice" }, head: { sha: "abc" }, base: { ref: "master" },
           updated_at: "2026-08-13T10:00:00Z", state: "open", draft: false, merged: false,
           labels: [{ name: "AI review requested" }],
         };
@@ -112,7 +109,7 @@ describe("authoritative per-PR reads", () => {
     });
 
     expect(await adapter.getPr(12)).toEqual({
-      number: 12, title: "T", author: "alice", head_sha: "abc",
+      number: 12, title: "T", author: "alice", head_sha: "abc", base_ref: "master",
       updated_at: "2026-08-13T10:00:00Z", state: "open", draft: false, merged: false,
       labels: ["AI review requested"],
     });
@@ -242,50 +239,34 @@ describe("resolveOwnReviewThread ownership gate", () => {
   });
 });
 
-describe("requestEscalationReview redundancy skips", () => {
-  const pr = (author: string) => ({
-    number: 8, title: "T", user: { login: author }, head: { sha: "abc" },
-    updated_at: "2026-08-13T10:00:00Z", state: "open", draft: false, merged: false, labels: [],
+describe("nominating a human reviewer is structurally impossible", () => {
+  it("the adapter has no requestEscalationReview method", () => {
+    const { adapter } = build(() => ({}));
+    expect((adapter as unknown as Record<string, unknown>).requestEscalationReview).toBeUndefined();
   });
 
-  function harness(author: string, requested: string[], reviewers: string[]) {
-    return build((url) => {
-      if (url.endsWith("/requested_reviewers")) return { users: requested.map((login) => ({ login })), teams: [] };
-      if (url.endsWith("/reviews?per_page=100")) return reviewers.map((login, i) => ({ id: i, user: { login }, state: "COMMENTED", commit_id: "c" }));
-      return pr(author);
-    });
-  }
-
-  it("skips when the PR author is the escalation reviewer", async () => {
-    const { adapter } = harness("mhale", [], []);
-    expect(await adapter.requestEscalationReview(8)).toEqual({ skipped: "author-is-reviewer" });
+  it("the gate rejects a hand-rolled request_reviewer mutation", async () => {
+    const { adapter } = build(() => ({}));
+    const gate = (adapter as unknown as { gate: { execute: (i: unknown) => Promise<unknown> } }).gate;
+    await expect(
+      gate.execute({
+        kind: "request_reviewer",
+        method: "POST",
+        path: "/repos/example-org/example-app/pulls/8/requested_reviewers",
+        body: { reviewers: ["mhale"] },
+        note: "smuggled",
+        pr: 8,
+      }),
+    ).rejects.toThrow();
     expect(readdirSync(dryrunDir)).toHaveLength(0);
   });
 
-  it("skips when the reviewer is already requested", async () => {
-    const { adapter } = harness("alice", ["mhale"], []);
-    expect(await adapter.requestEscalationReview(8)).toEqual({ skipped: "already-requested" });
-    expect(readdirSync(dryrunDir)).toHaveLength(0);
-  });
-
-  it("skips when the reviewer already has a standing review", async () => {
-    const { adapter } = harness("alice", [], ["mhale"]);
-    expect(await adapter.requestEscalationReview(8)).toEqual({ skipped: "standing-review" });
-    expect(readdirSync(dryrunDir)).toHaveLength(0);
-  });
-
-  it("records the request when no redundancy applies", async () => {
-    const { adapter } = harness("alice", ["bob"], ["carol"]);
-    const out = await adapter.requestEscalationReview(8);
-    expect(out.skipped).toBeNull();
-    expect(out.result!.executed).toBe(false);
-    expect(dryrunRecords()[0]).toMatchObject({
-      kind: "request_reviewer",
-      method: "POST",
-      path: "/repos/example-org/example-app/pulls/8/requested_reviewers",
-      body: { reviewers: ["mhale"] },
-      pr: 8,
-    });
+  it("base_ref rides along on PR reads (the worktree needs it)", async () => {
+    const { adapter } = build(() => ({
+      number: 8, title: "T", user: { login: "alice" }, head: { sha: "abc" }, base: { ref: "release/2026-08" },
+      updated_at: "2026-08-13T10:00:00Z", state: "open", draft: false, merged: false, labels: [],
+    }));
+    expect((await adapter.getPr(8)).base_ref).toBe("release/2026-08");
   });
 });
 

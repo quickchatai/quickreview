@@ -2,7 +2,7 @@
 //
 // Everything here is pure assembly plus one gated submit. The ported summary
 // format is preserved: verdict line → lenses line → severity sections → the
-// "Start here" handoff guide on ESCALATE → footer. Inline comments are anchor-
+// "Start here" handoff guide on NEEDS_HUMAN → footer. Inline comments are anchor-
 // validated (src/anchors.ts) and capped at 50; anything stripped or overflowing
 // is appended to the body rather than dropped, and rather than failing the
 // whole call.
@@ -43,9 +43,9 @@ export interface ReviewInput {
   lenses: string[];
   /** Unified patch text per file (PR files API `patch`) — anchor validation. */
   patches?: Record<string, string>;
-  /** Why the daemon (or the session) escalated — rendered under "Start here". */
-  escalation_reasons?: string[];
-  /** AI_APPROVED soundness marker, rendered on ESCALATE. */
+  /** Why the session could not decide — rendered under "Start here". */
+  needs_human_reasons?: string[];
+  /** AI_APPROVED soundness marker, rendered on NEEDS_HUMAN. */
   ai_approved?: boolean;
   /** Prior findings still open and unchanged (re-review sections). */
   deferred?: string[];
@@ -74,13 +74,13 @@ export interface AssembledReview {
 }
 
 export function eventForVerdict(v: Verdict): ReviewPayload["event"] {
-  // ESCALATE posts the complete review as a COMMENT — the merge decision is
+  // NEEDS_HUMAN posts the complete review as a COMMENT — the merge decision is
   // the human's (ported).
   return v === "APPROVE" ? "APPROVE" : v === "REQUEST_CHANGES" ? "REQUEST_CHANGES" : "COMMENT";
 }
 
 function verdictLine(v: Verdict, counts: Record<PostTag, number>): string {
-  const label = v === "APPROVE" ? "Approved" : v === "REQUEST_CHANGES" ? "Changes requested" : "Escalated to a human";
+  const label = v === "APPROVE" ? "Approved" : v === "REQUEST_CHANGES" ? "Changes requested" : "Needs a human";
   const parts: string[] = [];
   const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
   if (counts.blocker) parts.push(plural(counts.blocker, "blocker"));
@@ -188,16 +188,16 @@ export function renderBody(
     );
   }
 
-  if (input.verdict === "ESCALATE") {
+  if (input.verdict === "NEEDS_HUMAN") {
     const start: string[] = [];
     start.push(
-      `This PR is escalated for a human second opinion${
-        input.ai_approved === undefined ? "" : input.ai_approved ? " (the automated review found it sound: AI_APPROVED)" : " (the automated review is not confident it is sound)"
+      `The automated review could not decide this one, so it is parked for a person${
+        input.ai_approved === undefined ? "" : input.ai_approved ? " (it found the PR otherwise sound: AI_APPROVED)" : " (it is not confident the PR is sound)"
       }.`,
       "",
       "**Why:**",
-      ...(input.escalation_reasons?.length
-        ? input.escalation_reasons.map((r) => `- ${r}`)
+      ...(input.needs_human_reasons?.length
+        ? input.needs_human_reasons.map((r) => `- ${r}`)
         : ["- reviewer judgment: not confident enough to decide alone"]),
       "",
       "**Validate before merging:**",
@@ -206,7 +206,7 @@ export function renderBody(
     start.push(
       ...(top.length
         ? top.map((f) => `- ${ref(f)} — ${f.title}`)
-        : ["- the escalation reasons above; the automated review found nothing blocking"]),
+        : ["- the reasons above; the automated review found nothing blocking"]),
     );
     section("Start here", start);
   }

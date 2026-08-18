@@ -113,10 +113,10 @@ describe("computeTier / authorizedPrs", () => {
   });
 
   it("resolves own PRs only for a mapped login, and never for an unmapped id", () => {
-    store.upsertPr({ number: 1234, state: "reviewing", head_sha: "a", title: "t", author: "alice-gh", trigger_ts: null, stale_recheck: 0, escalation_worthy: 0, migration_gate: 0 });
-    store.upsertPr({ number: 1240, state: "tracked", head_sha: "b", title: "t", author: "Alice-GH", trigger_ts: null, stale_recheck: 0, escalation_worthy: 0, migration_gate: 0 });
-    store.upsertPr({ number: 1250, state: "closed", head_sha: "c", title: "t", author: "alice-gh", trigger_ts: null, stale_recheck: 0, escalation_worthy: 0, migration_gate: 0 });
-    store.upsertPr({ number: 1260, state: "reviewing", head_sha: "d", title: "t", author: "bob", trigger_ts: null, stale_recheck: 0, escalation_worthy: 0, migration_gate: 0 });
+    store.upsertPr({ number: 1234, state: "reviewing", head_sha: "a", title: "t", author: "alice-gh", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+    store.upsertPr({ number: 1240, state: "tracked", head_sha: "b", title: "t", author: "Alice-GH", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+    store.upsertPr({ number: 1250, state: "closed", head_sha: "c", title: "t", author: "alice-gh", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+    store.upsertPr({ number: 1260, state: "reviewing", head_sha: "d", title: "t", author: "bob", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
     expect(authorizedPrs(store, "alice-gh")).toEqual([1234, 1240]);
     expect(authorizedPrs(store, null)).toEqual([]);
   });
@@ -268,8 +268,8 @@ describe("SlackRouter dispositions", () => {
 
 describe("the inject envelope", () => {
   it("carries the exact annex fields, with the thread root and its PR", async () => {
-    store.upsertPr({ number: 1234, state: "reviewing", head_sha: "a", title: "t", author: "alice-gh", trigger_ts: null, stale_recheck: 0, escalation_worthy: 0, migration_gate: 0 });
-    store.upsertPr({ number: 1240, state: "queued", head_sha: "b", title: "t", author: "alice-gh", trigger_ts: null, stale_recheck: 0, escalation_worthy: 0, migration_gate: 0 });
+    store.upsertPr({ number: 1234, state: "reviewing", head_sha: "a", title: "t", author: "alice-gh", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+    store.upsertPr({ number: 1240, state: "queued", head_sha: "b", title: "t", author: "alice-gh", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
     store.upsertSlackThread({ pr: 1234, channel: CHANNEL, root_ts: "1712345678.123456" });
     await router().handle(event({ ts: "1712345999.000100", thread_ts: "1712345678.123456" }));
     const body = injected[0] ?? "";
@@ -302,7 +302,7 @@ describe("the inject envelope", () => {
   });
 
   it("an unmapped Slack id is tier anyone with no login and no own PRs", async () => {
-    store.upsertPr({ number: 1234, state: "reviewing", head_sha: "a", title: "t", author: "alice-gh", trigger_ts: null, stale_recheck: 0, escalation_worthy: 0, migration_gate: 0 });
+    store.upsertPr({ number: 1234, state: "reviewing", head_sha: "a", title: "t", author: "alice-gh", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
     await router().handle(event({ user: "U0STRANGER" }));
     const h = header(injected[0] ?? "");
     expect(h["tier"]).toBe("anyone");

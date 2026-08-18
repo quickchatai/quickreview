@@ -301,12 +301,13 @@ export const MANUAL_ITEMS: Array<{ item: string; name: string; instructions: str
   },
   {
     item: "⑥",
-    name: "live test PR — escalation path (dry_run OFF)",
+    name: "live test PR — NEEDS_HUMAN park (dry_run OFF)",
     instructions: [
-      "Open a second labelled test PR touching an infra/ path.",
-      "Expect: a clean AI review first, then a review request for mhale",
-      "(it is the owner — the self-noise is accepted once), and the redundancy",
-      "skips honored (no duplicate request, no request when a standing review exists).",
+      "Open a second labelled test PR the reviewer should not be able to decide alone.",
+      "Expect: the complete review posted as a COMMENT, the PR parked on awaiting_human,",
+      "and NO review request on GitHub — parking is daemon-side only since 2026-08-18.",
+      "Check `qcr status` shows it awaiting_human and that state/dryrun/ holds no",
+      "request_reviewer record (that mutation kind no longer exists).",
       "Restore dry_run = true afterwards.",
     ],
   },

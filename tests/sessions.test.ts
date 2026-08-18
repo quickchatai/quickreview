@@ -80,7 +80,6 @@ const order: RoundOrder = {
   round_no: 1,
   round_type: "first",
   lenses: ["pass-baseline"],
-  escalation_worthy: false,
   escalation_reasons: [],
   migration_gate: false,
   head_sha: "abc123",

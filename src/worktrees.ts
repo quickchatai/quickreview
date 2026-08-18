@@ -20,6 +20,20 @@ export interface WorktreeManagerOptions {
   cloneDir?: string;
 }
 
+/** What one round's worktree preparation established about the tree on disk. */
+export interface WorktreeFacts {
+  path: string;
+  /** The sha the worktree is actually checked out at, resolved from the
+   * just-fetched `refs/pull/<n>/head` — the authority for the round. */
+  head_sha: string;
+  /** Branch the PR targets; "" when the caller did not supply one. */
+  base_ref: string;
+  /** Tip of base_ref at fetch time; "" when no base_ref was fetched. */
+  base_sha: string;
+  /** merge-base(base_sha, head_sha); "" when unavailable. */
+  merge_base: string;
+}
+
 export function cloneUrlFor(repo: string): string {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(repo) || repo.startsWith("git@") || repo.startsWith("/")
     ? repo
@@ -63,17 +77,59 @@ export class WorktreeManager {
     return `refs/qcr/pr-${pr}`;
   }
 
+  /** Where a fetched base branch lands — the ordinary remote-tracking name, so
+   * `origin/master` in a pass's shell means what it says. */
+  private baseRef(branch: string): string {
+    return `refs/remotes/origin/${branch}`;
+  }
+
   /**
-   * Fetch the PR head and materialise (or refresh) wt/pr-<n> at it.
-   * Called at queue time and again at the start of every round.
+   * Fetch the PR head AND the branch it targets, then materialise (or refresh)
+   * wt/pr-<n> at the head.
+   *
+   * The base fetch is not decoration. Before 2026-08-18 the base clone was
+   * created once and only ever fetched `refs/pull/<n>/head`, so
+   * `origin/master` stayed frozen at clone time — while `pass-data-safety` is
+   * instructed to verify migration numbering and `dependencies` "against
+   * master's current head", a P1 rule. That check was reading a snapshot that
+   * could be weeks old, producing both false P1s and false clears.
+   *
+   * Both refspecs go in one `git fetch` so the two sides are as close to
+   * simultaneous as git allows.
    */
-  async ensureWorktree(pr: number): Promise<string> {
+  async ensureWorktree(pr: number, opts: { baseRef?: string } = {}): Promise<WorktreeFacts> {
+    await this.ensureBaseClone();
+    mkdirSync(this.wtRoot, { recursive: true });
+    const base = opts.baseRef?.trim();
+    const ref = this.prRef(pr);
+    const refspecs = [`+refs/pull/${pr}/head:${ref}`];
+    if (base) refspecs.push(`+refs/heads/${base}:${this.baseRef(base)}`);
+    await this.git(["fetch", "--force", "origin", ...refspecs]);
+    const head_sha = (await this.git(["rev-parse", ref])).stdout.trim();
+    const path = await this.checkoutAt(pr, head_sha);
+
+    let base_sha = "";
+    let merge_base = "";
+    if (base) {
+      base_sha = (await this.git(["rev-parse", this.baseRef(base)])).stdout.trim();
+      // Unrelated histories (or a force-pushed base) leave no merge-base. That
+      // is information for the session, not a reason to fail the round.
+      const mb = await this.run("git", ["merge-base", base_sha, head_sha], { cwd: this.basePath });
+      if (mb.code === 0) merge_base = mb.stdout.trim();
+    }
+    return { path, head_sha, base_ref: base ?? "", base_sha, merge_base };
+  }
+
+  /**
+   * Materialise wt/pr-<n> at an ALREADY-FETCHED sha, without touching the
+   * network. This is what keeps the round prompt honest: the sha is resolved
+   * once, in ensureWorktree, and every later step checks out that exact sha
+   * instead of re-fetching and silently landing on a newer head.
+   */
+  async checkoutAt(pr: number, sha: string): Promise<string> {
     await this.ensureBaseClone();
     mkdirSync(this.wtRoot, { recursive: true });
     const path = this.worktreePath(pr);
-    const ref = this.prRef(pr);
-    await this.git(["fetch", "--force", "origin", `+refs/pull/${pr}/head:${ref}`]);
-    const sha = (await this.git(["rev-parse", ref])).stdout.trim();
     if (existsSync(path)) {
       await this.git(["reset", "--hard", sha], path);
       await this.git(["clean", "-fdx"], path);
@@ -83,9 +139,16 @@ export class WorktreeManager {
     return path;
   }
 
+  /** True when `sha` is present in the base clone (no fetch needed). */
+  async hasCommit(sha: string): Promise<boolean> {
+    if (!/^[0-9a-f]{7,40}$/i.test(sha)) return false;
+    const res = await this.run("git", ["cat-file", "-e", `${sha}^{commit}`], { cwd: this.basePath });
+    return res.code === 0;
+  }
+
   /** Re-fetch + reset an existing worktree (round refresh); creates if absent. */
-  async refresh(pr: number): Promise<string> {
-    return this.ensureWorktree(pr);
+  async refresh(pr: number, opts: { baseRef?: string } = {}): Promise<WorktreeFacts> {
+    return this.ensureWorktree(pr, opts);
   }
 
   async headSha(pr: number): Promise<string> {

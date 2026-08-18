@@ -46,10 +46,13 @@ export function roundTemplateFile(roundType: RoundType): string {
   return ROUND_TEMPLATE_FILES[roundType];
 }
 
-const NO_ESCALATION = "none flagged — apply your own escalation judgment";
+// The migration gate survived the escalation scrap (the owner, 2026-08-18) as a
+// data-safety signal: it still forces the sol-med tier and still tells the
+// session the DDL must be judged. Only the "escalate unless…" framing is gone.
 const GATE_ON =
-  "MIGRATION GATE: this PR touches migrations — escalate unless the migration is provably INSTANT-safe, in sequence with master, backfill-free and ordering-safe.";
+  "MIGRATION GATE: this PR touches migrations — pass-data-safety must judge the real DDL (ALGORITHM, ordering against the base branch, backfill safety, rolling-deploy ordering). A migration you cannot prove safe is a blocker or a NEEDS_HUMAN, never an approve.";
 const GATE_OFF = "no migration gate on this round";
+const NO_BASE = "(unknown — the daemon could not resolve the base branch this round)";
 
 /** Markdown table of the round's pass plan — one row per subagent launch. */
 export function renderPassPlan(plan: PassPlanEntry[]): string {
@@ -79,9 +82,9 @@ export function roundVars(order: RoundOrder): TemplateVars {
     lenses: order.lenses.join(", "),
     pass_plan: renderPassPlan(order.pass_plan),
     addable_lenses: renderAddableLenses(order.addable_lenses),
-    escalation_criteria: order.escalation_worthy
-      ? order.escalation_reasons.join("; ") || "flagged escalation-worthy (no reason recorded)"
-      : order.escalation_reasons.join("; ") || NO_ESCALATION,
+    base_ref: order.base_ref || NO_BASE,
+    base_sha: order.base_sha || NO_BASE,
+    merge_base: order.merge_base || NO_BASE,
     migration_gate_note: order.migration_gate ? GATE_ON : GATE_OFF,
     settled_digest: order.settled_digest.trim() || "(nothing settled yet)",
   };

@@ -375,6 +375,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     adapter,
     hooks,
     renderPrompt,
+    // One network fetch per round, before the order is built: the PR head and
+    // the branch it targets, together. Everything downstream (prompt, session,
+    // passes) then works from the shas this returns.
+    prepareWorktree: (pr, baseRef) => sessions.worktrees.ensureWorktree(pr, { baseRef }),
     log,
     // Lazy on purpose: the Slack subsystem is built in onStart, after the
     // store exists. Off ⇒ this resolves undefined forever and dispatch/verdicts
@@ -436,23 +440,6 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
             await d.pump();
           }
           return { ok: true, restarted: `pr-${target}` };
-        },
-        async markEscalationWorthy(pr, reason) {
-          const row = d.store.getPr(pr);
-          if (!row) return { ok: false, reason: `unknown PR #${pr}` };
-          d.store.upsertPr({ ...row, escalation_worthy: 1 });
-          d.store.logEvent("marked_escalation_worthy", pr, { reason });
-          // §1.4: the 🚩 pre-flag belongs on THIS path too — a person
-          // who asked for a human review must see it confirmed in the channel,
-          // not only in the next verdict. Idempotent per PR (the announcer's
-          // ledger key is the enforcement) and swallowed on failure: Slack never
-          // blocks a command.
-          try {
-            await slack?.announcer.escalationWorthy({ pr, reasons: [reason] });
-          } catch (err) {
-            log("slack: escalation pre-flag failed (command still succeeded)", err);
-          }
-          return { ok: true };
         },
         pausePr(pr, reason) {
           const row = d.store.getPr(pr);

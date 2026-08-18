@@ -10,7 +10,11 @@
 //   queued          a trigger is outstanding; waiting for a dispatch slot
 //   reviewing       a round is running (trigger already consumed)
 //   awaiting_author REQUEST_CHANGES posted; the author owes a push/reply
-//   awaiting_human  escalated — the human reviewer owns it (never auto-approved)
+//   awaiting_human  parked for a person — the round ended without a decision
+//                   (never auto-approved). NOTE (2026-08-18): the escalation
+//                   mechanics were scrapped; reaching this state no longer
+//                   requests a reviewer on GitHub. It is a daemon-side park,
+//                   surfaced in the TUI and Slack, cleared by a re-trigger.
 //   closed          merged or closed; session archived, worktree dropped
 // `stale_recheck` remains as legacy state for old rows/rounds; ordinary pushes
 // never set it or queue work. Only an explicit review re-request starts a round.
@@ -25,11 +29,11 @@
 // │ dispatched      │ reviewing reviewing reviewing reviewing  reviewing closed⁴│
 // │ verdict APPROVE │ tracked   tracked  tracked    tracked    aw_human⁵ closed │
 // │ verdict R_C     │ aw_author aw_author aw_author aw_author  aw_human⁵ closed │
-// │ verdict ESCAL.  │ aw_human  aw_human aw_human   aw_human   aw_human  closed │
+// │ verdict N_HUMAN │ aw_human  aw_human aw_human   aw_human   aw_human  closed │
 // │ round_overdue   │ aw_human  aw_human aw_human   aw_human   aw_human  closed │  (never an approve path)
 // │ author_reply    │ tracked   queued   reviewing  aw_author  aw_human  closed │  (ping-pong: no lifecycle change)
 // │ synchronize     │ tracked   queued   reviewing  aw_author  aw_human  closed │
-// │ escalation_det. │ aw_human  queued⁷  reviewing⁷ aw_human   aw_human  closed │
+// │ human_requested │ aw_human  queued⁷  reviewing⁷ aw_human   aw_human  closed │
 // │ closed          │ closed    closed   closed     closed     closed    closed │
 // │ reopened        │ tracked   queued   reviewing  aw_author  aw_human  tracked│
 // └─────────────────┴──────────────────────────────────────────────────────────┘
@@ -37,17 +41,18 @@
 //   current head, and the reconcile poll re-derives the triggered set after it
 //   finishes (GitHub truth wins — spec §3).
 // ² closed is terminal for the lifecycle; a reopened PR must first `reopened`.
-// ³ once escalated, the human owns the PR. Only an explicit re-trigger queues
+// ³ once parked, the human owns the PR. Only an explicit re-trigger queues
 //   another full review.
 // ⁴ dispatch never runs against a closed PR (dispatch filters on `queued`).
-// ⁵ a verdict cannot demote an escalation: awaiting_human is sticky against
-//   APPROVE/REQUEST_CHANGES — the never-auto-approve-an-escalation invariant.
-// ⁷ the escalation reviewer being requested while a round is queued/running
-//   does not cancel the round; the verdict then lands on awaiting_human.
+// ⁵ a verdict cannot un-park a PR: awaiting_human is sticky against
+//   APPROVE/REQUEST_CHANGES — the never-auto-approve-a-parked-PR invariant.
+// ⁷ an author asking for a human mid-round does not cancel the round; the
+//   verdict then lands on awaiting_human.
 //
 // The never-retract-an-approval invariant is structural: no event and no
 // transition in this module touches an existing review (spec §8).
 import type { PrLifecycleState, StateStore } from "./state.js";
+import type { Verdict } from "./types.js";
 
 export type SmEventType =
   | "track"
@@ -58,7 +63,7 @@ export type SmEventType =
   | "round_overdue"
   | "author_reply"
   | "synchronize"
-  | "escalation_detected"
+  | "human_requested"
   | "closed"
   | "reopened";
 
@@ -67,11 +72,13 @@ export type SmEvent =
   | { type: "trigger"; source: "label" | "team_request" | "manual" | "reconcile" }
   | { type: "stale_detected" }
   | { type: "dispatched" }
-  | { type: "verdict"; verdict: "APPROVE" | "REQUEST_CHANGES" | "ESCALATE" }
+  | { type: "verdict"; verdict: Verdict }
   | { type: "round_overdue" }
   | { type: "author_reply" }
   | { type: "synchronize" }
-  | { type: "escalation_detected" }
+  /** Someone asked for a person on this PR (author ping-pong `human_requested`).
+   * Parks it; no GitHub reviewer is requested. */
+  | { type: "human_requested" }
   | { type: "closed" }
   | { type: "reopened" };
 
@@ -101,7 +108,7 @@ export function transition(current: PrLifecycleState, event: SmEvent): PrLifecyc
       return "reviewing";
 
     case "verdict":
-      if (event.verdict === "ESCALATE") return "awaiting_human";
+      if (event.verdict === "NEEDS_HUMAN") return "awaiting_human";
       if (current === "awaiting_human") return "awaiting_human";
       return event.verdict === "REQUEST_CHANGES" ? "awaiting_author" : "tracked";
 
@@ -116,7 +123,7 @@ export function transition(current: PrLifecycleState, event: SmEvent): PrLifecyc
       // label or configured team review request.
       return current;
 
-    case "escalation_detected":
+    case "human_requested":
       if (current === "queued" || current === "reviewing") return current;
       return "awaiting_human";
   }
@@ -180,7 +187,6 @@ export function applyEvent(
     author,
     trigger_ts: triggerTs,
     stale_recheck: staleRecheck,
-    escalation_worthy: existing?.escalation_worthy ?? 0,
     migration_gate: existing?.migration_gate ?? 0,
   });
 
@@ -191,8 +197,8 @@ export function applyEvent(
   return { pr, from, to, changed };
 }
 
-/** Persist dispatch-time gate results on the PR row (used by dispatch). */
-export function setPrGates(store: StateStore, pr: number, escalationWorthy: boolean, migrationGate: boolean): void {
+/** Persist the dispatch-time migration gate on the PR row (used by dispatch). */
+export function setPrGates(store: StateStore, pr: number, migrationGate: boolean): void {
   const row = store.getPr(pr);
   if (!row) return;
   store.upsertPr({
@@ -203,7 +209,6 @@ export function setPrGates(store: StateStore, pr: number, escalationWorthy: bool
     author: row.author,
     trigger_ts: row.trigger_ts,
     stale_recheck: row.stale_recheck,
-    escalation_worthy: escalationWorthy ? 1 : 0,
     migration_gate: migrationGate ? 1 : 0,
   });
 }

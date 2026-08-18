@@ -23,17 +23,16 @@ describe("postTag", () => {
 });
 
 describe("deriveVerdict", () => {
-  it("requests changes whenever a blocker exists, even alongside escalation", () => {
-    expect(deriveVerdict({ hasBlockers: true, escalationWorthy: false, selfEscalated: false })).toBe("REQUEST_CHANGES");
-    expect(deriveVerdict({ hasBlockers: true, escalationWorthy: true, selfEscalated: true })).toBe("REQUEST_CHANGES");
+  it("requests changes whenever a blocker exists, even when the session is unsure", () => {
+    expect(deriveVerdict({ hasBlockers: true, needsHuman: false })).toBe("REQUEST_CHANGES");
+    expect(deriveVerdict({ hasBlockers: true, needsHuman: true })).toBe("REQUEST_CHANGES");
   });
 
-  it("escalates on the escalation criteria or a self-escalation", () => {
-    expect(deriveVerdict({ hasBlockers: false, escalationWorthy: true, selfEscalated: false })).toBe("ESCALATE");
-    expect(deriveVerdict({ hasBlockers: false, escalationWorthy: false, selfEscalated: true })).toBe("ESCALATE");
+  it("parks only on the session's own judgment — there are no daemon criteria left", () => {
+    expect(deriveVerdict({ hasBlockers: false, needsHuman: true })).toBe("NEEDS_HUMAN");
   });
 
   it("approves a clean, unremarkable PR", () => {
-    expect(deriveVerdict({ hasBlockers: false, escalationWorthy: false, selfEscalated: false })).toBe("APPROVE");
+    expect(deriveVerdict({ hasBlockers: false, needsHuman: false })).toBe("APPROVE");
   });
 });

@@ -98,7 +98,6 @@ function queuedPr(pr: number): void {
     author: "alice",
     trigger_ts: T0.toISOString(),
     stale_recheck: 0,
-    escalation_worthy: 0,
     migration_gate: 0,
   });
 }
@@ -176,7 +175,6 @@ describe("verdict hooks", () => {
       author: "alice",
       trigger_ts: null,
       stale_recheck: 0,
-      escalation_worthy: 0,
       migration_gate: 0,
     });
     return store.startRound(pr, "first", ["pass-baseline"], cfg.daemon.round_deadline_min);
@@ -244,7 +242,7 @@ describe("verdict hooks", () => {
     await watcher(announcer()).checkDeadlines();
     expect(slack.posts[0].text).toBe(
       `⏱ #5263 round 1 blew its ${cfg.daemon.round_deadline_min}-min deadline — ` +
-        "parked on awaiting_human, <@U_MAT> requested. No verdict was posted.",
+        "parked on awaiting_human for <@U_MAT>. No verdict was posted.",
     );
   });
 

@@ -54,10 +54,6 @@ class FakeGitHub implements ReconcileAdapter {
     this.calls.push("searchTeamTriggered");
     return this.teamTriggered;
   }
-  async searchAwaitingEscalationReviewer() {
-    this.calls.push("searchAwaitingEscalationReviewer");
-    return this.awaiting;
-  }
   async listOpenPrs() {
     return this.open;
   }
@@ -111,7 +107,6 @@ function seed(number: number, state: PrLifecycleState, over: Partial<{ head: str
     author: "alice",
     trigger_ts: over.trigger ?? null,
     stale_recheck: over.stale ?? 0,
-    escalation_worthy: 0,
     migration_gate: 0,
   });
 }
@@ -208,19 +203,19 @@ describe("reconcileOnce", () => {
     expect(store.isBotComment(333)).toBe(false);
   });
 
-  it("parks a PR on awaiting_human when the escalation reviewer is requested", async () => {
+  // Since the escalation scrap (2026-08-18), awaiting_human is a purely LOCAL
+  // state: a requested reviewer on GitHub is somebody else's business and must
+  // no longer park a PR here. The reconcile pass only counts what is parked.
+  it("reports locally parked PRs and never parks one off a GitHub review request", async () => {
     gh.open = [ref(16), ref(17)];
-    gh.awaiting = [item(16), item(17)];
-    gh.requested.set(16, { users: [cfg.github.escalation_reviewer], teams: [] });
-    gh.requested.set(17, { users: ["someone-else"], teams: [] });
+    gh.requested.set(16, { users: ["mhale"], teams: [] });
     seed(16, "tracked");
-    seed(17, "tracked");
+    seed(17, "awaiting_human");
     const { hooks } = recordingHooks();
     const report = await reconcileOnce({ cfg, store, adapter: gh, hooks });
-    expect(store.getPr(16)!.state).toBe("awaiting_human");
-    expect(store.getPr(17)!.state).toBe("tracked");
-    expect(report.awaiting_human).toEqual([16]);
-    expect(corrections(store).map((c) => `${c.pr}:${c.what}`)).toContain("16:awaiting-human");
+    expect(store.getPr(16)!.state).toBe("tracked"); // a human reviewer ≠ our park
+    expect(report.awaiting_human).toEqual([17]);
+    expect(gh.calls).not.toContain("searchAwaitingEscalationReviewer");
   });
 
   it("does not close a PR GitHub still reports as open (listing lag)", async () => {
@@ -282,7 +277,7 @@ describe("dry-run re-trigger suppression", () => {
   it("suppresses re-queue when the last applied verdict matches the head (dry-run)", async () => {
     gh.open = [ref(9, { head_sha: "sha9" })];
     gh.labelTriggered = [item(9)];
-    store.upsertPr({ number: 9, state: "tracked", head_sha: "sha9", title: "PR 9", author: "alice", trigger_ts: null, stale_recheck: 0, escalation_worthy: 0, migration_gate: 0 });
+    store.upsertPr({ number: 9, state: "tracked", head_sha: "sha9", title: "PR 9", author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
     store.logEvent("verdict_applied", 9, { head_sha: "sha9", verdict: "APPROVE" });
 
     await reconcileOnce({ cfg: { ...cfg, dry_run: true }, store, adapter: gh, hooks });
@@ -297,7 +292,7 @@ describe("dry-run re-trigger suppression", () => {
   it("does not suppress when dry_run is off", async () => {
     gh.open = [ref(9, { head_sha: "sha9" })];
     gh.labelTriggered = [item(9)];
-    store.upsertPr({ number: 9, state: "tracked", head_sha: "sha9", title: "PR 9", author: "alice", trigger_ts: null, stale_recheck: 0, escalation_worthy: 0, migration_gate: 0 });
+    store.upsertPr({ number: 9, state: "tracked", head_sha: "sha9", title: "PR 9", author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
     store.logEvent("verdict_applied", 9, { head_sha: "sha9", verdict: "APPROVE" });
 
     await reconcileOnce({ cfg: { ...cfg, dry_run: false }, store, adapter: gh, hooks });
@@ -307,7 +302,7 @@ describe("dry-run re-trigger suppression", () => {
   it.each([true, false])("never queues an outdated approval merely because the head moved (dry_run=%s)", async (dryRun) => {
     gh.open = [ref(11, { head_sha: "sha11-new" })];
     gh.stale = [{ number: 11, head_sha: "sha11-new", approved_sha: "old-sha", approved_at: "2026-08-10T00:00:00Z" }];
-    store.upsertPr({ number: 11, state: "tracked", head_sha: "sha11", title: "PR 11", author: "alice", trigger_ts: null, stale_recheck: 0, escalation_worthy: 0, migration_gate: 0 });
+    store.upsertPr({ number: 11, state: "tracked", head_sha: "sha11", title: "PR 11", author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
 
     await reconcileOnce({ cfg: { ...cfg, dry_run: dryRun }, store, adapter: gh, hooks });
     expect(store.getPr(11)).toMatchObject({ state: "tracked", head_sha: "sha11-new", stale_recheck: 0 });
@@ -318,7 +313,7 @@ describe("dry-run re-trigger suppression", () => {
     gh.open = [ref(13, { head_sha: "sha13" })];
     gh.labelTriggered = [item(13)];
     gh.stale = [{ number: 13, head_sha: "sha13", approved_sha: "old", approved_at: "2026-08-10T00:00:00Z" }];
-    store.upsertPr({ number: 13, state: "tracked", head_sha: "sha13", title: "PR 13", author: "alice", trigger_ts: null, stale_recheck: 0, escalation_worthy: 0, migration_gate: 0 });
+    store.upsertPr({ number: 13, state: "tracked", head_sha: "sha13", title: "PR 13", author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
     store.setPaused(13, true);
 
     await reconcileOnce({ cfg: { ...cfg, dry_run: false }, store, adapter: gh, hooks });
@@ -342,7 +337,6 @@ describe("reconcileOrphanedRounds", () => {
       author: "alice",
       trigger_ts: null,
       stale_recheck: 0,
-      escalation_worthy: 0,
       migration_gate: 0,
     });
 

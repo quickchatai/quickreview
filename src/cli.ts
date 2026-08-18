@@ -96,7 +96,6 @@ export interface WhyPayload {
   author?: string;
   trigger_ts?: string | null;
   stale_recheck?: boolean;
-  escalation_worthy?: boolean;
   updated_at?: string;
   spend_usd: number;
   rounds: Array<{ round_no: number; round_type: string; status: string; verdict: string | null; started_at: string; finished_at: string | null; spend_usd: number | null; est_usd?: number | null; tokens_in?: number | null; tokens_out?: number | null; lenses: string; summary?: string | null }>;
@@ -160,7 +159,6 @@ export function whyJson(store: StateStore, n: number, archiveDir: string): WhyPa
     payload.author = pr.author;
     payload.trigger_ts = pr.trigger_ts;
     payload.stale_recheck = Boolean(pr.stale_recheck);
-    payload.escalation_worthy = Boolean(pr.escalation_worthy);
     payload.updated_at = pr.updated_at;
   }
   if (existsSync(archiveDir)) {

@@ -82,7 +82,6 @@ describe("detailLines", () => {
     state: "reviewing",
     title: "fix(crm): retry send_message",
     head_sha: "a2e380ff11",
-    escalation_worthy: false,
     trigger_ts: "2026-08-13T14:02:00Z",
     spend_usd: 1.3,
     rounds: [
@@ -95,7 +94,8 @@ describe("detailLines", () => {
 
   it("renders header facts, ledger, rounds and threads", () => {
     const lines = detailLines(why, snapshot.prs[0], 60).map(stripAnsi);
-    expect(lines[1]).toBe("reviewing · round 2 · esc-worthy: no");
+    // The esc-worthy fact went with the escalation heuristic (2026-08-18).
+    expect(lines[1]).toBe("reviewing · round 2");
     expect(lines[2]).toContain("spend $1.30 · head a2e380f · trig");
     expect(lines).toContain("F1 [P1/0.9][delivery] tasks.py:88 open");
     expect(lines.find((l) => l.startsWith("ROUNDS"))).toContain("r1 RC · r2 …");
@@ -135,7 +135,6 @@ describe("detailLines keeps foreign text inside the pane", () => {
     state: "reviewing",
     title: "fix(crm): retry send_message",
     head_sha: "a2e380ff11",
-    escalation_worthy: false,
     trigger_ts: "2026-08-13T14:02:00Z",
     spend_usd: 1.3,
     rounds: [],

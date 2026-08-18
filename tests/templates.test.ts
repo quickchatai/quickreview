@@ -33,10 +33,11 @@ const order: RoundOrder = {
     { lens: "pass-validate", agent: "pass-validate--terra-med", tier: "terra-med", raisable_to: [] },
   ],
   addable_lenses: ["pass-ui", "pass-contracts"],
-  escalation_worthy: true,
-  escalation_reasons: ["touches auth", "prod-risk"],
   migration_gate: true,
   head_sha: "deadbeef",
+  base_ref: "master",
+  base_sha: "basetip",
+  merge_base: "forkpoint",
   worktree: "/sandbox/wt/pr-412",
   settled_digest: "T1: author fixed at abc123",
   issued_at: "2026-08-13T10:00:00Z",
@@ -70,7 +71,9 @@ describe("roundVars", () => {
     const v = roundVars(order);
     expect(v.n).toBe("412");
     expect(v.lenses).toBe("pass-security, pass-delivery, pass-validate");
-    expect(v.escalation_criteria).toBe("touches auth; prod-risk");
+    expect(v.base_ref).toBe("master");
+    expect(v.base_sha).toBe("basetip");
+    expect(v.merge_base).toBe("forkpoint");
     expect(v.pass_plan).toContain("| lens | subagent to call | tier | may raise to |");
     expect(v.pass_plan).toContain("| pass-security | `pass-security--sol-high` | sol-high | — (pinned) |");
     expect(v.pass_plan).toContain("| pass-delivery | `pass-delivery--sol-med` | sol-med | `pass-delivery--sol-high` |");
@@ -81,10 +84,22 @@ describe("roundVars", () => {
   });
 
   it("uses placeholders for an empty settled digest and no gate", () => {
-    const v = roundVars({ ...order, settled_digest: "  ", migration_gate: false, escalation_worthy: false, escalation_reasons: [] });
+    const v = roundVars({ ...order, settled_digest: "  ", migration_gate: false });
     expect(v.settled_digest).toBe("(nothing settled yet)");
     expect(v.migration_gate_note).toMatch(/no migration gate/);
-    expect(v.escalation_criteria).toMatch(/none flagged/);
+  });
+
+  it("marks unresolved base facts rather than rendering a bare empty string", () => {
+    const v = roundVars({ ...order, base_ref: "", base_sha: "", merge_base: "" });
+    expect(v.base_ref).toMatch(/unknown/);
+    expect(v.base_sha).toMatch(/unknown/);
+    expect(v.merge_base).toMatch(/unknown/);
+  });
+
+  it("keeps the migration gate but drops its escalation framing", () => {
+    const note = roundVars(order).migration_gate_note;
+    expect(note).toMatch(/MIGRATION GATE/);
+    expect(note.toLowerCase()).not.toContain("escalate unless");
   });
 
   it("falls back when every known lens is already planned", () => {
@@ -122,7 +137,7 @@ describe("renderRoundPrompt", () => {
       "PR #{{n}} {{title}} @ {{head_sha}}",
       "worktree: {{worktree}}",
       "lenses: {{lenses}}",
-      "escalation: {{escalation_criteria}}",
+      "base: {{base_ref}} @ {{base_sha}} (merge-base {{merge_base}})",
       "{{migration_gate_note}}",
       "SETTLED: {{settled_digest}}",
     ].join("\n");

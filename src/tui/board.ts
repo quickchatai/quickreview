@@ -59,7 +59,15 @@ export interface BoardView {
 // ---- layout ----------------------------------------------------------------
 
 function rowPlain(pr: SnapshotPr, now: Date): string {
-  const chip = pr.last_verdict === "APPROVE" ? "✓A" : pr.last_verdict === "REQUEST_CHANGES" ? "✗RC" : pr.last_verdict === "ESCALATE" ? "⚑E" : "";
+  // "ESCALATE" still appears in rounds recorded before 2026-08-18.
+  const chip =
+    pr.last_verdict === "APPROVE"
+      ? "✓A"
+      : pr.last_verdict === "REQUEST_CHANGES"
+        ? "✗RC"
+        : pr.last_verdict === "NEEDS_HUMAN" || pr.last_verdict === "ESCALATE"
+          ? "⚑H"
+          : "";
   const rounds = pr.rounds ? `r${pr.rounds}` : "";
   return [glyphFor(pr), `#${pr.number}`, pr.author ?? "", fmtAge(pr.updated_at, now), rounds, chip, pr.title].filter((s) => s !== "").join(" ");
 }
@@ -181,7 +189,6 @@ export function detailLines(detail: WhyPayload | undefined, pr: SnapshotPr | und
   const round = detail.rounds.length > 0 ? detail.rounds[detail.rounds.length - 1]?.round_no : undefined;
   const facts: string[] = [`${stateColor(detail.state ?? pr.state)}${detail.state ?? pr.state}${RESET}`];
   if (round !== undefined) facts.push(`round ${round}`);
-  facts.push(`esc-worthy: ${detail.escalation_worthy ? "yes" : "no"}`);
   if (detail.author) facts.push(`by ${FG.author}${detail.author}${RESET}`);
   lines.push(truncate(facts.join(" · "), width));
   const trig = detail.trigger_ts ? `trig ${fmtAge(detail.trigger_ts, now)} ago` : "trig —";

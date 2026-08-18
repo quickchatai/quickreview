@@ -53,10 +53,10 @@ describe("severity → tag mapping (spec §5)", () => {
 });
 
 describe("eventForVerdict", () => {
-  it("posts ESCALATE as a COMMENT review", () => {
+  it("posts NEEDS_HUMAN as a COMMENT review", () => {
     expect(eventForVerdict("APPROVE")).toBe("APPROVE");
     expect(eventForVerdict("REQUEST_CHANGES")).toBe("REQUEST_CHANGES");
-    expect(eventForVerdict("ESCALATE")).toBe("COMMENT");
+    expect(eventForVerdict("NEEDS_HUMAN")).toBe("COMMENT");
   });
 });
 
@@ -152,15 +152,15 @@ describe("assembleReview", () => {
     expect(review.payload.body).toContain("over the 50-inline-comment cap");
   });
 
-  it("renders the Start here section on ESCALATE with reasons and what to validate", () => {
+  it("renders the Start here section on NEEDS_HUMAN with reasons and what to validate", () => {
     const review = assembleReview({
       pr: 3,
       head_sha: "sha",
-      verdict: "ESCALATE",
+      verdict: "NEEDS_HUMAN",
       lenses: ["pass-baseline", "pass-data-safety"],
       patches,
       ai_approved: true,
-      escalation_reasons: ["infra paths: ansible/site.yml", "migration gate: backfill not proven"],
+      needs_human_reasons: ["migration gate: backfill not proven", "infra paths: ansible/site.yml"],
       findings: [finding({ severity: "P2", confidence: 0.5, title: "unclear ordering" })],
     });
 

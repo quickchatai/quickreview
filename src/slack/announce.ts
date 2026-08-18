@@ -23,7 +23,7 @@
 //     and the `slack_posts` idem_key ledger, claimed BEFORE the API call so a
 //     restart mid-post cannot double-post.
 //
-// Thread-lifecycle posts (pickup / verdict / re-round / escalation pre-flag /
+// Thread-lifecycle posts (pickup / verdict / re-round /
 // superseded) are deliberately NOT cooldown-gated: they answer a real event on
 // one PR and folding them would silently drop a verdict. They honour their
 // cause's `enabled` switch (never hardcoded) and the idem ledger, nothing else.
@@ -34,7 +34,6 @@ import type { SlackPostKind, StateStore } from "../state.js";
 import type { RoundType } from "../types.js";
 import {
   causeMessage,
-  escalationWorthyMessage,
   formatGap,
   heartbeatMessage,
   isoSeconds,
@@ -56,7 +55,6 @@ export const LIFECYCLE_CAUSES = {
   pickup: "pr.pickup",
   verdict: "pr.verdict",
   reRound: "round.restarted",
-  escalationWorthy: "pr.escalation_worthy",
   superseded: "review.superseded",
 } as const;
 
@@ -74,8 +72,6 @@ export interface RoundAnnouncement {
   additions: number;
   deletions: number;
   changed_files: number;
-  escalation_worthy?: boolean;
-  escalation_reasons?: string[];
   /** Why this later round started; defaults from `round_type`. Ignored when
    * the announcement opens the thread (the root carries the round type). */
   reason?: ReRoundReason;
@@ -308,8 +304,7 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
    * the thread ROOT when nothing has spoken for this PR yet, or as the first
    * REPLY when a `pr.not_picked_up` notice already opened the thread (DP-2a is
    * root-on-first-event, NOT pickup-only-if-first) — and the 🔄 line in-thread
-   * on every genuinely later round. Also fires the one-per-PR
-   * escalation-worthy pre-flag when it applies.
+   * on every genuinely later round.
    *
    * The branch is on the PICKUP POST, never on thread existence: a thread the
    * 🐢 notice opened must still receive the pickup template, and a 🔄 line
@@ -352,35 +347,11 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
         text: reRoundMessage({ round_no: a.round_no, reason, head_sha: a.head_sha }),
       });
     }
-    if (a.escalation_worthy && (a.escalation_reasons?.length ?? 0) > 0) {
-      await this.escalationWorthy({ pr: a.pr, reasons: a.escalation_reasons! });
-    }
   }
 
-  /**
-   * The pre-flag, once per PR (the idem key is the whole enforcement).
-   *
-   * SAFE TO CALL FROM ANY PATH (dispatch, or the overseer's
-   * `mark-escalation-worthy` command — §1.4):
-   *   * idempotent per PR — the `escalation_worthy:<pr>` ledger key is claimed
-   *     before the API call, so the second caller posts nothing whichever
-   *     fires first;
-   *   * safe with no thread — `post` promotes it to the PR's thread ROOT
-   *     (root-on-first-event) instead of dropping it in the channel loose;
-   *   * safe with an empty (or all-blank) `reasons` — the reasons line is
-   *     dropped rather than rendered as a stray `__`;
-   *   * never throws: every failure is recorded `ok = 0` and swallowed.
-   */
-  async escalationWorthy(a: { pr: number; reasons: string[] }): Promise<void> {
-    if (!this.lifecycleEnabled(LIFECYCLE_CAUSES.escalationWorthy)) return;
-    const reasons = (a.reasons ?? []).map((r) => r.trim()).filter((r) => r.length > 0);
-    await this.post({
-      idemKey: `escalation_worthy:${a.pr}`,
-      kind: "announce",
-      pr: a.pr,
-      text: escalationWorthyMessage({ pr: a.pr, reasons }),
-    });
-  }
+  // escalationWorthy() — the one-per-PR pre-flag — was removed on 2026-08-18
+  // along with the heuristic that produced it. A PR now announces its verdict
+  // and nothing before it.
 
   /** The verdict, in-thread. RATIFIED: never `reply_broadcast`, whatever
    * `broadcast_verdicts` says — the seam has no broadcast parameter at all. */

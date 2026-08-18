@@ -10,7 +10,9 @@ export type MutationKind =
   | "add_label"
   | "remove_label"
   | "delete_team_review_request"
-  | "request_reviewer"
+  // "request_reviewer" was retired on 2026-08-18 with the escalation
+  // mechanics. Its absence from this union is the enforcement: no call site
+  // can nominate a human reviewer on GitHub, because no such kind exists.
   | "create_review"
   | "create_review_comment_reply"
   // Resolve only a bot-owned inline thread after the adapter verifies both
@@ -24,6 +26,26 @@ export type MutationKind =
   // owner+state guards; dismissing an approval or another identity's review
   // remains structurally impossible.
   | "supersede_own_review";
+
+/**
+ * The same set at RUNTIME. The union above is erased at compile time, so on
+ * its own it stops honest call sites and nothing else — a hand-rolled intent
+ * (or one that crosses a JSON boundary) sailed straight through. Every intent
+ * is now checked against this list, which makes a retired kind such as
+ * `request_reviewer` unreachable in fact and not merely in the type system.
+ */
+export const MUTATION_KINDS: readonly MutationKind[] = [
+  "add_label",
+  "remove_label",
+  "delete_team_review_request",
+  "create_review",
+  "create_review_comment_reply",
+  "resolve_own_review_thread",
+  "create_issue",
+  "create_pull",
+  "push_branch",
+  "supersede_own_review",
+];
 
 export interface MutationIntent {
   kind: MutationKind;
@@ -63,6 +85,12 @@ export class MutationGate {
   }
 
   async execute(intent: MutationIntent): Promise<GateResult> {
+    // Checked before anything else — an unknown kind is never recorded to
+    // state/dryrun/ either, so a retired kind cannot even leave evidence
+    // suggesting the daemon still performs it.
+    if (!(MUTATION_KINDS as readonly string[]).includes(intent.kind)) {
+      throw new Error(`gate: unknown mutation kind "${intent.kind}" — refusing to execute or record it`);
+    }
     if (intent.forceLive && intent.kind !== "supersede_own_review") {
       throw new Error(`forceLive is not allowed for kind ${intent.kind}`);
     }

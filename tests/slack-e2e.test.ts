@@ -176,7 +176,6 @@ beforeEach(async () => {
     author: "alice-gh",
     trigger_ts: null,
     stale_recheck: 0,
-    escalation_worthy: 0,
     migration_gate: 0,
   });
 

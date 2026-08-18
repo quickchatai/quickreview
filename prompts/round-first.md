@@ -2,14 +2,15 @@
 
 > Sandbox file: `prompts/round-first.md`. Rendered by `src/templates.ts` and
 > injected into the PR session (`pr-{{n}}`) by the daemon. Placeholders:
-> `{{n}} {{title}} {{worktree}} {{head_sha}} {{lenses}} {{pass_plan}}
-> {{addable_lenses}} {{escalation_criteria}} {{migration_gate_note}}
-> {{settled_digest}} {{round_type}} {{round_no}}`.
+> `{{n}} {{title}} {{worktree}} {{head_sha}} {{base_ref}} {{base_sha}}
+> {{merge_base}} {{lenses}} {{pass_plan}} {{addable_lenses}}
+> {{migration_gate_note}} {{settled_digest}} {{round_type}} {{round_no}}`.
 
 ---
 
 **ROUND: {{round_type}}** — PR #{{n}} ("{{title}}")
 **Worktree**: `{{worktree}}` @ `{{head_sha}}`
+**Base branch**: `{{base_ref}}` @ `{{base_sha}}` (merge-base `{{merge_base}}`)
 **Lenses this round**: {{lenses}}
 
 Run the full 7-step round from your system prompt. This is the **first** review
@@ -52,6 +53,15 @@ Raw `gh` is for additional READS only; every mutation goes through a script.
 Establish the facts from the worktree at `{{head_sha}}`: changed files, the diff,
 the PR's claimed invariant (title + body). The diff tells you where to look; the
 worktree tells you what is true.
+
+**The base branch is fresh this round.** The daemon fetched `{{base_ref}}` at
+the same moment it fetched this PR's head, so `origin/{{base_ref}}` in the
+worktree is the branch's real tip (`{{base_sha}}`), not a stale clone. Use it
+whenever a check is defined against the base — migration numbering and
+`dependencies`, "does master already have this fix", sibling divergence. The
+PR's own changes are `{{merge_base}}..{{head_sha}}`; commits on
+`origin/{{base_ref}}` after the merge-base are NOT part of this PR and must not
+be reviewed as if they were.
 
 ## 2. Dispatch passes
 
@@ -106,22 +116,26 @@ its kills (they feed the EOD critic).
 
 ## 5. Decide
 
-Ported verdict logic:
+> **This section supersedes steps 5 and 7 of your system prompt.** That text
+> predates the 2026-08-18 change and still describes ESCALATE and escalation
+> criteria. There are none. Use the three verdicts below.
 
 - any `[blocker]` ⇒ **REQUEST_CHANGES**
-- the escalation criteria below, or your own judgment that you cannot decide
-  confidently ⇒ **ESCALATE** (set `ai_approved` per your confidence that the PR
-  is otherwise sound)
+- you cannot decide confidently ⇒ **NEEDS_HUMAN** (set `ai_approved` per your
+  confidence that the PR is otherwise sound)
 - otherwise ⇒ **APPROVE**
 
 Nits and questions never block. Posting map: P0/P1 → `[blocker]`; P2 →
 `[blocker]` if confidence ≥ 0.8 else `[question]`; P3 → `[question]`/`[nit]`.
 
-**ESCALATION CRITERIA**
-{{escalation_criteria}}
+**NEEDS_HUMAN is a park, not a handoff.** The daemon no longer nominates a
+reviewer on GitHub; it stops the PR and shows it to the owner. So the bar is your
+own judgment alone — no criteria list decides it for you, and there is no cost
+to the reader beyond your review sitting there until a person reads it. Post the
+complete review either way: NEEDS_HUMAN means "here is everything I found, and I
+am not the one who should call the merge", never a shortened review.
 
-**When in doubt, escalate.** Escalation is the safe default: it is a full review
-plus a human second opinion, never a shallow handoff or a shortened review.
+**When in doubt, park.** Never approve a PR you have not convinced yourself of.
 
 ## 6. Post
 
@@ -129,8 +143,10 @@ One GitHub review: severity-tagged inline comments anchored **inside changed-lin
 runs** on the exact path and side (first 50 inline, overflow to the body,
 unanchorable → body). The summary body opens with the verdict line and the
 lenses line (including any raises/adds with their one-line reasons), then
-`### Blockers / Nits / Questions`, the "Start here" guide on ESCALATE, and the
-standard footer. REQUEST_CHANGES/COMMENT posts **only** through
+`### Blockers / Nits / Questions`, the "Start here" guide on NEEDS_HUMAN (say
+plainly what you could not decide and what a person should look at first), and
+the standard footer. NEEDS_HUMAN posts as a COMMENT — the merge call is not
+yours. REQUEST_CHANGES/COMMENT posts **only** through
 `scripts/post-review.sh`; **APPROVE always goes through
 `scripts/approve-pr.sh`** (posts and clears both triggers).
 
@@ -144,7 +160,7 @@ are not):
 {
   "pr": {{n}},
   "round_no": {{round_no}},
-  "verdict": "APPROVE" | "REQUEST_CHANGES" | "ESCALATE",
+  "verdict": "APPROVE" | "REQUEST_CHANGES" | "NEEDS_HUMAN",
   "ai_approved": true,
   "head_sha": "{{head_sha}}",
   "summary": "<3-4 plain sentences for the owner>",
@@ -152,12 +168,12 @@ are not):
 }
 ```
 
-`pr` and `round_no` are numbers. `ai_approved` (soundness marker, ESCALATE
+`pr` and `round_no` are numbers. `ai_approved` (soundness marker, NEEDS_HUMAN
 only) and `summary` are optional — but always write `summary`: 3-4 plain
 sentences telling the owner what is going on with this PR right now (what the
 change does, what this round found, where it stands), plus any tier raises or
 added lenses with their reasons. No markdown, no lens jargon; it renders
 verbatim in his TUI detail pane. Never report spend or cost figures — the
 daemon measures usage itself. Update the ledger to the state at
-`{{head_sha}}`. The daemon owns labels and the escalation review request —
-never touch those yourself.
+`{{head_sha}}`. The daemon owns labels and the PR's lifecycle state — never
+touch those yourself, and never request a reviewer on GitHub.

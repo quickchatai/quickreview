@@ -17,6 +17,9 @@ export interface PrRef {
   title: string;
   author: string;
   head_sha: string;
+  /** The branch the PR targets (`base.ref`) — what the review compares against
+   * and the branch the worktree keeps fresh each round. */
+  base_ref: string;
   updated_at: string;
   state: "open" | "closed";
   draft: boolean;
@@ -290,11 +293,9 @@ export class GitHubAdapter {
     return this.searchIssues(q);
   }
 
-  /** Open PRs where the escalation reviewer is awaited (replaces `@me`). */
-  async searchAwaitingEscalationReviewer(): Promise<SearchIssueItem[]> {
-    const q = `repo:${this.cfg.github.repo} is:open is:pr review-requested:${this.cfg.github.escalation_reviewer}`;
-    return this.searchIssues(q);
-  }
+  // searchAwaitingEscalationReviewer() was removed on 2026-08-18 with the rest
+  // of the escalation mechanics: nothing requests a reviewer any more, so
+  // scanning for one told the reconcile pass nothing it owns.
 
   // ---- authoritative per-PR reads ----------------------------------------
 
@@ -305,6 +306,7 @@ export class GitHubAdapter {
       title: pr.title,
       author: pr.user.login,
       head_sha: pr.head.sha,
+      base_ref: pr.base?.ref ?? "",
       updated_at: pr.updated_at,
       state: pr.state,
       draft: pr.draft,
@@ -337,6 +339,7 @@ export class GitHubAdapter {
       title: pr.title,
       author: pr.user.login,
       head_sha: pr.head.sha,
+      base_ref: pr.base?.ref ?? "",
       updated_at: pr.updated_at,
       state: pr.state,
       draft: pr.draft,
@@ -491,27 +494,11 @@ export class GitHubAdapter {
     return result;
   }
 
-  /** Escalation: request the human reviewer, honoring the ported redundancy
-   * skips — author is the reviewer / standing review exists / already
-   * requested. Returns null when skipped. */
-  async requestEscalationReview(n: number): Promise<{ skipped: string | null; result?: GateResult }> {
-    const reviewer = this.cfg.github.escalation_reviewer;
-    const pr = await this.getPr(n);
-    if (pr.author === reviewer) return { skipped: "author-is-reviewer" };
-    const requested = await this.getRequestedReviewers(n);
-    if (requested.users.includes(reviewer)) return { skipped: "already-requested" };
-    const reviews = await this.listReviews(n);
-    if (reviews.some((r) => r.user === reviewer)) return { skipped: "standing-review" };
-    const result = await this.gate.execute({
-      kind: "request_reviewer",
-      method: "POST",
-      path: `/repos/${this.owner}/${this.repo}/pulls/${n}/requested_reviewers`,
-      body: { reviewers: [reviewer] },
-      note: `request ${reviewer} review on #${n} (escalation)`,
-      pr: n,
-    });
-    return { skipped: null, result };
-  }
+  // requestEscalationReview() was removed on 2026-08-18 (the owner: scrap the
+  // escalation mechanics). The daemon no longer nominates a human on GitHub;
+  // a PR it cannot decide is parked on `awaiting_human` daemon-side and
+  // surfaced through the TUI and Slack. The `request_reviewer` gate kind is
+  // consequently unreachable — see gate.ts.
 
   async createReview(n: number, payload: { commit_id: string; event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT"; body: string; comments?: unknown[] }): Promise<GateResult> {
     return this.gate.execute({

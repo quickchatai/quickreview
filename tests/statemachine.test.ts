@@ -20,7 +20,7 @@ const TABLE: Array<[SmEvent, PrLifecycleState[]]> = [
     ["awaiting_author", "awaiting_author", "awaiting_author", "awaiting_author", "awaiting_human", "closed"],
   ],
   [
-    { type: "verdict", verdict: "ESCALATE" },
+    { type: "verdict", verdict: "NEEDS_HUMAN" },
     ["awaiting_human", "awaiting_human", "awaiting_human", "awaiting_human", "awaiting_human", "closed"],
   ],
   [
@@ -30,7 +30,7 @@ const TABLE: Array<[SmEvent, PrLifecycleState[]]> = [
   [{ type: "author_reply" }, ["tracked", "queued", "reviewing", "awaiting_author", "awaiting_human", "closed"]],
   [{ type: "synchronize" }, ["tracked", "queued", "reviewing", "awaiting_author", "awaiting_human", "closed"]],
   [
-    { type: "escalation_detected" },
+    { type: "human_requested" },
     ["awaiting_human", "queued", "reviewing", "awaiting_human", "awaiting_human", "closed"],
   ],
   [{ type: "closed" }, ["closed", "closed", "closed", "closed", "closed", "closed"]],

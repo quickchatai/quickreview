@@ -16,7 +16,6 @@ import { SLACK_TS_RE } from "./slack/reply.js";
 export type CommandName =
   | "rerun-round"
   | "restart-session"
-  | "mark-escalation-worthy"
   | "pause-pr"
   | "resume-pr"
   | "flag-owner-legacy"
@@ -27,7 +26,6 @@ export type CommandName =
 export const COMMAND_WHITELIST: readonly CommandName[] = [
   "rerun-round",
   "restart-session",
-  "mark-escalation-worthy",
   "pause-pr",
   "resume-pr",
   "flag-owner-legacy",
@@ -39,7 +37,6 @@ export const COMMAND_WHITELIST: readonly CommandName[] = [
 export type Command =
   | { command: "rerun-round"; pr: number }
   | { command: "restart-session"; pr: number | "overseer" }
-  | { command: "mark-escalation-worthy"; pr: number; reason: string }
   | { command: "pause-pr"; pr: number; reason: string }
   | { command: "resume-pr"; pr: number }
   | { command: "flag-owner-legacy"; message: string }
@@ -57,7 +54,6 @@ export interface CommandContext {
 export interface CommandDeps {
   rerunRound(pr: number): Promise<FileOutcome | void> | FileOutcome | void;
   restartSession(target: number | "overseer"): Promise<FileOutcome | void> | FileOutcome | void;
-  markEscalationWorthy(pr: number, reason: string): Promise<FileOutcome | void> | FileOutcome | void;
   pausePr(pr: number, reason: string): Promise<FileOutcome | void> | FileOutcome | void;
   resumePr(pr: number): Promise<FileOutcome | void> | FileOutcome | void;
   flagOwnerLegacy(message: string): Promise<FileOutcome | void> | FileOutcome | void;
@@ -96,6 +92,18 @@ export function validateCommand(raw: unknown): ValidationResult {
   const name = obj["command"];
   if (typeof name !== "string") return { ok: false, reason: "missing 'command' field" };
   if (!(COMMAND_WHITELIST as readonly string[]).includes(name)) {
+    // Retired commands get their own reason. `prompts/overseer-system.md` is
+    // frozen seeded content (CLAUDE.md rule 6) and still advertises
+    // mark-escalation-worthy, so the overseer will keep emitting it until
+    // the owner ratifies a reseed — it should learn why, not just "unknown".
+    if (name === "mark-escalation-worthy") {
+      return {
+        ok: false,
+        reason:
+          "command 'mark-escalation-worthy' was RETIRED on 2026-08-18: escalation-worthiness no longer exists. " +
+          "A PR only stops for a person when a round returns NEEDS_HUMAN. Use pause-pr to hold one, or flag-owner-legacy to raise it.",
+      };
+    }
     return { ok: false, reason: `command '${name}' is not whitelisted (allowed: ${COMMAND_WHITELIST.join(", ")})` };
   }
 
@@ -114,13 +122,6 @@ export function validateCommand(raw: unknown): ValidationResult {
         return { ok: false, reason: "'pr' must be a positive integer or the string \"overseer\"" };
       }
       return { ok: true, command: { command: "restart-session", pr: pr as number | "overseer" } };
-    }
-    case "mark-escalation-worthy": {
-      const err = fieldError(obj, ["pr", "reason"]);
-      if (err) return { ok: false, reason: err };
-      if (!isPrNumber(obj["pr"])) return { ok: false, reason: "'pr' must be a positive integer" };
-      if (!isNonEmptyString(obj["reason"])) return { ok: false, reason: "'reason' must be a non-empty string" };
-      return { ok: true, command: { command: "mark-escalation-worthy", pr: obj["pr"], reason: obj["reason"] } };
     }
     case "pause-pr": {
       const err = fieldError(obj, ["pr", "reason"]);
@@ -200,7 +201,6 @@ export function validateCommand(raw: unknown): ValidationResult {
  */
 const TIER_TABLE: Record<CommandName, { anyone: boolean; author: "own" | boolean; owner_legacy: boolean }> = {
   "rerun-round": { anyone: false, author: "own", owner_legacy: true },
-  "mark-escalation-worthy": { anyone: false, author: "own", owner_legacy: true },
   "pause-pr": { anyone: false, author: "own", owner_legacy: true },
   "resume-pr": { anyone: false, author: "own", owner_legacy: true },
   // The safety valve: anyone may always reach a human.
@@ -276,8 +276,6 @@ export async function executeCommand(
       return normalize(await deps.rerunRound(command.pr));
     case "restart-session":
       return normalize(await deps.restartSession(command.pr));
-    case "mark-escalation-worthy":
-      return normalize(await deps.markEscalationWorthy(command.pr, command.reason));
     case "pause-pr":
       return normalize(await deps.pausePr(command.pr, command.reason));
     case "resume-pr":

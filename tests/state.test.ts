@@ -26,7 +26,6 @@ const prRow = (number: number, over: Partial<Parameters<StateStore["upsertPr"]>[
   author: "alice",
   trigger_ts: null,
   stale_recheck: 0,
-  escalation_worthy: 0,
   migration_gate: 0,
   ...over,
 });
@@ -224,7 +223,6 @@ describe("status.json", () => {
         title: "PR 7",
         head_sha: "abc1234567",
         stale_recheck: 1,
-        escalation_worthy: 0,
         trigger_ts: null,
         updated_at: expect.any(String),
         author: "alice",

@@ -91,9 +91,10 @@ describe("WorktreeManager", () => {
     const sha = commit("feature.txt", "v1\n");
     publishPullHead(7, sha);
     const m = mgr();
-    const path = await m.ensureWorktree(7);
-    expect(path).toBe(join(root, "wt", "pr-7"));
-    expect(readFileSync(join(path, "feature.txt"), "utf8")).toBe("v1\n");
+    const facts = await m.ensureWorktree(7);
+    expect(facts.path).toBe(join(root, "wt", "pr-7"));
+    expect(facts.head_sha).toBe(sha);
+    expect(readFileSync(join(facts.path, "feature.txt"), "utf8")).toBe("v1\n");
     expect(await m.headSha(7)).toBe(sha);
   });
 
@@ -101,7 +102,7 @@ describe("WorktreeManager", () => {
     const first = commit("feature.txt", "v1\n");
     publishPullHead(7, first);
     const m = mgr();
-    const path = await m.ensureWorktree(7);
+    const { path } = await m.ensureWorktree(7);
     // local scratch in the worktree must not survive the refresh
     writeFileSync(join(path, "feature.txt"), "dirty\n");
     writeFileSync(join(path, "junk.txt"), "junk\n");
@@ -113,6 +114,76 @@ describe("WorktreeManager", () => {
     expect(readFileSync(join(path, "feature.txt"), "utf8")).toBe("v2\n");
     expect(existsSync(join(path, "junk.txt"))).toBe(false);
     expect(await m.headSha(7)).toBe(second);
+  });
+
+  // ---- base-branch freshness (2026-08-18) ---------------------------------
+  // The bug this closes: the base clone was created once and only ever fetched
+  // refs/pull/<n>/head, so origin/master stayed frozen at clone time while
+  // pass-data-safety was told to verify migration ordering "against master's
+  // current head" — a P1 rule reading a snapshot that could be weeks old.
+
+  it("fetches the PR's base branch alongside the head and reports its tip", async () => {
+    const head = commit("feature.txt", "v1\n");
+    publishPullHead(7, head);
+    const m = mgr();
+    await m.ensureWorktree(7, { baseRef: "master" });
+
+    // master moves AFTER the clone exists — the stale-clone scenario exactly.
+    const newMaster = commit("other.txt", "landed later\n");
+    const facts = await m.refresh(7, { baseRef: "master" });
+
+    expect(facts.base_ref).toBe("master");
+    expect(facts.base_sha).toBe(newMaster);
+    expect(git(m.basePath, "rev-parse", "refs/remotes/origin/master").trim()).toBe(newMaster);
+  });
+
+  it("computes the merge-base so the session can scope the PR's own commits", async () => {
+    const forkPoint = git(origin, "rev-parse", "HEAD").trim();
+    // A PR head that branched at forkPoint, while master moved on separately.
+    git(origin, "checkout", "-q", "-b", "feature");
+    const head = commit("feature.txt", "pr work\n");
+    publishPullHead(7, head);
+    git(origin, "checkout", "-q", "master");
+    commit("unrelated.txt", "master moved\n");
+
+    const facts = await mgr().ensureWorktree(7, { baseRef: "master" });
+    expect(facts.head_sha).toBe(head);
+    expect(facts.merge_base).toBe(forkPoint);
+    expect(facts.merge_base).not.toBe(facts.base_sha);
+  });
+
+  it("degrades to empty base facts when no base ref is supplied", async () => {
+    publishPullHead(7, commit("a.txt", "x\n"));
+    const facts = await mgr().ensureWorktree(7);
+    expect(facts).toMatchObject({ base_ref: "", base_sha: "", merge_base: "" });
+    expect(facts.head_sha).not.toBe("");
+  });
+
+  // ---- sha pinning: the prompt must not outrun the tree -------------------
+
+  it("checkoutAt materialises an already-fetched sha WITHOUT hitting the network", async () => {
+    const first = commit("feature.txt", "v1\n");
+    publishPullHead(7, first);
+    const m = mgr();
+    await m.ensureWorktree(7);
+
+    // A push lands after the round was pinned. checkoutAt must ignore it.
+    const second = commit("feature.txt", "v2\n");
+    publishPullHead(7, second);
+    const path = await m.checkoutAt(7, first);
+
+    expect(readFileSync(join(path, "feature.txt"), "utf8")).toBe("v1\n");
+    expect(await m.headSha(7)).toBe(first);
+  });
+
+  it("hasCommit distinguishes a fetched sha from an unknown one", async () => {
+    const sha = commit("a.txt", "x\n");
+    publishPullHead(7, sha);
+    const m = mgr();
+    await m.ensureWorktree(7);
+    expect(await m.hasCommit(sha)).toBe(true);
+    expect(await m.hasCommit("0".repeat(40))).toBe(false);
+    expect(await m.hasCommit("not-a-sha")).toBe(false);
   });
 
   it("keeps two PR worktrees independent", async () => {

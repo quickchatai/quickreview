@@ -78,7 +78,6 @@ function queuedPr(pr: number, triggerTs: string | null = T0.toISOString()): void
     author: "alice",
     trigger_ts: triggerTs,
     stale_recheck: 0,
-    escalation_worthy: 0,
     migration_gate: 0,
   });
 }
@@ -229,30 +228,13 @@ describe("idempotence", () => {
     expect(slack.posts.filter((p) => p.text.includes("APPROVED"))).toHaveLength(1);
   });
 
-  it("fires the escalation-worthy pre-flag once per PR", async () => {
+  // The 🚩 pre-flag was removed on 2026-08-18 with the heuristic behind it.
+  it("announces no pre-flag: a round opens its thread and says nothing else", async () => {
     const a = announcer();
-    await a.roundStarted({ ...round, escalation_worthy: true, escalation_reasons: ["touches auth"] });
-    await a.escalationWorthy({ pr: 5263, reasons: ["touches auth"] });
-    expect(slack.posts.filter((p) => p.text.startsWith("🚩"))).toHaveLength(1);
-  });
-
-  // The overseer's `mark-escalation-worthy` command calls this DIRECTLY, off
-  // the dispatch path (§1.4) — these are the guarantees that call
-  // relies on.
-  it("escalationWorthy is safe called cold: no thread, empty reasons, twice over", async () => {
-    const a = announcer();
-    await a.escalationWorthy({ pr: 991, reasons: [] });
-    expect(slack.posts).toHaveLength(1);
-    // With no thread it becomes the ROOT rather than a loose channel post…
-    expect(slack.posts[0].thread_ts).toBeUndefined();
-    expect(store.slackThreadForPr(991)!.root_ts).toBe("1700000001.0001");
-    // …and an empty reasons list drops the line instead of rendering `__`.
-    expect(slack.posts[0].text).toBe("🚩 #991 is escalation-worthy — a human will be asked to review whatever the verdict says");
-    // Idempotent per PR, whichever path fires second.
-    await a.escalationWorthy({ pr: 991, reasons: ["  ", "touches auth"] });
-    await a.roundStarted({ ...round, pr: 991, escalation_worthy: true, escalation_reasons: ["touches auth"] });
-    expect(slack.posts.filter((p) => p.text.startsWith("🚩"))).toHaveLength(1);
-    expect(store.slackPost("escalation_worthy:991")).toMatchObject({ ok: 1 });
+    expect((a as unknown as Record<string, unknown>).escalationWorthy).toBeUndefined();
+    await a.roundStarted(round);
+    expect(slack.posts.filter((p) => p.text.startsWith("🚩"))).toHaveLength(0);
+    expect(slack.posts).toHaveLength(1); // the pickup root, nothing more
   });
 });
 

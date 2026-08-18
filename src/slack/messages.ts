@@ -17,7 +17,7 @@
 // CLAUDE.md hard rule 2 shows up here as a WORDING rule: nothing the daemon
 // says may claim a review was dismissed. Superseding is "read the newest one".
 import type { Config } from "../config.js";
-import type { RoundType } from "../types.js";
+import type { RoundType, Verdict } from "../types.js";
 
 /** Slack mrkdwn escaping — `&` first, or the other two double-escape. */
 export function escapeMrkdwn(text: string): string {
@@ -52,10 +52,8 @@ export function userRef(cfg: Config, githubLogin: string): string {
   return escapeMrkdwn(login);
 }
 
-/** The human who takes escalations (config `[github].escalation_reviewer`). */
-export function escalationRef(cfg: Config): string {
-  return userRef(cfg, cfg.github.escalation_reviewer);
-}
+// escalationRef() was removed on 2026-08-18: there is no nominated escalation
+// reviewer any more. Parked PRs are addressed to the owner, via legacyOwnerRef().
 
 /** the owner — by mention when his id is configured, by name otherwise. */
 export function legacyOwnerRef(cfg: Config): string {
@@ -111,12 +109,12 @@ export function pickupMessage(cfg: Config, m: PickupMessageInput): string {
   );
 }
 
-export type VerdictName = "APPROVE" | "REQUEST_CHANGES" | "ESCALATE";
+export type VerdictName = Verdict;
 
 const VERDICT_RENDER: Record<VerdictName, { glyph: string; label: string }> = {
   APPROVE: { glyph: "✅", label: "APPROVED" },
   REQUEST_CHANGES: { glyph: "🔧", label: "CHANGES REQUESTED" },
-  ESCALATE: { glyph: "🚨", label: "ESCALATED" },
+  NEEDS_HUMAN: { glyph: "🚨", label: "NEEDS A HUMAN" },
 };
 
 export interface VerdictMessageInput {
@@ -138,8 +136,8 @@ export function verdictMessage(cfg: Config, m: VerdictMessageInput): string {
   // is noise, and an invented one would be a lie about what the round found.
   if (m.summary !== null && m.summary.trim() !== "") lines.push(escapeMrkdwn(m.summary));
   lines.push(`<${m.review_url ?? prUrl(cfg, m.pr)}|review on GitHub>`);
-  if (m.verdict === "ESCALATE") {
-    lines.push(`human review requested from ${escalationRef(cfg)} — the merge decision is theirs`);
+  if (m.verdict === "NEEDS_HUMAN") {
+    lines.push(`parked for a person — ${legacyOwnerRef(cfg)}, the merge decision is yours`);
   }
   return lines.join("\n");
 }
@@ -169,16 +167,9 @@ export function reRoundMessage(m: { round_no: number; reason: ReRoundReason; hea
   return `🔄 round ${m.round_no} started — ${reRoundReasonText(m.reason)} (\`${shortSha(m.head_sha)}\`)`;
 }
 
-/** Reasons budget for the pre-flag line (annex §2). */
-export const ESCALATION_REASONS_MAX = 160;
-
-export function escalationWorthyMessage(m: { pr: number; reasons: string[] }): string {
-  const reasons = truncate(m.reasons.join(" · "), ESCALATION_REASONS_MAX);
-  const flag = `🚩 #${m.pr} is escalation-worthy — a human will be asked to review whatever the verdict says`;
-  // No reasons ⇒ no reasons line. An empty italic run renders as a literal
-  // `__`, which is noise, and inventing a reason would be worse.
-  return reasons.trim() === "" ? flag : `${flag}\n_${escapeMrkdwn(reasons)}_`;
-}
+// escalationWorthyMessage() and its pre-flag line were removed on 2026-08-18:
+// the daemon no longer scores PRs for escalation-worthiness, so there is
+// nothing to pre-announce.
 
 /**
  * A newer round replaced an older one. WORDING IS LOAD-BEARING: no approval and
@@ -215,7 +206,7 @@ export function causeMessage(cfg: Config, m: CauseMessageInput): string {
     case "round.overdue":
       return (
         `⏱ #${m.pr} round ${m.round_no} blew its ${m.deadline_min}-min deadline — ` +
-        `parked on awaiting_human, ${escalationRef(cfg)} requested. No verdict was posted.`
+        `parked on awaiting_human for ${legacyOwnerRef(cfg)}. No verdict was posted.`
       );
     case "round.malformed_verdict":
       return `⚠️ #${m.pr} round ${m.round_no} ended without a usable verdict — parked on awaiting_human, no approval was implied.`;

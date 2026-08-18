@@ -3,13 +3,19 @@
 > Sandbox file: `prompts/round-staleness.md`. Rendered by `src/templates.ts` and
 > injected into the PR session (`pr-{{n}}`) by the daemon. Placeholders:
 > `{{n}} {{title}} {{worktree}} {{head_sha}} {{lenses}} {{pass_plan}}
-> {{addable_lenses}} {{escalation_criteria}} {{migration_gate_note}}
+> {{addable_lenses}} {{base_ref}} {{base_sha}} {{merge_base}} {{migration_gate_note}}
 > {{settled_digest}} {{round_type}} {{round_no}}`.
 
 ---
 
 **ROUND: {{round_type}}** — PR #{{n}} ("{{title}}")
 **Worktree**: `{{worktree}}` @ `{{head_sha}}`
+**Base branch**: `{{base_ref}}` @ `{{base_sha}}` (merge-base `{{merge_base}}`) —
+fetched fresh this round, so `origin/{{base_ref}}` is the branch's real tip. Use
+it for every check defined against the base (migration numbering and
+`dependencies`, "is this already fixed on the base", sibling divergence). This
+PR is `{{merge_base}}..{{head_sha}}`; later commits on the base are not yours to
+review.
 **Lenses this round**: {{lenses}}
 
 This round was triggered because **the head moved after your approval**. Your
@@ -109,16 +115,20 @@ finding.
 
 - any `[blocker]` in the delta ⇒ **REQUEST_CHANGES** (your prior approval is
   superseded by the new review — **never dismissed**; dismissal does not exist)
-- escalation criteria below, or doubt about the delta's blast radius ⇒
-  **ESCALATE**
+- doubt about the delta's blast radius, or any other reason you cannot decide
+  confidently ⇒ **NEEDS_HUMAN**
 - the delta is clean and the approval still holds ⇒ **APPROVE** at the new head
 
 Nits and questions never block.
 
-**ESCALATION CRITERIA**
-{{escalation_criteria}}
+> **This section supersedes steps 5 and 7 of your system prompt**, which
+> predate the 2026-08-18 change and still describe ESCALATE and escalation
+> criteria. There are none.
 
-**When in doubt, escalate.**
+**NEEDS_HUMAN is a park, not a handoff.** The daemon no longer nominates a
+reviewer on GitHub; it stops the PR and shows it to the owner.
+
+**When in doubt, park.** Never approve a PR you have not convinced yourself of.
 
 ## 6. Post
 
@@ -126,7 +136,9 @@ One review over the delta: anchored inline comments (50 inline, overflow to
 body), summary opening with the verdict line and lenses line (including any
 raises/adds with their one-line reasons), an explicit sentence naming this a
 **staleness re-check of an earlier approval** and the range checked,
-`### Blockers / Nits / Questions`, "Start here" on ESCALATE, standard footer.
+`### Blockers / Nits / Questions`, "Start here" on NEEDS_HUMAN (what you could
+not decide, and where a person should look first), standard footer. NEEDS_HUMAN
+posts as a COMMENT — the merge call is not yours.
 REQUEST_CHANGES/COMMENT posts **only** through `scripts/post-review.sh`; a
 re-APPROVE goes through `scripts/approve-pr.sh`.
 
@@ -140,7 +152,7 @@ are not):
 {
   "pr": {{n}},
   "round_no": {{round_no}},
-  "verdict": "APPROVE" | "REQUEST_CHANGES" | "ESCALATE",
+  "verdict": "APPROVE" | "REQUEST_CHANGES" | "NEEDS_HUMAN",
   "ai_approved": true,
   "head_sha": "{{head_sha}}",
   "summary": "<3-4 plain sentences for the owner>",
@@ -148,11 +160,12 @@ are not):
 }
 ```
 
-`pr` and `round_no` are numbers. `ai_approved` (soundness marker, ESCALATE
+`pr` and `round_no` are numbers. `ai_approved` (soundness marker, NEEDS_HUMAN
 only) and `summary` are optional — but always write `summary`: 3-4 plain
 sentences telling the owner what is going on with this PR right now (what the
 change does, what this round found, where it stands), plus any tier raises or
 added lenses with their reasons. No markdown, no lens jargon; it renders
 verbatim in his TUI detail pane. Never report spend or cost figures — the
 daemon measures usage itself. Update the ledger header to `{{head_sha}}`.
-Labels and the escalation review request belong to the daemon.
+Labels and the PR's lifecycle state belong to the daemon; never request a
+reviewer on GitHub.

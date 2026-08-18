@@ -22,7 +22,15 @@ class FakeAdapter implements DispatchAdapter {
   files = new Map<number, PrFileEntry[]>();
   failLabelOn = new Set<number>();
   goneLabelOn = new Set<number>();
+  /** PR → base branch; absent means "master". Set to throw via failGetPrOn. */
+  baseRefs = new Map<number, string>();
+  failGetPrOn = new Set<number>();
 
+  async getPr(n: number): Promise<{ base_ref: string }> {
+    this.calls.push({ fn: "getPr", pr: n });
+    if (this.failGetPrOn.has(n)) throw new Error("500 boom");
+    return { base_ref: this.baseRefs.get(n) ?? "master" };
+  }
   async listPrFiles(n: number): Promise<PrFileEntry[]> {
     this.calls.push({ fn: "listPrFiles", pr: n });
     return this.files.get(n) ?? [];
@@ -80,7 +88,6 @@ function queue(pr: number, triggerTs: string | null, over: Partial<{ title: stri
     author: "alice",
     trigger_ts: triggerTs,
     stale_recheck: 0,
-    escalation_worthy: 0,
     migration_gate: 0,
   });
 }
@@ -262,6 +269,7 @@ describe("dispatchOnce", () => {
       { fn: "removeLabel", pr: 21, arg: baseCfg.github.trigger_label },
       { fn: "deleteTeamReviewRequest", pr: 21 },
       { fn: "addLabel", pr: 21, arg: baseCfg.github.in_progress_label },
+      { fn: "getPr", pr: 21 }, // base branch, for the worktree fetch
       { fn: "listPrFiles", pr: 21 },
     ]);
   });
@@ -302,7 +310,7 @@ describe("dispatchOnce", () => {
     expect(adapter.calls.filter((c) => c.pr === 24)).toHaveLength(0);
   });
 
-  it("builds the round order from the files API: lenses, escalation, migration gate", async () => {
+  it("builds the round order from the files API: lenses and the migration gate", async () => {
     queue(31, "2026-08-13T09:00:00Z", { title: "Terraform the ingest cluster", head: "abc123" });
     adapter.files.set(31, [
       file("infra/main.tf", 120, 5),
@@ -325,25 +333,24 @@ describe("dispatchOnce", () => {
     expect(order!.lenses).toContain("pass-data-safety");
     expect(order!.lenses).toContain("pass-contracts");
     expect(order!.lenses[order!.lenses.length - 1]).toBe("pass-validate");
-    expect(order!.escalation_worthy).toBe(true);
-    expect(order!.escalation_reasons.join(" ")).toContain("infra/main.tf");
     expect(order!.migration_gate).toBe(true);
+    // The escalation heuristic is gone: an infra-shaped diff carries no flag.
+    expect((order as unknown as Record<string, unknown>).escalation_worthy).toBeUndefined();
+    expect((order as unknown as Record<string, unknown>).escalation_reasons).toBeUndefined();
     // pass_plan mirrors lenses in order; addable = the known passes not planned.
     expect(order!.pass_plan.map((p) => p.lens)).toEqual(order!.lenses);
     expect(order!.addable_lenses).toEqual(ALL_PASSES.filter((l) => !order!.lenses.includes(l)));
 
     const row = store.getPr(31)!;
-    expect(row.escalation_worthy).toBe(1);
     expect(row.migration_gate).toBe(1);
     expect(orders[0]!.prompt).toContain('"pr": 31'); // default renderer = JSON
   });
 
-  it("leaves a small tidy PR unescalated and ungated", async () => {
+  it("leaves a small tidy PR ungated", async () => {
     queue(32, "2026-08-13T09:00:00Z");
     adapter.files.set(32, [file("README.md", 3, 1)]);
     const { hooks } = recordingHooks();
     const [order] = await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
-    expect(order!.escalation_worthy).toBe(false);
     expect(order!.migration_gate).toBe(false);
     expect(order!.lenses).toEqual(["pass-baseline", "pass-validate"]);
     // Small quiet diff: baseline starts terra-med and can be raised up the ladder.
@@ -353,6 +360,84 @@ describe("dispatchOnce", () => {
       tier: "terra-med",
       raisable_to: ["pass-baseline--sol-med", "pass-baseline--sol-high"],
     });
+  });
+
+  // ---- worktree facts in the order (2026-08-18) ---------------------------
+
+  it("carries the prepared tree's base facts into the order", async () => {
+    queue(60, "2026-08-13T09:00:00Z", { head: "snapshot-sha" });
+    adapter.baseRefs.set(60, "release/2026-08");
+    const asked: Array<[number, string]> = [];
+    const { hooks } = recordingHooks();
+    const [order] = await dispatchOnce({
+      cfg: baseCfg,
+      store,
+      adapter,
+      hooks,
+      prepareWorktree: async (pr, baseRef) => {
+        asked.push([pr, baseRef]);
+        return { head_sha: "snapshot-sha", base_ref: baseRef, base_sha: "base-tip", merge_base: "fork-point" };
+      },
+    });
+    // The PR's OWN base branch is what gets fetched, not a hardcoded master.
+    expect(asked).toEqual([[60, "release/2026-08"]]);
+    expect(order!.base_ref).toBe("release/2026-08");
+    expect(order!.base_sha).toBe("base-tip");
+    expect(order!.merge_base).toBe("fork-point");
+  });
+
+  it("prefers the tree's real sha over the PR row snapshot and logs the drift", async () => {
+    queue(61, "2026-08-13T09:00:00Z", { head: "stale-snapshot" });
+    const { hooks } = recordingHooks();
+    const [order] = await dispatchOnce({
+      cfg: baseCfg,
+      store,
+      adapter,
+      hooks,
+      // A push landed between the reconcile snapshot and the fetch.
+      prepareWorktree: async () => ({ head_sha: "pushed-sha", base_ref: "master", base_sha: "b", merge_base: "m" }),
+    });
+    expect(order!.head_sha).toBe("pushed-sha");
+    const drift = store.db.prepare("SELECT payload FROM events WHERE kind = 'head_drift'").all() as Array<{ payload: string }>;
+    expect(drift).toHaveLength(1);
+    expect(JSON.parse(drift[0]!.payload)).toMatchObject({ expected: "stale-snapshot", actual: "pushed-sha" });
+  });
+
+  it("logs no drift when the tree matches the snapshot", async () => {
+    queue(62, "2026-08-13T09:00:00Z", { head: "same-sha" });
+    const { hooks } = recordingHooks();
+    await dispatchOnce({
+      cfg: baseCfg,
+      store,
+      adapter,
+      hooks,
+      prepareWorktree: async () => ({ head_sha: "same-sha", base_ref: "master", base_sha: "b", merge_base: "m" }),
+    });
+    expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'head_drift'").get()).toMatchObject({ c: 0 });
+  });
+
+  it("still dispatches when the base-ref lookup fails — degraded, not blocked", async () => {
+    queue(63, "2026-08-13T09:00:00Z", { head: "abc" });
+    adapter.failGetPrOn.add(63);
+    const { hooks } = recordingHooks();
+    const [order] = await dispatchOnce({
+      cfg: baseCfg,
+      store,
+      adapter,
+      hooks,
+      prepareWorktree: async (_pr, baseRef) => ({ head_sha: "abc", base_ref: baseRef, base_sha: "", merge_base: "" }),
+    });
+    expect(order).toBeDefined();
+    expect(order!.base_ref).toBe("");
+  });
+
+  it("falls back to the row sha with empty base facts when there is no worktree seam", async () => {
+    queue(64, "2026-08-13T09:00:00Z", { head: "row-sha" });
+    const { hooks } = recordingHooks();
+    const [order] = await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+    expect(order!.head_sha).toBe("row-sha");
+    expect(order!.base_ref).toBe("");
+    expect(order!.merge_base).toBe("");
   });
 
   it("uses the injected prompt renderer and settled digest", async () => {
@@ -394,7 +479,6 @@ describe("dispatchOnce", () => {
       author: "alice",
       trigger_ts: "2026-08-13T09:00:00Z",
       stale_recheck: 0,
-      escalation_worthy: 0,
       migration_gate: 0,
     });
     const { hooks } = recordingHooks();

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MutationGate, type MutationIntent } from "../src/gate.js";
+import { MUTATION_KINDS, MutationGate, type MutationIntent } from "../src/gate.js";
 
 let dir: string;
 
@@ -92,12 +92,7 @@ describe("MutationGate live", () => {
 
 describe("the closed mutation vocabulary", () => {
   it("enumerates only the intended kinds — no review-retraction kind exists", () => {
-    const src = readFileSync(new URL("../src/gate.ts", import.meta.url), "utf8");
-    const kinds = src
-      .slice(src.indexOf("export type MutationKind"), src.indexOf("export interface MutationIntent"))
-      .match(/"[a-z_]+"/g)!
-      .map((s) => s.replace(/"/g, ""));
-    expect(kinds.sort()).toEqual(
+    expect([...MUTATION_KINDS].sort()).toEqual(
       [
         "add_label",
         "create_issue",
@@ -107,7 +102,6 @@ describe("the closed mutation vocabulary", () => {
         "delete_team_review_request",
         "push_branch",
         "remove_label",
-        "request_reviewer",
         // Bot-owned inline threads may be resolved after a checked author
         // response; this does not alter or dismiss a review verdict.
         "resolve_own_review_thread",
@@ -117,6 +111,29 @@ describe("the closed mutation vocabulary", () => {
         "supersede_own_review",
       ].sort(),
     );
+    // request_reviewer was retired with the escalation mechanics (2026-08-18).
+    expect(MUTATION_KINDS).not.toContain("request_reviewer");
+  });
+
+  it("the runtime list matches the compile-time union, so neither can drift", () => {
+    const src = readFileSync(new URL("../src/gate.ts", import.meta.url), "utf8");
+    const union = src
+      .slice(src.indexOf("export type MutationKind"), src.indexOf("/**\n * The same set at RUNTIME"))
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//")) // comments name retired kinds
+      .join("\n");
+    const declared = [...new Set((union.match(/"[a-z_]+"/g) ?? []).map((s) => s.replace(/"/g, "")))];
+    expect(declared.sort()).toEqual([...MUTATION_KINDS].sort());
+  });
+
+  it("rejects an unknown kind at runtime, recording nothing", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-gate-kind-"));
+    const gate = new MutationGate({ dryRun: true, dryrunDir: dir, executor: async () => ({}) });
+    await expect(
+      gate.execute({ kind: "request_reviewer" as never, method: "POST", path: "/x", note: "smuggled", pr: 1 }),
+    ).rejects.toThrow(/unknown mutation kind/);
+    expect(readdirSync(dir)).toHaveLength(0);
+    rmSync(dir, { recursive: true, force: true });
   });
 });
 

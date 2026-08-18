@@ -8,7 +8,6 @@ import { parseConfig, type Config } from "../src/config.js";
 import * as messages from "../src/slack/messages.js";
 import {
   causeMessage,
-  escalationWorthyMessage,
   escapeMrkdwn,
   formatGap,
   pickupMessage,
@@ -149,21 +148,23 @@ describe("verdict (in-thread)", () => {
     expect(text).toContain("uses &lt;Foo /&gt; &amp; &lt;Bar /&gt;");
   });
 
-  it("appends the human-review line on ESCALATED, as a fourth line", () => {
+  it("appends the parked line on NEEDS A HUMAN, as a fourth line", () => {
     const text = verdictMessage(cfg, {
       pr: 5263,
       author: "alice",
       round_no: 4,
-      verdict: "ESCALATE",
+      verdict: "NEEDS_HUMAN",
       summary: "Auth path changed.",
       duration_min: 21,
     });
     expect(text).toBe(
-      "<@U_ALICE> 🚨 *ESCALATED* — round 4, 21 min\n" +
+      "<@U_ALICE> 🚨 *NEEDS A HUMAN* — round 4, 21 min\n" +
         "Auth path changed.\n" +
         "<https://github.com/example-org/example-app/pull/5263|review on GitHub>\n" +
-        "human review requested from <@U_MAT> — the merge decision is theirs",
+        "parked for a person — <@U_MAT>, the merge decision is yours",
     );
+    // The line must not claim a GitHub review request; none is made.
+    expect(text.toLowerCase()).not.toContain("requested");
   });
 });
 
@@ -183,25 +184,11 @@ describe("re-round, pre-flag, superseded", () => {
     );
   });
 
-  it("renders the escalation-worthy pre-flag with reasons joined by ' · '", () => {
-    expect(escalationWorthyMessage({ pr: 5263, reasons: ["touches auth", "migration present"] })).toBe(
-      "🚩 #5263 is escalation-worthy — a human will be asked to review whatever the verdict says\n" +
-        "_touches auth · migration present_",
-    );
-  });
-
-  it("drops the reasons line entirely when there are none (never a bare '__')", () => {
-    const flag = "🚩 #7 is escalation-worthy — a human will be asked to review whatever the verdict says";
-    expect(escalationWorthyMessage({ pr: 7, reasons: [] })).toBe(flag);
-    expect(escalationWorthyMessage({ pr: 7, reasons: ["  "] })).toBe(flag);
-    expect(escalationWorthyMessage({ pr: 7, reasons: [] })).not.toContain("__");
-  });
-
-  it("truncates the reasons at 160 chars and escapes them", () => {
-    const text = escalationWorthyMessage({ pr: 1, reasons: [`${"x".repeat(200)} <b>`] });
-    const italic = text.split("\n")[1];
-    expect(italic.length).toBe(162); // 160 payload + the two underscores
-    expect(escalationWorthyMessage({ pr: 1, reasons: ["<b> & c"] })).toContain("_&lt;b&gt; &amp; c_");
+  it("no longer exports the escalation-worthy pre-flag (scrapped 2026-08-18)", async () => {
+    const mod = (await import("../src/slack/messages.js")) as Record<string, unknown>;
+    expect(mod.escalationWorthyMessage).toBeUndefined();
+    expect(mod.escalationRef).toBeUndefined();
+    expect(mod.ESCALATION_REASONS_MAX).toBeUndefined();
   });
 
   it("renders the superseded line without ever claiming a dismissal", () => {
@@ -214,7 +201,7 @@ describe("re-round, pre-flag, superseded", () => {
 describe("unprompted causes", () => {
   it("renders round.overdue", () => {
     expect(causeMessage(cfg, { cause: "round.overdue", pr: 5263, round_no: 2, deadline_min: 45 })).toBe(
-      "⏱ #5263 round 2 blew its 45-min deadline — parked on awaiting_human, <@U_MAT> requested. No verdict was posted.",
+      "⏱ #5263 round 2 blew its 45-min deadline — parked on awaiting_human for <@U_MAT>. No verdict was posted.",
     );
   });
 
@@ -271,11 +258,10 @@ describe("hard rule 2 — nothing the daemon says implies a dismissal", () => {
         deletions: 1,
         lenses: ["pass-baseline"],
       }),
-      ...(["APPROVE", "REQUEST_CHANGES", "ESCALATE"] as const).map((v) =>
+      ...(["APPROVE", "REQUEST_CHANGES", "NEEDS_HUMAN"] as const).map((v) =>
         verdictMessage(cfg, { pr: 1, author: "alice", round_no: 1, verdict: v, summary: "s", duration_min: 1 }),
       ),
       reRoundMessage({ round_no: 2, reason: { kind: "pushed" }, head_sha: "abc1234" }),
-      escalationWorthyMessage({ pr: 1, reasons: ["r"] }),
       supersededMessage({ old_round_no: 1, new_round_no: 2, head_sha: "abc1234" }),
       causeMessage(cfg, { cause: "round.overdue", pr: 1, round_no: 1, deadline_min: 45 }),
       causeMessage(cfg, { cause: "round.malformed_verdict", pr: 1, round_no: 1 }),

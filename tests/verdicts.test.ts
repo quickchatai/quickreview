@@ -13,7 +13,6 @@ const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "config.toml
 /** Recording adapter — stands in for GitHubAdapter + MutationGate. */
 class FakeAdapter implements VerdictAdapter {
   calls: string[] = [];
-  escalationSkip: string | null = null;
   async addLabel(n: number, label: string): Promise<GateResult> {
     this.calls.push(`addLabel:${n}:${label}`);
     return { executed: false, dryRunFile: "d" };
@@ -21,10 +20,6 @@ class FakeAdapter implements VerdictAdapter {
   async removeLabel(n: number, label: string): Promise<GateResult> {
     this.calls.push(`removeLabel:${n}:${label}`);
     return { executed: false, dryRunFile: "d" };
-  }
-  async requestEscalationReview(n: number): Promise<{ skipped: string | null }> {
-    this.calls.push(`requestEscalationReview:${n}`);
-    return { skipped: this.escalationSkip };
   }
 }
 
@@ -71,7 +66,6 @@ function reviewingRound(pr: number): number {
     author: "alice",
     trigger_ts: null,
     stale_recheck: 0,
-    escalation_worthy: 0,
     migration_gate: 0,
   });
   return store.startRound(pr, "first", ["pass-baseline", "pass-validate"], cfg.daemon.round_deadline_min);
@@ -158,30 +152,40 @@ describe("valid verdicts", () => {
     expect(readdirSync(join(dir, "processed")).length).toBe(1);
   });
 
-  it("APPROVE lands the PR back on tracked and never requests the human", async () => {
+  it("APPROVE lands the PR back on tracked", async () => {
     reviewingRound(101);
     await watcher().handleFile(write(101, 1, verdictFile({ pr: 101, verdict: "APPROVE" })));
     expect(store.getPr(101)!.state).toBe("tracked");
-    expect(adapter.calls.some((c) => c.startsWith("requestEscalationReview"))).toBe(false);
   });
 
-  it("ESCALATE requests the human reviewer and records the redundancy skip", async () => {
+  it("NEEDS_HUMAN parks the PR locally and touches no reviewer on GitHub", async () => {
     reviewingRound(102);
-    adapter.escalationSkip = "already-requested";
-    await watcher().handleFile(write(102, 1, verdictFile({ pr: 102, verdict: "ESCALATE", ai_approved: true })));
-    expect(adapter.calls).toContain("requestEscalationReview:102");
+    await watcher().handleFile(write(102, 1, verdictFile({ pr: 102, verdict: "NEEDS_HUMAN", ai_approved: true })));
     expect(store.getPr(102)!.state).toBe("awaiting_human");
+    // The whole GitHub surface of a park: labels, nothing else.
+    expect(adapter.calls.every((c) => c.startsWith("addLabel") || c.startsWith("removeLabel"))).toBe(true);
     const logged = JSON.parse(
       (store.db.prepare("SELECT payload FROM events WHERE kind = 'verdict_applied'").get() as { payload: string }).payload,
     );
-    expect(logged).toMatchObject({ verdict: "ESCALATE", ai_approved: true, escalation_skipped: "already-requested" });
+    expect(logged).toMatchObject({ verdict: "NEEDS_HUMAN", ai_approved: true });
+    expect(logged).not.toHaveProperty("escalation_skipped");
+  });
+
+  it("accepts a legacy ESCALATE verdict as NEEDS_HUMAN (the frozen seed still emits it)", async () => {
+    reviewingRound(105);
+    await watcher().handleFile(write(105, 1, verdictFile({ pr: 105, verdict: "ESCALATE" })));
+    expect(store.getPr(105)!.state).toBe("awaiting_human");
+    const logged = JSON.parse(
+      (store.db.prepare("SELECT payload FROM events WHERE kind = 'verdict_applied'").get() as { payload: string }).payload,
+    );
+    expect(logged.verdict).toBe("NEEDS_HUMAN"); // normalised on the way in
   });
 
   it("startup sweep consumes every pending file", async () => {
     reviewingRound(103);
     reviewingRound(104);
     write(103, 1, verdictFile({ pr: 103, verdict: "APPROVE" }));
-    write(104, 1, verdictFile({ pr: 104, verdict: "ESCALATE" }));
+    write(104, 1, verdictFile({ pr: 104, verdict: "NEEDS_HUMAN" }));
     writeFileSync(join(dir, "notes.txt"), "ignore me");
     const done = await watcher().sweep();
     expect(done.sort()).toEqual(["pr-103-round-1.json", "pr-104-round-1.json"]);
@@ -300,7 +304,7 @@ describe("anomaly paths", () => {
 
     expect(overseer).toHaveLength(1);
     expect(overseer[0]).toContain("ANOMALY (malformed)");
-    expect(adapter.calls).toEqual([`removeLabel:200:${cfg.github.in_progress_label}`, "requestEscalationReview:200"]);
+    expect(adapter.calls).toEqual([`removeLabel:200:${cfg.github.in_progress_label}`]);
     expect(adapter.calls.some((c) => c.includes(cfg.github.reviewed_label))).toBe(false);
     expect(store.getPr(200)!.state).toBe("awaiting_human");
     const round = store.db.prepare("SELECT status, verdict FROM rounds WHERE id = ?").get(roundId) as any;
@@ -317,7 +321,7 @@ describe("anomaly paths", () => {
     expect(store.getPr(201)!.state).toBe("awaiting_human");
   });
 
-  it("an overdue round is escalated, never approved", async () => {
+  it("an overdue round is parked, never approved", async () => {
     const past = new Date("2026-08-13T10:00:00Z");
     const later = new Date("2026-08-13T12:00:00Z");
     let clock = past;
@@ -330,7 +334,6 @@ describe("anomaly paths", () => {
       author: "alice",
       trigger_ts: null,
       stale_recheck: 0,
-      escalation_worthy: 0,
       migration_gate: 0,
     });
     const roundId = overdueStore.startRound(300, "first", ["pass-baseline"], cfg.daemon.round_deadline_min);
@@ -342,7 +345,8 @@ describe("anomaly paths", () => {
     expect(overseer[0]).toContain("ANOMALY (overdue)");
     expect(overdueStore.getPr(300)!.state).toBe("awaiting_human");
     expect((overdueStore.db.prepare("SELECT status FROM rounds WHERE id = ?").get(roundId) as any).status).toBe("overdue");
-    expect(adapter.calls).toContain("requestEscalationReview:300");
+    // No reviewer nomination anywhere on the anomaly path either.
+    expect(adapter.calls.every((c) => c.startsWith("addLabel") || c.startsWith("removeLabel"))).toBe(true);
     expect(adapter.calls.some((c) => c.includes(cfg.github.reviewed_label))).toBe(false);
     // Idempotent: the round is no longer running, so a second sweep is a no-op.
     expect(await w.checkDeadlines()).toEqual([]);
@@ -369,7 +373,6 @@ describe("anomaly paths", () => {
       author: "alice",
       trigger_ts: null,
       stale_recheck: 0,
-      escalation_worthy: 0,
       migration_gate: 0,
     });
     const oldId = s.startRound(4844, "first", ["pass-baseline"], cfg.daemon.round_deadline_min);

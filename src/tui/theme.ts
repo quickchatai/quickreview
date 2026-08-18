@@ -29,14 +29,22 @@ export function stateColor(state: string): string {
 export function verdictColor(verdict: string | null | undefined): string {
   if (verdict === "APPROVE") return FG.approve;
   if (verdict === "REQUEST_CHANGES") return FG.request_changes;
-  if (verdict === "ESCALATE") return FG.awaiting_human;
+  // "ESCALATE" persists in rounds recorded before 2026-08-18.
+  if (verdict === "NEEDS_HUMAN" || verdict === "ESCALATE") return FG.awaiting_human;
   return FG.dim;
 }
 
-/** Compact verdict chip: APPROVE → ✓A, REQUEST_CHANGES → ✗RC, ESCALATE → ⚑E. */
+/** Compact verdict chip: APPROVE → ✓A, REQUEST_CHANGES → ✗RC, NEEDS_HUMAN → ⚑H. */
 export function verdictChip(verdict: string | null | undefined): string {
   if (!verdict) return "";
-  const label = verdict === "APPROVE" ? "✓A" : verdict === "REQUEST_CHANGES" ? "✗RC" : verdict === "ESCALATE" ? "⚑E" : verdict;
+  const label =
+    verdict === "APPROVE"
+      ? "✓A"
+      : verdict === "REQUEST_CHANGES"
+        ? "✗RC"
+        : verdict === "NEEDS_HUMAN" || verdict === "ESCALATE"
+          ? "⚑H"
+          : verdict;
   return `${verdictColor(verdict)}${label}${RESET}`;
 }
 

@@ -295,7 +295,7 @@ describe("mentionsBot", () => {
 describe("applyInterpretation", () => {
   it("refreshes a pushed head without queuing or pumping a review", async () => {
     const store = new StateStore(":memory:");
-    store.upsertPr({ number: 4242, state: "awaiting_author", head_sha: "old", title: "T", author: "alice", trigger_ts: null, stale_recheck: 0, escalation_worthy: 0, migration_gate: 0 });
+    store.upsertPr({ number: 4242, state: "awaiting_author", head_sha: "old", title: "T", author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
     const touched = vi.fn();
     await applyInterpretation({ cfg, store, onPrTouched: touched }, interpretEvent("pull_request", "synchronize", synchronizePayload(), deps()));
     expect(store.getPr(4242)).toMatchObject({ state: "awaiting_author", head_sha: "2222222222" });

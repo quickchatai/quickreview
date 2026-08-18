@@ -7,7 +7,7 @@
 //   (a) blocker parity      old-flow blockers vs sandbox blockers, matched by
 //                           path + theme; every unmatched row flagged
 //   (b) invariant scan      zero dry-run records of any kind outside the known
-//                           allowlist; escalation redundancy honored
+//                           allowlist; no retired mutation kinds
 //   (c) anchor validity     every sandbox inline anchor lands on a changed line
 //   (d) settled threads     no finding re-raises a thread the archived ledger
 //                           lists as SETTLED
@@ -81,7 +81,6 @@ export const ALLOWED_MUTATION_KINDS = [
   "add_label",
   "remove_label",
   "delete_team_review_request",
-  "request_reviewer",
   "create_review",
   "create_review_comment_reply",
   "create_issue",
@@ -261,12 +260,15 @@ export function invariantScan(records: DryrunRecord[], pr: number): InvariantVio
       violations.push({ rule: "no unsolicited scope", detail: `record ${r.file ?? "?"} (${r.kind}) targets #${r.pr}, not the PR under comparison (#${pr})` });
     }
   }
-  const escalations = records.filter((r) => r.kind === "request_reviewer");
-  if (escalations.length > 1) {
-    violations.push({ rule: "escalation redundancy", detail: `${escalations.length} request_reviewer records for #${pr} — one escalation per round at most` });
-  }
-  if (escalations.length === 1 && !records.some((r) => r.kind === "create_review")) {
-    violations.push({ rule: "escalation after a clean AI review", detail: `#${pr} escalated without a create_review record in the same run` });
+  // Retired kinds: recognised so historical dry-run evidence reads clearly
+  // rather than tripping the generic allowlist rule, but still a violation if
+  // one shows up in a fresh run — nothing can emit them any more.
+  const retired = records.filter((r) => r.kind === "request_reviewer");
+  if (retired.length > 0) {
+    violations.push({
+      rule: "retired mutation kind",
+      detail: `${retired.length} request_reviewer record(s) for #${pr} — escalation was scrapped 2026-08-18; no code path may nominate a reviewer`,
+    });
   }
   return violations;
 }

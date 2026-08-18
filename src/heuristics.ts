@@ -1,6 +1,6 @@
 // Pure dispatch heuristics ported from the old /auto-review flow:
-// test-file exclusion (the jq filter as TS), escalation-worthiness, and the
-// migration gate. Consumed by dispatch (B2); unit-tested directly.
+// test-file exclusion (the jq filter as TS), the migration gate, lens
+// selection and the pass tier. Consumed by dispatch (B2); unit-tested directly.
 
 import type { PrFileEntry } from "./github.js";
 
@@ -40,42 +40,27 @@ export function prodStats(files: PrFile[]): ProdStats {
   };
 }
 
-// Escalation-worthy path heuristics (spec §3): infra-shaped paths.
-const ESCALATION_PATH_PATTERNS: RegExp[] = [
-  /(^|\/)infra\//,
-  /(^|\/)ansible\//,
-  /(^|\/)\.github\/workflows\//,
-  /\.tf$/,
-  /(^|\/)setup\.sh$/,
-];
-
-const ESCALATION_PROD_LINES = 500;
-const ESCALATION_PROD_FILES = 15;
-
-export function escalationWorthy(files: PrFile[]): { worthy: boolean; reasons: string[] } {
-  const reasons: string[] = [];
-  const infraHits = files.filter((f) => ESCALATION_PATH_PATTERNS.some((re) => re.test(f.filename)));
-  if (infraHits.length > 0) reasons.push(`infra paths: ${infraHits.map((f) => f.filename).join(", ")}`);
-  const { prod_lines, prod_files } = prodStats(files);
-  if (prod_lines > ESCALATION_PROD_LINES) reasons.push(`prod_lines ${prod_lines} > ${ESCALATION_PROD_LINES}`);
-  if (prod_files > ESCALATION_PROD_FILES) reasons.push(`prod_files ${prod_files} > ${ESCALATION_PROD_FILES}`);
-  return { worthy: reasons.length > 0, reasons };
-}
+// The escalation-worthiness heuristic (infra paths ∪ prod_lines > 500 ∪
+// prod_files > 15) was DELETED on 2026-08-18 (the owner: "scrap the escalation
+// mechanics entirely"). It scored every PR, drove a prompt block and a Slack
+// flag, and no code ever checked whether the score predicted anything. Nothing
+// replaces it under another name: the tier ladder below now keys on size and
+// the migration gate alone.
 
 export function migrationGate(files: PrFile[]): boolean {
   return files.some((f) => /(^|\/)migrations\//.test(f.filename));
 }
 
-/** Pass model tier for a round: small quiet diffs start at terra-med; any
- * migration, escalation-worthiness, or size at/over `smallDiffLines` starts
- * at sol-med. (Risk passes and pass-validate have fixed tiers in config —
- * this function only picks the base tier for the raisable passes.) */
+/** Pass model tier for a round: small quiet diffs start at terra-med; a
+ * migration or a size at/over `smallDiffLines` starts at sol-med. (Risk passes
+ * and pass-validate have fixed tiers in config — this function only picks the
+ * base tier for the raisable passes.) */
 export function passTier(
   files: PrFileEntry[],
-  opts: { migrationGate: boolean; escalationWorthy: boolean; smallDiffLines: number },
+  opts: { migrationGate: boolean; smallDiffLines: number },
 ): "terra-med" | "sol-med" {
   const total = files.reduce((n, f) => n + f.additions + f.deletions, 0);
-  if (total < opts.smallDiffLines && !opts.migrationGate && !opts.escalationWorthy) return "terra-med";
+  if (total < opts.smallDiffLines && !opts.migrationGate) return "terra-med";
   return "sol-med";
 }
 

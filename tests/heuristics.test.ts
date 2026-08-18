@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { escalationWorthy, isTestFile, migrationGate, passTier, prodStats, selectLenses, type PrFile } from "../src/heuristics.js";
+import { isTestFile, migrationGate, passTier, prodStats, selectLenses, type PrFile } from "../src/heuristics.js";
 import type { PrFileEntry } from "../src/github.js";
 
 const f = (filename: string, additions = 1, deletions = 0): PrFile => ({ filename, additions, deletions });
@@ -52,28 +52,12 @@ describe("prodStats", () => {
   });
 });
 
-describe("escalationWorthy", () => {
-  it("is false for a small production change", () => {
-    expect(escalationWorthy([f("src/a.py", 10, 2)])).toEqual({ worthy: false, reasons: [] });
-  });
-
-  it("flags infra-shaped paths", () => {
-    for (const name of ["infra/main.tf", "ansible/site.yml", ".github/workflows/ci.yml", "deploy/prod.tf", "setup.sh"]) {
-      const out = escalationWorthy([f(name)]);
-      expect(out.worthy, name).toBe(true);
-      expect(out.reasons[0]).toContain("infra paths");
+describe("escalationWorthy is gone", () => {
+  it("exports no escalation heuristic at all (scrapped 2026-08-18)", async () => {
+    const mod = (await import("../src/heuristics.js")) as Record<string, unknown>;
+    for (const name of ["escalationWorthy", "ESCALATION_PATH_PATTERNS", "escalationReasons"]) {
+      expect(mod[name], name).toBeUndefined();
     }
-  });
-
-  it("flags size over the prod-lines and prod-files thresholds", () => {
-    expect(escalationWorthy([f("src/a.py", 300, 201)]).reasons).toEqual(["prod_lines 501 > 500"]);
-    expect(escalationWorthy([f("src/a.py", 250, 250)]).worthy).toBe(false); // exactly 500 is fine
-    const many = Array.from({ length: 16 }, (_, i) => f(`src/m${i}.py`));
-    expect(escalationWorthy(many).reasons).toEqual(["prod_files 16 > 15"]);
-  });
-
-  it("ignores test churn when sizing", () => {
-    expect(escalationWorthy([f("tests/test_big.py", 5000, 5000)]).worthy).toBe(false);
   });
 });
 
@@ -86,7 +70,7 @@ describe("migrationGate", () => {
 });
 
 describe("passTier", () => {
-  const opts = { migrationGate: false, escalationWorthy: false, smallDiffLines: 150 };
+  const opts = { migrationGate: false, smallDiffLines: 150 };
 
   it("starts small quiet diffs at terra-med", () => {
     expect(passTier([fe("src/a.py", 100, 49)], opts)).toBe("terra-med");
@@ -98,9 +82,12 @@ describe("passTier", () => {
     expect(passTier([fe("src/a.py", 100, 49), fe("src/b.py", 1, 0)], opts)).toBe("sol-med");
   });
 
-  it("goes sol-med on the migration gate or escalation worthiness, however small", () => {
+  it("goes sol-med on the migration gate, however small", () => {
     expect(passTier([fe("src/a.py", 1, 0)], { ...opts, migrationGate: true })).toBe("sol-med");
-    expect(passTier([fe("src/a.py", 1, 0)], { ...opts, escalationWorthy: true })).toBe("sol-med");
+  });
+
+  it("no longer raises the tier for infra paths (the escalation heuristic is gone)", () => {
+    expect(passTier([fe("infra/main.tf", 1, 0)], opts)).toBe("terra-med");
   });
 
   it("counts additions plus deletions across all files, tests included", () => {

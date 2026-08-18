@@ -190,7 +190,6 @@ describe("wakeOrHold / flushHeldWakes", () => {
       author: "a",
       trigger_ts: null,
       stale_recheck: 0,
-      escalation_worthy: 0,
       migration_gate: 0,
     });
   });
@@ -212,7 +211,7 @@ describe("wakeOrHold / flushHeldWakes", () => {
   it("does not hold a wake for a different PR's round", async () => {
     store.upsertPr({
       number: 8, state: "tracked", head_sha: "d", title: "t", author: "a",
-      trigger_ts: null, stale_recheck: 0, escalation_worthy: 0, migration_gate: 0,
+      trigger_ts: null, stale_recheck: 0, migration_gate: 0,
     });
     store.startRound(8, "first", ["pass-baseline"], 75);
     expect(await wakeOrHold(deps(), 7, "hello", "author_reply")).toBe("injected");

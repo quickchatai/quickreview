@@ -33,6 +33,7 @@ function stalenessSimulation(cfg: Config) {
     title: "pushed approved PR fixture",
     author: "someone",
     head_sha: fixture.head_sha,
+    base_ref: "master",
     updated_at: new Date().toISOString(),
     state: "open",
     draft: false,
@@ -42,7 +43,6 @@ function stalenessSimulation(cfg: Config) {
   const adapter = {
     searchLabelTriggered: async () => [],
     searchTeamTriggered: async () => [],
-    searchAwaitingEscalationReviewer: async () => [],
     listOpenPrs: async () => [prRef],
     getPr: async () => prRef,
     stalenessScan: async () => [{ number: fixture.number, head_sha: fixture.head_sha, approved_sha: fixture.approved_sha, approved_at: "" }],

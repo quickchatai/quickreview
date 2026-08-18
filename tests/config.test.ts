@@ -24,7 +24,9 @@ describe("parseConfig", () => {
     expect(cfg.github.app_slug).toBe("example-review");
     expect(cfg.github.bot_login).toBe("example-review[bot]");
     expect(cfg.github.review_team).toBe("example-org/review");
-    expect(cfg.github.escalation_reviewer).toBe("mhale");
+    // escalation_reviewer was removed on 2026-08-18: the daemon never
+    // nominates a reviewer, so there is no reviewer to name.
+    expect((cfg.github as unknown as Record<string, unknown>).escalation_reviewer).toBeUndefined();
     expect(cfg.server.port).toBe(8787);
     expect(cfg.daemon.poll_interval_s).toBeGreaterThan(0);
     expect(cfg.eod.time).toBe("18:00");
@@ -47,8 +49,8 @@ describe("parseConfig", () => {
   });
 
   it("throws on a missing github key", () => {
-    const trimmed = readFileSync(configPath, "utf8").replace(/^escalation_reviewer.*$/m, "");
-    expect(() => parseConfig(trimmed)).toThrowError(/missing key 'escalation_reviewer'/);
+    const trimmed = readFileSync(configPath, "utf8").replace(/^issue_label.*$/m, "");
+    expect(() => parseConfig(trimmed)).toThrowError(/missing key 'issue_label'/);
   });
 
   it("coerces dry_run to a boolean", () => {

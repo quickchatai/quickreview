@@ -8,7 +8,7 @@
 import type { Config } from "./config.js";
 import type { GateResult } from "./gate.js";
 import type { PrFileEntry } from "./github.js";
-import { escalationWorthy, migrationGate, passTier, selectLenses } from "./heuristics.js";
+import { migrationGate, passTier, selectLenses } from "./heuristics.js";
 import type { DispatchAnnouncer } from "./slack/announce.js";
 import { applyEvent, setPrGates } from "./statemachine.js";
 import type { PrStateRow, StateStore } from "./state.js";
@@ -18,6 +18,8 @@ import type { PassPlanEntry, PassTier, RoundOrder, RoundType, SessionHooks } fro
  * the adapter, so this module never touches GitHub directly. */
 export interface DispatchAdapter {
   listPrFiles(n: number): Promise<PrFileEntry[]>;
+  /** Read-only; dispatch needs `base_ref` to keep the base branch fresh. */
+  getPr(n: number): Promise<{ base_ref: string }>;
   addLabel(n: number, label: string): Promise<GateResult>;
   removeLabel(n: number, label: string): Promise<GateResult>;
   deleteTeamReviewRequest(n: number): Promise<GateResult>;
@@ -33,6 +35,16 @@ export interface DispatchDeps {
   /** SETTLED digest carried from the session ledger (B3/B4). */
   settledDigest?: (pr: number) => string;
   worktreeFor?: (pr: number) => string;
+  /**
+   * Fetch the PR head + its base branch and materialise the worktree, before
+   * the round order is built. Returns what is actually on disk. Optional: the
+   * stub-wired daemon core and unit tests have no git, and fall back to the PR
+   * row's sha with no base facts.
+   */
+  prepareWorktree?: (
+    pr: number,
+    baseRef: string,
+  ) => Promise<{ head_sha: string; base_ref: string; base_sha: string; merge_base: string }>;
   /** Slack announcer (S4). Optional: absent ⇒ no Slack at all, which
    * is what the stub-wired daemon core and every non-Slack test see. */
   announce?: DispatchAnnouncer;
@@ -161,7 +173,6 @@ export function buildPassPlan(
 ): { pass_plan: PassPlanEntry[]; addable_lenses: string[] } {
   const defaultTier = passTier(files, {
     migrationGate: migrationGate(files),
-    escalationWorthy: escalationWorthy(files).worthy,
     smallDiffLines: cfg.models.small_diff_lines,
   });
   const risk = new Set(cfg.models.risk_passes);
@@ -187,8 +198,11 @@ export function buildRoundOrder(args: {
   worktree: string;
   settledDigest: string;
   issuedAt: string;
+  /** Facts established by preparing the worktree. Absent only for callers with
+   * no worktree seam (the stub-wired daemon core and unit tests), which fall
+   * back to the PR row's sha and an unknown base. */
+  tree?: { head_sha: string; base_ref: string; base_sha: string; merge_base: string };
 }): RoundOrder {
-  const { worthy, reasons } = escalationWorthy(args.files);
   const { pass_plan, addable_lenses } = buildPassPlan(args.cfg, args.files);
   return {
     pr: args.row.number,
@@ -201,10 +215,11 @@ export function buildRoundOrder(args: {
     lenses: pass_plan.map((p) => p.lens),
     pass_plan,
     addable_lenses,
-    escalation_worthy: worthy,
-    escalation_reasons: reasons,
     migration_gate: migrationGate(args.files),
-    head_sha: args.row.head_sha,
+    head_sha: args.tree?.head_sha || args.row.head_sha,
+    base_ref: args.tree?.base_ref ?? "",
+    base_sha: args.tree?.base_sha ?? "",
+    merge_base: args.tree?.merge_base ?? "",
     worktree: args.worktree,
     settled_digest: args.settledDigest,
     issued_at: args.issuedAt,
@@ -263,8 +278,16 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       const roundType = roundTypeFor(row, priorRounds);
       const consumed = await consumeTriggers(deps, row.number);
 
+      // The branch this PR targets. Only used to keep the base fresh in the
+      // clone; a failed read degrades to "no base facts", never a failed round.
+      let baseRef = "";
+      try {
+        baseRef = (await deps.adapter.getPr(row.number)).base_ref;
+      } catch (err) {
+        log(`dispatch: base ref lookup failed on #${row.number}`, err);
+      }
+
       const files = await deps.adapter.listPrFiles(row.number);
-      const { worthy } = escalationWorthy(files);
       const gate = migrationGate(files);
       const lenses = [...selectLenses(files), "pass-validate"];
 
@@ -280,7 +303,25 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       const roundNo = (store.db.prepare("SELECT round_no FROM rounds WHERE id = ?").get(roundId) as { round_no: number })
         .round_no;
 
+      // Prepare the tree BEFORE building the order, so the prompt cites the sha
+      // the passes will actually read. The old sequence built the order from
+      // `row.head_sha` (a webhook/reconcile snapshot) and only then fetched, so
+      // a push landing in between made the prompt quietly wrong — passes cited
+      // one sha while reading another tree, and their anchors were computed
+      // against a diff the review was not about.
+      const tree = deps.prepareWorktree ? await deps.prepareWorktree(row.number, baseRef) : undefined;
+      if (tree && row.head_sha && tree.head_sha !== row.head_sha) {
+        log(`dispatch: #${row.number} head drift ${row.head_sha} → ${tree.head_sha}`);
+        store.logEvent("head_drift", row.number, {
+          round_id: roundId,
+          expected: row.head_sha,
+          actual: tree.head_sha,
+          source: "worktree_prepare",
+        });
+      }
+
       const order = buildRoundOrder({
+        tree,
         cfg,
         row,
         files,
@@ -297,15 +338,17 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // rounds whenever worktree preparation failed.
       await deps.hooks.dispatchRound(order, render(order));
 
-      setPrGates(store, row.number, worthy, gate);
+      setPrGates(store, row.number, gate);
       applyEvent(store, row.number, { type: "dispatched" }, {}, { botLogin: cfg.github.bot_login, now });
       store.logEvent("round_dispatched", row.number, {
         round_id: roundId,
         round_no: roundNo,
         round_type: roundType,
         lenses: order.lenses,
-        escalation_worthy: order.escalation_worthy,
         migration_gate: order.migration_gate,
+        head_sha: order.head_sha,
+        base_ref: order.base_ref,
+        base_sha: order.base_sha,
         triggers_consumed: consumed,
       });
       // Slack (S4): the PR's thread root on the first round we see, a
@@ -318,15 +361,13 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
             pr: row.number,
             title: row.title,
             author: row.author,
-            head_sha: row.head_sha,
+            head_sha: order.head_sha,
             round_no: roundNo,
             round_type: roundType,
             lenses: order.lenses,
             additions: diffstat.additions,
             deletions: diffstat.deletions,
             changed_files: diffstat.changed_files,
-            escalation_worthy: order.escalation_worthy,
-            escalation_reasons: order.escalation_reasons,
           });
         } catch (err) {
           log(`dispatch: slack announcement failed on #${row.number}`, err);
