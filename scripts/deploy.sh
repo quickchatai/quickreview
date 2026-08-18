@@ -229,6 +229,14 @@ echo >&2
 if [[ "$MODE" != "verify" ]]; then
   command -v ansible-playbook >/dev/null 2>&1 || die "ansible-playbook not on PATH — run this from the controller machine"
   [[ -f "$INVENTORY" ]] || die "no inventory at $INVENTORY (cp inventory.example.ini inventory.ini, then edit; or set QC_INVENTORY)"
+  # Rebuild dist HERE, against the exact tree being shipped. The rsync mirrors
+  # dist/ and the container entrypoint rebuilds only when package-lock.json
+  # changes — so a stale local dist ships stale COMPILED code under a fresh
+  # BUILD_SHA. Bit us live 2026-08-18: three fix deploys shipped source whose
+  # dist was still the pre-fix build (builds had run in worktrees, never in
+  # this checkout), and the daemon kept spawning sessions with the old argv.
+  note "building dist against $HEAD_SHA"
+  (cd "$SANDBOX_DIR" && npm run build) || die "npm run build failed — refusing to ship a tree whose dist cannot be rebuilt"
   # BUILD_SHA rides the rsync so the VM can answer "what commit runs here?"
   # (the qcr tui deploy tab diffs local HEAD against it). Gitignored, so the
   # clean-tree guard above stays meaningful.
