@@ -163,6 +163,12 @@ export class PiSessionManager implements SessionHooks {
       join(this.root, "extensions", "inject-bridge.ts"),
       join(this.root, "extensions", "ledger-pin.ts"),
       join(this.root, "extensions", "muted-theme.ts"),
+      // Registers the built state/agents lens passes with pi-subagents via its
+      // globalThis hook (live finding 2026-08-18: the extension's agents dir is
+      // hardcoded, our old .pi/subagents.config.json was inert). Rides argv on
+      // purpose: pi-subagents' child processes load only the global settings
+      // extensions, so passes stay unregistered inside a leaf.
+      join(this.root, "extensions", "register-lens-agents.ts"),
     ];
   }
 

@@ -1,5 +1,0 @@
-{
-  "maxConcurrency": 6,
-  "agentsDir": "state/agents",
-  "defaultModel": "openai-codex/gpt-5.6-sol"
-}

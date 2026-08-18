@@ -397,7 +397,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
 
     async onStart(d) {
       // Lens agents: expand {{include:...}} + per-pass model overrides into the
-      // build dir pi-subagents is pointed at (.pi/subagents.config.json).
+      // build dir the register-lens-agents extension reads (state/agents) —
+      // each session registers them with pi-subagents at spawn via its
+      // globalThis hook (the extension's own agents dir is hardcoded).
       const built = buildAgents(join(root, "agents"), join(root, "state", "agents"), {
         root,
         tiers: cfg.models.tiers,

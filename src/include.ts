@@ -363,9 +363,10 @@ export function tiersForPass(pass: string, riskPasses: string[], validateTier: P
 
 /**
  * Preprocess every `agents/pass-*.md` in `srcDir` into per-tier variant files
- * `<pass>--<tier>.md` in `outDir` — the directory the pi-subagents extension
- * is configured to read (see `.pi/subagents.config.json`; the exact config
- * key/location is VERIFY-ON-PIN).
+ * `<pass>--<tier>.md` in `outDir` — the directory the register-lens-agents
+ * extension reads and registers with pi-subagents at session spawn (VERIFIED
+ * live 2026-08-18: pi-subagents' own agents dir is hardcoded to its install
+ * dir; a config file cannot repoint it — see extensions/register-lens-agents.ts).
  */
 export function buildAgents(srcDir: string, outDir: string, opts: BuildAgentsOptions = {}): BuiltAgent[] {
   const root = opts.root ?? resolve(srcDir, "..");
