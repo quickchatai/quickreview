@@ -12,6 +12,13 @@
 # config.toml → the intended mutation is recorded to state/dryrun/ instead of
 # being sent. Live mode authenticates via scripts/mint-token.sh only.
 #
+# All THREE posting-time guards run here, from scripts/guards.sh —
+# the shell mirror of src/guards.ts, which the MutationGate enforces on the
+# daemon's own route. This is the session's route, so it refuses exactly what
+# the gate refuses: a merged/closed PR, a head already reviewed with nothing
+# new since, and REQUEST_CHANGES over a head a human has already approved
+# (softened to COMMENT, findings intact).
+#
 # Usage: post-review.sh <pr-number> <REQUEST_CHANGES|COMMENT> <body-file> [comments-json-file]
 #   comments-json-file: JSON array of {path, line, side?, body} inline comments.
 
@@ -67,10 +74,38 @@ REPO="$(cfg github repo)"
 # Anything other than an explicit `false` is treated as dry-run (fail closed).
 [[ "$DRY_RUN" == "false" ]] && LIVE=1 || LIVE=0
 
+# ---- the posting-time guards --------------------------------------
+# All three, from the shared mirror of src/guards.ts — this is the session's
+# posting route, so it must refuse exactly what the gate refuses.
+# shellcheck source=scripts/guards.sh
+. "$ROOT/scripts/guards.sh"
+
+guard_require_open                                        # guard 3
+HEAD_SHA="$GUARD_HEAD_SHA"
+guard_require_new_evidence "$HEAD_SHA"                    # guard 2
+
+DOWNGRADE_NOTE=""
+APPROVER=""
+if [[ "$EVENT" == "REQUEST_CHANGES" ]]; then              # guard 1
+  APPROVER="$(guard_human_approver "$HEAD_SHA" "$GUARD_PR_AUTHOR")"
+  if [[ -n "$APPROVER" ]]; then
+    echo "guard: #$PR REQUEST_CHANGES -> COMMENT (@$APPROVER approved ${HEAD_SHA:0:7})" >&2
+    EVENT="COMMENT"
+    DOWNGRADE_NOTE="$(guard_downgrade_note "$APPROVER" "$HEAD_SHA")"
+  fi
+fi
+
 # Payload: validates comments (path str, line int>0, body str, side RIGHT|LEFT).
-PAYLOAD="$(EVENT="$EVENT" python3 - "$BODY_FILE" "$COMMENTS_FILE" <<'PY'
+PAYLOAD="$(EVENT="$EVENT" NOTE_SUFFIX="$DOWNGRADE_NOTE" HEAD_SHA="$HEAD_SHA" \
+  python3 - "$BODY_FILE" "$COMMENTS_FILE" <<'PY'
 import json, os, sys
-payload = {"event": os.environ["EVENT"], "body": open(sys.argv[1]).read()}
+body = open(sys.argv[1]).read()
+suffix = os.environ.get("NOTE_SUFFIX", "")
+if suffix:
+    body = f"{body}\n\n{suffix}"
+payload = {"event": os.environ["EVENT"], "body": body}
+if os.environ.get("HEAD_SHA"):
+    payload["commit_id"] = os.environ["HEAD_SHA"]
 if sys.argv[2]:
     comments = json.load(open(sys.argv[2]))
     if not isinstance(comments, list):
@@ -132,56 +167,14 @@ call() { # call <method> <path> <body-json> <note>
   esac
 }
 
-# ---- guard 3: merged/closed re-check, immediately before posting ---
-# Same guard the MutationGate enforces daemon-side (src/guards.ts), mirrored
-# here because this is the other posting route. One read, right before the
-# mutation; live mode fails CLOSED on an unreadable state.
-
-guard_token() {
-  if [[ "$LIVE" == "1" ]]; then "$ROOT/scripts/mint-token.sh"; else "$ROOT/scripts/mint-token.sh" 2>/dev/null || true; fi
-}
-
-pr_liveness() { # → open | merged | closed | unreadable
-  local tok body
-  tok="$(guard_token)"
-  if [[ -n "$tok" ]]; then
-    body="$(curl -sS -H "Authorization: Bearer $tok" -H "Accept: application/vnd.github+json" \
-      -H "X-GitHub-Api-Version: 2022-11-28" "$API/repos/$REPO/pulls/$PR" || true)"
-  else
-    body="$(curl -sS -H "Accept: application/vnd.github+json" "$API/repos/$REPO/pulls/$PR" || true)"
-  fi
-  printf '%s' "$body" | python3 -c '
-import json, sys
-try:
-    d = json.load(sys.stdin)
-except Exception:
-    print("unreadable"); raise SystemExit(0)
-if not isinstance(d, dict) or "state" not in d:
-    print("unreadable")
-elif d.get("merged"):
-    print("merged")
-elif d.get("state") != "open":
-    print("closed")
-else:
-    print("open")
-' || echo unreadable
-}
-
-case "$(pr_liveness)" in
-  open) ;;
-  merged) die "#$PR is already merged — refusing to post (guard 3)" ;;
-  closed) die "#$PR is closed — refusing to post (guard 3)" ;;
-  *)
-    if [[ "$LIVE" == "1" ]]; then
-      die "could not read the state of #$PR — refusing to post (guard 3, fail closed)"
-    fi
-    echo "guard: #$PR state unreadable; dry-run posts nothing, continuing" >&2
-    ;;
-esac
-
 NOTE="post $EVENT review on #$PR"
+if [[ -n "$DOWNGRADE_NOTE" ]]; then NOTE="$NOTE (downgraded: @$APPROVER approved this head)"; fi
 if [[ "$LIVE" == "1" ]]; then
   call POST "/repos/$REPO/pulls/$PR/reviews" "$PAYLOAD" "$NOTE"
+  # The reviewed-head mark, stamped only for a review that really reached
+  # GitHub — the same after-step the gate runs daemon-side, and what makes
+  # guard 2 bite on the next round through this route.
+  guard_stamp_reviewed_head "$HEAD_SHA" "$EVENT"
 else
   record create_review POST "/repos/$REPO/pulls/$PR/reviews" "$PAYLOAD" "$NOTE"
 fi

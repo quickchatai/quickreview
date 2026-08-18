@@ -1,8 +1,9 @@
-// Guard 3 on the OTHER posting route. The sessions post through
-// scripts/post-review.sh and scripts/approve-pr.sh, which do not go through
-// src/gate.ts — so the merged/closed re-check is mirrored there the same way
-// the dry-run gate is, and this is the bypass-attempt test: posting via the
-// shell path still hits the guard.
+// The guards on the OTHER posting route. The sessions post through
+// scripts/post-review.sh, approve-pr.sh and reply-thread.sh, which do not go
+// through src/gate.ts — so scripts/guards.sh mirrors the guards there the same
+// way the dry-run gate is mirrored, and this is the bypass-attempt test:
+// posting via the shell path still hits every guard the gate would apply
+// (1 + 2 + 3 on post-review.sh, 3 on the other two).
 //
 // No real GitHub and no real credential: GITHUB_API points at a loopback stub,
 // and the throwaway config's secrets_dir is an empty temp dir, so
@@ -12,22 +13,36 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createServer, type Server } from "node:http";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { StateStore } from "../src/state.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+const HEAD = "68b8040c0ffee1234567890abcdef0123456789a";
 
 interface PrStub {
   state: "open" | "closed";
   merged: boolean;
+  head?: { sha: string };
+  user?: { login: string };
+}
+
+interface ReviewStub {
+  id: number;
+  user: { login: string };
+  state: string;
+  commit_id: string;
 }
 
 let server: Server;
 let apiBase: string;
 let dir: string;
 let pr: PrStub | null;
+let reviews: ReviewStub[];
+let dbPath: string;
 
 const CONFIG = (secretsDir: string) =>
   [
@@ -35,6 +50,7 @@ const CONFIG = (secretsDir: string) =>
     "",
     "[github]",
     'repo = "example-org/example-app"',
+    'bot_login = "example-review[bot]"',
     'trigger_label = "AI review requested"',
     'review_team = "example-org/review"',
     `secrets_dir = "${secretsDir}"`,
@@ -45,8 +61,15 @@ beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "qcr-guard3-"));
   mkdirSync(join(dir, "secrets"));
   writeFileSync(join(dir, "config.toml"), CONFIG(join(dir, "secrets")));
-  pr = { state: "open", merged: false };
+  pr = { state: "open", merged: false, head: { sha: HEAD }, user: { login: "pr-author" } };
+  reviews = [];
+  dbPath = join(dir, "state.db");
   server = createServer((req, res) => {
+    if (req.method === "GET" && req.url?.startsWith("/repos/") && req.url.includes("/pulls/5180/reviews")) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(reviews));
+      return;
+    }
     if (req.method === "GET" && req.url?.endsWith("/pulls/5180")) {
       res.writeHead(pr ? 200 : 404, { "content-type": "application/json" });
       res.end(JSON.stringify(pr ?? { message: "Not Found" }));
@@ -81,6 +104,8 @@ async function run(script: string, args: string[]): Promise<{ ok: boolean; out: 
         GITHUB_API: apiBase,
         QCR_CONFIG: join(dir, "config.toml"),
         QCR_DRYRUN_DIR: join(dir, "dryrun"),
+        // Never the repo's own state.db: the guards read and stamp this file.
+        QCR_STATE_DB: dbPath,
       },
     });
     return { ok: true, out: `${stdout}${stderr}` };
@@ -96,6 +121,13 @@ function dryrunRecords(): string[] {
   } catch {
     return [];
   }
+}
+
+/** The single dry-run record the run produced, parsed. */
+function record(): { note: string; body: { event?: string; body?: string; commit_id?: string } } {
+  const files = dryrunRecords();
+  expect(files).toHaveLength(1);
+  return JSON.parse(readFileSync(join(dir, "dryrun", files[0]!), "utf8"));
 }
 
 function bodyFile(): string {
@@ -149,6 +181,148 @@ describe("scripts/post-review.sh — guard 3", () => {
     const res = await run("post-review.sh", ["5180", "COMMENT", bodyFile()]);
     expect(res.ok).toBe(true);
     expect(res.out).toContain("unreadable");
+    expect(dryrunRecords()).toHaveLength(1);
+  });
+});
+
+describe("scripts/post-review.sh — guard 1 (human approval at this head)", () => {
+  it("downgrades REQUEST_CHANGES to COMMENT and keeps the findings", async () => {
+    reviews = [{ id: 1, user: { login: "mhale" }, state: "APPROVED", commit_id: HEAD }];
+    const res = await run("post-review.sh", ["5180", "REQUEST_CHANGES", bodyFile()]);
+    expect(res.ok).toBe(true);
+    const rec = record();
+    expect(rec.body.event).toBe("COMMENT");
+    expect(rec.body.body).toContain("Automated review body."); // findings intact
+    expect(rec.body.body).toContain("@mhale");
+    expect(rec.body.commit_id).toBe(HEAD);
+    expect(rec.note).toContain("downgraded");
+  });
+
+  it("leaves REQUEST_CHANGES alone when the approval is on an older head", async () => {
+    reviews = [{ id: 1, user: { login: "mhale" }, state: "APPROVED", commit_id: "0ldhead" }];
+    const res = await run("post-review.sh", ["5180", "REQUEST_CHANGES", bodyFile()]);
+    expect(res.ok).toBe(true);
+    expect(record().body.event).toBe("REQUEST_CHANGES");
+  });
+
+  it("ignores the bot's own approval and the PR author's", async () => {
+    reviews = [
+      { id: 1, user: { login: "example-review[bot]" }, state: "APPROVED", commit_id: HEAD },
+      { id: 2, user: { login: "pr-author" }, state: "APPROVED", commit_id: HEAD },
+    ];
+    const res = await run("post-review.sh", ["5180", "REQUEST_CHANGES", bodyFile()]);
+    expect(res.ok).toBe(true);
+    expect(record().body.event).toBe("REQUEST_CHANGES");
+  });
+
+  it("ignores an approval the same human has since retired", async () => {
+    reviews = [
+      { id: 1, user: { login: "mhale" }, state: "APPROVED", commit_id: HEAD },
+      { id: 2, user: { login: "mhale" }, state: "CHANGES_REQUESTED", commit_id: HEAD },
+    ];
+    const res = await run("post-review.sh", ["5180", "REQUEST_CHANGES", bodyFile()]);
+    expect(res.ok).toBe(true);
+    expect(record().body.event).toBe("REQUEST_CHANGES");
+  });
+});
+
+describe("scripts/post-review.sh — guard 2 (no new evidence)", () => {
+  it("refuses a second review of the same head with no author reply since", async () => {
+    const store = new StateStore(dbPath);
+    store.recordReviewedHead(5180, { head_sha: HEAD, verdict: "REQUEST_CHANGES" });
+    store.close();
+    const res = await run("post-review.sh", ["5180", "COMMENT", bodyFile()]);
+    expect(res.ok).toBe(false);
+    expect(res.out).toContain("guard 2");
+    expect(dryrunRecords()).toEqual([]);
+  });
+
+  it("allows it again once the author has replied", async () => {
+    const store = new StateStore(dbPath);
+    store.recordReviewedHead(5180, { head_sha: HEAD, verdict: "REQUEST_CHANGES" });
+    store.noteAuthorReply(5180, "2099-01-01T00:00:00.000Z");
+    store.close();
+    const res = await run("post-review.sh", ["5180", "COMMENT", bodyFile()]);
+    expect(res.ok).toBe(true);
+    expect(dryrunRecords()).toHaveLength(1);
+  });
+
+  it("allows it on a new head", async () => {
+    const store = new StateStore(dbPath);
+    store.recordReviewedHead(5180, { head_sha: "an0therhead", verdict: "REQUEST_CHANGES" });
+    store.close();
+    const res = await run("post-review.sh", ["5180", "COMMENT", bodyFile()]);
+    expect(res.ok).toBe(true);
+    expect(dryrunRecords()).toHaveLength(1);
+  });
+
+  it("posts when there is no mark at all (and dry-run stamps none)", async () => {
+    const res = await run("post-review.sh", ["5180", "COMMENT", bodyFile()]);
+    expect(res.ok).toBe(true);
+    const store = new StateStore(dbPath);
+    expect(store.reviewedHead(5180)).toBeUndefined();
+    store.close();
+  });
+});
+
+describe("scripts/guards.sh — the reviewed-head stamp", () => {
+  // The live route stamps the mark itself (the gate's after-step covers only
+  // the daemon's route), so the stamp is exercised directly: the shell writes
+  // a row src/state.ts reads back, with recordReviewedHead's semantics.
+  async function stamp(head: string, event: string): Promise<void> {
+    const script = [
+      `ROOT=${JSON.stringify(root)}`,
+      "API=http://127.0.0.1:1 CONFIG=/dev/null REPO=o/r PR=5180 LIVE=1",
+      'die() { echo "$*" >&2; exit 1; }',
+      "cfg() { :; }",
+      `. ${JSON.stringify(join(root, "scripts", "guards.sh"))}`,
+      `guard_stamp_reviewed_head ${JSON.stringify(head)} ${JSON.stringify(event)}`,
+    ].join("\n");
+    await exec("bash", ["-c", script], { env: { ...process.env, QCR_STATE_DB: dbPath } });
+  }
+
+  it("records the head that was really posted, keeping the verdict on a re-stamp", async () => {
+    const store = new StateStore(dbPath);
+    store.recordReviewedHead(5180, { head_sha: HEAD, verdict: "REQUEST_CHANGES", round_no: 2 });
+    store.noteAuthorReply(5180, "2099-01-01T00:00:00.000Z");
+    store.close();
+
+    await stamp(HEAD, "COMMENT");
+    const after = new StateStore(dbPath);
+    expect(after.reviewedHead(5180)).toMatchObject({
+      head_sha: HEAD,
+      verdict: "REQUEST_CHANGES", // same head ⇒ kept
+      round_no: 2,
+      posted_event: "COMMENT",
+      last_author_reply_at: null, // the reply has now been answered
+    });
+    after.close();
+  });
+
+  it("replaces the row wholesale on a new head", async () => {
+    const store = new StateStore(dbPath);
+    store.recordReviewedHead(5180, { head_sha: "0ldhead", verdict: "REQUEST_CHANGES", round_no: 1 });
+    store.close();
+
+    await stamp(HEAD, "REQUEST_CHANGES");
+    const after = new StateStore(dbPath);
+    expect(after.reviewedHead(5180)).toMatchObject({ head_sha: HEAD, verdict: null, round_no: null });
+    after.close();
+  });
+});
+
+describe("scripts/reply-thread.sh — guard 3", () => {
+  it("refuses to reply on a merged PR", async () => {
+    pr = { state: "closed", merged: true };
+    const res = await run("reply-thread.sh", ["5180", "12345", bodyFile()]);
+    expect(res.ok).toBe(false);
+    expect(res.out).toContain("already merged");
+    expect(dryrunRecords()).toEqual([]);
+  });
+
+  it("replies on an open PR", async () => {
+    const res = await run("reply-thread.sh", ["5180", "12345", bodyFile()]);
+    expect(res.ok).toBe(true);
     expect(dryrunRecords()).toHaveLength(1);
   });
 });

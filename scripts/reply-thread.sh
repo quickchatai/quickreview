@@ -58,6 +58,14 @@ REPO="$(cfg github repo)"
 # Anything other than an explicit `false` is treated as dry-run (fail closed).
 [[ "$DRY_RUN" == "false" ]] && LIVE=1 || LIVE=0
 
+# Guard 3: a reply is a posting mutation too — the gate applies the
+# merged/closed re-check to `create_review_comment_reply`, so this route does
+# the same, from the shared mirror. Guards 1 and 2 are about review verdicts
+# and have nothing to say about a thread reply.
+# shellcheck source=scripts/guards.sh
+. "$ROOT/scripts/guards.sh"
+guard_require_open
+
 PAYLOAD="$(python3 -c 'import json,sys; json.dump({"body": open(sys.argv[1]).read()}, sys.stdout)' "$BODY_FILE")"
 PATH_API="/repos/$REPO/pulls/$PR/comments/$CID/replies"
 NOTE="reply to review comment $CID on #$PR"

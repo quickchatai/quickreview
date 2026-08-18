@@ -153,62 +153,23 @@ do_mutation() { # do_mutation <kind> <method> <path> <body> <note>
 
 urlenc() { python3 -c 'import sys,urllib.parse; sys.stdout.write(urllib.parse.quote(sys.argv[1], safe=""))' "$1"; }
 
-# ---- guard 3: merged/closed re-check, immediately before posting ---
+# ---- the posting-time guards --------------------------------------
 #
 # Four of the predecessor system's reviews landed at or after the merge (one
 # approved 13s after it). The daemon enforces this on the MutationGate; this
 # shell path is the other posting route, so it mirrors the check the same way
-# it mirrors the dry-run gate. One read, right before the mutation; a read is
-# never gated. Live mode fails CLOSED — an unverifiable PR state is exactly the
-# case those post-merge reviews came out of.
+# it mirrors the dry-run gate — scripts/guards.sh is that mirror. One read,
+# right before the mutation; a read is never gated. Live mode fails CLOSED — an
+# unverifiable PR state is exactly the case those post-merge reviews came from.
+#
+# Only guard 3 applies here. Guard 1 softens REQUEST_CHANGES and has nothing to
+# say about an approval; guard 2 deliberately does NOT gate an approval — this
+# script also clears both wake triggers, so refusing it would leave a PR
+# triggered with nothing left able to clear it.
+# shellcheck source=scripts/guards.sh
+. "$ROOT/scripts/guards.sh"
 
-guard_token() {
-  if [[ "$LIVE" == "1" ]]; then token; else "$ROOT/scripts/mint-token.sh" 2>/dev/null || true; fi
-}
-
-pr_liveness() { # → open | merged | closed | unreadable
-  local tok body
-  tok="$(guard_token)"
-  if [[ -n "$tok" ]]; then
-    body="$(curl -sS -H "Authorization: Bearer $tok" -H "Accept: application/vnd.github+json" \
-      -H "X-GitHub-Api-Version: 2022-11-28" "$API/repos/$REPO/pulls/$PR" || true)"
-  else
-    body="$(curl -sS -H "Accept: application/vnd.github+json" "$API/repos/$REPO/pulls/$PR" || true)"
-  fi
-  printf '%s' "$body" | python3 -c '
-import json, sys
-try:
-    d = json.load(sys.stdin)
-except Exception:
-    print("unreadable"); raise SystemExit(0)
-if not isinstance(d, dict) or "state" not in d:
-    print("unreadable")
-elif d.get("merged"):
-    print("merged")
-elif d.get("state") != "open":
-    print("closed")
-else:
-    print("open")
-' || echo unreadable
-}
-
-guard_pr_open() {
-  local verdict
-  verdict="$(pr_liveness)"
-  case "$verdict" in
-    open) ;;
-    merged) die "#$PR is already merged — refusing to post (guard 3)" ;;
-    closed) die "#$PR is closed — refusing to post (guard 3)" ;;
-    *)
-      if [[ "$LIVE" == "1" ]]; then
-        die "could not read the state of #$PR — refusing to post (guard 3, fail closed)"
-      fi
-      echo "guard: #$PR state unreadable; dry-run posts nothing, continuing" >&2
-      ;;
-  esac
-}
-
-guard_pr_open
+guard_require_open
 
 # ---- 1. approve -------------------------------------------------------------
 
@@ -216,6 +177,9 @@ REVIEW_BODY_JSON="$(REVIEW_BODY="$REVIEW_BODY" python3 -c \
   'import json,os,sys; json.dump({"event":"APPROVE","body":os.environ["REVIEW_BODY"]}, sys.stdout)')"
 do_mutation create_review POST "/repos/$REPO/pulls/$PR/reviews" "$REVIEW_BODY_JSON" \
   "approve #$PR"
+# The reviewed-head mark, only for an approval that really reached GitHub (the
+# same rule the gate's after-step follows). reads this mark.
+if [[ "$LIVE" == "1" ]]; then guard_stamp_reviewed_head "$GUARD_HEAD_SHA" "APPROVE"; fi
 
 # ---- 2. clear the label trigger ---------------------------------------------
 

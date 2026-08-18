@@ -17,9 +17,16 @@
 //
 // All three are installed on the ONE MutationGate (gate.ts `MutationGuard`),
 // not on a call site, so no posting route in the daemon can reach GitHub
-// around them. The shell posting path (scripts/post-review.sh,
-// scripts/approve-pr.sh) mirrors guard 3 the same way it mirrors the dry-run
-// gate — that mirror is exercised in tests/guards-shell.test.ts.
+// around them. The sessions post through the shell instead
+// (scripts/post-review.sh, approve-pr.sh, reply-thread.sh), which does not go
+// through the gate — `scripts/guards.sh` is the mirror for that route and it
+// carries ALL THREE, together with the reviewed-head stamp that the gate's
+// after-step makes on its own route. The two halves are deliberately kept
+// behaviourally identical: tests/guards.test.ts drives the real gate and
+// tests/guards-shell.test.ts runs the real scripts, over the same cases.
+// Guard coverage per shell route: post-review.sh 1+2+3, approve-pr.sh 3 (an
+// approval is not softened, and gating it would strand the wake triggers this
+// script clears), reply-thread.sh 3.
 //
 // Nothing here dismisses, retracts or edits an existing review. A guard's only
 // powers are to refuse a mutation and to soften an event from REQUEST_CHANGES

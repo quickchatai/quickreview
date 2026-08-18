@@ -204,6 +204,13 @@ posts as a COMMENT — the merge call is not yours.
 REQUEST_CHANGES/COMMENT posts **only** through `scripts/post-review.sh`;
 APPROVE goes through `scripts/approve-pr.sh`.
 
+Both scripts enforce the posting-time guards, and their answer is final: they
+refuse a merged or closed PR, refuse a second review of a head already reviewed
+with no author reply since, and rewrite REQUEST_CHANGES to COMMENT when a
+non-author human has already approved this exact head (your findings are posted
+unchanged, with one line saying why it is not blocking). A refusal is not
+something to work around — record what happened in the verdict and stop.
+
 ## 7. Return
 
 Write `verdict/pr-{{n}}-round-{{round_no}}.json` with EXACTLY this JSON shape —
