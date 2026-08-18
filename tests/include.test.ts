@@ -520,6 +520,100 @@ describe("the built pass contract (rules)", () => {
     }
   });
 
+  // the two seed rules that demanded evidence the execution policy
+  // forbids gathering (`sqlmigrate` output, a replica row count). The seeds are
+  // frozen (rule 6), so the withdrawal + replacement rides the addendum — and
+  // it must be plain enough that the pass follows it where the two conflict.
+  it("supersedes pass-data-safety's sqlmigrate run and replica-count P1", () => {
+    for (const [name, text] of bodies) {
+      const isDataSafety = name.startsWith("pass-data-safety--");
+      expect(text.includes("## Data safety: no execution — read the migration, ask for the rest")).toBe(isDataSafety);
+    }
+    const ds = bodies.get("pass-data-safety--sol-high") ?? bodies.get("pass-data-safety--sol-med");
+    expect(ds).toBeDefined();
+    const text = ds as string;
+    // The supersession is stated, not implied.
+    expect(text).toContain("**Both instructions are withdrawn, and where they conflict with this section this section wins.**");
+    expect(text).toContain("there is no read replica");
+    // ALGORITHM undeterminable → a question asking for sqlmigrate output.
+    expect(text).toContain("cannot be read off the operation, **ask for it**");
+    expect(text).toContain("a `[question]` requesting the `sqlmigrate` output in the PR body");
+    expect(text).toContain("Never a blocker asserting a hazard that was never rendered.");
+    // Missing row count → a question, never a P1; the readable P1s survive.
+    expect(text).toContain("a missing production row count is a `[question]`");
+    expect(text).toContain("**never a P1**");
+    expect(text).toContain("count of nonconforming source rows is the same `[question]`, not a P2");
+    expect(text).toContain("**no per-run cap, no deterministic ordering, no kill switch, or a backfill over an unbounded predicate**");
+    expect(text).toContain("first tick over the accumulated backlog");
+    // Migration numbering / dependencies ordering is explicitly unchanged.
+    expect(text).toContain("Migration numbering and `dependencies` ordering against the base branch are untouched by this section");
+    expect(text).toContain("## Migration numbering against the base branch is handled daemon-side");
+    // The addendum lands AFTER the seed rule it supersedes.
+    expect(text.indexOf("run `sqlmigrate` in the worktree")).toBeLessThan(
+      text.indexOf("## Data safety: no execution"),
+    );
+  });
+
+  it("keeps sqlmigrate/replica talk out of every other built pass", () => {
+    for (const [name, text] of bodies) {
+      if (name.startsWith("pass-data-safety--")) continue;
+      expect(text).not.toContain("sqlmigrate");
+      expect(text).not.toContain("replica");
+    }
+  });
+
+  // The class must survive the no-exec contract, not be dropped by it: test
+  // vacuity is ~12% of all blockers and one of two classes nothing else in the
+  // pipeline catches. Both corpus examples were reachable by reading.
+  it("reframes pass-baseline's test-vacuity rule as a static read plus CI", () => {
+    for (const [name, text] of bodies) {
+      const isBaseline = name.startsWith("pass-baseline--");
+      expect(text.includes("## Baseline: test vacuity is a STATIC read")).toBe(isBaseline);
+    }
+    const baseline = bodies.get("pass-baseline--sol-med") as string;
+    expect(baseline).toContain("Reverting a fix and re-running the suite is mutation testing");
+    expect(baseline).toContain("**That instruction is withdrawn; where it conflicts with this section, this section wins.**");
+    expect(baseline).toContain("The finding class is NOT withdrawn");
+    expect(baseline).toContain("**read the assertion and the code it exercises, and establish whether the assertion could ever fail**");
+    expect(baseline).toContain("is that value still produced when the bug is present?");
+    expect(baseline).toContain("Use the CI result for whether the suite passes (`gh pr checks`, read-only); never run the suite");
+    // Corpus example 1 — the translation helper that returns the key itself.
+    expect(baseline).toContain("contained `title.unknown`");
+    expect(baseline).toContain("returns **the key itself** when the key is missing");
+    expect(baseline).toContain("holds for any broken key");
+    // Corpus example 2 — the mock translator returning plain text, not HTML.
+    expect(baseline).toContain("mock replaced the translator with one returning **plain text**");
+    expect(baseline).toContain("the real translator returns HTML");
+    // Sweep catch: "materialize a sample of the final string" is a hand-join.
+    expect(baseline).toContain("assemble it **by reading**");
+    expect(baseline).toContain("Do not execute the code to produce it.");
+    // It lands after the seed rule it supersedes.
+    expect(baseline.indexOf("reverted proves nothing")).toBeLessThan(
+      baseline.indexOf("## Baseline: test vacuity is a STATIC read"),
+    );
+  });
+
+  it("no built pass instructs an execution outside the allowlist", () => {
+    // The exec-demanding phrasings that survive in a seed must each be
+    // withdrawn by a later addendum section in the SAME built body.
+    const withdrawals: Record<string, string> = {
+      "run `sqlmigrate` in the worktree": "## Data safety: no execution",
+      "replica query": "## Data safety: no execution",
+      "must show a replica count": "## Data safety: no execution",
+      "reverted proves nothing": "## Baseline: test vacuity is a STATIC read",
+      "sample of the final string": "## Baseline: test vacuity is a STATIC read",
+    };
+    for (const text of everyBody()) {
+      for (const [phrase, section] of Object.entries(withdrawals)) {
+        if (!text.includes(phrase)) continue;
+        expect(text.indexOf(section)).toBeGreaterThan(text.indexOf(phrase));
+      }
+      // The policy itself is unchanged and still names the allowlist.
+      expect(text).toContain("Allowed commands: git, rg, grep, cat, ls, find");
+      expect(text).toContain("never re-run or trigger anything");
+    }
+  });
+
   it("delivers all of it without touching a single seed", () => {
     for (const f of readdirSync(join(sandbox, "agents"))) {
       const seed = readFileSync(join(sandbox, "agents", f), "utf8");
