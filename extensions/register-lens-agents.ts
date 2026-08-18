@@ -50,7 +50,7 @@ interface SubagentsHook {
 /** Same `---` frontmatter split pi-subagents' own loadAgents performs. */
 export function parseAgentFile(content: string): { frontmatter: Record<string, string>; body: string } {
   const m = /^---\n([\s\S]*?)\n---\n?/.exec(content);
-  if (!m) return { frontmatter: {}, body: content };
+  if (!m || m[1] === undefined) return { frontmatter: {}, body: content };
   const frontmatter: Record<string, string> = {};
   for (const line of m[1].split("\n")) {
     const idx = line.indexOf(":");
