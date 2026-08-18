@@ -265,9 +265,18 @@ describe("listMigrationFiles", () => {
     ]);
   });
 
-  it("returns nothing for a sha-shaped nonsense argument", async () => {
+  // Never []: an empty list means "the base has no migrations", and a reader
+  // that cannot read must not be able to impersonate that answer — the
+  // pre-check would then go silently quiet, which forbids.
+  it("throws rather than returning [] when the sha is unusable", async () => {
     const m = mgr();
     await m.ensureBaseClone();
-    expect(await m.listMigrationFiles("not-a-sha")).toEqual([]);
+    await expect(m.listMigrationFiles("not-a-sha")).rejects.toThrow(/not a commit sha/);
+  });
+
+  it("throws when the sha is well-shaped but absent from the clone", async () => {
+    const m = mgr();
+    await m.ensureBaseClone();
+    await expect(m.listMigrationFiles("0".repeat(40))).rejects.toThrow();
   });
 });

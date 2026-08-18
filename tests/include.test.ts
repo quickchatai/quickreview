@@ -388,6 +388,24 @@ describe("addendum registry", () => {
     expect(new Set(PASS_ADDENDA.map((a) => a.id)).size).toBe(PASS_ADDENDA.length);
   });
 
+  // the daemon posts the renumber as a COMMENT, so the lens must stop
+  // ALSO raising it as a P1 — otherwise the merge gate is still consumed and
+  // the author still owes a re-review round, which is the whole complaint.
+  // agents/pass-data-safety.md is a frozen seed (rule 6), so the withdrawal is
+  // delivered here, appended to the built body.
+  it("withdraws the base-branch migration-numbering P1 from pass-data-safety only", () => {
+    const dataSafety = composeAddendum("pass-data-safety");
+    expect(dataSafety).toContain("## Migration numbering against the base branch is handled daemon-side");
+    expect(dataSafety).toContain("**never return a base-branch migration-number collision as a finding**");
+    // The withdrawal is narrow: the rest of the migration judgment survives.
+    expect(dataSafety).toContain("ALGORITHM");
+    expect(dataSafety).toContain("backfill safety");
+    // No other pass is touched, and the seed itself is not read or rewritten.
+    for (const pass of ["pass-security", "pass-baseline", "pass-delivery", VALIDATE_PASS])
+      expect(composeAddendum(pass)).not.toContain("handled daemon-side");
+    expect(addendaForPass("pass-data-safety").map((a) => a.id)).toContain("migration-numbering");
+  });
+
   it("gives pass-validate different text from the lens passes", () => {
     const lens = composeAddendum("pass-security");
     const validate = composeAddendum(VALIDATE_PASS);

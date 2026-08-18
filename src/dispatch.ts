@@ -123,23 +123,6 @@ function alreadyConsumed(err: unknown): boolean {
   return /→ 404\b|"status":\s*"404"/.test(String(err));
 }
 
-/** True when the identical collision set was already commented for this PR —
- * a staleness round re-runs at the same head and must not repost. Detection
- * still runs and is still logged; only the duplicate COMMENT is suppressed. */
-function alreadyCommented(store: StateStore, pr: number, fingerprint: string): boolean {
-  const rows = store.db
-    .prepare("SELECT payload FROM events WHERE kind = 'migration_collision_comment' AND pr = ? ORDER BY id DESC LIMIT 10")
-    .all(pr) as Array<{ payload: string | null }>;
-  return rows.some((r) => {
-    if (!r.payload) return false;
-    try {
-      return (JSON.parse(r.payload) as { fingerprint?: unknown }).fingerprint === fingerprint;
-    } catch {
-      return false;
-    }
-  });
-}
-
 /**
  * Migration-number collision pre-check, run once per round after the
  * worktree is prepared and BEFORE the session is handed the order.
@@ -180,7 +163,10 @@ async function migrationPreCheck(
       collisions: collisions.map((c) => ({ pr_path: c.pr_path, base_path: c.base_path, target_path: c.target_path })),
     });
     const fingerprint = collisionFingerprint(args.head_sha, collisions);
-    if (alreadyCommented(deps.store, args.pr, fingerprint)) {
+    // A staleness round re-runs at the same head and must not repost the same
+    // comment. Detection still runs and is still logged; only the duplicate
+    // COMMENT is suppressed.
+    if (deps.store.migrationCollisionCommented(args.pr, fingerprint)) {
       log(`dispatch: #${args.pr} migration collision already commented at ${args.head_sha}`);
       return collisions;
     }

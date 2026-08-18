@@ -3,6 +3,7 @@
 // Contract: a {{placeholder}} in the text with no supplied value is a bug and
 // throws; a supplied value the template does not use is fine (templates are
 // edited independently of this renderer).
+import type { MigrationCollision } from "./migrations.js";
 import type { PassPlanEntry, RoundOrder, RoundType } from "./types.js";
 
 const PLACEHOLDER = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
@@ -52,6 +53,48 @@ export function roundTemplateFile(roundType: RoundType): string {
 const GATE_ON =
   "MIGRATION GATE: this PR touches migrations — pass-data-safety must judge the real DDL (ALGORITHM, ordering against the base branch, backfill safety, rolling-deploy ordering). A migration you cannot prove safe is a blocker or a NEEDS_HUMAN, never an approve.";
 const GATE_OFF = "no migration gate on this round";
+
+/**
+ * The GATE NOTES paragraph that carries's pre-check result to the
+ * session (rendered inside `migration_gate_note`, which all three round
+ * templates already print — no seed and no template edit needed).
+ *
+ * The daemon detected these collisions itself, before this round was ordered,
+ * and already posted the remedy as a COMMENT. Without this paragraph the
+ * session would re-derive the same fact from the diff and raise it as a
+ * blocker, which is exactly what the ticket exists to stop: the finding is
+ * correct, the verdict was wrong. So the note is imperative — the collision is
+ * settled mechanics, it is not a finding, and it never moves the verdict.
+ */
+export function renderMigrationCollisionsNote(collisions: readonly MigrationCollision[]): string {
+  if (collisions.length === 0) return "";
+  const lines = [
+    "",
+    "",
+    "MIGRATION NUMBERING — ALREADY HANDLED, DO NOT RAISE IT. The daemon checked",
+    "this PR's migration numbers against the base branch at the pinned base sha",
+    "before this round was ordered, found the collision(s) below, and has already",
+    "posted the exact remedy to the PR as a COMMENT:",
+    "",
+  ];
+  for (const c of collisions) {
+    lines.push(
+      `- \`${c.pr_path}\` collides with \`${c.base_path}\` → rename to \`${c.target_path}\`, dependencies \`[${c.dependency}]\``,
+    );
+  }
+  lines.push(
+    "",
+    "This is mechanics, not review content: it is deterministic, it has exactly",
+    "one remedy and it carries no design decision. It is **not a finding** — do",
+    "not report it, do not post it inline or in the body, do not let any pass",
+    "raise it, and above all do not let it become a `[blocker]` or move the",
+    "verdict. A PR whose only migration problem is this numbering collision is",
+    "still APPROVE-able on its merits. Everything else about these migrations —",
+    "the DDL itself, ALGORITHM, backfill safety, rolling-deploy ordering — is",
+    "judged exactly as it always was.",
+  );
+  return lines.join("\n");
+}
 const NO_BASE = "(unknown — the daemon could not resolve the base branch this round)";
 
 /** Markdown table of the round's pass plan — one row per subagent launch. */
@@ -85,7 +128,8 @@ export function roundVars(order: RoundOrder): TemplateVars {
     base_ref: order.base_ref || NO_BASE,
     base_sha: order.base_sha || NO_BASE,
     merge_base: order.merge_base || NO_BASE,
-    migration_gate_note: order.migration_gate ? GATE_ON : GATE_OFF,
+    migration_gate_note:
+      (order.migration_gate ? GATE_ON : GATE_OFF) + renderMigrationCollisionsNote(order.migration_collisions ?? []),
     settled_digest: order.settled_digest.trim() || "(nothing settled yet)",
   };
 }

@@ -749,6 +749,26 @@ export class StateStore {
       .run(this.ts(), kind, pr, payload === undefined ? null : JSON.stringify(payload));
   }
 
+  /**
+   * Has the migration-collision COMMENT with this fingerprint already been
+   * posted for this PR? Scans every such event for the PR — no
+   * recency window, because a PR that accumulates rounds must not start
+   * re-posting the same comment once the newest N events are other collisions.
+   */
+  migrationCollisionCommented(pr: number, fingerprint: string): boolean {
+    const rows = this.db
+      .prepare("SELECT payload FROM events WHERE kind = 'migration_collision_comment' AND pr = ?")
+      .all(pr) as Array<{ payload: string | null }>;
+    return rows.some((r) => {
+      if (!r.payload) return false;
+      try {
+        return (JSON.parse(r.payload) as { fingerprint?: unknown }).fingerprint === fingerprint;
+      } catch {
+        return false;
+      }
+    });
+  }
+
   /** Head sha of the last applied verdict for a PR (from the event log). */
   lastVerdictHead(pr: number): string | undefined {
     const row = this.db

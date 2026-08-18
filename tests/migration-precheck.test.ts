@@ -13,6 +13,7 @@ import { dispatchOnce, type DispatchAdapter } from "../src/dispatch.js";
 import { MutationGate, type MutationIntent, type GateResult } from "../src/gate.js";
 import type { PrFileEntry } from "../src/github.js";
 import { StateStore } from "../src/state.js";
+import { renderRoundPrompt } from "../src/templates.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
 
 const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "config.toml"), "utf8"));
@@ -186,6 +187,78 @@ describe("migration collision pre-check", () => {
     // The gate flag is unchanged by the pre-check: the lens still runs.
     expect(orders[0]?.migration_gate).toBe(true);
     expect(orders[0]?.lenses).toContain("pass-data-safety");
+  });
+
+  // The COMMENT alone does not fix the ticket: if the session still hears
+  // nothing, pass-data-safety re-derives the same collision and REQUEST_CHANGES
+  // is posted anyway — the merge gate consumed, the re-review round owed. So
+  // the pre-check's result must arrive in the prompt the session is actually
+  // injected with (the round template rendered through src/templates.ts).
+  it("tells the session, in the real rendered prompt, that the collision is already handled", async () => {
+    queue(49);
+    adapter.files = [file("backend/chat/migrations/0042_x.py")];
+    const prompts: string[] = [];
+    const template = readFileSync(resolve(process.cwd(), "prompts/round-first.md"), "utf8");
+
+    await dispatchOnce({
+      cfg,
+      store,
+      adapter,
+      hooks: {
+        async dispatchRound(_order, prompt) {
+          prompts.push(prompt);
+        },
+        async inject() {},
+        async injectOverseer() {},
+        async archiveAndClose() {},
+      },
+      renderPrompt: (o) => renderRoundPrompt(template, o),
+      prepareWorktree: tree,
+      listBaseMigrations: async () => BASE_MIGRATIONS,
+    });
+
+    const prompt = prompts[0] ?? "";
+    expect(prompt).toContain("ALREADY HANDLED, DO NOT RAISE IT");
+    expect(prompt).toContain("backend/chat/migrations/0043_x.py");
+    expect(prompt).toContain('("chat", "0042_add_widget_flag")');
+    expect(prompt).toContain("not a finding");
+  });
+
+  it("leaves the gate note alone when there is no collision", async () => {
+    queue(50);
+    adapter.files = [file("backend/chat/migrations/0043_free.py")];
+    const prompts: string[] = [];
+    const template = readFileSync(resolve(process.cwd(), "prompts/round-first.md"), "utf8");
+
+    await dispatchOnce({
+      cfg,
+      store,
+      adapter,
+      hooks: {
+        async dispatchRound(_order, prompt) {
+          prompts.push(prompt);
+        },
+        async inject() {},
+        async injectOverseer() {},
+        async archiveAndClose() {},
+      },
+      renderPrompt: (o) => renderRoundPrompt(template, o),
+      prepareWorktree: tree,
+      listBaseMigrations: async () => BASE_MIGRATIONS,
+    });
+
+    expect(prompts[0]).not.toContain("ALREADY HANDLED");
+    expect(prompts[0]).toContain("MIGRATION GATE");
+  });
+
+  it("suppresses the repost however many events sit in between", () => {
+    // Regression guard: the dedupe used to read the newest 10 events only, so
+    // a PR with a busier log quietly started reposting the same comment.
+    store.logEvent("migration_collision_comment", 51, { fingerprint: "fp-old" });
+    for (let i = 0; i < 40; i++) store.logEvent("migration_collision_comment", 51, { fingerprint: `fp-${i}` });
+    expect(store.migrationCollisionCommented(51, "fp-old")).toBe(true);
+    expect(store.migrationCollisionCommented(51, "fp-never")).toBe(false);
+    expect(store.migrationCollisionCommented(52, "fp-old")).toBe(false); // scoped per PR
   });
 
   it("says nothing when the PR's migration number is free", async () => {

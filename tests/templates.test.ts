@@ -102,6 +102,60 @@ describe("roundVars", () => {
     expect(note.toLowerCase()).not.toContain("escalate unless");
   });
 
+  // the pre-check's result has to REACH the session, or the lens
+  // re-derives the collision and blocks on it anyway. It rides on
+  // migration_gate_note, which all three round templates already print.
+  it("carries the daemon-handled migration collisions into the gate note", () => {
+    const v = roundVars({
+      ...order,
+      migration_collisions: [
+        {
+          app: "backend/chat",
+          app_label: "chat",
+          pr_path: "backend/chat/migrations/0042_add_widget.py",
+          number: 42,
+          base_path: "backend/chat/migrations/0042_add_widget_flag.py",
+          target_number: 43,
+          target_path: "backend/chat/migrations/0043_add_widget.py",
+          dependency_name: "0042_add_widget_flag",
+          dependency: '("chat", "0042_add_widget_flag")',
+        },
+      ],
+    });
+    const note = v.migration_gate_note;
+    expect(note).toMatch(/MIGRATION GATE/); // the gate itself is untouched
+    expect(note).toContain("ALREADY HANDLED, DO NOT RAISE IT");
+    expect(note).toContain("backend/chat/migrations/0043_add_widget.py");
+    expect(note).toContain('("chat", "0042_add_widget_flag")');
+    expect(note).toContain("not a finding");
+    expect(note).toContain("[blocker]");
+    // …and it survives into the actual prompt the session is injected with.
+    const tpl = readFileSync(resolve(process.cwd(), "prompts/round-re-review.md"), "utf8");
+    expect(
+      renderRoundPrompt(tpl, {
+        ...order,
+        migration_collisions: [
+          {
+            app: "backend/chat",
+            app_label: "chat",
+            pr_path: "backend/chat/migrations/0042_add_widget.py",
+            number: 42,
+            base_path: "backend/chat/migrations/0042_add_widget_flag.py",
+            target_number: 43,
+            target_path: "backend/chat/migrations/0043_add_widget.py",
+            dependency_name: "0042_add_widget_flag",
+            dependency: '("chat", "0042_add_widget_flag")',
+          },
+        ],
+      }),
+    ).toContain("ALREADY HANDLED, DO NOT RAISE IT");
+  });
+
+  it("says nothing about collisions when the pre-check found none", () => {
+    expect(roundVars({ ...order, migration_collisions: [] }).migration_gate_note).not.toContain("ALREADY HANDLED");
+    expect(roundVars({ ...order, migration_collisions: undefined }).migration_gate_note).not.toContain("ALREADY HANDLED");
+  });
+
   it("falls back when every known lens is already planned", () => {
     expect(roundVars({ ...order, addable_lenses: [] }).addable_lenses).toMatch(/none — every known lens/);
   });

@@ -148,7 +148,12 @@ export class WorktreeManager {
    * clone's checkout is not at the base branch — the worktrees are.
    */
   async listMigrationFiles(sha: string): Promise<string[]> {
-    if (!/^[0-9a-f]{7,40}$/i.test(sha)) return [];
+    // A sha this reader cannot use THROWS rather than returning []: an empty
+    // list is indistinguishable from "the base has no migrations", which would
+    // make the pre-check silently find nothing — the one failure mode
+    // hard constraint forbids ("more reliable, never quieter"). The caller
+    // catches it and logs `migration_precheck_failed`.
+    if (!/^[0-9a-f]{7,40}$/i.test(sha)) throw new Error(`listMigrationFiles: not a commit sha: ${sha}`);
     const res = await this.git(["ls-tree", "-r", "--name-only", sha]);
     return res.stdout
       .split("\n")
