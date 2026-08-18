@@ -69,7 +69,9 @@ describe("[models] tiered pass scheme", () => {
       "sol-high": "openai-codex/gpt-5.6-sol:high",
     });
     expect(cfg.models.risk_passes).toEqual(["pass-security", "pass-prod-risk", "pass-data-safety"]);
-    expect(cfg.models.validate_tier).toBe("terra-med");
+    // the validator's floor is pinned at the top tier — it vetoes
+    // sol-high findings, so it may never run below them.
+    expect(cfg.models.validate_tier).toBe("sol-high");
     expect(cfg.models.small_diff_lines).toBe(150);
   });
 
@@ -81,7 +83,7 @@ describe("[models] tiered pass scheme", () => {
     const cfg2 = parseConfig(minimal);
     expect(cfg2.models.tiers).toEqual(MODELS_TIER_DEFAULTS.tiers);
     expect(cfg2.models.risk_passes).toEqual(MODELS_TIER_DEFAULTS.risk_passes);
-    expect(cfg2.models.validate_tier).toBe("terra-med");
+    expect(cfg2.models.validate_tier).toBe("sol-high");
     expect(cfg2.models.small_diff_lines).toBe(150);
     expect(cfg2.models.pricing).toEqual({});
   });

@@ -16,7 +16,7 @@
 //
 // Tier fan-out: each seeded pass builds into per-tier variant files
 // `<pass>--<tier>.md`. Risk passes (config models.risk_passes) build only the
-// sol-high variant; pass-validate builds only its fixed tier
+// sol-high variant; pass-validate builds every tier at or above its floor
 // (models.validate_tier); every other pass builds all three tiers. The tier's
 // model spec ("provider/model:thinking") is split into the SEPARATE
 // pi-subagents `model` and `thinking` frontmatter fields. The addendum
@@ -25,6 +25,7 @@
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, resolve, join } from "node:path";
 import { MODELS_TIER_DEFAULTS } from "./config.js";
+import { PASS_TIER_ORDER, tiersAtOrAbove } from "./types.js";
 import type { PassTier } from "./types.js";
 
 const INCLUDE_RE = /\{\{include:([^}\r\n]+)\}\}/g;
@@ -157,7 +158,7 @@ export function splitModelSpec(spec: string): { model: string; thinking: string 
 // ---- the build step ------------------------------------------------------
 
 /** All pass tiers, ascending. */
-export const PASS_TIERS: readonly PassTier[] = ["terra-med", "sol-med", "sol-high"];
+export const PASS_TIERS: readonly PassTier[] = PASS_TIER_ORDER;
 
 // ---- the addendum registry -------------------------------------
 //
@@ -285,10 +286,15 @@ export interface BuiltAgent {
   thinking: string | null;
 }
 
-/** The tiers a given pass fans out into. */
+/** The tiers a given pass fans out into.
+ *
+ * `validateTier` is the validator's FLOOR, not a pin: dispatch
+ * raises `pass-validate` to the round's highest lens tier, so every tier at or
+ * above the floor must have a built variant on disk or that raise would name
+ * an agent pi-subagents cannot find. */
 export function tiersForPass(pass: string, riskPasses: string[], validateTier: PassTier): PassTier[] {
   if (riskPasses.includes(pass)) return ["sol-high"];
-  if (pass === "pass-validate") return [validateTier];
+  if (pass === VALIDATE_PASS) return tiersAtOrAbove(validateTier);
   return [...PASS_TIERS];
 }
 

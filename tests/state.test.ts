@@ -73,6 +73,18 @@ describe("rounds", () => {
     expect(Date.parse(r1.deadline_at) - Date.parse(r1.started_at)).toBe(45 * 60_000);
   });
 
+  // which tier held the veto, so a later audit can attribute kills.
+  it("records the validator's tier at start, and lets a late stamp fill it in", () => {
+    const id = store.startRound(7, "initial", ["pass-baseline"], 45, { validate_tier: "sol-high" });
+    expect(store.roundsFor(7)[0]!.validate_tier).toBe("sol-high");
+
+    const bare = store.startRound(8, "initial", [], 45);
+    expect(store.roundsFor(8)[0]!.validate_tier).toBeNull();
+    store.setRoundMeta(bare, { validate_tier: "sol-med" });
+    expect(store.roundsFor(8)[0]!.validate_tier).toBe("sol-med");
+    expect(id).not.toBe(bare);
+  });
+
   it("finishRound records verdict, spend and wall-clock duration", () => {
     const id = store.startRound(7, "initial", [], 45);
     clock = new Date(T0.getTime() + 12 * 60_000 + 30_000);

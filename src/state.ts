@@ -62,6 +62,10 @@ export interface RoundRow {
   tokens_cache_read: number | null;
   /** Daemon-side USD estimate (config pricing); null when a model is unpriced. */
   est_usd: number | null;
+  /** The tier `pass-validate` ran at this round — recorded so a
+   * later audit can tell which tier killed which finding. Null on rounds
+   * started before the column existed (and on backfilled history). */
+  validate_tier: string | null;
 }
 
 /** PR lifecycle facts for PRs the daemon never tracked (M2 backfill fills it).
@@ -215,6 +219,18 @@ CREATE TABLE IF NOT EXISTS pending_wakes (
   held_at    TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS pending_wakes_pr ON pending_wakes(pr, id);
+-- The reviewed-head mark: one row per PR, the head this system last
+-- reviewed. Deliberately NOT part of pr_state: the mark outlives lifecycle
+-- churn and is read by guards that must not depend on the current state.
+CREATE TABLE IF NOT EXISTS reviewed_heads (
+  pr                   INTEGER PRIMARY KEY,
+  head_sha             TEXT NOT NULL,
+  reviewed_at          TEXT NOT NULL,
+  verdict              TEXT,
+  posted_event         TEXT,
+  round_no             INTEGER,
+  last_author_reply_at TEXT
+);
 CREATE TABLE IF NOT EXISTS filed_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   kind TEXT NOT NULL,           -- 'improvement_pr' | 'issue'
@@ -265,6 +281,30 @@ CREATE TABLE IF NOT EXISTS slack_cooldowns (
 );
 `;
 
+/**
+ * The reviewed-head mark: the last head this system actually
+ * reviewed on a PR, what it decided there, and the newest author reply seen
+ * since. One row per PR — the mark is a *position*, not a history; the rounds
+ * table keeps the history.
+ *
+ * Two readers: the no-new-evidence guard (posting time and dispatch time) and
+ * the post-approval delta recheck that follows, which needs exactly
+ * `head_sha` to diff the current head against.
+ */
+export interface ReviewedHeadRow {
+  pr: number;
+  head_sha: string;
+  /** When the mark was last (re)stamped — the instant author replies race. */
+  reviewed_at: string;
+  /** The verdict applied at this head, when one was ("APPROVE" | …). */
+  verdict: string | null;
+  /** The review event actually POSTed at this head, when one was. */
+  posted_event: string | null;
+  round_no: number | null;
+  /** Newest author reply observed after the mark was stamped (new evidence). */
+  last_author_reply_at: string | null;
+}
+
 /** A wake held while its PR's round was in flight (single-shepherd S4). */
 export interface PendingWakeRow {
   id: number;
@@ -284,6 +324,8 @@ export interface RoundStartMeta {
   deletions?: number | null;
   changed_files?: number | null;
   trigger_ts?: string | null;
+  /** The tier the round's validator runs at. */
+  validate_tier?: string | null;
 }
 
 export class StateStore {
@@ -325,6 +367,8 @@ export class StateStore {
       // store created by an earlier slice converges.
       "ALTER TABLE slack_cooldowns ADD COLUMN fold_count INTEGER NOT NULL DEFAULT 0",
       "ALTER TABLE slack_cooldowns ADD COLUMN bypassed INTEGER NOT NULL DEFAULT 0",
+      // The validator's tier for the round — nullable, additive.
+      "ALTER TABLE rounds ADD COLUMN validate_tier TEXT",
     ]) {
       try {
         this.db.exec(ddl);
@@ -389,8 +433,8 @@ export class StateStore {
     const info = this.db
       .prepare(
         `INSERT INTO rounds (pr, round_no, round_type, lenses, started_at, deadline_at, status,
-                             additions, deletions, changed_files, trigger_ts)
-         VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?)`,
+                             additions, deletions, changed_files, trigger_ts, validate_tier)
+         VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)`,
       )
       .run(
         pr,
@@ -403,6 +447,7 @@ export class StateStore {
         meta.deletions ?? null,
         meta.changed_files ?? null,
         meta.trigger_ts ?? null,
+        meta.validate_tier ?? null,
       );
     return Number(info.lastInsertRowid);
   }
@@ -411,7 +456,7 @@ export class StateStore {
   setRoundMeta(id: number, meta: RoundStartMeta): void {
     const sets: string[] = [];
     const args: Array<number | string | null> = [];
-    for (const key of ["additions", "deletions", "changed_files", "trigger_ts"] as const) {
+    for (const key of ["additions", "deletions", "changed_files", "trigger_ts", "validate_tier"] as const) {
       if (meta[key] !== undefined) {
         sets.push(`${key} = ?`);
         args.push(meta[key] as number | string | null);
@@ -633,6 +678,57 @@ export class StateStore {
 
   isBotComment(commentId: number): boolean {
     return this.botCommentPr(commentId) !== undefined;
+  }
+
+  // ---- reviewed-head mark (guard 2; reuses it) -----------
+
+  /**
+   * Stamp the head this system reviewed. Moving to a NEW head replaces the
+   * whole row — the author-reply memory belongs to the head it was seen at, so
+   * carrying it forward would make the next round look like it already had new
+   * evidence. Re-stamping the SAME head only fills in the fields given and
+   * refreshes `reviewed_at`, which is what retires a reply that has now been
+   * answered.
+   */
+  recordReviewedHead(
+    pr: number,
+    mark: { head_sha: string; verdict?: string | null; posted_event?: string | null; round_no?: number | null },
+  ): void {
+    const prev = this.reviewedHead(pr);
+    const same = prev?.head_sha === mark.head_sha;
+    this.db
+      .prepare(
+        `INSERT INTO reviewed_heads (pr, head_sha, reviewed_at, verdict, posted_event, round_no, last_author_reply_at)
+         VALUES (@pr, @head_sha, @reviewed_at, @verdict, @posted_event, @round_no, @last_author_reply_at)
+         ON CONFLICT(pr) DO UPDATE SET
+           head_sha=@head_sha, reviewed_at=@reviewed_at, verdict=@verdict,
+           posted_event=@posted_event, round_no=@round_no, last_author_reply_at=@last_author_reply_at`,
+      )
+      .run({
+        pr,
+        head_sha: mark.head_sha,
+        reviewed_at: this.ts(),
+        verdict: mark.verdict ?? (same ? prev!.verdict : null),
+        posted_event: mark.posted_event ?? (same ? prev!.posted_event : null),
+        round_no: mark.round_no ?? (same ? prev!.round_no : null),
+        last_author_reply_at: null,
+      });
+  }
+
+  reviewedHead(pr: number): ReviewedHeadRow | undefined {
+    return this.db.prepare("SELECT * FROM reviewed_heads WHERE pr = ?").get(pr) as ReviewedHeadRow | undefined;
+  }
+
+  /** Record an author reply against the PR's mark — the second half of "no new
+   * evidence". Only ever moves the stamp forward; a PR with no mark has nothing
+   * to skip, so the reply is simply not recorded. */
+  noteAuthorReply(pr: number, atIso?: string): void {
+    const at = atIso ?? this.ts();
+    this.db
+      .prepare(
+        "UPDATE reviewed_heads SET last_author_reply_at = ? WHERE pr = ? AND (last_author_reply_at IS NULL OR last_author_reply_at < ?)",
+      )
+      .run(at, pr, at);
   }
 
   // ---- webhook delivery dedupe ------------------------------------------

@@ -174,6 +174,13 @@ describe("shipped round templates", () => {
       expect(out).toContain("pass-ui, pass-contracts");
     });
 
+    // the validator now holds its veto at the top tier; the kill log
+    // that feeds the EOD critic must survive that raise unchanged.
+    it(`${roundTemplateFile(rt)} still dispatches the planned validator variant and logs its kills`, () => {
+      expect(text).toContain("pass-validate");
+      expect(text).toMatch(/log\s+(its|the)\s+kills/i);
+    });
+
     it(`${roundTemplateFile(rt)} dispatches via the subagent tool, no bash fan-out, no spend_usd`, () => {
       // spend_usd is gone from the verdict contract — the daemon measures usage.
       expect(text).not.toContain("spend_usd");

@@ -198,6 +198,27 @@ export const SLACK_DEFAULTS: SlackConfig = {
   policy: SLACK_POLICY_DEFAULTS,
 };
 
+/**
+ * [guards] — the posting-time guards. Every one is ON by default:
+ * each answers a documented incident from the predecessor system, and a knob
+ * exists only so a guard can be taken out of the path deliberately, in one
+ * place, rather than by editing the gate.
+ */
+export interface GuardsConfig {
+  /** A non-author human APPROVED at the head ⇒ post COMMENT, not REQUEST_CHANGES. */
+  downgrade_on_human_approval: boolean;
+  /** Same head as the last review and no author reply since ⇒ post nothing. */
+  skip_unchanged_head: boolean;
+  /** Re-read the PR immediately before every posting mutation; merged/closed ⇒ refuse. */
+  recheck_pr_state_before_post: boolean;
+}
+
+export const GUARDS_DEFAULTS: GuardsConfig = {
+  downgrade_on_human_approval: true,
+  skip_unchanged_head: true,
+  recheck_pr_state_before_post: true,
+};
+
 /** Per-model spend rates, keyed by bare model id (e.g. "gpt-5.6-sol"). */
 export interface ModelPricing {
   input_per_mtok: number;
@@ -214,7 +235,9 @@ export interface ModelsConfig {
   tiers: Record<PassTier, string>;
   /** Passes always run at sol-high, single variant, not raisable. */
   risk_passes: string[];
-  /** pass-validate is FIXED at this tier — single variant, not raisable. */
+  /** pass-validate's FLOOR tier. The validator holds a veto over
+   * every lens finding, so dispatch raises it to the round's highest lens
+   * tier; this knob can only make it start higher, never lower. */
   validate_tier: PassTier;
   /** Diffs under this many changed lines start at terra-med (heuristics). */
   small_diff_lines: number;
@@ -233,7 +256,7 @@ export const MODELS_TIER_DEFAULTS: Pick<
     "sol-high": "openai-codex/gpt-5.6-sol:high",
   },
   risk_passes: ["pass-security", "pass-prod-risk", "pass-data-safety"],
-  validate_tier: "terra-med",
+  validate_tier: "sol-high",
   small_diff_lines: 150,
   pricing: {},
 };
@@ -261,6 +284,7 @@ export interface Config {
   tui: TuiConfig;
   companion: CompanionConfig;
   backfill: BackfillConfig;
+  guards: GuardsConfig;
   slack: SlackConfig;
 }
 
@@ -359,6 +383,7 @@ export function parseConfig(toml: string): Config {
     tui: { ...TUI_DEFAULTS, ...((raw.tui ?? {}) as Partial<TuiConfig>) },
     companion: resolveCompanionPaths({ ...COMPANION_DEFAULTS, ...((raw.companion ?? {}) as Partial<CompanionConfig>) }),
     backfill: { ...backfillDefaults(github), ...((raw.backfill ?? {}) as Partial<BackfillConfig>) },
+    guards: { ...GUARDS_DEFAULTS, ...((raw.guards ?? {}) as Partial<GuardsConfig>) },
     slack: parseSlack((raw.slack ?? {}) as Record<string, any>),
   };
   for (const k of [

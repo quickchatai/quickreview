@@ -132,10 +132,17 @@ describe("splitModelSpec", () => {
 describe("tiersForPass", () => {
   const risk = ["pass-security", "pass-prod-risk", "pass-data-safety"];
 
-  it("risk passes get only sol-high; validate its fixed tier; others all three", () => {
+  it("risk passes get only sol-high; others all three", () => {
     expect(tiersForPass("pass-security", risk, "terra-med")).toEqual(["sol-high"]);
-    expect(tiersForPass("pass-validate", risk, "terra-med")).toEqual(["terra-med"]);
     expect(tiersForPass("pass-baseline", risk, "terra-med")).toEqual(["terra-med", "sol-med", "sol-high"]);
+  });
+
+  // validate_tier is a FLOOR — dispatch raises the validator to the
+  // round's highest lens tier, so every tier at or above it must be buildable.
+  it("validate builds every tier at or above its floor", () => {
+    expect(tiersForPass(VALIDATE_PASS, risk, "terra-med")).toEqual(["terra-med", "sol-med", "sol-high"]);
+    expect(tiersForPass(VALIDATE_PASS, risk, "sol-med")).toEqual(["sol-med", "sol-high"]);
+    expect(tiersForPass(VALIDATE_PASS, risk, "sol-high")).toEqual(["sol-high"]);
   });
 });
 
@@ -221,7 +228,7 @@ describe("buildAgents", () => {
     expect(alpha).not.toContain("## Execution policy (sandbox rule, enforced)");
   });
 
-  it("builds a single sol-high variant for risk passes and a single fixed-tier validate", () => {
+  it("builds a single sol-high variant for risk passes and validate from its floor up", () => {
     writeFileSync(
       join(root, "agents", "pass-validate.md"),
       `---\nname: pass-validate\nmodel: openai/gpt-5.6-sol\n---\n\n{{include:prompts/pass-common.md}}\n`,
@@ -233,7 +240,11 @@ describe("buildAgents", () => {
       validateTier: "terra-med",
     });
     expect(built.filter((b) => b.pass === "pass-alpha").map((b) => b.name)).toEqual(["pass-alpha--sol-high"]);
-    expect(built.filter((b) => b.pass === "pass-validate").map((b) => b.name)).toEqual(["pass-validate--terra-med"]);
+    expect(built.filter((b) => b.pass === "pass-validate").map((b) => b.name)).toEqual([
+      "pass-validate--terra-med",
+      "pass-validate--sol-med",
+      "pass-validate--sol-high",
+    ]);
     expect(built.filter((b) => b.pass === "pass-beta")).toHaveLength(3);
     const validate = readFileSync(join(out, "pass-validate--terra-med.md"), "utf8");
     expect(validate).toContain("model: openai-codex/gpt-5.6-terra\n");
@@ -259,6 +270,35 @@ describe("buildAgents", () => {
     expect(readFileSync(join(out, "pass-beta--sol-high.md"), "utf8")).toContain("model: openai-codex/override-model\n");
   });
 
+  // the validator's variants must go through exactly the same tier
+  // and override machinery the lens passes do; this path had no test.
+  it("applies tier specs and per-variant overrides to the validator too", () => {
+    writeFileSync(
+      join(root, "agents", "pass-validate.md"),
+      `---\nname: pass-validate\nmodel: openai/gpt-5.6-sol\n---\n\n{{include:prompts/pass-common.md}}\n`,
+    );
+    const out = join(root, "state", "agents");
+    const built = buildAgents(join(root, "agents"), out, {
+      root,
+      validateTier: "sol-med",
+      models: { "pass-validate--sol-high": "openai-codex/override-validate:high" },
+    });
+
+    // Floor and above — the tiers dispatch may raise the validator to.
+    const validate = built.filter((b) => b.pass === VALIDATE_PASS);
+    expect(validate.map((b) => b.name)).toEqual(["pass-validate--sol-med", "pass-validate--sol-high"]);
+    // The floor variant takes the tier's spec, split the usual way…
+    const floor = readFileSync(join(out, "pass-validate--sol-med.md"), "utf8");
+    expect(floor).toContain("name: pass-validate--sol-med\n");
+    expect(floor).toContain("model: openai-codex/gpt-5.6-sol\n");
+    expect(floor).toContain("thinking: medium\n");
+    // …and the per-variant override wins over it, exactly as for a lens.
+    const high = built.find((b) => b.name === "pass-validate--sol-high")!;
+    expect(high.model).toBe("openai-codex/override-validate");
+    expect(high.thinking).toBe("high");
+    expect(readFileSync(high.output, "utf8")).toContain("model: openai-codex/override-validate\n");
+  });
+
   it("ignores non pass-* files", () => {
     const out = join(root, "state", "agents");
     const built = buildAgents(join(root, "agents"), out, { root });
@@ -277,7 +317,8 @@ describe("the real seeded content", () => {
     const out = mkdtempSync(join(tmpdir(), "qcr-agents-build-"));
     try {
       const built = buildAgents(join(sandbox, "agents"), out, { root: sandbox });
-      // 5 raisable passes × 3 tiers + 3 risk passes × 1 + validate × 1 = 19.
+      // 5 raisable passes × 3 tiers + 3 risk passes × 1 + validate × 1 (its
+      // shipped floor is the top tier) = 19.
       expect(built).toHaveLength(19);
       for (const b of built) {
         const text = readFileSync(b.output, "utf8");
@@ -288,7 +329,8 @@ describe("the real seeded content", () => {
         expect(b.name).toBe(`${b.pass}--${b.tier}`);
       }
       const names = built.map((b) => b.name);
-      expect(names).toContain("pass-validate--terra-med");
+      expect(names).toContain("pass-validate--sol-high");
+      expect(names).not.toContain("pass-validate--terra-med");
       expect(names).toContain("pass-security--sol-high");
       expect(names).not.toContain("pass-security--terra-med");
       expect(names).not.toContain("pass-security--sol-med");
@@ -394,7 +436,8 @@ describe("the built pass contract (rules)", () => {
   });
 
   it("the validator audits reachability and never kills on it", () => {
-    const text = bodies.get(`${VALIDATE_PASS}--terra-med`) as string;
+    // Whichever tier the validator's floor puts it at.
+    const [, text] = [...bodies].find(([name]) => name.startsWith(`${VALIDATE_PASS}--`))!;
     expect(text).toContain("reachability: routine | plausible | contrived");
     expect(text).toContain("**never a kill reason on its own**");
     expect(text).toContain("do not let a `routine` P0/P1 be talked down");
