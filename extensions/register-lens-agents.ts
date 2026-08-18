@@ -17,15 +17,15 @@
 // agents dir (state/agents/<pass>--<tier>.md, written by buildAgents in
 // src/include.ts) and registers each with that hook.
 //
-// Load order: pi-subagents rides the global ~/.pi/agent/settings.json (every
-// pi process), while THIS extension rides the per-session `--extension` argv
-// (sessions.ts extensionPaths). Globals load before argv extensions
-// (// VERIFY-ON-PIN: observed order on 0.84.1 — settings extensions register
-// first in the boot banner), so the hook exists by the time we run. That
-// asymmetry is deliberate and load-bearing: pi-subagents' CHILD processes get
-// only the settings.json extensions, so the pass agents are never registered
-// inside a child — a pass cannot fan out into another pass, which structurally
-// enforces the passes-are-leaves rule even if a frontmatter slipped through.
+// Load order (VERIFIED live 2026-08-18 on 0.84.1): per-session `--extension`
+// argv extensions load BEFORE the global ~/.pi/agent/settings.json ones, so
+// at activate() the hook does not exist yet — registration therefore POLLS
+// for it (registerWhenReady) rather than assuming order either way. The
+// argv/global asymmetry is deliberate and load-bearing: pi-subagents' CHILD
+// processes get only the settings.json extensions, so the pass agents are
+// never registered inside a child — a pass cannot fan out into another pass,
+// which structurally enforces the passes-are-leaves rule even if a
+// frontmatter slipped through.
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Pi } from "@earendil-works/pi-coding-agent";
@@ -107,18 +107,53 @@ export function registerAll(hook: SubagentsHook, dir: string, log: (msg: string)
   return n;
 }
 
-export default function activate(_pi: Pi): void {
-  const hook = (globalThis as { __pi_subagents?: SubagentsHook }).__pi_subagents;
-  if (!hook) {
-    // Loud, unmissable: without the hook every lens spawn degrades to a
-    // generic worker. This means pi-subagents did not load before us —
-    // check ~/.pi/agent/settings.json and the extension load order.
-    console.error(
-      "register-lens-agents: FATAL — globalThis.__pi_subagents missing; " +
-        "pi-subagents not loaded (or loaded after this extension). " +
-        "Lens passes will NOT resolve.",
-    );
+/** Poll for the hook instead of assuming extension load order. VERIFIED live
+ * 2026-08-18: per-session `--extension` argv extensions load BEFORE the global
+ * settings.json ones, so at our activate() the hook does not exist yet —
+ * an eager read logged FATAL on every session. The model's first turn is
+ * seconds away at minimum, so a few-second grace window closes the race. */
+export function registerWhenReady(
+  getHook: () => SubagentsHook | undefined,
+  dir: string,
+  log: (msg: string) => void,
+  opts: { intervalMs?: number; timeoutMs?: number; setInterval?: typeof globalThis.setInterval; clearInterval?: typeof globalThis.clearInterval } = {},
+): void {
+  const first = getHook();
+  if (first) {
+    registerAll(first, dir, log);
     return;
   }
-  registerAll(hook, builtAgentsDir(), (msg) => console.error(msg));
+  const intervalMs = opts.intervalMs ?? 250;
+  const timeoutMs = opts.timeoutMs ?? 15_000;
+  const setI = opts.setInterval ?? setInterval;
+  const clearI = opts.clearInterval ?? clearInterval;
+  let waited = 0;
+  const timer = setI(() => {
+    waited += intervalMs;
+    const hook = getHook();
+    if (hook) {
+      clearI(timer);
+      registerAll(hook, dir, log);
+      return;
+    }
+    if (waited >= timeoutMs) {
+      clearI(timer);
+      // Loud, unmissable: without the hook every lens spawn degrades to a
+      // generic worker acting as the lens.
+      log(
+        "register-lens-agents: FATAL — globalThis.__pi_subagents never appeared; " +
+          "pi-subagents not loaded in this process. Lens passes will NOT resolve.",
+      );
+    }
+  }, intervalMs);
+  // Never hold the process open just for this timer.
+  (timer as { unref?: () => void }).unref?.();
+}
+
+export default function activate(_pi: Pi): void {
+  registerWhenReady(
+    () => (globalThis as { __pi_subagents?: SubagentsHook }).__pi_subagents,
+    builtAgentsDir(),
+    (msg) => console.error(msg),
+  );
 }
