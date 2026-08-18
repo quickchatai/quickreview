@@ -107,53 +107,75 @@ export function registerAll(hook: SubagentsHook, dir: string, log: (msg: string)
   return n;
 }
 
-/** Poll for the hook instead of assuming extension load order. VERIFIED live
- * 2026-08-18: per-session `--extension` argv extensions load BEFORE the global
- * settings.json ones, so at our activate() the hook does not exist yet —
- * an eager read logged FATAL on every session. The model's first turn is
- * seconds away at minimum, so a few-second grace window closes the race. */
-export function registerWhenReady(
+/** Why registration is re-attempted on EVERY tool_call, not done once at
+ * activate (both VERIFIED live 2026-08-18, the hard way):
+ *
+ * 1. Argv extensions load before the global settings.json ones, so at our
+ *    activate() the hook may not exist yet.
+ * 2. Worse: pi-subagents' module load exposes the hook immediately, but its
+ *    own activate() later runs `agents = loadAgents()` — REASSIGNING the
+ *    array and silently discarding anything registered before that point. A
+ *    one-shot early registration therefore "succeeds" and is then wiped
+ *    (that is exactly what happened to the first fix: the throwaway session
+ *    logged "registered 22" and the next real round still got
+ *    "Unknown agent: pass-validate--sol-high").
+ *
+ * The only ordering guarantee we actually have: by the time the MODEL calls
+ * any tool, every extension's activate() has long finished. So we register
+ * lazily on the tool_call event (fires before the tool executes — the same
+ * pre-execution hook bash-guard vetoes on), and re-attempt on every call:
+ * registerAgent throws on duplicates, making re-attempts cheap no-ops, and a
+ * fresh wipe (should one ever happen again) heals on the next call. The
+ * configs are read from disk once and cached. */
+export function makeToolCallRegistrar(
   getHook: () => SubagentsHook | undefined,
   dir: string,
   log: (msg: string) => void,
-  opts: { intervalMs?: number; timeoutMs?: number; setInterval?: typeof globalThis.setInterval; clearInterval?: typeof globalThis.clearInterval } = {},
-): void {
-  const first = getHook();
-  if (first) {
-    registerAll(first, dir, log);
-    return;
-  }
-  const intervalMs = opts.intervalMs ?? 250;
-  const timeoutMs = opts.timeoutMs ?? 15_000;
-  const setI = opts.setInterval ?? setInterval;
-  const clearI = opts.clearInterval ?? clearInterval;
-  let waited = 0;
-  const timer = setI(() => {
-    waited += intervalMs;
+): () => void {
+  let cached: LensAgentConfig[] | undefined;
+  let everRegistered = false;
+  let warnedNoHook = false;
+  return () => {
     const hook = getHook();
-    if (hook) {
-      clearI(timer);
-      registerAll(hook, dir, log);
+    if (!hook) {
+      if (!warnedNoHook) {
+        warnedNoHook = true;
+        // Loud, unmissable: without the hook every planned lens spawn fails
+        // (the round templates order STOP + anomaly rather than a stand-in).
+        log(
+          "register-lens-agents: FATAL — globalThis.__pi_subagents missing at first tool call; " +
+            "pi-subagents not loaded in this process. Lens passes will NOT resolve.",
+        );
+      }
       return;
     }
-    if (waited >= timeoutMs) {
-      clearI(timer);
-      // Loud, unmissable: without the hook every lens spawn degrades to a
-      // generic worker acting as the lens.
-      log(
-        "register-lens-agents: FATAL — globalThis.__pi_subagents never appeared; " +
-          "pi-subagents not loaded in this process. Lens passes will NOT resolve.",
-      );
+    cached ??= loadBuiltAgents(dir);
+    let n = 0;
+    for (const agent of cached) {
+      try {
+        hook.registerAgent(agent);
+        n += 1;
+      } catch {
+        // already registered — fine
+      }
     }
-  }, intervalMs);
-  // Never hold the process open just for this timer.
-  (timer as { unref?: () => void }).unref?.();
+    if (n > 0 && !everRegistered) {
+      everRegistered = true;
+      log(`register-lens-agents: registered ${n} built pass agents from ${dir}`);
+    } else if (n > 0) {
+      // A later re-registration means something wiped the shared array again.
+      log(`register-lens-agents: re-registered ${n} pass agents (registry was reset)`);
+    }
+  };
 }
 
-export default function activate(_pi: Pi): void {
-  registerWhenReady(
+export default function activate(pi: Pi): void {
+  const attempt = makeToolCallRegistrar(
     () => (globalThis as { __pi_subagents?: SubagentsHook }).__pi_subagents,
     builtAgentsDir(),
     (msg) => console.error(msg),
   );
+  pi.on("tool_call", () => {
+    attempt();
+  });
 }

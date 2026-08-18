@@ -103,58 +103,62 @@ describe("registerAll", () => {
   });
 });
 
-describe("registerWhenReady", () => {
-  it("registers immediately when the hook already exists", async () => {
-    const { registerWhenReady } = await import("../extensions/register-lens-agents.js");
+describe("makeToolCallRegistrar", () => {
+  // The live failure mode this guards: pi-subagents' activate() reassigns its
+  // agents array AFTER an early registration, wiping it. Registration must
+  // therefore happen lazily at tool_call time and survive a later wipe.
+  it("registers on the first tool call once the hook exists", async () => {
+    const { makeToolCallRegistrar } = await import("../extensions/register-lens-agents.js");
     const d = tempAgentsDir({ "pass-baseline--sol-med.md": AGENT_MD });
     const seen: string[] = [];
-    registerWhenReady(
-      () => ({ registerAgent: (c: LensAgentConfig) => seen.push(c.name), unregisterAgent() {} }),
+    const attempt = makeToolCallRegistrar(
+      () => ({ registerAgent: (c: LensAgentConfig) => {
+        if (seen.includes(c.name)) throw new Error("dup");
+        seen.push(c.name);
+      }, unregisterAgent() {} }),
       d,
       () => {},
     );
+    attempt();
+    expect(seen).toEqual(["pass-baseline--sol-med"]);
+    attempt(); // every later call is a cheap all-duplicates no-op
     expect(seen).toEqual(["pass-baseline--sol-med"]);
   });
 
-  it("polls until the hook appears (argv extensions load before globals)", async () => {
-    const { registerWhenReady } = await import("../extensions/register-lens-agents.js");
+  it("re-registers after the shared array is wiped (the live activate() reassignment)", async () => {
+    const { makeToolCallRegistrar } = await import("../extensions/register-lens-agents.js");
+    const d = tempAgentsDir({ "pass-baseline--sol-med.md": AGENT_MD });
+    let registry: string[] = [];
+    const logs: string[] = [];
+    const attempt = makeToolCallRegistrar(
+      () => ({ registerAgent: (c: LensAgentConfig) => {
+        if (registry.includes(c.name)) throw new Error("dup");
+        registry.push(c.name);
+      }, unregisterAgent() {} }),
+      d,
+      (m) => logs.push(m),
+    );
+    attempt();
+    expect(registry).toEqual(["pass-baseline--sol-med"]);
+    registry = []; // pi-subagents' activate(): agents = loadAgents()
+    attempt();
+    expect(registry).toEqual(["pass-baseline--sol-med"]);
+    expect(logs.some((l) => l.includes("re-registered"))).toBe(true);
+  });
+
+  it("tolerates a hook that appears only on a later call, and warns FATAL once meanwhile", async () => {
+    const { makeToolCallRegistrar } = await import("../extensions/register-lens-agents.js");
     const d = tempAgentsDir({ "pass-baseline--sol-med.md": AGENT_MD });
     const seen: string[] = [];
-    let hook: { registerAgent(c: LensAgentConfig): void; unregisterAgent(): void } | undefined;
-    const timers: Array<() => void> = [];
-    registerWhenReady(() => hook, d, () => {}, {
-      intervalMs: 1,
-      timeoutMs: 10,
-      setInterval: ((fn: () => void) => {
-        timers.push(fn);
-        return 0 as unknown as ReturnType<typeof setInterval>;
-      }) as typeof setInterval,
-      clearInterval: (() => {}) as typeof clearInterval,
-    });
-    expect(seen).toEqual([]); // not yet — hook absent at activate
-    timers[0]!(); // tick 1: still absent
-    hook = { registerAgent: (c) => seen.push(c.name), unregisterAgent() {} };
-    timers[0]!(); // tick 2: hook appeared
-    expect(seen).toEqual(["pass-baseline--sol-med"]);
-  });
-
-  it("logs FATAL once the timeout elapses without a hook", async () => {
-    const { registerWhenReady } = await import("../extensions/register-lens-agents.js");
-    const d = tempAgentsDir({ "pass-baseline--sol-med.md": AGENT_MD });
     const logs: string[] = [];
-    const timers: Array<() => void> = [];
-    registerWhenReady(() => undefined, d, (m) => logs.push(m), {
-      intervalMs: 5,
-      timeoutMs: 10,
-      setInterval: ((fn: () => void) => {
-        timers.push(fn);
-        return 0 as unknown as ReturnType<typeof setInterval>;
-      }) as typeof setInterval,
-      clearInterval: (() => {}) as typeof clearInterval,
-    });
-    timers[0]!();
-    timers[0]!(); // waited 10ms >= timeout
-    expect(logs.some((l) => l.includes("FATAL"))).toBe(true);
+    let hook: { registerAgent(c: LensAgentConfig): void; unregisterAgent(): void } | undefined;
+    const attempt = makeToolCallRegistrar(() => hook, d, (m) => logs.push(m));
+    attempt();
+    attempt();
+    expect(logs.filter((l) => l.includes("FATAL"))).toHaveLength(1);
+    hook = { registerAgent: (c) => seen.push(c.name), unregisterAgent() {} };
+    attempt();
+    expect(seen).toEqual(["pass-baseline--sol-med"]);
   });
 });
 
