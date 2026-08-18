@@ -318,9 +318,10 @@ describe("the real seeded content", () => {
     const out = mkdtempSync(join(tmpdir(), "qcr-agents-build-"));
     try {
       const built = buildAgents(join(sandbox, "agents"), out, { root: sandbox });
-      // 5 raisable passes × 3 tiers + 3 risk passes × 1 + validate × 1 (its
-      // shipped floor is the top tier) = 19.
-      expect(built).toHaveLength(19);
+      // 6 raisable passes × 3 tiers (pass-intent included) + 3 risk
+      // passes × 1 + validate × 1 (its shipped floor is the top tier,
+      //) = 22.
+      expect(built).toHaveLength(22);
       for (const b of built) {
         const text = readFileSync(b.output, "utf8");
         expect(text).not.toContain("{{include:");
@@ -675,5 +676,86 @@ describe("the built pass contract (rules)", () => {
     const common = readFileSync(join(sandbox, "prompts", "pass-common.md"), "utf8");
     expect(common).not.toContain("reachability");
     expect(common).not.toContain("(sandbox rule)");
+  });
+});
+
+// ---- pass-intent --------------------------------------------------
+//
+// The tenth lens. Its definition file is OURS (created after the
+// seeding, deliberately absent from the seed manifest), so its rules live in
+// the definition itself; only the validator-side severity cap rides the
+// addendum registry.
+describe("pass-intent", () => {
+  const sandbox = join(import.meta.dirname, "..");
+  let out: string;
+  let bodies: Map<string, string>;
+
+  beforeEach(() => {
+    out = mkdtempSync(join(tmpdir(), "qcr-intent-"));
+    bodies = new Map();
+    for (const b of buildAgents(join(sandbox, "agents"), out, { root: sandbox })) {
+      bodies.set(b.name, readFileSync(b.output, "utf8"));
+    }
+  });
+
+  afterEach(() => rmSync(out, { recursive: true, force: true }));
+
+  it("builds at terra-med into the agents output dir like every other pass", () => {
+    expect(bodies.has("pass-intent--terra-med")).toBe(true);
+    // Raisable like any non-risk lens: the higher-tier variants exist too.
+    expect(bodies.has("pass-intent--sol-med")).toBe(true);
+    expect(bodies.has("pass-intent--sol-high")).toBe(true);
+    const text = bodies.get("pass-intent--terra-med")!;
+    expect(text.startsWith("---\nname: pass-intent--terra-med\n")).toBe(true);
+    // The shared blank-slate contract and the lens addenda reach it.
+    expect(text).toContain("You are a **blank-slate review pass**");
+    expect(text).toContain("## Execution policy (sandbox rule, enforced)");
+    expect(text).toContain("reachability: routine | plausible | contrived");
+  });
+
+  it("is a leaf: no agent-spawning tools in any built variant", () => {
+    for (const name of ["pass-intent--terra-med", "pass-intent--sol-med", "pass-intent--sol-high"]) {
+      const text = bodies.get(name)!;
+      const tools = /^tools:[ \t]*(.*)$/m.exec(text)?.[1] ?? "";
+      for (const t of tools.split(",").map((s) => s.trim().toLowerCase())) {
+        expect(["subagent", "subagents", "task", "agent", "agents", "dispatch"]).not.toContain(t);
+      }
+      expect(text).toContain("## You are a leaf (sandbox rule, enforced)");
+    }
+  });
+
+  it("reads only the PR body and title as intent — tracker and transcripts are forbidden", () => {
+    const text = bodies.get("pass-intent--terra-med")!;
+    expect(text).toContain("The PR title and body are the ONLY intent source this lens judges against");
+    expect(text).toContain("Do not fetch a tracker\nticket");
+    expect(text).toContain("implementing conversation, prompt, or agent\ntranscript");
+    expect(text).toContain("arrives verbatim in your task string");
+  });
+
+  it("returns NONE on a thin body rather than manufacturing a finding", () => {
+    const text = bodies.get("pass-intent--terra-med")!;
+    expect(text).toContain("## Thin bodies return NONE");
+    expect(text).toContain("return `NONE`");
+    expect(text).toContain("**No finding is the correct output for most PRs.**");
+  });
+
+  it("caps severity — questions and nits, never a blocker", () => {
+    const text = bodies.get("pass-intent--terra-med")!;
+    expect(text).toContain("## Findings are questions and nits — never blockers");
+    expect(text).toContain("every finding you return is `P3` or `nit`");
+    expect(text).toContain("never `P0`, `P1`, or `P2`");
+    expect(text).toContain("nothing you return may post as a `[blocker]`");
+  });
+
+  it("the validator enforces the cap: intent candidates above P3 are capped down", () => {
+    const cap = "## Intent findings are capped — questions and nits only (sandbox rule)";
+    for (const [name, text] of bodies) {
+      expect(text.includes(cap), name).toBe(name.startsWith(`${VALIDATE_PASS}--`));
+    }
+    const validate = [...bodies].find(([name]) => name.startsWith(`${VALIDATE_PASS}--`))![1];
+    expect(validate).toContain("intent-over-cap");
+    expect(validate).toContain("never let one through as a `P0`–`P2` or a `[blocker]`");
+    expect(addendaForPass(VALIDATE_PASS).map((a) => a.id)).toContain("intent-cap-validate");
+    expect(addendaForPass("pass-intent").map((a) => a.id)).not.toContain("intent-cap-validate");
   });
 });

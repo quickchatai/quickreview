@@ -270,6 +270,15 @@ const NIT_SCOPE_ADDENDUM =
 const NIT_SCOPE_VALIDATE_ADDENDUM =
   "\n## Nit scope — enforce it on nits, never on defects (sandbox rule)\nWhen your task string carries a **NIT SCOPE** block (present from round 3 of a PR's review onward), a NEW nit-class candidate — one that would post as `[nit]` — anchored **outside the current delta** is killed, with the one-word reason `nit-out-of-delta`. This kill applies strictly to nits: never kill, soften, or re-severity a `P0`–`P2` on this rule — a real defect is raisable on any surface at any round, and the blocker bar has not moved. Absent the block, the rule is not armed and nits are audited exactly as before.\n";
 
+// pass-intent's severity cap, enforced at the validator. The lens's
+// own definition (agents/pass-intent.md — ours, not a frozen seed) already
+// caps itself at P3/nit, but the lens text is advice to a model; the validator
+// holds the veto, so the cap is repeated where it binds. Intent findings are
+// judgments about author COMMUNICATION (body vs diff), never about the code's
+// correctness — the class must never consume the merge gate.
+const INTENT_CAP_VALIDATE_ADDENDUM =
+  "\n## Intent findings are capped — questions and nits only (sandbox rule)\nA candidate from the `pass-intent` lens (the PR-body-vs-diff intent pass) is a judgment about author communication, never about the code: it may post only as a `[question]` or `[nit]`. Cap any `pass-intent` candidate arriving above `P3` down to `P3` with the one-word reason `intent-over-cap` — never let one through as a `P0`–`P2` or a `[blocker]`. A genuine code defect surfaced by the body-vs-diff comparison belongs to whichever lens owns it: judge it as that lens's class at its own severity only when another pass raised it; from `pass-intent` alone it stays a capped question.\n";
+
 /**
  * The composed addendum set, in composition order.
  *
@@ -293,6 +302,7 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
   { id: "baseline-test-vacuity-static", scope: ["pass-baseline"], text: BASELINE_TEST_VACUITY_STATIC_ADDENDUM },
   { id: "nit-scope", scope: "lenses", text: NIT_SCOPE_ADDENDUM },
   { id: "nit-scope-validate", scope: [VALIDATE_PASS], text: NIT_SCOPE_VALIDATE_ADDENDUM },
+  { id: "intent-cap-validate", scope: [VALIDATE_PASS], text: INTENT_CAP_VALIDATE_ADDENDUM },
 ];
 
 /** The addenda binding `pass`, in composition order. */

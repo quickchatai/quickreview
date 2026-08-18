@@ -99,6 +99,11 @@ export interface RoundOrder {
    * Empty when git could not compute one (shallow/unrelated histories). */
   merge_base: string;
   worktree: string;
+  /** The PR body as GitHub returned it: rendered verbatim into the
+   * round prompt's INTENT block when `pass-intent` is planned — the lens's
+   * entire intent artifact. Absent on orders built before the field existed
+   * and on orders whose adapter read failed (no intent lens either way). */
+  pr_body?: string;
   /** SETTLED digest carried from the last verdict's ledger snapshot. */
   settled_digest: string;
   issued_at: string;

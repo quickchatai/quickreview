@@ -307,6 +307,38 @@ describe("buildPassPlan", () => {
     expect(addable_lenses).toEqual(ALL_PASSES.filter((l) => l !== "pass-baseline" && l !== "pass-validate"));
     expect(addable_lenses).not.toContain("pass-validate");
   });
+
+  // pass-intent: selected on the PR body's substance, priced at the
+  // cheapest tier whatever the round's default, raisable like any other lens.
+  describe("pass-intent", () => {
+    const body =
+      "This PR introduces a token-bucket rate limiter for the public API. " +
+      "Requests over the limit receive a 429 with a Retry-After header, and " +
+      "the bucket refills once per second per client key.";
+
+    it("starts at terra-med even when the round's default tier is sol-med", () => {
+      // 200 changed lines ⇒ defaultTier sol-med; intent stays terra-med.
+      const { pass_plan } = buildPassPlan(planCfg, [file("app/service.py", 200, 0)], { body });
+      const intent = pass_plan.find((p) => p.lens === "pass-intent")!;
+      expect(intent).toEqual({
+        lens: "pass-intent",
+        agent: "pass-intent--terra-med",
+        tier: "terra-med",
+        raisable_to: ["pass-intent--sol-med", "pass-intent--sol-high"],
+      });
+      // Its terra-med never DRAGS the validator below the round's highest lens.
+      const validate = pass_plan.find((p) => p.lens === "pass-validate")!;
+      expect(validate.tier).toBe("sol-med");
+    });
+
+    it("is skipped (and stays addable) when the body is thin or absent", () => {
+      for (const intentArg of [undefined, {}, { body: "fixes the bug" }] as const) {
+        const { pass_plan, addable_lenses } = buildPassPlan(planCfg, [file("app/service.py", 200, 0)], intentArg);
+        expect(pass_plan.map((p) => p.lens)).not.toContain("pass-intent");
+        expect(addable_lenses).toContain("pass-intent");
+      }
+    });
+  });
 });
 
 describe("dispatchOnce", () => {

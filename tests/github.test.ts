@@ -110,6 +110,7 @@ describe("authoritative per-PR reads", () => {
 
     expect(await adapter.getPr(12)).toEqual({
       number: 12, title: "T", author: "alice", head_sha: "abc", base_ref: "master",
+      body: "", //: no description on the wire normalizes to ""
       updated_at: "2026-08-13T10:00:00Z", state: "open", draft: false, merged: false,
       labels: ["AI review requested"],
     });

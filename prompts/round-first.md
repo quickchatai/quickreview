@@ -4,7 +4,8 @@
 > injected into the PR session (`pr-{{n}}`) by the daemon. Placeholders:
 > `{{n}} {{title}} {{worktree}} {{head_sha}} {{base_ref}} {{base_sha}}
 > {{merge_base}} {{lenses}} {{pass_plan}} {{addable_lenses}}
-> {{migration_gate_note}} {{settled_digest}} {{round_type}} {{round_no}}`.
+> {{migration_gate_note}} {{settled_digest}} {{round_type}} {{round_no}}
+> {{intent_note}}`.
 
 ---
 
@@ -102,6 +103,7 @@ tests, builds, or package managers — no test runners, no app entrypoints, no
 
 **GATE NOTES**
 {{migration_gate_note}}
+{{intent_note}}
 
 ## 3. Merge
 

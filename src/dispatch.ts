@@ -8,7 +8,7 @@
 import type { Config } from "./config.js";
 import type { GateResult } from "./gate.js";
 import type { PrFileEntry } from "./github.js";
-import { migrationGate, passTier, selectLenses } from "./heuristics.js";
+import { INTENT_PASS, migrationGate, passTier, selectLenses } from "./heuristics.js";
 import {
   collisionFingerprint,
   detectMigrationCollisions,
@@ -27,8 +27,11 @@ import type { PassPlanEntry, PassTier, RoundOrder, RoundType, SessionHooks } fro
  * the adapter, so this module never touches GitHub directly. */
 export interface DispatchAdapter {
   listPrFiles(n: number): Promise<PrFileEntry[]>;
-  /** Read-only; dispatch needs `base_ref` to keep the base branch fresh. */
-  getPr(n: number): Promise<{ base_ref: string }>;
+  /** Read-only; dispatch needs `base_ref` to keep the base branch fresh, and
+   * `body` as pass-intent's artifact + substance-bar input. `body`
+   * stays optional so legacy fakes and adapters remain valid — absent
+   * body ⇒ the intent lens is simply never selected. */
+  getPr(n: number): Promise<{ base_ref: string; body?: string }>;
   addLabel(n: number, label: string): Promise<GateResult>;
   removeLabel(n: number, label: string): Promise<GateResult>;
   deleteTeamReviewRequest(n: number): Promise<GateResult>;
@@ -276,6 +279,7 @@ export const ALL_PASSES: readonly string[] = [
   "pass-statelessness",
   "pass-prod-risk",
   "pass-delivery",
+  "pass-intent",
   "pass-validate",
 ];
 
@@ -310,14 +314,19 @@ export function validatorTier(floor: PassTier, lensTiers: readonly PassTier[]): 
 export function buildPassPlan(
   cfg: Config,
   files: PrFileEntry[],
+  intent?: { body?: string | null },
 ): { pass_plan: PassPlanEntry[]; addable_lenses: string[] } {
   const defaultTier = passTier(files, {
     migrationGate: migrationGate(files),
     smallDiffLines: cfg.models.small_diff_lines,
   });
   const risk = new Set(cfg.models.risk_passes);
-  const lenses = [...selectLenses(files), VALIDATE_PASS];
-  const tierOf = (lens: string): PassTier => (risk.has(lens) ? "sol-high" : defaultTier);
+  const lenses = [...selectLenses(files, intent), VALIDATE_PASS];
+  // pass-intent starts at terra-med whatever the round's default:
+  // reading comprehension over two short texts, not a judgment over production
+  // risk. It is NOT pinned — the session may raise it like any other lens.
+  const tierOf = (lens: string): PassTier =>
+    risk.has(lens) ? "sol-high" : lens === INTENT_PASS ? "terra-med" : defaultTier;
   const validate = validatorTier(
     cfg.models.validate_tier,
     lenses.filter((l) => l !== VALIDATE_PASS).map(tierOf),
@@ -352,8 +361,12 @@ export function buildRoundOrder(args: {
   /** True when the PR touches migrations and the pre-check could NOT run —
    * the prompt must tell the session to check collisions itself. */
   migrationPrecheckDegraded?: boolean;
+  /** The PR body as GitHub returned it: pass-intent's whole intent
+   * artifact and the substance-bar input. Absent (stub-wired core, unit tests
+   * without an adapter body) ⇒ the intent lens is never selected. */
+  prBody?: string;
 }): RoundOrder {
-  const { pass_plan, addable_lenses } = buildPassPlan(args.cfg, args.files);
+  const { pass_plan, addable_lenses } = buildPassPlan(args.cfg, args.files, { body: args.prBody });
   return {
     pr: args.row.number,
     title: args.row.title,
@@ -375,6 +388,7 @@ export function buildRoundOrder(args: {
     worktree: args.worktree,
     settled_digest: args.settledDigest,
     issued_at: args.issuedAt,
+    ...(args.prBody !== undefined ? { pr_body: args.prBody } : {}),
   };
 }
 
@@ -469,21 +483,27 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         if (withheldHere) store.logEvent("approval_retry_dispatched", row.number, { head_sha: row.head_sha });
       }
 
-      // The branch this PR targets. Only used to keep the base fresh in the
-      // clone; a failed read degrades to "no base facts", never a failed round.
+      // The branch this PR targets (base freshness) and its body (:
+      // pass-intent's artifact + substance bar) come off one getPr read. A
+      // failed read degrades to "no base facts, no intent lens", never a
+      // failed round.
       let baseRef = "";
+      let prBody: string | undefined;
       try {
-        baseRef = (await deps.adapter.getPr(row.number)).base_ref;
+        const ref = await deps.adapter.getPr(row.number);
+        baseRef = ref.base_ref;
+        prBody = ref.body;
       } catch (err) {
         log(`dispatch: base ref lookup failed on #${row.number}`, err);
       }
 
       const files = await deps.adapter.listPrFiles(row.number);
       const gate = migrationGate(files);
-      // The plan is pure and deterministic in `files`, so computing it here and
-      // again inside buildRoundOrder yields the same tiers; taking the lens
-      // list off it keeps the round row and the order from ever disagreeing.
-      const plannedPasses = buildPassPlan(cfg, files).pass_plan;
+      // The plan is pure and deterministic in `files` + the PR body, so
+      // computing it here and again inside buildRoundOrder yields the same
+      // tiers; taking the lens list off it keeps the round row and the order
+      // from ever disagreeing.
+      const plannedPasses = buildPassPlan(cfg, files, { body: prBody }).pass_plan;
       const lenses = plannedPasses.map((p) => p.lens);
       const validateTier = plannedPasses.find((p) => p.lens === VALIDATE_PASS)?.tier ?? cfg.models.validate_tier;
 
@@ -563,6 +583,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         worktree: worktreeFor(row.number),
         settledDigest: settledDigest(row.number),
         issuedAt: now().toISOString(),
+        ...(prBody !== undefined ? { prBody } : {}),
       });
 
       // The round is provisional until the worktree/session/prompt handoff

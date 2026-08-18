@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { isTestFile, migrationGate, passTier, prodStats, selectLenses, type PrFile } from "../src/heuristics.js";
+import {
+  INTENT_MIN_SUBSTANCE_WORDS,
+  INTENT_PASS,
+  intentSubstanceWords,
+  isTestFile,
+  meetsIntentBar,
+  migrationGate,
+  passTier,
+  prodStats,
+  selectLenses,
+  type PrFile,
+} from "../src/heuristics.js";
 import type { PrFileEntry } from "../src/github.js";
 
 const f = (filename: string, additions = 1, deletions = 0): PrFile => ({ filename, additions, deletions });
@@ -164,5 +175,68 @@ describe("selectLenses", () => {
     expect(selectLenses(files)).toEqual(first);
     expect(new Set(first).size).toBe(first.length);
     expect(first[0]).toBe("pass-baseline");
+  });
+});
+
+// ---- pass-intent --------------------------------------------------
+
+const SUBSTANTIVE_BODY =
+  "This PR introduces a token-bucket rate limiter for the public API. " +
+  "Requests over the limit receive a 429 with a Retry-After header, and the " +
+  "bucket refills once per second per client key. No behaviour change for " +
+  "authenticated internal traffic.";
+
+describe("intent substance bar", () => {
+  it("rejects thin bodies — the lens's only honest output would be NONE", () => {
+    expect(meetsIntentBar(undefined)).toBe(false);
+    expect(meetsIntentBar(null)).toBe(false);
+    expect(meetsIntentBar("")).toBe(false);
+    expect(meetsIntentBar("fixes the bug")).toBe(false);
+    expect(meetsIntentBar("see JIRA-1234")).toBe(false);
+  });
+
+  it("accepts a body with real author prose", () => {
+    expect(meetsIntentBar(SUBSTANTIVE_BODY)).toBe(true);
+    expect(intentSubstanceWords(SUBSTANTIVE_BODY)).toBeGreaterThanOrEqual(INTENT_MIN_SUBSTANCE_WORDS);
+  });
+
+  it("does not count template scaffolding as substance", () => {
+    // An unfilled PR template: comments, headings, empty checkboxes, code and
+    // links — lots of characters, zero author intent.
+    const template = [
+      "<!-- Please describe your change below. Explain the motivation, the",
+      "approach you took, and anything the reviewer should pay attention to -->",
+      "## Description",
+      "## Checklist",
+      "- [ ]",
+      "- [x]",
+      "```",
+      "npm run build && npm test && make deploy release publish verify lint",
+      "```",
+      "https://github.com/example-org/example-app/pull/999",
+      "`inline_code_identifier`",
+    ].join("\n");
+    expect(intentSubstanceWords(template)).toBe(0);
+    expect(meetsIntentBar(template)).toBe(false);
+    // The same template WITH real prose underneath clears the bar.
+    expect(meetsIntentBar(`${template}\n${SUBSTANTIVE_BODY}`)).toBe(true);
+  });
+});
+
+describe("selectLenses: pass-intent", () => {
+  const files = [f("app/service.py", 40, 3)];
+
+  it("is keyed on the body, never on the file shape", () => {
+    expect(selectLenses(files)).not.toContain(INTENT_PASS);
+    expect(selectLenses(files, {})).not.toContain(INTENT_PASS);
+    expect(selectLenses(files, { body: "fixes the bug" })).not.toContain(INTENT_PASS);
+    expect(selectLenses(files, { body: SUBSTANTIVE_BODY })).toContain(INTENT_PASS);
+    // Same body, wildly different file shapes: selection does not move.
+    expect(selectLenses([f("infra/main.tf"), f("frontend/x.tsx")], { body: SUBSTANTIVE_BODY })).toContain(INTENT_PASS);
+  });
+
+  it("skips the lens on a thin body — cheaper than dispatching a NONE", () => {
+    expect(selectLenses(files, { body: "" })).not.toContain(INTENT_PASS);
+    expect(selectLenses(files, { body: null })).not.toContain(INTENT_PASS);
   });
 });

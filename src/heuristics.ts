@@ -64,6 +64,47 @@ export function passTier(
   return "sol-med";
 }
 
+// ---- pass-intent ------------------------------------------------
+//
+// The tenth lens: does the PR do what its author said it would? Its intent
+// artifact is the PR TITLE + BODY and nothing else (intent-as-artifact — what
+// the author told other humans; the implementing conversation/prompt is
+// rejected as an echo chamber and is never fetched). Selection keys on the
+// body clearing a minimum substance bar: dispatching a pass whose first act
+// is to return NONE is pure spend, and the lens's own load-bearing rule is
+// that a thin body supports no finding. The bar lives HERE (daemon-side, not
+// in the lens text) so a thin-body PR never costs a subagent at all.
+
+export const INTENT_PASS = "pass-intent";
+
+/** Words of author prose a body must carry before pass-intent is worth a
+ * dispatch. Below this, "the body says X" has no X to check — the lens's own
+ * contract says NONE is the only honest output. */
+export const INTENT_MIN_SUBSTANCE_WORDS = 20;
+
+/**
+ * Words of actual author prose in a PR body, after stripping the parts that
+ * carry no intent: PR-template HTML comments, fenced/inline code, bare URLs,
+ * template scaffolding headings and empty checkboxes. Deliberately crude —
+ * this is a dispatch-cost gate, not comprehension.
+ */
+export function intentSubstanceWords(body: string | null | undefined): number {
+  if (!body) return 0;
+  const prose = body
+    .replace(/<!--[\s\S]*?-->/g, " ") // PR-template comments
+    .replace(/```[\s\S]*?(```|$)/g, " ") // fenced code blocks
+    .replace(/`[^`\n]*`/g, " ") // inline code
+    .replace(/https?:\/\/\S+/g, " ") // bare links carry no prose
+    .replace(/^#{1,6}\s.*$/gm, " ") // headings = template scaffolding
+    .replace(/^\s*[-*]\s*\[[ xX]?\]\s*$/gm, " "); // empty checkbox rows
+  return prose.split(/\s+/).filter((w) => /[A-Za-z]/.test(w)).length;
+}
+
+/** The substance bar: run pass-intent iff the body clears it. */
+export function meetsIntentBar(body: string | null | undefined): boolean {
+  return intentSubstanceWords(body) >= INTENT_MIN_SUBSTANCE_WORDS;
+}
+
 // Dependency-manifest / lockfile shapes — a security surface (supply chain).
 const DEPS_MANIFEST_RE =
   /(^|\/)(package(-lock)?\.json|yarn\.lock|pnpm-lock\.yaml|requirements[^/]*\.txt|poetry\.lock|pyproject\.toml|Pipfile(\.lock)?|go\.(mod|sum)|Gemfile(\.lock)?|Cargo\.(toml|lock))$/;
@@ -72,7 +113,7 @@ const DEPS_MANIFEST_RE =
 // from the changed-file shape (path + patch-content signals), each tied to
 // the seeded lens's stated focus; validator always runs last (added by
 // dispatch, never selected here).
-export function selectLenses(files: PrFile[]): string[] {
+export function selectLenses(files: PrFile[], intent?: { body?: string | null }): string[] {
   const lenses = new Set<string>(["pass-baseline"]);
   const names = files.map((f) => f.filename);
   const any = (re: RegExp) => names.some((n) => re.test(n));
@@ -131,6 +172,11 @@ export function selectLenses(files: PrFile[]): string[] {
     added(/^\+.*@background_decorator/m)
   )
     lenses.add("pass-delivery");
+
+  // Intent: keyed on the BODY, not the file shape — the artifact it
+  // judges against is the author's own description, so a body below the
+  // substance bar means the pass's only honest output would be NONE. Skip it.
+  if (meetsIntentBar(intent?.body)) lenses.add(INTENT_PASS);
 
   return [...lenses];
 }

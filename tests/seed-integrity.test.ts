@@ -59,6 +59,9 @@ const RATIFIED_DIVERGENCE = new Set<string>([
 
 /** Files that are OURS to edit — they must never be frozen by the manifest. */
 const NON_SEEDED = [
+  // agents/pass-intent.md is OURS: created after the seeding,
+  // never part of the frozen set — it must not be pinned by the manifest.
+  "agents/pass-intent.md",
   "prompts/round-first.md",
   "prompts/round-re-review.md",
   "prompts/round-staleness.md",

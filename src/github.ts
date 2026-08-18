@@ -21,6 +21,10 @@ export interface PrRef {
   /** The branch the PR targets (`base.ref`) — what the review compares against
    * and the branch the worktree keeps fresh each round. */
   base_ref: string;
+  /** The PR description: pass-intent's whole intent artifact and
+   * the substance-bar input. Optional so long-standing PrRef fakes stay
+   * valid; the real adapter always sets it ("" when GitHub returns null). */
+  body?: string;
   updated_at: string;
   state: "open" | "closed";
   draft: boolean;
@@ -322,6 +326,7 @@ export class GitHubAdapter {
       author: pr.user.login,
       head_sha: pr.head.sha,
       base_ref: pr.base?.ref ?? "",
+      body: pr.body ?? "",
       updated_at: pr.updated_at,
       state: pr.state,
       draft: pr.draft,
@@ -355,6 +360,7 @@ export class GitHubAdapter {
       author: pr.user.login,
       head_sha: pr.head.sha,
       base_ref: pr.base?.ref ?? "",
+      body: pr.body ?? "",
       updated_at: pr.updated_at,
       state: pr.state,
       draft: pr.draft,

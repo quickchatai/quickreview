@@ -7,6 +7,7 @@ import {
   render,
   renderAddableLenses,
   renderConversationSystemPrompt,
+  renderIntentNote,
   renderNitScopeNote,
   renderOverseerSystemPrompt,
   renderPassPlan,
@@ -451,5 +452,86 @@ describe("shipped recheck template", () => {
     expect(text).toContain("running non-blocking nits");
     expect(text).toContain("never a new inline thread");
     expect(text).toContain("this thread does not need another round to\n  close");
+  });
+});
+
+// ---- the INTENT note ----------------------------------------------
+
+describe("renderIntentNote", () => {
+  const intentEntry = {
+    lens: "pass-intent",
+    agent: "pass-intent--terra-med",
+    tier: "terra-med" as const,
+    raisable_to: ["pass-intent--sol-med", "pass-intent--sol-high"],
+  };
+  const intentOrder: RoundOrder = {
+    ...order,
+    lenses: [...order.lenses, "pass-intent"],
+    pass_plan: [...order.pass_plan, intentEntry],
+    pr_body:
+      "This PR adds a token-bucket rate limiter for the public API. Requests " +
+      "over the limit receive a 429 with a Retry-After header.",
+  };
+
+  it("renders nothing when pass-intent is not planned", () => {
+    expect(renderIntentNote(order)).toBe("");
+    expect(roundVars(order).intent_note).toBe("");
+  });
+
+  it("carries the PR title and body VERBATIM as the whole intent artifact", () => {
+    const note = renderIntentNote(intentOrder);
+    expect(note).toContain(`TITLE: ${intentOrder.title}`);
+    expect(note).toContain(`BODY:\n${intentOrder.pr_body}`);
+    expect(note).toContain("Copy the fenced block below VERBATIM");
+    expect(note).toContain("ENTIRE intent artifact");
+  });
+
+  it("states the task string's sources: no tracker, no conversation, no prompt transcript", () => {
+    const note = renderIntentNote(intentOrder);
+    expect(note).toContain("do not fetch a tracker ticket, an implementing");
+    expect(note).toContain("conversation, or any prompt transcript");
+    expect(note).toContain("no tracker ticket, no");
+    expect(note).toContain("implementing conversation, no prompt transcript");
+    expect(note).toContain("judges the diff against the title");
+    expect(note).toContain("and body below and against nothing else");
+  });
+
+  it("carries the thin-body NONE rule and the severity cap into the task string", () => {
+    const note = renderIntentNote(intentOrder);
+    expect(note).toContain("too thin to\njudge against, return NONE");
+    expect(note).toContain("Findings are [question] or [nit]\nonly — severity P3/nit, never a [blocker]");
+  });
+
+  it("the task-string block may contain nothing PR-specific beyond title and body", () => {
+    // Fixed scaffolding: swap title and body and the note changes ONLY where
+    // they were substituted — no other PR data can leak into the task string.
+    const a = renderIntentNote(intentOrder);
+    const b = renderIntentNote({ ...intentOrder, title: "Other title", pr_body: "Other body prose entirely." });
+    const scaffold = (note: string, title: string, bodyText: string) =>
+      note.replace(`TITLE: ${title}`, "TITLE: <t>").replace(`BODY:\n${bodyText}`, "BODY:\n<b>");
+    expect(scaffold(a, intentOrder.title, intentOrder.pr_body!)).toBe(
+      scaffold(b, "Other title", "Other body prose entirely."),
+    );
+  });
+
+  it("outruns backtick runs in an adversarial body so the fence never breaks", () => {
+    const evil = { ...intentOrder, pr_body: "look:\n````\ncode\n````\nand ```more```" };
+    const note = renderIntentNote(evil);
+    // The chosen fence is strictly longer than the body's longest run (4).
+    expect(note).toContain("\n`````\nINTENT ARTIFACT");
+    expect(note.trimEnd().endsWith("`````")).toBe(true);
+    expect(note).toContain(evil.pr_body);
+  });
+
+  it("reaches every rendered round prompt when planned, and renders empty otherwise", () => {
+    const root = resolve(process.cwd(), "prompts");
+    for (const rt of ["first", "re-review", "staleness"] as RoundType[]) {
+      const template = readFileSync(resolve(root, roundTemplateFile(rt)), "utf8");
+      const withIntent = renderRoundPrompt(template, { ...intentOrder, round_type: rt, round_no: 3 });
+      expect(withIntent).toContain("INTENT ARTIFACT");
+      expect(withIntent).toContain(`TITLE: ${intentOrder.title}`);
+      const without = renderRoundPrompt(template, { ...order, round_type: rt, round_no: 3 });
+      expect(without).not.toContain("INTENT ARTIFACT");
+    }
   });
 });
