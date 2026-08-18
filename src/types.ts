@@ -103,6 +103,13 @@ export interface VerdictFile {
   /** Soundness marker on NEEDS_HUMAN: "the PR looks otherwise sound, I just
    * cannot decide". Recorded, never acted on. */
   ai_approved?: boolean;
+  /**
+   * Set by the session when the code judgment was "no blockers" but the
+   * approval could not be given because CI is not green at this head
+   *. The review was posted as a COMMENT; the daemon records the
+   * withholding and re-queues the PR when CI goes green there.
+   */
+  approval_withheld?: boolean;
   head_sha: string;
   spend_usd?: number;
   ledger_snapshot?: string;

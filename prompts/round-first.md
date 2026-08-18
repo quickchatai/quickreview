@@ -119,6 +119,31 @@ its kills (they feed the EOD critic).
 > **This section is authoritative over steps 5 and 7 of your system prompt.**
 > There are no escalation criteria — only the three verdicts below.
 
+**CI gate — apply it BEFORE the mapping below. No green CI at this head makes
+APPROVE unavailable, regardless of findings.** Read CI at `{{head_sha}}` with
+`scripts/pr-checks.sh {{n}}` (a read — you never trigger, re-run or cancel
+anything). Green means every check at this head finished and at least one really
+succeeded; failing, cancelled, timed-out or still-running is not green. **An
+infrastructure failure, a cancelled run or an all-skipped suite blocks exactly
+like a failing test** — there is no case to argue, which is the point of having
+a rule: the predecessor system improvised this eleven times and approved over a
+genuinely red required check.
+
+- **red CI and no blockers ⇒ post the full review as a COMMENT with the approval
+  withheld.** Say plainly in the opening paragraph that **no blockers were found
+  and approval is withheld pending green CI at this head**, so the author knows
+  the review is finished and what it is waiting on. Post through
+  `scripts/post-review.sh {{n}} COMMENT <body-file>`; `scripts/approve-pr.sh`
+  refuses an approval here anyway. In step 7 write `"verdict": "APPROVE"` with
+  `"approval_withheld": true` — that pair says "the code is fine, the approval
+  waits on CI alone", and the daemon re-queues this PR the moment CI goes green
+  at this head. Nothing is stuck; do not poll CI and do not wait.
+- never **REQUEST_CHANGES** on red CI alone — there is nothing for the author to
+  change, and the fault may be the base branch or infra.
+- never **NEEDS_HUMAN** on red CI alone — a transient failure is not a question
+  for a person.
+- blockers found ⇒ REQUEST_CHANGES exactly as below; red CI changes nothing.
+
 - any `[blocker]` ⇒ **REQUEST_CHANGES**
 - you cannot decide confidently ⇒ **NEEDS_HUMAN** (set `ai_approved` per your
   confidence that the PR is otherwise sound)
@@ -229,6 +254,10 @@ are not):
   "finished_at": "<ISO-8601 UTC now>"
 }
 ```
+
+`approval_withheld` is the step-5 CI gate: `true` only when the code judgment
+was APPROVE and the approval is held back because CI is not green at this head
+(the review went out as a COMMENT). Omit it otherwise.
 
 `pr` and `round_no` are numbers. `ai_approved` (soundness marker, NEEDS_HUMAN
 only) and `summary` are optional — but always write `summary`: 3-4 plain

@@ -43,6 +43,9 @@ let dir: string;
 let pr: PrStub | null;
 let reviews: ReviewStub[];
 let dbPath: string;
+/** Check-runs at HEAD (guard 4). Green by default: every pre-existing
+ * case here is about another guard and must not trip this one. */
+let checkRuns: Array<{ name: string; status: string; conclusion: string | null }>;
 
 const CONFIG = (secretsDir: string) =>
   [
@@ -63,8 +66,19 @@ beforeEach(async () => {
   writeFileSync(join(dir, "config.toml"), CONFIG(join(dir, "secrets")));
   pr = { state: "open", merged: false, head: { sha: HEAD }, user: { login: "pr-author" } };
   reviews = [];
+  checkRuns = [{ name: "unit", status: "completed", conclusion: "success" }];
   dbPath = join(dir, "state.db");
   server = createServer((req, res) => {
+    if (req.method === "GET" && req.url?.includes("/check-runs")) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ check_runs: checkRuns }));
+      return;
+    }
+    if (req.method === "GET" && req.url?.includes("/commits/") && req.url.includes("/status")) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ state: "success", statuses: [] }));
+      return;
+    }
     if (req.method === "GET" && req.url?.startsWith("/repos/") && req.url.includes("/pulls/5180/reviews")) {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(reviews));
@@ -158,6 +172,47 @@ describe("scripts/approve-pr.sh — guard 3", () => {
     expect(res.ok).toBe(true);
     const kinds = dryrunRecords().map((f) => f.replace(/^.*-(?=[a-z])/, ""));
     expect(kinds.sort()).toEqual(["create_review.json", "delete_team_review_request.json", "remove_label.json"]);
+  });
+});
+
+describe("scripts/approve-pr.sh — guard 4 (red CI hard-gates APPROVE)", () => {
+  it("refuses the approval over a failing check and sends nothing at all", async () => {
+    checkRuns = [
+      { name: "unit", status: "completed", conclusion: "success" },
+      { name: "e2e", status: "completed", conclusion: "failure" },
+    ];
+    const res = await run("approve-pr.sh", ["5180", bodyFile()]);
+    expect(res.ok).toBe(false);
+    expect(res.out).toContain("APPROVE is unavailable");
+    expect(res.out).toContain("post-review.sh"); // it says what to do instead
+    expect(dryrunRecords()).toEqual([]);
+  });
+
+  it("refuses identically for an infra cancellation — no special-casing", async () => {
+    checkRuns = [{ name: "unit", status: "completed", conclusion: "cancelled" }];
+    const res = await run("approve-pr.sh", ["5180", bodyFile()]);
+    expect(res.ok).toBe(false);
+    expect(res.out).toContain("CI is red");
+  });
+
+  it("refuses while a check is still running", async () => {
+    checkRuns = [{ name: "unit", status: "in_progress", conclusion: null }];
+    const res = await run("approve-pr.sh", ["5180", bodyFile()]);
+    expect(res.ok).toBe(false);
+    expect(res.out).toContain("CI is pending");
+  });
+
+  it("lets a green suite through — the three approval records still appear", async () => {
+    const res = await run("approve-pr.sh", ["5180", bodyFile()]);
+    expect(res.ok).toBe(true);
+    expect(dryrunRecords()).toHaveLength(3);
+  });
+
+  it("posting the withheld review as a COMMENT is never refused by this guard", async () => {
+    checkRuns = [{ name: "unit", status: "completed", conclusion: "failure" }];
+    const res = await run("post-review.sh", ["5180", "COMMENT", bodyFile()]);
+    expect(res.ok).toBe(true);
+    expect(dryrunRecords()).toHaveLength(1);
   });
 });
 

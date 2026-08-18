@@ -88,6 +88,12 @@ export function validateVerdict(raw: unknown): ParsedVerdict {
   // the session JSONLs). Deleted so no consumer can store it.
   delete v.spend_usd;
   if (v.ai_approved !== undefined && typeof v.ai_approved !== "boolean") return bad("ai_approved must be a boolean");
+  // LLM-written booleans arrive as strings often enough to coerce the
+  // two unambiguous spellings rather than fail the whole file over them.
+  if (v.approval_withheld === "true") v.approval_withheld = true;
+  if (v.approval_withheld === "false") v.approval_withheld = false;
+  if (v.approval_withheld !== undefined && typeof v.approval_withheld !== "boolean")
+    return bad("approval_withheld must be a boolean");
   if (v.ledger_snapshot !== undefined && typeof v.ledger_snapshot !== "string") return bad("ledger_snapshot must be a string");
   if (v.summary !== undefined && typeof v.summary !== "string") return bad("summary must be a string");
   if (typeof v.summary === "string") v.summary = v.summary.trim().slice(0, 800);
@@ -237,6 +243,17 @@ export class VerdictWatcher {
     // decided. Read by the no-new-evidence guard at dispatch and at posting
     // time, and by the post-approval delta recheck.
     if (v.head_sha) store.recordReviewedHead(v.pr, { head_sha: v.head_sha, verdict: v.verdict, round_no: v.round_no });
+    // The withheld-approval mark, session route. The session posted
+    // its review as a COMMENT because CI was not green at this head; the mark
+    // is what notices when CI goes green and re-queues the PR (cigate.ts).
+    // Anything else clears it: the verdict here supersedes whatever earlier
+    // round withheld an approval.
+    if (v.head_sha && v.approval_withheld && v.verdict === "APPROVE") {
+      store.recordApprovalWithheld(v.pr, { head_sha: v.head_sha, reason: "red-ci", ci_state: null });
+      store.logEvent("approval_withheld_red_ci", v.pr, { head_sha: v.head_sha, source: "verdict" });
+    } else {
+      store.clearApprovalWithheld(v.pr);
+    }
     // Slack (S4), in-thread and never broadcast. duration_s is computed
     // inside finishRound, so it is read back off the row rather than recomputed.
     const finished = round ? store.roundsFor(v.pr).find((r) => r.id === round.id) : undefined;

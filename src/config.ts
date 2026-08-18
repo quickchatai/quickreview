@@ -211,12 +211,16 @@ export interface GuardsConfig {
   skip_unchanged_head: boolean;
   /** Re-read the PR immediately before every posting mutation; merged/closed ⇒ refuse. */
   recheck_pr_state_before_post: boolean;
+  /** No green CI at this head ⇒ APPROVE is unavailable; the review posts as a
+   * COMMENT with approval withheld. */
+  block_approve_on_red_ci: boolean;
 }
 
 export const GUARDS_DEFAULTS: GuardsConfig = {
   downgrade_on_human_approval: true,
   skip_unchanged_head: true,
   recheck_pr_state_before_post: true,
+  block_approve_on_red_ci: true,
 };
 
 /**

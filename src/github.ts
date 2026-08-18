@@ -2,6 +2,7 @@
 // mutation is expressed as a MutationIntent and pushed through the gate
 // (dry-run writes it to state/dryrun/ instead of executing). There is no
 // review-dismissal function in this adapter, by design — never add one.
+import type { CheckSummary } from "./cigate.js";
 import type { Config } from "./config.js";
 import { MutationGate, type MutationIntent, type GateResult } from "./gate.js";
 import { TokenMinter, type FetchFn } from "./githubAuth.js";
@@ -400,6 +401,35 @@ export class GitHubAdapter {
       out.push(...batch.map(fileEntry));
       if (batch.length < 100) break;
     }
+    return out;
+  }
+
+  /**
+   * Checks at a ref — check-runs plus the legacy commit statuses, since a repo
+   * can gate on either (guard 4). Read-only: CI is consulted, never
+   * triggered or re-run.
+   */
+  async listChecks(ref: string): Promise<CheckSummary[]> {
+    const out: CheckSummary[] = [];
+    const enc = encodeURIComponent(ref);
+    const runs = await this.request<{ check_runs?: any[] }>(
+      "GET",
+      `/repos/${this.owner}/${this.repo}/commits/${enc}/check-runs?per_page=100`,
+    );
+    for (const r of runs.check_runs ?? [])
+      out.push({ name: r.name ?? "check", status: r.status ?? "", conclusion: r.conclusion ?? null });
+    const status = await this.request<{ statuses?: any[] }>(
+      "GET",
+      `/repos/${this.owner}/${this.repo}/commits/${enc}/status?per_page=100`,
+    );
+    for (const s of status.statuses ?? [])
+      // A commit status has no status/conclusion split: `pending` is unfinished,
+      // `success`/`failure`/`error` are its conclusions.
+      out.push({
+        name: s.context ?? "status",
+        status: s.state === "pending" ? "pending" : "completed",
+        conclusion: s.state === "pending" ? null : s.state === "success" ? "success" : "failure",
+      });
     return out;
   }
 

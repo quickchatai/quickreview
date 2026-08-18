@@ -162,14 +162,17 @@ urlenc() { python3 -c 'import sys,urllib.parse; sys.stdout.write(urllib.parse.qu
 # right before the mutation; a read is never gated. Live mode fails CLOSED — an
 # unverifiable PR state is exactly the case those post-merge reviews came from.
 #
-# Only guard 3 applies here. Guard 1 softens REQUEST_CHANGES and has nothing to
+# Guards 3 and 4 apply here. Guard 1 softens REQUEST_CHANGES and has nothing to
 # say about an approval; guard 2 deliberately does NOT gate an approval — this
 # script also clears both wake triggers, so refusing it would leave a PR
-# triggered with nothing left able to clear it.
+# triggered with nothing left able to clear it. Guard 4 is the
+# opposite case: it is only ever about approvals, so it belongs precisely here —
+# no green CI at this head and the approval is refused, whatever the findings.
 # shellcheck source=scripts/guards.sh
 . "$ROOT/scripts/guards.sh"
 
 guard_require_open
+guard_require_green_ci "$GUARD_HEAD_SHA"
 
 # ---- 1. approve -------------------------------------------------------------
 

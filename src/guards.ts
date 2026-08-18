@@ -14,6 +14,12 @@
 //      nothing. The same mark is what the post-approval delta recheck reads.
 //   3. Re-check merged/closed state immediately before posting. Four sampled
 //      reviews landed at or after the merge — one approved 13 seconds after it.
+//   4. No green CI at this head ⇒ APPROVE is unavailable. The old
+//      bot improvised this rule eleven times, each approval arguing in prose
+//      that the red run did not count. The review still posts — as a COMMENT
+//      with the approval withheld and a plain note saying so — and the PR is
+//      re-queued when CI goes green. The classifier lives in cigate.ts, which
+//      the shell mirror answers from too.
 //
 // All three are installed on the ONE MutationGate (gate.ts `MutationGuard`),
 // not on a call site, so no posting route in the daemon can reach GitHub
@@ -24,13 +30,19 @@
 // after-step makes on its own route. The two halves are deliberately kept
 // behaviourally identical: tests/guards.test.ts drives the real gate and
 // tests/guards-shell.test.ts runs the real scripts, over the same cases.
-// Guard coverage per shell route: post-review.sh 1+2+3, approve-pr.sh 3 (an
-// approval is not softened, and gating it would strand the wake triggers this
-// script clears), reply-thread.sh 3.
+// Guard coverage per shell route: post-review.sh 1+2+3 (it hard-rejects
+// APPROVE, so guard 4 has nothing to say there), approve-pr.sh 3+4 — guards 1
+// and 2 do not apply to it (an approval is not softened for a human approval,
+// and gating it on evidence would strand the wake triggers this script
+// clears), but guard 4 is exactly about approvals, so it does — and
+// reply-thread.sh 3. On the shell route guard 4 REFUSES rather than softens:
+// approve-pr.sh can only approve, so the session posts its COMMENT through
+// post-review.sh instead, which is what the round template tells it to do.
 //
 // Nothing here dismisses, retracts or edits an existing review. A guard's only
 // powers are to refuse a mutation and to soften an event from REQUEST_CHANGES
 // to COMMENT.
+import { ciBlocksApproval, classifyCi, withholdApproval, type CheckSummary, type CiState } from "./cigate.js";
 import type { GuardsConfig } from "./config.js";
 import type { GateResult, MutationGuard, MutationIntent } from "./gate.js";
 import { isBotAuthor } from "./statemachine.js";
@@ -47,10 +59,17 @@ export const POSTING_KINDS: ReadonlySet<string> = new Set([
 export interface GuardAdapter {
   getPr(n: number): Promise<{ state: "open" | "closed"; merged: boolean; head_sha: string; author: string }>;
   listReviews(n: number): Promise<Array<{ id: number; user: string; state: string; commit_id: string }>>;
+  /** Checks at a head (guard 4). Optional: an adapter without it
+   * cannot see CI, and a guard never blocks on what it cannot see. */
+  listChecks?(ref: string): Promise<CheckSummary[]>;
 }
 
-/** The store slice: the reviewed-head mark plus the event log. */
-export type GuardStore = Pick<StateStore, "reviewedHead" | "recordReviewedHead" | "logEvent">;
+/** The store slice: the reviewed-head mark, the withheld-approval mark, and
+ * the event log. */
+export type GuardStore = Pick<
+  StateStore,
+  "reviewedHead" | "recordReviewedHead" | "logEvent" | "recordApprovalWithheld" | "clearApprovalWithheld"
+>;
 
 export interface GuardDeps {
   store: GuardStore;
@@ -143,6 +162,29 @@ export function hasNewEvidence(mark: ReviewedHeadRow | undefined, headSha: strin
  * and in `GateResult.blocked`. */
 export type BlockReason = "pr-merged" | "pr-closed" | "pr-unreadable" | "no-new-evidence";
 
+/**
+ * Read the checks at a head for guard 4. Null means "cannot see CI" — no
+ * adapter method, no head, or a failed read — and a guard never blocks on what
+ * it cannot see: failing closed here would withhold every approval during a
+ * GitHub outage, turning an outage into a pile of parked PRs. What it CAN see
+ * it enforces without exception, infra failures included.
+ */
+async function readCi(
+  deps: GuardDeps,
+  pr: number,
+  head: string,
+  log: (msg: string, extra?: unknown) => void,
+): Promise<CiState | null> {
+  if (!deps.adapter.listChecks || !head) return null;
+  try {
+    return classifyCi(await deps.adapter.listChecks(head));
+  } catch (err) {
+    log(`guard: checks read failed on #${pr}`, err);
+    deps.store.logEvent("approval_ci_unreadable", pr, { head_sha: head, error: String(err) });
+    return null;
+  }
+}
+
 export function makePostingGuard(deps: GuardDeps): MutationGuard {
   const log = deps.log ?? (() => {});
 
@@ -209,6 +251,28 @@ export function makePostingGuard(deps: GuardDeps): MutationGuard {
             },
           };
         }
+      }
+
+      // --- guard 4: no green CI at this head ⇒ no approval ---
+      if (deps.guards.block_approve_on_red_ci && (body.event ?? "").toUpperCase() === "APPROVE") {
+        const ci = await readCi(deps, pr, head, log);
+        if (ci && ciBlocksApproval(ci)) {
+          log(`guard: #${pr} APPROVE → COMMENT (CI ${ci} at ${head.slice(0, 7)})`);
+          deps.store.logEvent("approval_withheld_red_ci", pr, { head_sha: head, ci_state: ci });
+          // The promise this note makes to the author — "waiting on CI alone" —
+          // is kept by the mark: the `ci_completed` trigger reads it and
+          // re-queues the PR the moment CI goes green (cigate.ts).
+          deps.store.recordApprovalWithheld(pr, { head_sha: head, ci_state: ci, reason: "red-ci" });
+          return {
+            intent: {
+              ...intent,
+              body: withholdApproval(body, ci, head),
+              note: `post COMMENT review on #${pr} (approval withheld: CI ${ci} at this head)`,
+            },
+          };
+        }
+        // Green (or invisible) CI: no approval is being withheld here any more.
+        if (ci === "green") deps.store.clearApprovalWithheld(pr);
       }
       return {};
     },

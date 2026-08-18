@@ -407,7 +407,15 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // last verdict put it in — that verdict still stands.
       const mark = store.reviewedHead(row.number);
       const standing = normalizeVerdict(mark?.verdict);
-      if (cfg.guards.skip_unchanged_head && standing && !hasNewEvidence(mark, row.head_sha)) {
+      // a withholding standing at THIS head is new evidence of its
+      // own. The last round decided "no blockers, approval withheld for CI",
+      // and something re-queued the PR — CI going green (cigate.ts) or a
+      // person. Skipping here would leave that PR waiting for a verdict that is
+      // never re-attempted, which is the stuck-PR failure the gate must not
+      // create.
+      const withheld = store.approvalWithheld(row.number);
+      const withheldHere = withheld?.head_sha === row.head_sha;
+      if (cfg.guards.skip_unchanged_head && standing && !withheldHere && !hasNewEvidence(mark, row.head_sha)) {
         await consumeTriggers(deps, row.number, { markInProgress: false });
         log(`dispatch: #${row.number} skipped — no new evidence at ${row.head_sha.slice(0, 7)}`);
         store.logEvent("round_skipped_no_new_evidence", row.number, {
@@ -424,6 +432,14 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       }
 
       const consumed = await consumeTriggers(deps, row.number);
+
+      // The round about to run re-decides the verdict from scratch, so the
+      // withholding it might have inherited is spent. A new one is recorded if
+      // this round's approval is withheld again (guards.ts guard 4).
+      if (withheld) {
+        store.clearApprovalWithheld(row.number);
+        if (withheldHere) store.logEvent("approval_retry_dispatched", row.number, { head_sha: row.head_sha });
+      }
 
       // The branch this PR targets. Only used to keep the base fresh in the
       // clone; a failed read degrades to "no base facts", never a failed round.

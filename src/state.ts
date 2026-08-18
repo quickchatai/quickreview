@@ -243,6 +243,18 @@ CREATE TABLE IF NOT EXISTS rechecks (
   created_at   TEXT NOT NULL,
   PRIMARY KEY (pr, fingerprint)
 );
+-- Approval withheld for red CI: one row per PR, the head whose
+-- approval was withheld and why. Presence of a row is the promise the gate
+-- makes to the author — "this is waiting on CI alone" — and the thing the
+-- ci_completed trigger reads to notice that CI went green. Cleared when the
+-- PR is dispatched for another round, which is where the verdict is re-decided.
+CREATE TABLE IF NOT EXISTS approval_withheld (
+  pr         INTEGER PRIMARY KEY,
+  head_sha   TEXT NOT NULL,
+  ci_state   TEXT,
+  reason     TEXT,
+  created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS filed_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   kind TEXT NOT NULL,           -- 'improvement_pr' | 'issue'
@@ -315,6 +327,21 @@ export interface ReviewedHeadRow {
   round_no: number | null;
   /** Newest author reply observed after the mark was stamped (new evidence). */
   last_author_reply_at: string | null;
+}
+
+/**
+ * An approval withheld for red CI. The row says: this head was
+ * reviewed, nothing blocked, and the approval is waiting on CI and nothing
+ * else. Read by the `ci_completed` retry (cigate.ts) and by dispatch, which
+ * treats a standing withholding as new evidence at the same head.
+ */
+export interface ApprovalWithheldRow {
+  pr: number;
+  head_sha: string;
+  /** The CI state observed when the approval was withheld ("red" | "pending"). */
+  ci_state: string | null;
+  reason: string | null;
+  created_at: string;
 }
 
 /** A wake held while its PR's round was in flight (single-shepherd S4). */
@@ -741,6 +768,39 @@ export class StateStore {
         "UPDATE reviewed_heads SET last_author_reply_at = ? WHERE pr = ? AND (last_author_reply_at IS NULL OR last_author_reply_at < ?)",
       )
       .run(at, pr, at);
+  }
+
+  // ---- withheld approvals -------------------------------------
+
+  /**
+   * Mark that an approval was withheld at `head_sha` because CI was not green.
+   * One row per PR: the mark is a position, not a history (the event log keeps
+   * the history), and a later withholding at a newer head replaces it.
+   */
+  recordApprovalWithheld(pr: number, mark: { head_sha: string; ci_state?: string | null; reason?: string | null }): void {
+    this.db
+      .prepare(
+        `INSERT INTO approval_withheld (pr, head_sha, ci_state, reason, created_at)
+         VALUES (@pr, @head_sha, @ci_state, @reason, @created_at)
+         ON CONFLICT(pr) DO UPDATE SET
+           head_sha=@head_sha, ci_state=@ci_state, reason=@reason, created_at=@created_at`,
+      )
+      .run({
+        pr,
+        head_sha: mark.head_sha,
+        ci_state: mark.ci_state ?? null,
+        reason: mark.reason ?? null,
+        created_at: this.ts(),
+      });
+  }
+
+  approvalWithheld(pr: number): ApprovalWithheldRow | undefined {
+    return this.db.prepare("SELECT * FROM approval_withheld WHERE pr = ?").get(pr) as ApprovalWithheldRow | undefined;
+  }
+
+  /** Drop the mark — the verdict is about to be decided again. */
+  clearApprovalWithheld(pr: number): void {
+    this.db.prepare("DELETE FROM approval_withheld WHERE pr = ?").run(pr);
   }
 
   // ---- post-approval delta rechecks ---------------------------

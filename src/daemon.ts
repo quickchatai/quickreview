@@ -9,6 +9,7 @@
 // the disk-logging stub without touching this file.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { retryWithheldApproval, type CiAdapter, type WithheldRetryDeps } from "./cigate.js";
 import { loadConfig, sandboxRoot, type Config } from "./config.js";
 import { dispatchOnce, type DispatchAdapter } from "./dispatch.js";
 import { MutationGate, type MutationIntent } from "./gate.js";
@@ -36,7 +37,7 @@ import { wakeOrHold } from "./wakes.js";
 // Partial<RecheckAdapter>: the recheck's two extra reads (compare, files) are a
 // seam, not a requirement — a daemon wired without them simply never rechecks,
 // which is exactly how every legacy caller and test behaves.
-export type DaemonAdapter = DispatchAdapter & ReconcileAdapter & VerdictAdapter & Partial<RecheckAdapter>;
+export type DaemonAdapter = DispatchAdapter & ReconcileAdapter & VerdictAdapter & Partial<RecheckAdapter> & Partial<CiAdapter>;
 
 export interface DaemonDeps {
   cfg?: Config;
@@ -172,6 +173,11 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
   };
   const rechecks = new RecheckWatcher({ cfg, store, verdictDir, log });
 
+  // The withheld-approval retry — same `ci_completed` event, opposite
+  // direction: the recheck above asks whether a standing approval must fall,
+  // this asks whether a withheld one can finally be given.
+  const ciDeps: WithheldRetryDeps = { cfg, store, adapter: gh, log };
+
   const timers: NodeJS.Timeout[] = [];
   let server: ReturnType<typeof createWebhookServer> | null = null;
   let stopping = false;
@@ -222,10 +228,23 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
           );
         },
         onCiCompleted: async (ci) => {
-          for (const pr of ci.prs)
+          for (const pr of ci.prs) {
             await guard(`recheck #${pr}`, () =>
               runRecheck(recheckDeps, { pr, trigger: "ci", head_sha: ci.head_sha, ci: { conclusion: ci.conclusion } }),
             );
+            // the other side of the same event. A PR whose approval
+            // was withheld for red CI is re-queued the moment CI goes green at
+            // that head — without this the gate turns every infra flake into a
+            // permanently stuck PR.
+            await guard(`approval retry #${pr}`, async () => {
+              const outcome = await retryWithheldApproval(ciDeps, {
+                pr,
+                head_sha: ci.head_sha,
+                conclusion: ci.conclusion,
+              });
+              if (outcome.action === "requeued") await pump();
+            });
+          }
         },
         onBaseAdvanced: async (advance) => {
           await guard(`recheck base ${advance.branch}`, () =>

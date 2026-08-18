@@ -441,6 +441,46 @@ describe("held wakes are flushed at round end", () => {
   });
 });
 
+describe("approval withheld for red CI, session route", () => {
+  it("records the mark from an APPROVE verdict that says the approval was withheld", async () => {
+    reviewingRound(100);
+    const name = write(100, 1, verdictFile({ verdict: "APPROVE", approval_withheld: true }));
+
+    await watcher().handleFile(name);
+
+    expect(store.approvalWithheld(100)).toMatchObject({ head_sha: "abc123", reason: "red-ci" });
+    expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'approval_withheld_red_ci'").get()).toEqual({ c: 1 });
+  });
+
+  it("clears an older mark when the next verdict does not withhold anything", async () => {
+    store.recordApprovalWithheld(100, { head_sha: "old111", ci_state: "red" });
+    reviewingRound(100);
+    const name = write(100, 1, verdictFile({ verdict: "APPROVE" }));
+
+    await watcher().handleFile(name);
+
+    expect(store.approvalWithheld(100)).toBeUndefined();
+  });
+
+  it("ignores the flag on a verdict that is not an approval — nothing is being withheld", async () => {
+    reviewingRound(100);
+    const name = write(100, 1, verdictFile({ verdict: "REQUEST_CHANGES", approval_withheld: true }));
+
+    await watcher().handleFile(name);
+
+    expect(store.approvalWithheld(100)).toBeUndefined();
+    expect(store.getPr(100)?.state).toBe("awaiting_author");
+  });
+
+  it("validates the flag: booleans and the two digit-string spellings only", () => {
+    expect(validateVerdict({ ...verdictFile(), approval_withheld: true }).ok).toBe(true);
+    const coerced = validateVerdict({ ...verdictFile(), approval_withheld: "true" });
+    expect(coerced.ok).toBe(true);
+    expect(coerced.verdict?.approval_withheld).toBe(true);
+    expect(validateVerdict({ ...verdictFile(), approval_withheld: "maybe" }).ok).toBe(false);
+  });
+});
+
 describe("structural invariant: no review-retraction path", () => {
   // The forbidden token is assembled at runtime so this guard test does not
   // itself contain the string it forbids.

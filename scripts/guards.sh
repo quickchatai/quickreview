@@ -14,6 +14,9 @@
 #   2. Same head as the last review and no author reply since ⇒ post nothing.
 #   3. Merged/closed re-check immediately before the mutation; in live mode an
 #      unreadable state fails CLOSED.
+#   4. No green CI at this head ⇒ APPROVE is unavailable (approve-pr.sh
+#      only — post-review.sh cannot approve). Refuses; the review is posted as a
+#      COMMENT with approval withheld instead.
 #
 # Nothing here dismisses, retracts or edits any existing review. A guard can
 # only refuse a post or soften REQUEST_CHANGES to COMMENT.
@@ -174,6 +177,83 @@ for user, (state, commit) in latest.items():
 guard_downgrade_note() { # guard_downgrade_note <approver> <head-sha>
   printf '_Not blocking: **@%s** has already approved this head (`%s`). The findings above are reported for information only — this review does not request changes._' \
     "$1" "${2:0:7}"
+}
+
+# ---- guard 4: no green CI at this head ⇒ no approval -------------
+#
+# Mirrors src/cigate.ts `classifyCi`. Only approve-pr.sh sources this one —
+# post-review.sh hard-rejects APPROVE already, so it has nothing to withhold.
+# The shell half REFUSES instead of softening: this script can only approve, so
+# the session posts the full review as a COMMENT through post-review.sh (with
+# approval_withheld in its verdict file) exactly as the round template says.
+#
+# CI is READ here and nowhere triggered or re-run. An unreadable CI is not
+# evidence of red: it never blocks, for the same reason guard 1's failed read
+# never blocks — a GitHub outage must not turn into a pile of withheld
+# approvals.
+
+guard_ci_state() { # guard_ci_state <head-sha> — green|red|pending|none|unknown
+  local head="${1:-}" runs status
+  [[ -n "$head" ]] || { echo unknown; return 0; }
+  runs="$(guard_api_get "/repos/$REPO/commits/$head/check-runs?per_page=100")"
+  status="$(guard_api_get "/repos/$REPO/commits/$head/status?per_page=100")"
+  GUARD_CI_RUNS="$runs" GUARD_CI_STATUS="$status" python3 -c '
+import json, os
+docs = []
+for raw in (os.environ.get("GUARD_CI_RUNS") or "", os.environ.get("GUARD_CI_STATUS") or ""):
+    raw = raw.strip()
+    if not raw:
+        continue
+    try:
+        docs.append(json.loads(raw))
+    except Exception:
+        pass
+checks = []
+for d in docs:
+    if not isinstance(d, dict):
+        continue
+    for r in d.get("check_runs") or []:
+        checks.append((str(r.get("status") or ""), str(r.get("conclusion") or "")))
+    for s in d.get("statuses") or []:
+        state = str(s.get("state") or "")
+        if state == "pending":
+            checks.append(("pending", ""))
+        else:
+            checks.append(("completed", "success" if state == "success" else "failure"))
+if not docs:
+    print("unknown"); raise SystemExit(0)
+if not checks:
+    print("none"); raise SystemExit(0)
+# Mirrors src/cigate.ts classifyCi — keep the two in step.
+UNFINISHED = {"queued", "in_progress", "waiting", "pending", "requested"}
+INERT = {"skipped", "neutral"}
+pending = succeeded = False
+for status, conclusion in checks:
+    status, conclusion = status.lower(), conclusion.lower()
+    if status in UNFINISHED or (status != "completed" and conclusion == ""):
+        pending = True
+    elif conclusion == "success":
+        succeeded = True
+    elif conclusion in INERT:
+        continue
+    else:
+        print("red"); raise SystemExit(0)
+print("pending" if pending else ("green" if succeeded else "red"))
+' 2>/dev/null || echo unknown
+}
+
+guard_require_green_ci() { # guard_require_green_ci <head-sha>
+  guard_enabled block_approve_on_red_ci || return 0
+  local head="${1:-}" state
+  # Guard 3 usually has the head already; if it was switched off, read it here.
+  [[ -n "$head" ]] || { guard_read_pr; head="$GUARD_HEAD_SHA"; }
+  state="$(guard_ci_state "$head")"
+  case "$state" in
+    red|pending)
+      die "CI is ${state} at ${head:0:7} on #$PR — APPROVE is unavailable (guard 4). Post the full review as a COMMENT via scripts/post-review.sh, say plainly that no blockers were found and that approval is withheld pending green CI, and set \"approval_withheld\": true in the verdict file."
+      ;;
+    *) ;;   # green, none, unknown: the guard blocks only what it can see
+  esac
 }
 
 # ---- the reviewed-head mark -------------------------------------------------
