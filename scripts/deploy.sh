@@ -185,8 +185,8 @@ VM_HOST="${QC_VM_HOST:-$(first_inventory_host)}"
 VERIFY_CMDS=(
   "systemctl is-active cloudflared"
   "systemctl is-active docker"
-  "docker ps --filter name=$CONTAINER --format '{{.Names}} {{.Status}}'"
-  "docker exec $CONTAINER tmux ls || echo 'no tmux sessions yet'"
+  "sudo docker ps --filter name=$CONTAINER --format '{{.Names}} {{.Status}}'"
+  "sudo docker exec $CONTAINER tmux ls || echo 'no tmux sessions yet'"
   "cat /opt/quickreview/state/status.json | head -20   # heartbeat for the status collector"
 )
 
