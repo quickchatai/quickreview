@@ -231,3 +231,43 @@ describe("WorktreeManager", () => {
     expect(existsSync(join(root, "wt", "scratch"))).toBe(true);
   });
 });
+
+// The migration-collision pre-check reads the BASE branch's migration
+// files at the round's base sha — out of the clone's object store, not the
+// checkout, because the base clone is never checked out at the base branch.
+describe("listMigrationFiles", () => {
+  function commitAt(paths: Record<string, string>): string {
+    for (const [p, body] of Object.entries(paths)) {
+      mkdirSync(join(origin, p, ".."), { recursive: true });
+      writeFileSync(join(origin, p), body);
+    }
+    git(origin, "add", "-A");
+    git(origin, "commit", "-q", "-m", "migrations");
+    return git(origin, "rev-parse", "HEAD").trim();
+  }
+
+  it("lists only numbered migration files at that sha", async () => {
+    const sha = commitAt({
+      "backend/chat/migrations/__init__.py": "",
+      "backend/chat/migrations/0041_add_index.py": "x\n",
+      "backend/chat/migrations/0042_add_flag.py": "x\n",
+      "backend/chat/models.py": "x\n",
+      "docs/migrations/plan.md": "x\n",
+    });
+    const m = mgr();
+    await m.ensureBaseClone();
+    await m.ensureWorktree(1, { baseRef: "master" }).catch(() => undefined); // fetch master
+    const files = await m.listMigrationFiles(sha);
+    expect(files).toEqual([
+      "backend/chat/migrations/0041_add_index.py",
+      "backend/chat/migrations/0042_add_flag.py",
+      "backend/chat/migrations/__init__.py",
+    ]);
+  });
+
+  it("returns nothing for a sha-shaped nonsense argument", async () => {
+    const m = mgr();
+    await m.ensureBaseClone();
+    expect(await m.listMigrationFiles("not-a-sha")).toEqual([]);
+  });
+});

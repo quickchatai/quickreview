@@ -2,11 +2,12 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
-import { ALL_PASSES, buildPassPlan, capacity, dispatchOnce, queuedInOrder, roundTypeFor, type DispatchAdapter } from "../src/dispatch.js";
+import { ALL_PASSES, buildPassPlan, capacity, dispatchOnce, queuedInOrder, roundTypeFor, validatorTier, type DispatchAdapter } from "../src/dispatch.js";
 import type { GateResult } from "../src/gate.js";
 import type { PrFileEntry } from "../src/github.js";
 import { StateStore } from "../src/state.js";
 import { applyEvent } from "../src/statemachine.js";
+import { PASS_TIER_ORDER } from "../src/types.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
 
 const baseCfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "config.toml"), "utf8"));
@@ -48,6 +49,10 @@ class FakeAdapter implements DispatchAdapter {
   }
   async deleteTeamReviewRequest(n: number): Promise<GateResult> {
     this.calls.push({ fn: "deleteTeamReviewRequest", pr: n });
+    return { executed: false, dryRunFile: "x" };
+  }
+  async createReview(n: number, payload: { event: string; body: string }): Promise<GateResult> {
+    this.calls.push({ fn: "createReview", pr: n, arg: payload.event });
     return { executed: false, dryRunFile: "x" };
   }
 }
@@ -144,6 +149,22 @@ describe("recording at round start", () => {
     expect(adapter.calls.filter((c) => c.fn === "listPrFiles")).toHaveLength(1);
   });
 
+  // the audit trail — which tier held the veto in this round.
+  it("records the validator's tier on the round row and the dispatch event", async () => {
+    queue(23, "2026-08-13T09:00:00Z");
+    adapter.files.set(23, [file("auth/permissions.py", 10, 2)]);
+    const { hooks, orders } = recordingHooks();
+
+    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+
+    const round = store.roundsFor(23)[0]!;
+    const planned = orders[0]!.order.pass_plan.find((p) => p.lens === "pass-validate")!;
+    expect(round.validate_tier).toBe(planned.tier);
+    expect(round.validate_tier).toBe("sol-high");
+    const dispatched = store.recentEvents(50).find((e) => e.kind === "round_dispatched")!;
+    expect(JSON.parse(dispatched.payload ?? "{}").validate_tier).toBe("sol-high");
+  });
+
   it("counts only daemon-run rounds when choosing first vs re-review", async () => {
     // A backfilled (imported) round must not flip the next live round to
     // "re-review" — its template references a settled digest that never existed.
@@ -193,7 +214,8 @@ describe("buildPassPlan", () => {
     }
   });
 
-  it("pins pass-validate to cfg.models.validate_tier, never raisable", () => {
+  it("runs pass-validate at cfg.models.validate_tier when nothing outranks it, never raisable", () => {
+    // A tiny quiet diff: every lens is terra-med, so the floor stands.
     const { pass_plan } = buildPassPlan(planCfg, [file("README.md", 3, 1)]);
     expect(pass_plan[pass_plan.length - 1]).toEqual({
       lens: "pass-validate",
@@ -207,6 +229,53 @@ describe("buildPassPlan", () => {
     ).pass_plan;
     expect(solValidate[solValidate.length - 1]!.agent).toBe("pass-validate--sol-high");
     expect(solValidate[solValidate.length - 1]!.raisable_to).toEqual([]);
+  });
+
+  // the validator vetoes every finding in the round, so it may never
+  // run below the model that produced them.
+  it("raises pass-validate to the round's highest lens tier", () => {
+    // A risk lens (sol-high) alongside a terra-med floor.
+    const risky = buildPassPlan(planCfg, [file("auth/permissions.py", 10, 2)]).pass_plan;
+    const validate = risky.find((p) => p.lens === "pass-validate")!;
+    expect(risky.find((p) => p.lens === "pass-security")!.tier).toBe("sol-high");
+    expect(validate).toEqual({
+      lens: "pass-validate",
+      agent: "pass-validate--sol-high",
+      tier: "sol-high",
+      raisable_to: [],
+    });
+    // A big non-risk diff lands the lenses on sol-med — the validator follows.
+    const medium = buildPassPlan(planCfg, [file("app/service.py", 200, 0)]).pass_plan;
+    expect(medium.find((p) => p.lens === "pass-validate")!.tier).toBe("sol-med");
+  });
+
+  it("never runs the validator below any lens, whatever the plan", () => {
+    const sets: PrFileEntry[][] = [
+      [file("README.md", 3, 1)],
+      [file("app/service.py", 200, 0)],
+      [file("auth/permissions.py", 10, 2)],
+      [file("infra/main.tf", 120, 5), file("app/migrations/0007_add_index.py", 30, 0)],
+      [file("frontend/App.tsx", 40, 4), file("app/api/routes.py", 10, 1)],
+    ];
+    for (const files of sets) {
+      const { pass_plan } = buildPassPlan(planCfg, files);
+      const validate = pass_plan.find((p) => p.lens === "pass-validate")!;
+      for (const p of pass_plan) {
+        expect(PASS_TIER_ORDER.indexOf(validate.tier)).toBeGreaterThanOrEqual(PASS_TIER_ORDER.indexOf(p.tier));
+      }
+    }
+  });
+
+  it("the shipped config pins the validator at the top tier", () => {
+    expect(baseCfg.models.validate_tier).toBe("sol-high");
+  });
+
+  it("validatorTier is the floor raised by the highest lens tier, never lowered", () => {
+    expect(validatorTier("terra-med", [])).toBe("terra-med");
+    expect(validatorTier("terra-med", ["terra-med", "sol-med"])).toBe("sol-med");
+    expect(validatorTier("terra-med", ["sol-high", "terra-med"])).toBe("sol-high");
+    expect(validatorTier("sol-high", ["terra-med", "sol-med"])).toBe("sol-high");
+    expect(validatorTier("sol-med", ["terra-med"])).toBe("sol-med");
   });
 
   it("gives non-risk lenses the heuristic tier with an ascending raise ladder", () => {

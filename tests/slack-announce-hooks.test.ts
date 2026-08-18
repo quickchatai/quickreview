@@ -54,6 +54,9 @@ class FakeDispatchAdapter implements DispatchAdapter {
   async deleteTeamReviewRequest(): Promise<GateResult> {
     return { executed: false, dryRunFile: "x" };
   }
+  async createReview(): Promise<GateResult> {
+    return { executed: false, dryRunFile: "x" };
+  }
 }
 
 class FakeVerdictAdapter implements VerdictAdapter {

@@ -43,6 +43,9 @@ export interface DaemonDeps {
     pr: number,
     baseRef: string,
   ) => Promise<{ head_sha: string; base_ref: string; base_sha: string; merge_base: string }>;
+  /** Base-branch migration paths at a sha, for the collision pre-check
+   *. Absent ⇒ no git: the pre-check is skipped and logged. */
+  listBaseMigrations?: (baseSha: string) => Promise<string[]>;
   log?: (msg: string, extra?: unknown) => void;
   /** Skip binding the HTTP port (tests). */
   listen?: boolean;
@@ -219,6 +222,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         hooks,
         renderPrompt: deps.renderPrompt,
         prepareWorktree: deps.prepareWorktree,
+        listBaseMigrations: deps.listBaseMigrations,
         announce,
         log,
       });

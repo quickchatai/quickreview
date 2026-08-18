@@ -139,6 +139,23 @@ export class WorktreeManager {
     return path;
   }
 
+  /**
+   * Every Django migration file present at `sha`, repo-relative.
+   *
+   * Read-only, no network: the base branch was fetched moments earlier by
+   * `ensureWorktree`, so `sha` (the round's `base_sha`) is the branch's real
+   * tip. `git ls-tree` is used rather than the filesystem because the base
+   * clone's checkout is not at the base branch — the worktrees are.
+   */
+  async listMigrationFiles(sha: string): Promise<string[]> {
+    if (!/^[0-9a-f]{7,40}$/i.test(sha)) return [];
+    const res = await this.git(["ls-tree", "-r", "--name-only", sha]);
+    return res.stdout
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => /(^|\/)migrations\/[^/]+\.py$/.test(l));
+  }
+
   /** True when `sha` is present in the base clone (no fetch needed). */
   async hasCommit(sha: string): Promise<boolean> {
     if (!/^[0-9a-f]{7,40}$/i.test(sha)) return false;

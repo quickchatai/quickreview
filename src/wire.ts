@@ -20,6 +20,7 @@ import { latestDigestHeadline } from "./digest.js";
 import { promptReader, startEodTimer, type EodTimer } from "./eod.js";
 import { MutationGate, type MutationIntent } from "./gate.js";
 import { GitHubAdapter } from "./github.js";
+import { makePostingGuard } from "./guards.js";
 import { TokenMinter } from "./githubAuth.js";
 import { buildAgents } from "./include.js";
 import { fileImprovementPr, fileIssue, type Run } from "./improvements.js";
@@ -379,6 +380,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     // the branch it targets, together. Everything downstream (prompt, session,
     // passes) then works from the shas this returns.
     prepareWorktree: (pr, baseRef) => sessions.worktrees.ensureWorktree(pr, { baseRef }),
+    // Migration-number pre-check input: the base branch's migrations
+    // at the sha the round pinned. Local git in the just-fetched base clone.
+    listBaseMigrations: (baseSha) => sessions.worktrees.listMigrationFiles(baseSha),
     log,
     // Lazy on purpose: the Slack subsystem is built in onStart, after the
     // store exists. Off ⇒ this resolves undefined forever and dispatch/verdicts
@@ -532,6 +536,20 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       }
     },
   });
+
+  // Posting-time guards live ON the gate, so every posting route in
+  // the daemon — session review, approval path, migration pre-check comment —
+  // passes through them. They need the store, which only exists once the
+  // daemon has been built; hence the setter here rather than in buildParts().
+  gate.setGuard(
+    makePostingGuard({
+      store: daemon.store,
+      adapter,
+      botLogin: cfg.github.bot_login,
+      guards: cfg.guards,
+      log,
+    }),
+  );
 
   return daemon;
 }

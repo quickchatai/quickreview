@@ -1,5 +1,6 @@
 // Shared cross-slice contracts. B2's dispatch emits RoundOrder; B3's session
 // manager consumes it; verdict files close the loop (spec §3–4).
+import type { MigrationCollision } from "./migrations.js";
 
 export type RoundType = "first" | "re-review" | "staleness";
 
@@ -34,6 +35,19 @@ export function normalizeVerdict(raw: unknown): Verdict | null {
 /** Pass model tiers, ascending by capability/cost. */
 export type PassTier = "terra-med" | "sol-med" | "sol-high";
 
+/** The tier ladder, ascending. The one place the order is written down. */
+export const PASS_TIER_ORDER: readonly PassTier[] = ["terra-med", "sol-med", "sol-high"];
+
+/** The higher of two tiers (equal tiers return that tier). */
+export function higherTier(a: PassTier, b: PassTier): PassTier {
+  return PASS_TIER_ORDER.indexOf(b) > PASS_TIER_ORDER.indexOf(a) ? b : a;
+}
+
+/** Every tier at or above `floor`, ascending. */
+export function tiersAtOrAbove(floor: PassTier): PassTier[] {
+  return PASS_TIER_ORDER.slice(PASS_TIER_ORDER.indexOf(floor));
+}
+
 /** One planned pass in a round: the lens, the tier-variant agent that runs it
  * (`${lens}--${tier}`), and the higher-tier variant agent names the session
  * may raise to ([] when already at the top or the tier is fixed). */
@@ -57,6 +71,13 @@ export interface RoundOrder {
   /** Lenses NOT selected for this round that the session may add. */
   addable_lenses: string[];
   migration_gate: boolean;
+  /**
+   * Migration-number collisions with the base branch that the daemon detected
+   * itself and already delivered to the PR as a COMMENT. Mechanics:
+   * they are not findings, they never block, and they consume no verdict.
+   * Absent on orders built before the pre-check existed.
+   */
+  migration_collisions?: MigrationCollision[];
   /** The sha the worktree is ACTUALLY at — reconciled against the fetched
    * `refs/pull/<n>/head` before the order is built, not the webhook snapshot. */
   head_sha: string;

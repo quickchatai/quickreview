@@ -52,6 +52,7 @@ function stalenessSimulation(cfg: Config) {
     addLabel: async () => dryGateResult(),
     removeLabel: async () => dryGateResult(),
     deleteTeamReviewRequest: async () => dryGateResult(),
+    createReview: async () => dryGateResult(),
   };
   const hooks = {
     ...stubSessionHooks(join(sandboxRoot(), "state", "checklist-sim")),

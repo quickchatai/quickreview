@@ -9,9 +9,18 @@ import type { Config } from "./config.js";
 import type { GateResult } from "./gate.js";
 import type { PrFileEntry } from "./github.js";
 import { migrationGate, passTier, selectLenses } from "./heuristics.js";
+import {
+  collisionFingerprint,
+  detectMigrationCollisions,
+  renderMigrationCollisionComment,
+  type MigrationCollision,
+} from "./migrations.js";
+import { VALIDATE_PASS } from "./include.js";
+import { hasNewEvidence } from "./guards.js";
 import type { DispatchAnnouncer } from "./slack/announce.js";
 import { applyEvent, setPrGates } from "./statemachine.js";
 import type { PrStateRow, StateStore } from "./state.js";
+import { higherTier, normalizeVerdict, PASS_TIER_ORDER } from "./types.js";
 import type { PassPlanEntry, PassTier, RoundOrder, RoundType, SessionHooks } from "./types.js";
 
 /** The slice of GitHubAdapter dispatch needs — all mutations are gated inside
@@ -23,6 +32,12 @@ export interface DispatchAdapter {
   addLabel(n: number, label: string): Promise<GateResult>;
   removeLabel(n: number, label: string): Promise<GateResult>;
   deleteTeamReviewRequest(n: number): Promise<GateResult>;
+  /** COMMENT delivery for the migration-collision pre-check — the
+   * same gated `POST /pulls/<n>/reviews` the session's review uses. */
+  createReview(
+    n: number,
+    payload: { commit_id: string; event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT"; body: string; comments?: unknown[] },
+  ): Promise<GateResult>;
 }
 
 export interface DispatchDeps {
@@ -45,6 +60,14 @@ export interface DispatchDeps {
     pr: number,
     baseRef: string,
   ) => Promise<{ head_sha: string; base_ref: string; base_sha: string; merge_base: string }>;
+  /**
+   * Every migration file present on the base branch at a commit.
+   * Read-only git in the base clone, which the worktree preparation has just
+   * re-fetched — so `base_sha` really is the branch's tip this round. Optional:
+   * absent (stub-wired core, unit tests without git) ⇒ the collision pre-check
+   * is skipped and logged, never fatal.
+   */
+  listBaseMigrations?: (baseSha: string) => Promise<string[]>;
   /** Slack announcer (S4). Optional: absent ⇒ no Slack at all, which
    * is what the stub-wired daemon core and every non-Slack test see. */
   announce?: DispatchAnnouncer;
@@ -100,10 +123,101 @@ function alreadyConsumed(err: unknown): boolean {
   return /→ 404\b|"status":\s*"404"/.test(String(err));
 }
 
+/** True when the identical collision set was already commented for this PR —
+ * a staleness round re-runs at the same head and must not repost. Detection
+ * still runs and is still logged; only the duplicate COMMENT is suppressed. */
+function alreadyCommented(store: StateStore, pr: number, fingerprint: string): boolean {
+  const rows = store.db
+    .prepare("SELECT payload FROM events WHERE kind = 'migration_collision_comment' AND pr = ? ORDER BY id DESC LIMIT 10")
+    .all(pr) as Array<{ payload: string | null }>;
+  return rows.some((r) => {
+    if (!r.payload) return false;
+    try {
+      return (JSON.parse(r.payload) as { fingerprint?: unknown }).fingerprint === fingerprint;
+    } catch {
+      return false;
+    }
+  });
+}
+
+/**
+ * Migration-number collision pre-check, run once per round after the
+ * worktree is prepared and BEFORE the session is handed the order.
+ *
+ * A PR migration sitting on a number the base branch already took is
+ * deterministic, has exactly one remedy and carries no design content — so the
+ * daemon states the remedy itself, as a **COMMENT**. It is never a blocker, it
+ * consumes no verdict, and it does not touch the PR's lifecycle state. The
+ * write is `adapter.createReview`, i.e. the ordinary MutationGate path; in
+ * dry-run it lands in state/dryrun/ like every other intent.
+ *
+ * Every failure here is logged and swallowed: a round must never be lost to the
+ * pre-check. Returns the detected collisions for the round order/event log.
+ */
+async function migrationPreCheck(
+  deps: DispatchDeps,
+  args: { pr: number; files: PrFileEntry[]; head_sha: string; base_ref: string; base_sha: string },
+): Promise<MigrationCollision[]> {
+  const log = deps.log ?? (() => {});
+  if (!deps.listBaseMigrations || !args.base_sha) {
+    // Not a silent pass: the check is ~15% of all blockers and nothing else in
+    // the pipeline catches the class, so a round that could not run it says so.
+    if (args.files.some((f) => /(^|\/)migrations\//.test(f.filename)))
+      deps.store.logEvent("migration_precheck_skipped", args.pr, {
+        head_sha: args.head_sha,
+        reason: !deps.listBaseMigrations ? "no_base_reader" : "no_base_sha",
+      });
+    return [];
+  }
+  try {
+    const baseFiles = await deps.listBaseMigrations(args.base_sha);
+    const collisions = detectMigrationCollisions({ files: args.files, baseFiles });
+    if (collisions.length === 0) return [];
+    deps.store.logEvent("migration_collision_detected", args.pr, {
+      head_sha: args.head_sha,
+      base_ref: args.base_ref,
+      base_sha: args.base_sha,
+      collisions: collisions.map((c) => ({ pr_path: c.pr_path, base_path: c.base_path, target_path: c.target_path })),
+    });
+    const fingerprint = collisionFingerprint(args.head_sha, collisions);
+    if (alreadyCommented(deps.store, args.pr, fingerprint)) {
+      log(`dispatch: #${args.pr} migration collision already commented at ${args.head_sha}`);
+      return collisions;
+    }
+    const body = renderMigrationCollisionComment({
+      collisions,
+      base_ref: args.base_ref,
+      base_sha: args.base_sha,
+    });
+    const result = await deps.adapter.createReview(args.pr, {
+      commit_id: args.head_sha,
+      event: "COMMENT",
+      body,
+    });
+    deps.store.logEvent("migration_collision_comment", args.pr, {
+      head_sha: args.head_sha,
+      fingerprint,
+      executed: result.executed,
+      dry_run_file: result.dryRunFile ?? null,
+    });
+    return collisions;
+  } catch (err) {
+    log(`dispatch: migration pre-check failed on #${args.pr}`, err);
+    deps.store.logEvent("migration_precheck_failed", args.pr, { head_sha: args.head_sha, error: String(err) });
+    return [];
+  }
+}
+
 /** Consume both triggers at dispatch: the label and the team review request.
  * Both go through the adapter (and therefore the dry-run gate); failures are
  * logged, never fatal — the reconcile poll re-derives the truth. */
-async function consumeTriggers(deps: DispatchDeps, pr: number): Promise<string[]> {
+async function consumeTriggers(
+  deps: DispatchDeps,
+  pr: number,
+  /** The no-new-evidence skip consumes the triggers without starting
+   * a round, so it must not paint the PR "AI review in progress". */
+  opts: { markInProgress?: boolean } = {},
+): Promise<string[]> {
   const consumed: string[] = [];
   const log = deps.log ?? (() => {});
   try {
@@ -130,10 +244,12 @@ async function consumeTriggers(deps: DispatchDeps, pr: number): Promise<string[]
       deps.store.logEvent("trigger_consume_failed", pr, { which: "team_request", error: String(err) });
     }
   }
-  try {
-    await deps.adapter.addLabel(pr, deps.cfg.github.in_progress_label);
-  } catch (err) {
-    log(`dispatch: in-progress label failed on #${pr}`, err);
+  if (opts.markInProgress !== false) {
+    try {
+      await deps.adapter.addLabel(pr, deps.cfg.github.in_progress_label);
+    } catch (err) {
+      log(`dispatch: in-progress label failed on #${pr}`, err);
+    }
   }
   return consumed;
 }
@@ -153,17 +269,31 @@ export const ALL_PASSES: readonly string[] = [
   "pass-validate",
 ];
 
-/** Tier ladder, ascending. raisable_to lists the higher rungs only — a session
- * may raise a pass, never lower it. */
-const TIER_ORDER: readonly PassTier[] = ["terra-med", "sol-med", "sol-high"];
-
+/** raisable_to lists the higher rungs only — a session may raise a pass, never
+ * lower it. */
 function raisableFrom(lens: string, tier: PassTier): string[] {
-  return TIER_ORDER.slice(TIER_ORDER.indexOf(tier) + 1).map((t) => `${lens}--${t}`);
+  return PASS_TIER_ORDER.slice(PASS_TIER_ORDER.indexOf(tier) + 1).map((t) => `${lens}--${t}`);
+}
+
+/**
+ * The tier the round's validator runs at.
+ *
+ * `pass-validate` is the single adversarial gate: only its survivors post, so
+ * it holds a veto over every lens finding in the round. A cheaper model must
+ * never decide whether a more expensive model's finding is real — the
+ * configured `validate_tier` is therefore a FLOOR, raised here to the
+ * highest-tier lens actually planned for this round. With the shipped pin
+ * (`sol-high`) the raise is a no-op; the computation is what keeps the
+ * invariant true if the floor is ever lowered again.
+ */
+export function validatorTier(floor: PassTier, lensTiers: readonly PassTier[]): PassTier {
+  return lensTiers.reduce<PassTier>((acc, t) => higherTier(acc, t), floor);
 }
 
 /** Deterministic per-round pass plan (agent = `${lens}--${tier}`):
  * - risk passes are always "sol-high", single variant, not raisable;
- * - pass-validate is pinned to cfg.models.validate_tier, not raisable;
+ * - pass-validate runs at validatorTier() — the configured floor raised to the
+ *   round's highest lens tier — and is not raisable;
  * - every other selected lens gets the passTier() tier and may be raised to
  *   any higher tier's variant (ascending order).
  * addable_lenses = every known pass not already in the plan. */
@@ -176,10 +306,15 @@ export function buildPassPlan(
     smallDiffLines: cfg.models.small_diff_lines,
   });
   const risk = new Set(cfg.models.risk_passes);
-  const lenses = [...selectLenses(files), "pass-validate"];
+  const lenses = [...selectLenses(files), VALIDATE_PASS];
+  const tierOf = (lens: string): PassTier => (risk.has(lens) ? "sol-high" : defaultTier);
+  const validate = validatorTier(
+    cfg.models.validate_tier,
+    lenses.filter((l) => l !== VALIDATE_PASS).map(tierOf),
+  );
   const pass_plan = lenses.map((lens): PassPlanEntry => {
-    const pinned = lens === "pass-validate" || risk.has(lens);
-    const tier: PassTier = lens === "pass-validate" ? cfg.models.validate_tier : risk.has(lens) ? "sol-high" : defaultTier;
+    const pinned = lens === VALIDATE_PASS || risk.has(lens);
+    const tier: PassTier = lens === VALIDATE_PASS ? validate : tierOf(lens);
     return { lens, agent: `${lens}--${tier}`, tier, raisable_to: pinned ? [] : raisableFrom(lens, tier) };
   });
   const selected = new Set(lenses);
@@ -202,6 +337,8 @@ export function buildRoundOrder(args: {
    * no worktree seam (the stub-wired daemon core and unit tests), which fall
    * back to the PR row's sha and an unknown base. */
   tree?: { head_sha: string; base_ref: string; base_sha: string; merge_base: string };
+  /** Collisions the pre-check already delivered as a COMMENT. */
+  migrationCollisions?: MigrationCollision[];
 }): RoundOrder {
   const { pass_plan, addable_lenses } = buildPassPlan(args.cfg, args.files);
   return {
@@ -216,6 +353,7 @@ export function buildRoundOrder(args: {
     pass_plan,
     addable_lenses,
     migration_gate: migrationGate(args.files),
+    migration_collisions: args.migrationCollisions ?? [],
     head_sha: args.tree?.head_sha || args.row.head_sha,
     base_ref: args.tree?.base_ref ?? "",
     base_sha: args.tree?.base_sha ?? "",
@@ -276,6 +414,29 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // template references a settled digest that never existed (§2.1).
       const priorRounds = store.priorRoundCount(row.number);
       const roundType = roundTypeFor(row, priorRounds);
+
+      // guard 2, daemon half: a tick with nothing new to look at is a
+      // no-op. The triggers are still consumed (leaving them would re-queue the
+      // PR on the next reconcile, forever) and the PR returns to the state its
+      // last verdict put it in — that verdict still stands.
+      const mark = store.reviewedHead(row.number);
+      const standing = normalizeVerdict(mark?.verdict);
+      if (cfg.guards.skip_unchanged_head && standing && !hasNewEvidence(mark, row.head_sha)) {
+        await consumeTriggers(deps, row.number, { markInProgress: false });
+        log(`dispatch: #${row.number} skipped — no new evidence at ${row.head_sha.slice(0, 7)}`);
+        store.logEvent("round_skipped_no_new_evidence", row.number, {
+          head_sha: row.head_sha,
+          last_verdict: standing,
+          reviewed_at: mark!.reviewed_at,
+        });
+        applyEvent(store, row.number, { type: "verdict", verdict: standing }, {}, {
+          botLogin: cfg.github.bot_login,
+          now,
+          reason: "no-new-evidence",
+        });
+        continue;
+      }
+
       const consumed = await consumeTriggers(deps, row.number);
 
       // The branch this PR targets. Only used to keep the base fresh in the
@@ -289,15 +450,23 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
 
       const files = await deps.adapter.listPrFiles(row.number);
       const gate = migrationGate(files);
-      const lenses = [...selectLenses(files), "pass-validate"];
+      // The plan is pure and deterministic in `files`, so computing it here and
+      // again inside buildRoundOrder yields the same tiers; taking the lens
+      // list off it keeps the round row and the order from ever disagreeing.
+      const plannedPasses = buildPassPlan(cfg, files).pass_plan;
+      const lenses = plannedPasses.map((p) => p.lens);
+      const validateTier = plannedPasses.find((p) => p.lens === VALIDATE_PASS)?.tier ?? cfg.models.validate_tier;
 
       // Diffstat comes free off the files list dispatch already fetched — no
       // extra GitHub call in the hot path. trigger_ts is copied off pr_state
       // here because the `dispatched` transition clears it moments later.
+      // validate_tier is recorded so a later audit can tell which tier killed
+      // which finding.
       const diffstat = diffstatOf(files);
       const roundId = store.startRound(row.number, roundType, lenses, cfg.daemon.round_deadline_min, {
         ...diffstat,
         trigger_ts: row.trigger_ts,
+        validate_tier: validateTier,
       });
       provisionalRoundId = roundId;
       const roundNo = (store.db.prepare("SELECT round_no FROM rounds WHERE id = ?").get(roundId) as { round_no: number })
@@ -320,8 +489,20 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         });
       }
 
+      // Migration-number collision pre-check, before the session hears about
+      // the round. It is delivered as its own COMMENT, so whatever
+      // the review concludes, the renumber never rides on the verdict.
+      const migrationCollisions = await migrationPreCheck(deps, {
+        pr: row.number,
+        files,
+        head_sha: tree?.head_sha || row.head_sha,
+        base_ref: tree?.base_ref ?? baseRef,
+        base_sha: tree?.base_sha ?? "",
+      });
+
       const order = buildRoundOrder({
         tree,
+        migrationCollisions,
         cfg,
         row,
         files,
@@ -345,7 +526,9 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         round_no: roundNo,
         round_type: roundType,
         lenses: order.lenses,
+        validate_tier: validateTier,
         migration_gate: order.migration_gate,
+        migration_collisions: migrationCollisions.length,
         head_sha: order.head_sha,
         base_ref: order.base_ref,
         base_sha: order.base_sha,
