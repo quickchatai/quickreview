@@ -132,6 +132,78 @@ describe("detectMigrationCollisions", () => {
     expect(out[0]?.target_path).toBe("backend/chat/migrations/0044_first.py");
   });
 
+  it("names the follow-up dependency edit when a later migration depends on a renamed one", () => {
+    // The chained shape: the PR adds 0042_a (collides with the base's
+    // 0042) and 0043_b whose `dependencies` reference "0042_a". The advice must
+    // rename 0042_a → 0044_a AND tell the author to repoint 0043_b at the new
+    // name — and since 0043 would now sit below its own dependency, renumber
+    // 0043_b too.
+    const out = detectMigrationCollisions({
+      files: [
+        added("backend/chat/migrations/0042_a.py"),
+        {
+          filename: "backend/chat/migrations/0043_b.py",
+          status: "added",
+          patch: '@@\n+    dependencies = [\n+        ("chat", "0042_a"),\n+    ]',
+        },
+      ],
+      baseFiles: BASE,
+    });
+    expect(out).toHaveLength(2);
+    expect(out[0]).toMatchObject({
+      kind: "base-collision",
+      pr_path: "backend/chat/migrations/0042_a.py",
+      target_path: "backend/chat/migrations/0044_a.py",
+      dependency: '("chat", "0042_add_widget_flag")',
+    });
+    expect(out[1]).toMatchObject({
+      kind: "renamed-dependency",
+      pr_path: "backend/chat/migrations/0043_b.py",
+      stale_dependency: "0042_a",
+      dependency: '("chat", "0044_a")',
+      renumber: true,
+      target_path: "backend/chat/migrations/0045_b.py",
+    });
+
+    const body = renderMigrationCollisionComment({ collisions: out, base_ref: "master", base_sha: "cafebabe0000" });
+    expect(body).toContain("backend/chat/migrations/0044_a.py");
+    expect(body).toContain('reference `"0042_a"`');
+    expect(body).toContain('`[("chat", "0044_a")]`');
+    expect(body).toContain("backend/chat/migrations/0045_b.py");
+  });
+
+  it("cascades: a follow-up depending on a renumbered follow-up renumbers too", () => {
+    const out = detectMigrationCollisions({
+      files: [
+        added("backend/chat/migrations/0042_a.py"),
+        { filename: "backend/chat/migrations/0043_b.py", status: "added", patch: '+    dependencies = [("chat", "0042_a")]' },
+        { filename: "backend/chat/migrations/0044_c.py", status: "added", patch: '+    dependencies = [("chat", "0043_b")]' },
+      ],
+      baseFiles: BASE,
+    });
+    expect(out.map((c) => [c.pr_path, c.target_path, c.dependency])).toEqual([
+      ["backend/chat/migrations/0042_a.py", "backend/chat/migrations/0045_a.py", '("chat", "0042_add_widget_flag")'],
+      ["backend/chat/migrations/0043_b.py", "backend/chat/migrations/0046_b.py", '("chat", "0045_a")'],
+      ["backend/chat/migrations/0044_c.py", "backend/chat/migrations/0047_c.py", '("chat", "0046_b")'],
+    ]);
+  });
+
+  it("does not invent a follow-up when the later migration references nothing renamed", () => {
+    const out = detectMigrationCollisions({
+      files: [
+        added("backend/chat/migrations/0042_a.py"),
+        {
+          filename: "backend/chat/migrations/0043_b.py",
+          status: "added",
+          patch: '@@\n+    dependencies = [("chat", "0042_add_widget_flag")]',
+        },
+      ],
+      baseFiles: BASE,
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0]?.kind).toBe("base-collision");
+  });
+
   it("keeps the on-disk padding width", () => {
     const out = detectMigrationCollisions({
       files: [added("svc/migrations/009_x.py")],

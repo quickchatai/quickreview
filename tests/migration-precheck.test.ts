@@ -222,6 +222,8 @@ describe("migration collision pre-check", () => {
     expect(prompt).toContain("backend/chat/migrations/0043_x.py");
     expect(prompt).toContain('("chat", "0042_add_widget_flag")');
     expect(prompt).toContain("not a finding");
+    // A pre-check that RAN never renders the degraded note.
+    expect(prompt).not.toContain("MIGRATION PRE-CHECK DID NOT RUN");
   });
 
   it("leaves the gate note alone when there is no collision", async () => {
@@ -334,6 +336,144 @@ describe("migration collision pre-check", () => {
     expect(adapter.reviews).toEqual([]);
     expect(events("migration_precheck_skipped", 47)[0]).toMatchObject({ reason: "no_base_reader" });
     expect(orders).toHaveLength(1);
+  });
+
+  // acceptance: "more reliable, never quieter". The three degraded
+  // paths must each leave SOMEBODY holding the collision class — the gate note
+  // when detection ran, the session itself when it did not.
+  it("still renders the collisions into the gate note when the COMMENT fails", async () => {
+    queue(52);
+    adapter.files = [file("backend/chat/migrations/0042_x.py")];
+    adapter.failCreateReview = true;
+    const prompts: string[] = [];
+    const template = readFileSync(resolve(process.cwd(), "prompts/round-first.md"), "utf8");
+
+    await dispatchOnce({
+      cfg,
+      store,
+      adapter,
+      hooks: {
+        async dispatchRound(order, prompt) {
+          orders.push(order);
+          prompts.push(prompt);
+        },
+        async inject() {},
+        async injectOverseer() {},
+        async archiveAndClose() {},
+      },
+      renderPrompt: (o) => renderRoundPrompt(template, o),
+      prepareWorktree: tree,
+      listBaseMigrations: async () => BASE_MIGRATIONS,
+    });
+
+    // The collisions were computed and logged — they are not thrown away with
+    // the failed COMMENT: the session's gate note still carries them.
+    expect(orders[0]?.migration_collisions).toHaveLength(1);
+    expect(prompts[0]).toContain("ALREADY HANDLED, DO NOT RAISE IT");
+    expect(prompts[0]).toContain("backend/chat/migrations/0043_x.py");
+    expect(prompts[0]).not.toContain("MIGRATION PRE-CHECK DID NOT RUN");
+    expect(events("migration_precheck_failed", 52)).toHaveLength(1);
+    // The fingerprint is only marked on success, so the COMMENT retries later.
+    expect(adapter.reviews).toHaveLength(0);
+  });
+
+  it("tells the session to check collisions itself when the pre-check cannot run", async () => {
+    queue(53);
+    adapter.files = [file("backend/chat/migrations/0042_x.py")];
+    const prompts: string[] = [];
+    const overseer: string[] = [];
+    const template = readFileSync(resolve(process.cwd(), "prompts/round-first.md"), "utf8");
+
+    await dispatchOnce({
+      cfg,
+      store,
+      adapter,
+      hooks: {
+        async dispatchRound(order, prompt) {
+          orders.push(order);
+          prompts.push(prompt);
+        },
+        async inject() {},
+        async injectOverseer(message) {
+          overseer.push(message);
+        },
+        async archiveAndClose() {},
+      },
+      renderPrompt: (o) => renderRoundPrompt(template, o),
+      prepareWorktree: tree,
+      // no listBaseMigrations: the degraded path (a)
+    });
+
+    expect(orders[0]?.migration_precheck_degraded).toBe(true);
+    expect(prompts[0]).toContain("MIGRATION PRE-CHECK DID NOT RUN");
+    expect(prompts[0]).toContain("YOU must check base-branch migration-number collisions yourself");
+    // The degraded case is an overseer anomaly, on the existing inject channel.
+    expect(overseer.join("\n")).toContain("migration-precheck");
+    // The round itself still dispatched.
+    expect(orders).toHaveLength(1);
+  });
+
+  it("degrades the same way when the base read throws", async () => {
+    queue(54);
+    adapter.files = [file("backend/chat/migrations/0042_x.py")];
+    const prompts: string[] = [];
+    const template = readFileSync(resolve(process.cwd(), "prompts/round-first.md"), "utf8");
+
+    await dispatchOnce({
+      cfg,
+      store,
+      adapter,
+      hooks: {
+        async dispatchRound(order, prompt) {
+          orders.push(order);
+          prompts.push(prompt);
+        },
+        async inject() {},
+        async injectOverseer() {},
+        async archiveAndClose() {},
+      },
+      renderPrompt: (o) => renderRoundPrompt(template, o),
+      prepareWorktree: tree,
+      listBaseMigrations: async () => {
+        throw new Error("git for-each-ref exploded");
+      },
+    });
+
+    expect(orders[0]?.migration_precheck_degraded).toBe(true);
+    expect(prompts[0]).toContain("MIGRATION PRE-CHECK DID NOT RUN");
+    expect(events("migration_precheck_failed", 54)).toHaveLength(1);
+  });
+
+  it("says nothing about a degraded pre-check on a PR with no migrations", async () => {
+    queue(55);
+    adapter.files = [file("backend/chat/views.py", "modified")];
+    const prompts: string[] = [];
+    const overseer: string[] = [];
+    const template = readFileSync(resolve(process.cwd(), "prompts/round-first.md"), "utf8");
+
+    await dispatchOnce({
+      cfg,
+      store,
+      adapter,
+      hooks: {
+        async dispatchRound(order, prompt) {
+          orders.push(order);
+          prompts.push(prompt);
+        },
+        async inject() {},
+        async injectOverseer(message) {
+          overseer.push(message);
+        },
+        async archiveAndClose() {},
+      },
+      renderPrompt: (o) => renderRoundPrompt(template, o),
+      prepareWorktree: tree,
+      // no listBaseMigrations — but there is nothing to collide either
+    });
+
+    expect(orders[0]?.migration_precheck_degraded).toBe(false);
+    expect(prompts[0]).not.toContain("MIGRATION PRE-CHECK DID NOT RUN");
+    expect(overseer).toEqual([]);
   });
 
   it("never loses a round to a failing pre-check", async () => {

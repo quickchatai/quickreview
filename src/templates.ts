@@ -113,6 +113,13 @@ export function renderMigrationCollisionsNote(collisions: readonly MigrationColl
     "",
   ];
   for (const c of collisions) {
+    if (c.kind === "renamed-dependency") {
+      lines.push(
+        `- \`${c.pr_path}\` references renamed \`"${c.stale_dependency ?? ""}"\` → dependencies \`[${c.dependency}]\`` +
+          (c.renumber ? `, rename to \`${c.target_path}\`` : ""),
+      );
+      continue;
+    }
     lines.push(
       `- \`${c.pr_path}\` collides with \`${c.base_path}\` → rename to \`${c.target_path}\`, dependencies \`[${c.dependency}]\``,
     );
@@ -130,6 +137,33 @@ export function renderMigrationCollisionsNote(collisions: readonly MigrationColl
   );
   return lines.join("\n");
 }
+/**
+ * The GATE NOTES paragraph for a DEGRADED pre-check ("more reliable,
+ * never quieter"). When the daemon could not run the collision check at all —
+ * no base reader, no base sha, or the base read failed — the class must not
+ * fall between two stools: the daemon caught nothing AND the pass-data-safety
+ * addendum (src/include.ts) muzzles the lens. This note is the key that
+ * un-muzzles it for exactly this round: the addendum's withdrawal is
+ * conditional on the round prompt NOT carrying this text.
+ */
+export function renderMigrationPrecheckDegradedNote(): string {
+  return [
+    "",
+    "",
+    "MIGRATION PRE-CHECK DID NOT RUN — CHECK COLLISIONS YOURSELF. The daemon",
+    "normally checks this PR's migration numbers against the base branch before",
+    "each round and posts the renumber remedy itself as a COMMENT. This round the",
+    "migration pre-check did not run (the base branch facts were unavailable or",
+    "the base read failed), so nothing has been checked and nothing has been",
+    "posted. YOU must check base-branch migration-number collisions yourself this",
+    "round: compare every migration this PR adds against the base branch's",
+    "migrations, and report a number the base already occupies as a normal",
+    "finding — with the remedy (the free target number and the exact",
+    "`dependencies` entry) stated. This lifts, for this round only, the standing",
+    "rule that base-branch numbering collisions are handled daemon-side.",
+  ].join("\n");
+}
+
 const NO_BASE = "(unknown — the daemon could not resolve the base branch this round)";
 
 /** Markdown table of the round's pass plan — one row per subagent launch. */
@@ -164,7 +198,10 @@ export function roundVars(order: RoundOrder): TemplateVars {
     base_sha: order.base_sha || NO_BASE,
     merge_base: order.merge_base || NO_BASE,
     migration_gate_note:
-      (order.migration_gate ? GATE_ON : GATE_OFF) + renderMigrationCollisionsNote(order.migration_collisions ?? []),
+      (order.migration_gate ? GATE_ON : GATE_OFF) +
+      (order.migration_precheck_degraded
+        ? renderMigrationPrecheckDegradedNote()
+        : renderMigrationCollisionsNote(order.migration_collisions ?? [])),
     settled_digest: order.settled_digest.trim() || "(nothing settled yet)",
   };
 }

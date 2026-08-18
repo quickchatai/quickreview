@@ -20,6 +20,7 @@ import {
   splitModelSpec,
   tiersForPass,
 } from "../src/include.js";
+import { renderMigrationPrecheckDegradedNote } from "../src/templates.js";
 
 /** In-memory fs for the pure expansion tests. */
 function fakeFs(files: Record<string, string>) {
@@ -404,6 +405,19 @@ describe("addendum registry", () => {
     for (const pass of ["pass-security", "pass-baseline", "pass-delivery", VALIDATE_PASS])
       expect(composeAddendum(pass)).not.toContain("handled daemon-side");
     expect(addendaForPass("pass-data-safety").map((a) => a.id)).toContain("migration-numbering");
+  });
+
+  // follow-up: the withdrawal must not outlive the check it relies on.
+  // A degraded round (pre-check skipped or failed) renders "the migration
+  // pre-check did not run" into the GATE NOTES (src/templates.ts), and the
+  // addendum must hand the class back to the lens for exactly that round.
+  it("makes the migration-numbering withdrawal conditional on the pre-check having run", () => {
+    const dataSafety = composeAddendum("pass-data-safety");
+    expect(dataSafety).toContain("unless the round prompt says the migration pre-check did not run");
+    expect(dataSafety).toContain("**The withdrawal holds only when the daemon's check ran.**");
+    expect(dataSafety).toContain("the class is yours again");
+    // The key phrase must match what the degraded gate note actually says.
+    expect(renderMigrationPrecheckDegradedNote().toLowerCase()).toContain("migration pre-check did not run");
   });
 
   it("gives pass-validate different text from the lens passes", () => {

@@ -78,6 +78,15 @@ export interface RoundOrder {
    * Absent on orders built before the pre-check existed.
    */
   migration_collisions?: MigrationCollision[];
+  /**
+   * True when this PR touches migrations and the collision pre-check could
+   * NOT run this round (no base reader, no base sha, or the base read threw).
+   * The prompt then tells the session the pre-check did not run and that IT
+   * must check base-branch migration-number collisions itself — which is what
+   * conditionally lifts the pass-data-safety withdrawal (degraded is
+   * never quieter). Absent on orders built before the field existed.
+   */
+  migration_precheck_degraded?: boolean;
   /** The sha the worktree is ACTUALLY at — reconciled against the fetched
    * `refs/pull/<n>/head` before the order is built, not the webhook snapshot. */
   head_sha: string;

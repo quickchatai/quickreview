@@ -30,24 +30,40 @@ export interface MigrationRef {
   name: string;
 }
 
-/** A PR migration whose number is already taken on the base branch. */
+/** A PR migration whose number is already taken on the base branch — or a
+ * later PR migration whose `dependencies` reference one that the remedy
+ * renames (a "renamed-dependency" follow-up). */
 export interface MigrationCollision {
   app: string;
   app_label: string;
-  /** The PR file that must be renamed. */
+  /** The PR file that must be renamed (or, for a follow-up that keeps its
+   * number, whose `dependencies` must be edited). */
   pr_path: string;
-  /** The number both sides claim. */
+  /** The number both sides claim (follow-ups: the file's own number). */
   number: number;
-  /** The base-branch migration sitting on that number. */
+  /** The base-branch migration sitting on that number ("" for follow-ups —
+   * a follow-up collides with nothing on the base; its defect is the stale
+   * dependency reference). */
   base_path: string;
-  /** Free number the PR migration must move to. */
+  /** Free number the PR migration must move to (follow-ups that keep their
+   * number: the current number). */
   target_number: number;
-  /** Path the PR migration must move to. */
+  /** Path the PR migration must move to (follow-ups that keep their number:
+   * the current path). */
   target_path: string;
   /** Migration the renumbered file must depend on (name, no extension). */
   dependency_name: string;
   /** The exact `dependencies` entry to write. */
   dependency: string;
+  /** Why this entry exists. Absent (orders built before's follow-up
+   * detection) reads as "base-collision". */
+  kind?: "base-collision" | "renamed-dependency";
+  /** Follow-ups only: the old (pre-renumber) name this file's `dependencies`
+   * still reference. */
+  stale_dependency?: string;
+  /** Follow-ups only: false when the file keeps its number and only its
+   * `dependencies` entry moves. */
+  renumber?: boolean;
 }
 
 const MIGRATION_PATH = /^(?:(.*)\/)?migrations\/(\d{2,})_([^/]+)\.py$/;
@@ -78,10 +94,23 @@ function renamedTo(ref: MigrationRef, n: number): { name: string; path: string }
 
 export interface CollisionInput {
   /** The PR's changed files (github.ts `PrFileEntry`, or any shape with a
-   * filename and optionally a status). */
-  files: Array<{ filename: string; status?: string }>;
+   * filename and optionally a status and unified diff). The `patch` is what
+   * lets the detector see a later migration's `dependencies` referencing a
+   * migration the remedy renames. */
+  files: Array<{ filename: string; status?: string; patch?: string }>;
   /** Every migration path present on the base branch at `base_sha`. */
   baseFiles: string[];
+}
+
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Does this file's diff reference migration `name` the way a `dependencies`
+ * tuple does — as a quoted string? */
+function referencesMigration(patch: string | undefined, name: string): boolean {
+  if (!patch || !name) return false;
+  return new RegExp(`["']${escapeRe(name)}["']`).test(patch);
 }
 
 /**
@@ -106,19 +135,19 @@ export function detectMigrationCollisions(input: CollisionInput): MigrationColli
     baseByApp.set(ref.app, byNumber);
   }
 
-  const prByApp = new Map<string, MigrationRef[]>();
+  const prByApp = new Map<string, Array<{ ref: MigrationRef; patch?: string }>>();
   for (const f of input.files) {
     if (f.status === "removed") continue;
     const ref = parseMigrationPath(f.filename);
     if (!ref) continue;
-    prByApp.set(ref.app, [...(prByApp.get(ref.app) ?? []), ref]);
+    prByApp.set(ref.app, [...(prByApp.get(ref.app) ?? []), { ref, ...(f.patch !== undefined ? { patch: f.patch } : {}) }]);
   }
 
   const out: MigrationCollision[] = [];
-  for (const [app, refs] of [...prByApp].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+  for (const [app, entries] of [...prByApp].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
     const base = baseByApp.get(app) ?? new Map<number, MigrationRef>();
-    const ordered = [...refs].sort((a, b) => a.number - b.number || (a.path < b.path ? -1 : 1));
-    const colliding = ordered.filter((r) => {
+    const ordered = [...entries].sort((a, b) => a.ref.number - b.ref.number || (a.ref.path < b.ref.path ? -1 : 1));
+    const colliding = ordered.filter(({ ref: r }) => {
       const occupant = base.get(r.number);
       return occupant !== undefined && occupant.path !== r.path;
     });
@@ -126,13 +155,18 @@ export function detectMigrationCollisions(input: CollisionInput): MigrationColli
 
     // Free numbers start above everything either side already uses, so the
     // remedy never collides with a sibling migration in the same PR.
-    const used = [...base.keys(), ...ordered.map((r) => r.number)];
+    const used = [...base.keys(), ...ordered.map(({ ref: r }) => r.number)];
     let next = Math.max(...used) + 1;
     // The chain root is the base branch's leaf — the highest number the base
     // holds for this app, which is what the renumbered migration must depend on.
     const baseLeaf = [...base.values()].sort((a, b) => a.number - b.number).pop();
     let dependencyName = baseLeaf ? `${baseLeaf.digits}_${baseLeaf.name}` : "";
-    for (const ref of colliding) {
+    // Old (pre-remedy) name → the new name the remedy assigns. Follow-up
+    // detection below reads this to find later migrations whose `dependencies`
+    // still point at a name the remedy retires.
+    const renamed = new Map<string, { name: string; number: number }>();
+    const collidingPaths = new Set(colliding.map(({ ref: r }) => r.path));
+    for (const { ref } of colliding) {
       const targetNumber = next++;
       const target = renamedTo(ref, targetNumber);
       const occupant = base.get(ref.number) as MigrationRef;
@@ -146,10 +180,47 @@ export function detectMigrationCollisions(input: CollisionInput): MigrationColli
         target_path: target.path,
         dependency_name: dependencyName,
         dependency: `("${ref.app_label}", "${dependencyName}")`,
+        kind: "base-collision",
       });
+      renamed.set(`${ref.digits}_${ref.name}`, { name: target.name, number: targetNumber });
       // Two colliding migrations in one app renumber into a chain: the second
       // depends on the first's NEW name, not on the base leaf.
       dependencyName = target.name;
+    }
+
+    // Follow-ups: a later PR migration in the same app whose
+    // `dependencies` reference a migration the remedy just renamed. Its
+    // dependency entry must move to the new name — and if its own number now
+    // sits at or below its renumbered dependency, it must renumber too (which
+    // may cascade onto migrations depending on IT, hence the loop in number
+    // order and the `renamed` map growing as it goes).
+    for (const { ref, patch } of ordered) {
+      if (collidingPaths.has(ref.path)) continue;
+      const stale = [...renamed.keys()].find((old) => referencesMigration(patch, old));
+      if (stale === undefined) continue;
+      const dep = renamed.get(stale) as { name: string; number: number };
+      // With the free-number policy above (targets sit above every number
+      // either side uses) a follow-up is always at or below its renumbered
+      // dependency, so today this is always true; the conditional keeps the
+      // remedy correct if the target policy ever tightens.
+      const mustRenumber = ref.number <= dep.number;
+      const targetNumber = mustRenumber ? next++ : ref.number;
+      const target = mustRenumber ? renamedTo(ref, targetNumber) : { name: `${ref.digits}_${ref.name}`, path: ref.path };
+      out.push({
+        app,
+        app_label: ref.app_label,
+        pr_path: ref.path,
+        number: ref.number,
+        base_path: "",
+        target_number: targetNumber,
+        target_path: target.path,
+        dependency_name: dep.name,
+        dependency: `("${ref.app_label}", "${dep.name}")`,
+        kind: "renamed-dependency",
+        stale_dependency: stale,
+        renumber: mustRenumber,
+      });
+      if (mustRenumber) renamed.set(`${ref.digits}_${ref.name}`, { name: target.name, number: targetNumber });
     }
   }
   return out;
@@ -188,6 +259,17 @@ export function renderMigrationCollisionComment(input: CollisionCommentInput): s
     "",
   ];
   for (const c of input.collisions) {
+    if (c.kind === "renamed-dependency") {
+      lines.push(
+        `- \`${c.pr_path}\` — its \`dependencies\` reference \`"${c.stale_dependency ?? ""}"\`, which the renumber above moves to \`${c.dependency_name}\`.`,
+        `  - update its \`dependencies\` to \`[${c.dependency}]\``,
+      );
+      if (c.renumber)
+        lines.push(
+          `  - and rename it to \`${c.target_path}\` (number **${String(c.target_number).padStart(4, "0")}**) — its current number would sit below its renumbered dependency`,
+        );
+      continue;
+    }
     lines.push(
       `- \`${c.pr_path}\` collides with \`${c.base_path}\` on ${branch}.`,
       `  - rename it to \`${c.target_path}\` (number **${String(c.target_number).padStart(4, "0")}**)`,

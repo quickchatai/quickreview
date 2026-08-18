@@ -135,41 +135,57 @@ function alreadyConsumed(err: unknown): boolean {
  * dry-run it lands in state/dryrun/ like every other intent.
  *
  * Every failure here is logged and swallowed: a round must never be lost to the
- * pre-check. Returns the detected collisions for the round order/event log.
+ * pre-check. Returns the detected collisions for the round order/event log,
+ * plus whether the check DEGRADED — i.e. this PR touches migrations and the
+ * daemon could not check them (no base reader, no base sha, or the base read
+ * threw). A degraded check must never be quieter than no check at all
+ * (acceptance: "more reliable, never quieter"): the caller renders an
+ * explicit "the pre-check did not run — check collisions yourself" note into
+ * the round prompt, which is what conditionally un-muzzles pass-data-safety's
+ * withdrawn finding class for exactly that round (see src/include.ts,
+ * MIGRATION_NUMBERING_ADDENDUM).
  */
 async function migrationPreCheck(
   deps: DispatchDeps,
   args: { pr: number; files: PrFileEntry[]; head_sha: string; base_ref: string; base_sha: string },
-): Promise<MigrationCollision[]> {
+): Promise<{ collisions: MigrationCollision[]; degraded: boolean }> {
   const log = deps.log ?? (() => {});
+  const touchesMigrations = args.files.some((f) => /(^|\/)migrations\//.test(f.filename));
   if (!deps.listBaseMigrations || !args.base_sha) {
     // Not a silent pass: the check is ~15% of all blockers and nothing else in
     // the pipeline catches the class, so a round that could not run it says so.
-    if (args.files.some((f) => /(^|\/)migrations\//.test(f.filename)))
+    if (touchesMigrations)
       deps.store.logEvent("migration_precheck_skipped", args.pr, {
         head_sha: args.head_sha,
         reason: !deps.listBaseMigrations ? "no_base_reader" : "no_base_sha",
       });
-    return [];
+    return { collisions: [], degraded: touchesMigrations };
   }
+  let collisions: MigrationCollision[];
   try {
     const baseFiles = await deps.listBaseMigrations(args.base_sha);
-    const collisions = detectMigrationCollisions({ files: args.files, baseFiles });
-    if (collisions.length === 0) return [];
-    deps.store.logEvent("migration_collision_detected", args.pr, {
-      head_sha: args.head_sha,
-      base_ref: args.base_ref,
-      base_sha: args.base_sha,
-      collisions: collisions.map((c) => ({ pr_path: c.pr_path, base_path: c.base_path, target_path: c.target_path })),
-    });
-    const fingerprint = collisionFingerprint(args.head_sha, collisions);
-    // A staleness round re-runs at the same head and must not repost the same
-    // comment. Detection still runs and is still logged; only the duplicate
-    // COMMENT is suppressed.
-    if (deps.store.migrationCollisionCommented(args.pr, fingerprint)) {
-      log(`dispatch: #${args.pr} migration collision already commented at ${args.head_sha}`);
-      return collisions;
-    }
+    collisions = detectMigrationCollisions({ files: args.files, baseFiles });
+  } catch (err) {
+    log(`dispatch: migration pre-check failed on #${args.pr}`, err);
+    deps.store.logEvent("migration_precheck_failed", args.pr, { head_sha: args.head_sha, error: String(err) });
+    return { collisions: [], degraded: touchesMigrations };
+  }
+  if (collisions.length === 0) return { collisions, degraded: false };
+  deps.store.logEvent("migration_collision_detected", args.pr, {
+    head_sha: args.head_sha,
+    base_ref: args.base_ref,
+    base_sha: args.base_sha,
+    collisions: collisions.map((c) => ({ pr_path: c.pr_path, base_path: c.base_path, target_path: c.target_path })),
+  });
+  const fingerprint = collisionFingerprint(args.head_sha, collisions);
+  // A staleness round re-runs at the same head and must not repost the same
+  // comment. Detection still runs and is still logged; only the duplicate
+  // COMMENT is suppressed.
+  if (deps.store.migrationCollisionCommented(args.pr, fingerprint)) {
+    log(`dispatch: #${args.pr} migration collision already commented at ${args.head_sha}`);
+    return { collisions, degraded: false };
+  }
+  try {
     const body = renderMigrationCollisionComment({
       collisions,
       base_ref: args.base_ref,
@@ -186,12 +202,20 @@ async function migrationPreCheck(
       executed: result.executed,
       dry_run_file: result.dryRunFile ?? null,
     });
-    return collisions;
   } catch (err) {
+    // The COMMENT failed, but the collisions are real, already detected and
+    // already logged — throwing them away here would leave the round's gate
+    // note empty while the addendum still muzzles the lens, i.e. NOBODY
+    // holding the class. The check RAN (not degraded); the comment retries on
+    // the next round because the fingerprint is only marked on success.
     log(`dispatch: migration pre-check failed on #${args.pr}`, err);
-    deps.store.logEvent("migration_precheck_failed", args.pr, { head_sha: args.head_sha, error: String(err) });
-    return [];
+    deps.store.logEvent("migration_precheck_failed", args.pr, {
+      head_sha: args.head_sha,
+      stage: "create_review",
+      error: String(err),
+    });
   }
+  return { collisions, degraded: false };
 }
 
 /** Consume both triggers at dispatch: the label and the team review request.
@@ -325,6 +349,9 @@ export function buildRoundOrder(args: {
   tree?: { head_sha: string; base_ref: string; base_sha: string; merge_base: string };
   /** Collisions the pre-check already delivered as a COMMENT. */
   migrationCollisions?: MigrationCollision[];
+  /** True when the PR touches migrations and the pre-check could NOT run —
+   * the prompt must tell the session to check collisions itself. */
+  migrationPrecheckDegraded?: boolean;
 }): RoundOrder {
   const { pass_plan, addable_lenses } = buildPassPlan(args.cfg, args.files);
   return {
@@ -340,6 +367,7 @@ export function buildRoundOrder(args: {
     addable_lenses,
     migration_gate: migrationGate(args.files),
     migration_collisions: args.migrationCollisions ?? [],
+    migration_precheck_degraded: args.migrationPrecheckDegraded ?? false,
     head_sha: args.tree?.head_sha || args.row.head_sha,
     base_ref: args.tree?.base_ref ?? "",
     base_sha: args.tree?.base_sha ?? "",
@@ -494,17 +522,38 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // Migration-number collision pre-check, before the session hears about
       // the round. It is delivered as its own COMMENT, so whatever
       // the review concludes, the renumber never rides on the verdict.
-      const migrationCollisions = await migrationPreCheck(deps, {
+      const precheck = await migrationPreCheck(deps, {
         pr: row.number,
         files,
         head_sha: tree?.head_sha || row.head_sha,
         base_ref: tree?.base_ref ?? baseRef,
         base_sha: tree?.base_sha ?? "",
       });
+      const migrationCollisions = precheck.collisions;
+      // A degraded pre-check is an anomaly the overseer should see (same
+      // channel verdicts.ts uses — an overseer inject, never a new path). The
+      // round itself still runs: the prompt carries the "check collisions
+      // yourself" note, so the class is covered either way.
+      if (precheck.degraded) {
+        try {
+          await deps.hooks.injectOverseer(
+            [
+              `ANOMALY (migration-precheck) — PR #${row.number} round ${roundNo}`,
+              "The migration-number pre-check could not run this round (no base facts, or the base read failed) — " +
+                "see the migration_precheck_skipped/failed event on this PR.",
+              "The round prompt tells the session to check base-branch migration-number collisions itself, so nothing is lost — " +
+                "but a recurring degraded pre-check means the base clone or worktree preparation is broken and needs a look.",
+            ].join("\n"),
+          );
+        } catch (err) {
+          log(`dispatch: overseer inject for degraded pre-check failed on #${row.number}`, err);
+        }
+      }
 
       const order = buildRoundOrder({
         tree,
         migrationCollisions,
+        migrationPrecheckDegraded: precheck.degraded,
         cfg,
         row,
         files,
@@ -531,6 +580,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         validate_tier: validateTier,
         migration_gate: order.migration_gate,
         migration_collisions: migrationCollisions.length,
+        migration_precheck_degraded: precheck.degraded,
         head_sha: order.head_sha,
         base_ref: order.base_ref,
         base_sha: order.base_sha,
