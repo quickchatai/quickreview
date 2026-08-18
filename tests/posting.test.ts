@@ -4,6 +4,7 @@ import {
   assembleReview,
   eventForVerdict,
   INLINE_COMMENT_CAP,
+  inlineBody,
   REVIEW_FOOTER,
   submitReview,
   type Finding,
@@ -49,6 +50,25 @@ describe("severity → tag mapping (spec §5)", () => {
   it("maps P3 to question and nit to nit", () => {
     expect(postTag("P3", 1)).toBe("question");
     expect(postTag("nit", 1)).toBe("nit");
+  });
+
+  it("carries reachability through assembly: a contrived P0 posts as a question", () => {
+    const review = assembleReview({
+      pr: 1,
+      head_sha: "sha",
+      verdict: "REQUEST_CHANGES",
+      lenses: ["pass-baseline"],
+      patches,
+      findings: [finding({ severity: "P0", reachability: "contrived" })],
+    });
+    const tag = [...review.tags.values()][0];
+    expect(tag).toBe("question");
+    const comment = review.payload.comments[0]?.body ?? "";
+    expect(comment).toContain("[question]");
+    // Non-routine reachability is shown; it is what explains the softer tag.
+    expect(comment).toContain("· contrived ·");
+    // A routine finding's tail is unchanged.
+    expect(inlineBody(finding(), "blocker")).toContain("_P1 · confidence 0.90 · lens pass-baseline_");
   });
 });
 

@@ -13,7 +13,7 @@ import type { GitHubAdapter } from "./github.js";
 import type { GateResult } from "./gate.js";
 import type { StateStore } from "./state.js";
 import { partitionByAnchor, ANCHOR_REASON_TEXT, type AnchorRequest, type Side } from "./anchors.js";
-import { postTag, type PostTag, type Severity, type Verdict } from "./severity.js";
+import { postTag, type PostTag, type Reachability, type Severity, type Verdict } from "./severity.js";
 
 /** GitHub caps a single review at 50 inline comments (ported constraint). */
 export const INLINE_COMMENT_CAP = 50;
@@ -25,6 +25,8 @@ export const REVIEW_FOOTER =
 export interface Finding {
   severity: Severity;
   confidence: number;
+  /** How often the triggering state arises. Absent ⇒ `routine`. */
+  reachability?: Reachability;
   path: string;
   /** Anchor end line (GitHub `line`). Absent ⇒ unanchorable ⇒ body-only. */
   line?: number;
@@ -99,14 +101,17 @@ function bullet(f: Finding): string {
 
 export function inlineBody(f: Finding, tag: PostTag): string {
   const head = `[${tag}] ${f.title}`;
-  const tail = `_${f.severity} · confidence ${f.confidence.toFixed(2)} · lens ${f.lens}_`;
+  // Reachability is shown only when it is not `routine` — that is exactly when
+  // it explains a tag the severity alone would not have produced.
+  const reach = f.reachability && f.reachability !== "routine" ? ` · ${f.reachability}` : "";
+  const tail = `_${f.severity} · confidence ${f.confidence.toFixed(2)}${reach} · lens ${f.lens}_`;
   return `${head}\n\n${f.body}\n\n${tail}`;
 }
 
 /** Assemble the full review POST payload from a round's surviving findings. */
 export function assembleReview(input: ReviewInput): AssembledReview {
   const tags = new Map<Finding, PostTag>();
-  for (const f of input.findings) tags.set(f, postTag(f.severity, f.confidence));
+  for (const f of input.findings) tags.set(f, postTag(f.severity, f.confidence, f.reachability));
 
   // 1. anchorable candidates vs. findings with no anchor at all
   const overflow: AssembledReview["overflow"] = [];
@@ -164,7 +169,7 @@ export function renderBody(
   overflow: AssembledReview["overflow"],
 ): string {
   const counts: Record<PostTag, number> = { blocker: 0, question: 0, nit: 0 };
-  for (const f of input.findings) counts[tags.get(f) ?? postTag(f.severity, f.confidence)] += 1;
+  for (const f of input.findings) counts[tags.get(f) ?? postTag(f.severity, f.confidence, f.reachability)] += 1;
 
   const of = (tag: PostTag) => input.findings.filter((f) => tags.get(f) === tag);
   const out: string[] = [verdictLine(input.verdict, counts), "", `_Lenses applied: ${input.lenses.join(", ")}._`];

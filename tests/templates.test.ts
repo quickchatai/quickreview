@@ -193,6 +193,35 @@ describe("shipped round templates", () => {
       expect(text).toContain("scripts/reply-thread.sh {{n}} <comment-id> <body-file>");
       expect(text).toContain("scripts/approve-pr.sh");
     });
+
+    // the halves of the shared pass contract that live in the round
+    // templates: the Decide-step reachability gate and the Post-step delta rule.
+    it(`${roundTemplateFile(rt)} states the reachability decision rule without moving the blocker bar`, () => {
+      expect(text).toContain("Reachability gate");
+      expect(text).toContain("`reachability: routine | plausible | contrived`");
+      // contrived never blocks, at any severity.
+      expect(text).toMatch(/`contrived`[^]*never blocks, at\s*\n?\s*any severity/);
+      // plausible: P0/P1 still block, P2 becomes a question.
+      expect(text).toMatch(/`plausible`[^]*P0\/P1 still block; P2\s*\n?\s*becomes a `\[question\]`/);
+      // routine unchanged, and an absent field reads as routine.
+      expect(text).toContain("the map above applies unchanged");
+      expect(text).toContain("without the field is `routine`");
+      // The bar itself: a routine P0/P1 still blocks.
+      expect(text).toContain("**The blocker bar itself does not move.**");
+      expect(text).toMatch(/Posting map: P0\/P1 → `\[blocker\]`/);
+      // Remedy size and injection findings.
+      expect(text).toContain("**Remedy size.**");
+      expect(text).toContain("design objection, not a merge blocker");
+      expect(text).toContain("`kind: injection`");
+      expect(text).toContain("reaches the owner and the overseer");
+    });
+
+    it(`${roundTemplateFile(rt)} posts only deltas — verified-and-fine material never goes inline`, () => {
+      expect(text).toContain("**Only deltas get posted.**");
+      expect(text).toContain("collapsible `<details>` section at the bottom of the body");
+      expect(text).toContain("**Never inline**");
+      expect(text).toContain("verification\ninventory is not");
+    });
   }
 });
 
