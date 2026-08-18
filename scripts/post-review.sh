@@ -132,6 +132,53 @@ call() { # call <method> <path> <body-json> <note>
   esac
 }
 
+# ---- guard 3: merged/closed re-check, immediately before posting ---
+# Same guard the MutationGate enforces daemon-side (src/guards.ts), mirrored
+# here because this is the other posting route. One read, right before the
+# mutation; live mode fails CLOSED on an unreadable state.
+
+guard_token() {
+  if [[ "$LIVE" == "1" ]]; then "$ROOT/scripts/mint-token.sh"; else "$ROOT/scripts/mint-token.sh" 2>/dev/null || true; fi
+}
+
+pr_liveness() { # → open | merged | closed | unreadable
+  local tok body
+  tok="$(guard_token)"
+  if [[ -n "$tok" ]]; then
+    body="$(curl -sS -H "Authorization: Bearer $tok" -H "Accept: application/vnd.github+json" \
+      -H "X-GitHub-Api-Version: 2022-11-28" "$API/repos/$REPO/pulls/$PR" || true)"
+  else
+    body="$(curl -sS -H "Accept: application/vnd.github+json" "$API/repos/$REPO/pulls/$PR" || true)"
+  fi
+  printf '%s' "$body" | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print("unreadable"); raise SystemExit(0)
+if not isinstance(d, dict) or "state" not in d:
+    print("unreadable")
+elif d.get("merged"):
+    print("merged")
+elif d.get("state") != "open":
+    print("closed")
+else:
+    print("open")
+' || echo unreadable
+}
+
+case "$(pr_liveness)" in
+  open) ;;
+  merged) die "#$PR is already merged — refusing to post (guard 3)" ;;
+  closed) die "#$PR is closed — refusing to post (guard 3)" ;;
+  *)
+    if [[ "$LIVE" == "1" ]]; then
+      die "could not read the state of #$PR — refusing to post (guard 3, fail closed)"
+    fi
+    echo "guard: #$PR state unreadable; dry-run posts nothing, continuing" >&2
+    ;;
+esac
+
 NOTE="post $EVENT review on #$PR"
 if [[ "$LIVE" == "1" ]]; then
   call POST "/repos/$REPO/pulls/$PR/reviews" "$PAYLOAD" "$NOTE"

@@ -233,6 +233,10 @@ export class VerdictWatcher {
       verdict: v.verdict,
       ai_approved: v.ai_approved ?? null,
     });
+    // The reviewed-head mark: this head has now been reviewed and
+    // decided. Read by the no-new-evidence guard at dispatch and at posting
+    // time, and by the post-approval delta recheck.
+    if (v.head_sha) store.recordReviewedHead(v.pr, { head_sha: v.head_sha, verdict: v.verdict, round_no: v.round_no });
     // Slack (S4), in-thread and never broadcast. duration_s is computed
     // inside finishRound, so it is read back off the row rather than recomputed.
     const finished = round ? store.roundsFor(v.pr).find((r) => r.id === round.id) : undefined;

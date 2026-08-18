@@ -152,6 +152,16 @@ describe("valid verdicts", () => {
     expect(readdirSync(join(dir, "processed")).length).toBe(1);
   });
 
+  it("stamps the reviewed-head mark with the head and the verdict", async () => {
+    reviewingRound(106);
+    await watcher().handleFile(write(106, 1, verdictFile({ pr: 106, head_sha: "abc123" })));
+    expect(store.reviewedHead(106)).toMatchObject({
+      head_sha: "abc123",
+      verdict: "REQUEST_CHANGES",
+      round_no: 1,
+    });
+  });
+
   it("APPROVE lands the PR back on tracked", async () => {
     reviewingRound(101);
     await watcher().handleFile(write(101, 1, verdictFile({ pr: 101, verdict: "APPROVE" })));

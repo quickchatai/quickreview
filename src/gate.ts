@@ -66,9 +66,30 @@ export interface GateResult {
   executed: boolean;
   dryRunFile?: string;
   response?: unknown;
+  /** Set when a guard refused the mutation. Nothing was executed and
+   * nothing was recorded — the reason is a short tag ("pr-merged", …). */
+  blocked?: string;
 }
 
 export type MutationExecutor = (intent: MutationIntent) => Promise<unknown>;
+
+/** A guard's answer: refuse (`block`), or let it through — optionally with a
+ * rewritten intent (the human-approval downgrade posts a COMMENT instead of a
+ * REQUEST_CHANGES). Returning `{}` means "no opinion". */
+export interface GuardDecision {
+  block?: string;
+  intent?: MutationIntent;
+}
+
+/**
+ * Posting-time guards, attached to the ONE gate so that no posting
+ * route can reach GitHub around them. `before` runs ahead of the dry-run
+ * branch and of the executor; `after` sees what actually happened.
+ */
+export interface MutationGuard {
+  before(intent: MutationIntent): Promise<GuardDecision>;
+  after?(intent: MutationIntent, result: GateResult): void | Promise<void>;
+}
 
 let seq = 0;
 
@@ -78,13 +99,22 @@ export class MutationGate {
     private readonly dryrunDir: string,
     private readonly executor: MutationExecutor,
     private readonly now: () => Date = () => new Date(),
+    private guard?: MutationGuard,
   ) {}
 
   get isDryRun(): boolean {
     return this.dryRun;
   }
 
-  async execute(intent: MutationIntent): Promise<GateResult> {
+  /** Attach the posting guards. Production wiring needs the store and the
+   * adapter, which only exist after the gate itself does — hence a setter
+   * rather than a constructor-only dependency. */
+  setGuard(guard: MutationGuard): void {
+    this.guard = guard;
+  }
+
+  async execute(intentIn: MutationIntent): Promise<GateResult> {
+    let intent = intentIn;
     // Checked before anything else — an unknown kind is never recorded to
     // state/dryrun/ either, so a retired kind cannot even leave evidence
     // suggesting the daemon still performs it.
@@ -94,14 +124,30 @@ export class MutationGate {
     if (intent.forceLive && intent.kind !== "supersede_own_review") {
       throw new Error(`forceLive is not allowed for kind ${intent.kind}`);
     }
+    // Posting-time guards run BEFORE the dry-run branch: a mutation a guard
+    // refuses is neither executed nor recorded, so the dry-run evidence shows
+    // the same behaviour the live path would have had.
+    if (this.guard) {
+      const decision = await this.guard.before(intent);
+      if (decision.block) {
+        const blocked: GateResult = { executed: false, blocked: decision.block };
+        await this.guard.after?.(intent, blocked);
+        return blocked;
+      }
+      if (decision.intent) intent = decision.intent;
+    }
     if (this.dryRun && !intent.forceLive) {
       mkdirSync(this.dryrunDir, { recursive: true });
       const ts = this.now().toISOString().replace(/[:.]/g, "-");
       const file = join(this.dryrunDir, `${ts}-${String(seq++).padStart(4, "0")}-${intent.kind}.json`);
       writeFileSync(file, JSON.stringify({ recorded_at: this.now().toISOString(), ...intent }, null, 2));
-      return { executed: false, dryRunFile: file };
+      const recorded: GateResult = { executed: false, dryRunFile: file };
+      await this.guard?.after?.(intent, recorded);
+      return recorded;
     }
     const response = await this.executor(intent);
-    return { executed: true, response };
+    const executed: GateResult = { executed: true, response };
+    await this.guard?.after?.(intent, executed);
+    return executed;
   }
 }

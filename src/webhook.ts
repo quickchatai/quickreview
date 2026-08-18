@@ -349,6 +349,9 @@ export async function applyInterpretation(
       return;
     case "author_reply":
       applyEventFor(store, i.pr, { type: "author_reply" }, {}, opts);
+      // New evidence at the current head (guard 2): a reply is the one
+      // thing other than a push that makes re-reviewing the same head useful.
+      store.noteAuthorReply(i.pr);
       await deps.onAuthorReply?.(i);
       return;
     case "bot_comment":
