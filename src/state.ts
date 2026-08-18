@@ -505,11 +505,17 @@ export class StateStore {
     this.db.prepare(`UPDATE rounds SET ${sets.join(", ")} WHERE id = ?`).run(...args, id);
   }
 
-  /** Rounds the daemon actually ran for a PR — backfilled history excluded.
-   * Dispatch's first-review-vs-re-review choice keys on this (§2.1). */
+  /** Rounds that actually DELIVERED a verdict for a PR — backfilled history
+   * and dead rounds (cancelled/orphaned/overdue: verdict NULL) excluded.
+   * Dispatch's first-review-vs-re-review choice and the nit-cap "review age"
+   * key on this (§2.1; live 2026-08-18: #5313's two failed rounds
+   * aged it to a "round 3 re-review" with the nit cap active despite zero
+   * posted reviews — a failed round must not age the PR). */
   priorRoundCount(pr: number): number {
     return (
-      this.db.prepare("SELECT COUNT(*) AS c FROM rounds WHERE pr = ? AND backfilled = 0").get(pr) as { c: number }
+      this.db
+        .prepare("SELECT COUNT(*) AS c FROM rounds WHERE pr = ? AND backfilled = 0 AND verdict IS NOT NULL")
+        .get(pr) as { c: number }
     ).c;
   }
 

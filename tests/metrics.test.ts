@@ -409,8 +409,8 @@ describe("schema migrations", () => {
     );
     legacy.db
       .prepare(
-        `INSERT INTO rounds (pr, round_no, round_type, lenses, started_at, deadline_at, status)
-         VALUES (7, 1, 'first', 'pass-baseline', '2026-08-14T09:00:00.000Z', '2026-08-14T09:45:00.000Z', 'done')`,
+        `INSERT INTO rounds (pr, round_no, round_type, lenses, verdict, started_at, deadline_at, status)
+         VALUES (7, 1, 'first', 'pass-baseline', 'APPROVE', '2026-08-14T09:00:00.000Z', '2026-08-14T09:45:00.000Z', 'done')`,
       )
       .run();
     legacy.close();

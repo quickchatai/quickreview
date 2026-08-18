@@ -297,7 +297,7 @@ export function roundVars(order: RoundOrder): TemplateVars {
         ? renderMigrationPrecheckDegradedNote()
         : renderMigrationCollisionsNote(order.migration_collisions ?? [])),
     settled_digest: order.settled_digest.trim() || "(nothing settled yet)",
-    nit_scope_note: renderNitScopeNote(order.round_no),
+    nit_scope_note: renderNitScopeNote(order.review_no ?? order.round_no),
     intent_note: renderIntentNote(order),
   };
 }

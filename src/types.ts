@@ -63,6 +63,10 @@ export interface RoundOrder {
   title: string;
   round_id: number;
   round_no: number;
+  /** The PR's review age: prior VERDICTED rounds + 1. round_no stays the
+   * audit-unique sequence (cancelled rounds included); review_no drives
+   * age-keyed behaviour (nit cap) so failed rounds don't age the PR. */
+  review_no?: number;
   round_type: RoundType;
   /** Compat: the pass_plan lenses, in order (pass_plan is authoritative). */
   lenses: string[];

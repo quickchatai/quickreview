@@ -299,7 +299,9 @@ describe("runBackfill", () => {
     // Numbered below the live round, so MAX(round_no) is untouched.
     expect(rows[0]!.round_no).toBe(0);
     expect((s.db.prepare("SELECT MAX(round_no) AS m FROM rounds WHERE pr = 5000").get() as { m: number }).m).toBe(1);
-    expect(s.priorRoundCount(5000)).toBe(1);
+    // The live round is still running (no verdict), so it does not age the PR:
+    // priorRoundCount counts VERDICTED rounds only (2026-08-18, #5313).
+    expect(s.priorRoundCount(5000)).toBe(0);
     s.close();
   });
 

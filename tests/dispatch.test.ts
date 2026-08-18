@@ -189,6 +189,25 @@ describe("recording at round start", () => {
     await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
     expect(orders[1]!.order.round_type).toBe("re-review");
   });
+
+  it("a failed (cancelled, verdict-less) round does not age the PR — next round is still 'first' with review_no 1", async () => {
+    // Live 2026-08-18, #5313: two rounds died before posting anything and the
+    // PR was dispatched as "round 3 (re-review)" with the nit cap active,
+    // despite zero posted reviews. Failed rounds advance round_no (the audit
+    // sequence) but must not advance the review age.
+    queue(31, "2026-08-13T09:00:00Z");
+    const { hooks, orders } = recordingHooks();
+    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+    store.markRoundCancelled(store.runningRounds()[0]!.id, "session lost");
+    expect(store.priorRoundCount(31)).toBe(0);
+
+    queue(31, "2026-08-13T10:00:00Z");
+    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+    const order = orders[1]!.order;
+    expect(order.round_no).toBe(2); // audit sequence keeps counting
+    expect(order.round_type).toBe("first"); // review age does not
+    expect(order.review_no).toBe(1);
+  });
 });
 
 describe("buildPassPlan", () => {

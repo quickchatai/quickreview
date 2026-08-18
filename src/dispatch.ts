@@ -348,6 +348,9 @@ export function buildRoundOrder(args: {
   files: PrFileEntry[];
   roundId: number;
   roundNo: number;
+  /** Prior VERDICTED rounds + 1 — the PR's review age. Drives the nit cap;
+   * failed (cancelled/overdue) rounds advance round_no but not this. */
+  reviewNo?: number;
   roundType: RoundType;
   worktree: string;
   settledDigest: string;
@@ -372,6 +375,7 @@ export function buildRoundOrder(args: {
     title: args.row.title,
     round_id: args.roundId,
     round_no: args.roundNo,
+    ...(args.reviewNo !== undefined ? { review_no: args.reviewNo } : {}),
     round_type: args.roundType,
     // Kept for compatibility with the rounds table / event log: always the
     // pass_plan's lens names in plan order.
@@ -579,6 +583,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         files,
         roundId,
         roundNo,
+        reviewNo: priorRounds + 1,
         roundType,
         worktree: worktreeFor(row.number),
         settledDigest: settledDigest(row.number),
