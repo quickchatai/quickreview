@@ -197,49 +197,34 @@ guard_ci_state() { # guard_ci_state <head-sha> — green|red|pending|none|unknow
   [[ -n "$head" ]] || { echo unknown; return 0; }
   runs="$(guard_api_get "/repos/$REPO/commits/$head/check-runs?per_page=100")"
   status="$(guard_api_get "/repos/$REPO/commits/$head/status?per_page=100")"
-  GUARD_CI_RUNS="$runs" GUARD_CI_STATUS="$status" python3 -c '
-import json, os
-docs = []
-for raw in (os.environ.get("GUARD_CI_RUNS") or "", os.environ.get("GUARD_CI_STATUS") or ""):
-    raw = raw.strip()
-    if not raw:
-        continue
-    try:
-        docs.append(json.loads(raw))
-    except Exception:
-        pass
-checks = []
-for d in docs:
-    if not isinstance(d, dict):
-        continue
-    for r in d.get("check_runs") or []:
-        checks.append((str(r.get("status") or ""), str(r.get("conclusion") or "")))
-    for s in d.get("statuses") or []:
-        state = str(s.get("state") or "")
-        if state == "pending":
-            checks.append(("pending", ""))
-        else:
-            checks.append(("completed", "success" if state == "success" else "failure"))
-if not docs:
-    print("unknown"); raise SystemExit(0)
-if not checks:
-    print("none"); raise SystemExit(0)
-# Mirrors src/cigate.ts classifyCi — keep the two in step.
-UNFINISHED = {"queued", "in_progress", "waiting", "pending", "requested"}
-INERT = {"skipped", "neutral"}
-pending = succeeded = False
-for status, conclusion in checks:
-    status, conclusion = status.lower(), conclusion.lower()
-    if status in UNFINISHED or (status != "completed" and conclusion == ""):
-        pending = True
-    elif conclusion == "success":
-        succeeded = True
-    elif conclusion in INERT:
-        continue
-    else:
-        print("red"); raise SystemExit(0)
-print("pending" if pending else ("green" if succeeded else "red"))
-' 2>/dev/null || echo unknown
+  # Mirrors src/cigate.ts classifyCi — keep the two in step.
+  GUARD_CI_RUNS="$runs" GUARD_CI_STATUS="$status" jq -rn '
+    [env.GUARD_CI_RUNS // "", env.GUARD_CI_STATUS // ""]
+    | map(select(. != "") | try fromjson catch empty) as $docs
+    | if ($docs | length) == 0 then "unknown"
+      else
+        ( [ $docs[] | select(type == "object") | (.check_runs? // [])[]
+            | [ ((.status // "") | tostring | ascii_downcase),
+                ((.conclusion // "") | tostring | ascii_downcase) ] ]
+        + [ $docs[] | select(type == "object") | (.statuses? // [])[]
+            | ((.state // "") | tostring) as $s
+            | if $s == "pending" then ["pending", ""]
+              else ["completed", (if $s == "success" then "success" else "failure" end)]
+              end ] ) as $checks
+        | if ($checks | length) == 0 then "none"
+          else
+            ["queued", "in_progress", "waiting", "pending", "requested"] as $unfinished
+            | ["skipped", "neutral"] as $inert
+            | ($checks | map(.[0] as $st | .[1] as $c | select(
+                (($unfinished | index($st)) == null)
+                and (($st == "completed") or ($c != ""))))) as $finished
+            | if any($finished[]; .[1] as $c | ($c != "success") and (($inert | index($c)) == null)) then "red"
+              elif ($checks | length) > ($finished | length) then "pending"
+              elif any($finished[]; .[1] == "success") then "green"
+              else "red"
+              end
+          end
+      end' 2>/dev/null || echo unknown
 }
 
 guard_require_green_ci() { # guard_require_green_ci <head-sha>

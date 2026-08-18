@@ -94,6 +94,23 @@ describe("trivial-delta classifier", () => {
     expect(d.files[0]?.reason).toBe("migration-renumber");
   });
 
+  it("keeps a renamed migration significant when a semantic numeric constant changed", () => {
+    // digitsOnly masks digit runs only in the NNNN_name shape a migration
+    // filename or dependencies entry carries — a batch size (or timeout,
+    // default…) changing inside a renamed migration is a real content edit,
+    // not part of the renumber.
+    const d = classifyDelta([
+      file({
+        filename: "app/migrations/0043_add_col.py",
+        previous_filename: "app/migrations/0042_add_col.py",
+        status: "renamed",
+        patch: '@@\n-    dependencies = [("app", "0041_prev")]\n+    dependencies = [("app", "0042_prev")]\n@@\n-    BATCH_SIZE = 500\n+    BATCH_SIZE = 1000',
+      }),
+    ]);
+    expect(d.class).toBe("significant");
+    expect(d.files[0]?.reason).toBe("content");
+  });
+
   it("calls a migration renumber trivial — as a delete + add pair", () => {
     const d = classifyDelta([
       file({ filename: "app/migrations/0042_add_col.py", status: "removed", additions: 0, deletions: 30 }),

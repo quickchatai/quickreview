@@ -42,7 +42,9 @@ marked **review this**, at `{{head_sha}}`, in `{{worktree}}`.
 - **Only a real regression moves the verdict**: a defect introduced by this
   delta, or an old finding the delta has re-opened. New opinions about code you
   already approved are not regressions — they are, at most, ledger entries
-  marked `deferred`.
+  marked `deferred`. Findings raised during a recheck obey the same
+  reachability gate as a normal round: `contrived` never blocks at any
+  severity, and a `plausible` P2 is a question, not a blocker.
 - **Be cheap.** Read the changed lines and what they touch. Do not re-fetch the
   whole PR, do not re-run your previous round, do not re-read files you already
   hold.

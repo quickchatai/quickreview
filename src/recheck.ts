@@ -159,11 +159,15 @@ export function formattingOnly(patch: string): boolean {
   return squash(added) === squash(removed);
 }
 
-/** Same text once every digit run is masked — the renumber's content edit
- * (`dependencies = [("app", "0042_x")]` → `"0043_x"`) and nothing else. */
+/** Same text once every MIGRATION-NUMBER run is masked — the renumber's
+ * content edit (`dependencies = [("app", "0042_x")]` → `"0043_x"`) and nothing
+ * else. Only a digit run immediately followed by `_` (the `NNNN_name` shape a
+ * migration filename or `dependencies` entry carries) is masked: a semantic
+ * numeric change inside a renamed migration — a batch size, a timeout, a
+ * default — does NOT mask away, so it classifies significant. */
 export function digitsOnly(patch: string): boolean {
   const { added, removed } = patchLines(patch);
-  const mask = (lines: string[]): string => squash(lines).replace(/\d+/g, "#");
+  const mask = (lines: string[]): string => squash(lines).replace(/\d+(?=_)/g, "#");
   return mask(added) === mask(removed);
 }
 
