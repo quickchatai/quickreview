@@ -129,6 +129,16 @@ describe("the round templates carry the gate in their Decide step", () => {
     expect(decide).toContain("never **NEEDS_HUMAN** on red CI alone");
   });
 
+  it.each(templates)("%s exempts a head with no checks at all, matching ciBlocksApproval('none')", (name) => {
+    // ciBlocksApproval deliberately lets `none` through — a repo (or
+    // path) with no CI at all must not park forever. The templates must state
+    // the same rule, or the session gates harder than the code does.
+    const text = read(name);
+    expect(text).toContain("no CI checks configured at all");
+    expect(text).toContain("the gate applies only when checks exist and are not all green");
+    expect(ciBlocksApproval("none")).toBe(false);
+  });
+
   it.each(templates)("%s treats infra, cancelled and skipped identically, and only ever READS CI", (name) => {
     const text = read(name);
     expect(text).toContain("blocks exactly like a failing test");

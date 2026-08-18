@@ -130,6 +130,11 @@ like a failing test** — there is no case to argue, which is the point of havin
 a rule: the predecessor system improvised this eleven times and approved over a
 genuinely red required check.
 
+A head with **no CI checks configured at all** is not gated: the gate applies
+only when checks exist and are not all green — where nothing reports at this
+head, there is nothing to wait on and APPROVE stays available on the findings
+alone.
+
 - **red CI and no blockers ⇒ post the full review as a COMMENT with the approval
   withheld.** Say plainly in the opening paragraph that **no blockers were found
   and approval is withheld pending green CI at this head**, so the author knows

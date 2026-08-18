@@ -4,6 +4,7 @@
 // to match. GitHub always wins. Every correction is logged as a
 // `reconcile_correction` event: a rising correction rate is the webhook-health
 // signal the operator watches.
+import { retryWithheldApproval, type CheckSummary } from "./cigate.js";
 import type { Config } from "./config.js";
 import type { PrRef } from "./github.js";
 import { applyEvent, isBotAuthor } from "./statemachine.js";
@@ -26,6 +27,10 @@ export interface ReconcileAdapter {
   getPr(n: number): Promise<PrRef>;
   listBotReviewComments(n: number): Promise<number[]>;
   getRequestedReviewers(n: number): Promise<{ users: string[]; teams: string[] }>;
+  /** Checks at a ref — the withheld-approval backstop reads CI
+   * through this. Optional: a stub-wired daemon without it simply has no
+   * backstop, exactly as it had none before the slice existed. */
+  listChecks?(ref: string): Promise<CheckSummary[]>;
 }
 
 export interface ReconcileDeps {
@@ -205,6 +210,37 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
       }
     }
   });
+
+  // ---- 4. withheld-approval backstop ----------------------------
+  // cigate.ts promises that a PR whose approval was withheld for red CI is
+  // re-queued "by the next completion (or the reconcile poll)". The
+  // `ci_completed` webhook is the fast path; this sweep is the backstop for a
+  // lost delivery — without it a missed green would leave the PR waiting on a
+  // verdict that is never re-attempted. Same idiom as every other step:
+  // GitHub (the CI state at the recorded head) always wins, corrections
+  // logged. The retry itself is retryWithheldApproval — the exact function the
+  // webhook path calls — never a copy.
+  if (adapter.listChecks) {
+    await step("withheld-approvals", async () => {
+      for (const local of store.allPrs()) {
+        if (local.state === "closed") continue;
+        const mark = store.approvalWithheld(local.number);
+        if (!mark) continue;
+        const outcome = await retryWithheldApproval(
+          {
+            cfg,
+            store,
+            adapter: { listChecks: (ref) => adapter.listChecks!(ref) },
+            now,
+            ...(deps.log ? { log: deps.log } : {}),
+          },
+          { pr: local.number, head_sha: mark.head_sha },
+        );
+        if (outcome.action === "requeued")
+          correction(deps, local.number, "withheld-approval-requeued", { head_sha: mark.head_sha, ci: outcome.ci }, report);
+      }
+    });
+  }
 
   // ---- 5. bot-comment registry backfill ----------------------------------
   if (deps.backfillRegistry !== false) {

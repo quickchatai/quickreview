@@ -67,6 +67,13 @@ class FakeGitHub implements ReconcileAdapter {
   async stalenessScan() {
     return this.stale;
   }
+  /** Checks per head sha; a head with no entry has no checks (`none`). */
+  checksAt = new Map<string, Array<{ name: string; status: string; conclusion: string | null }>>();
+
+  async listChecks(ref: string) {
+    this.calls.push(`listChecks:${ref}`);
+    return this.checksAt.get(ref) ?? [];
+  }
   async listBotReviewComments(n: number) {
     return this.botComments.get(n) ?? [];
   }
@@ -255,6 +262,67 @@ describe("reconcileOnce", () => {
     const { hooks } = recordingHooks();
     await reconcileOnce({ cfg, store, adapter: gh, hooks });
     expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'reconcile_pass'").get()).toMatchObject({ c: 1 });
+  });
+});
+
+describe("withheld-approval backstop", () => {
+  // The webhook `ci_completed` is the fast path; this is the reconcile sweep
+  // cigate.ts promises for a lost delivery.
+  const green = [{ name: "ci", status: "completed", conclusion: "success" }];
+  const red = [{ name: "ci", status: "completed", conclusion: "failure" }];
+
+  it("requeues a withheld PR when CI is green at the recorded head (webhook lost)", async () => {
+    seed(70, "tracked");
+    gh.open = [ref(70)];
+    store.recordApprovalWithheld(70, { head_sha: "sha70", ci_state: "red", reason: "red-ci" });
+    gh.checksAt.set("sha70", green);
+
+    await reconcileOnce({ cfg, store, adapter: gh, hooks: recordingHooks().hooks });
+
+    expect(store.getPr(70)?.state).toBe("queued");
+    // The retry is retryWithheldApproval itself — its own event fires, plus the
+    // reconcile correction that says the poll (not the webhook) caught it.
+    expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'approval_retry_queued'").get()).toEqual({ c: 1 });
+    expect(corrections(store).some((c) => c.what === "withheld-approval-requeued")).toBe(true);
+  });
+
+  it("does not requeue while CI is still red — the mark stands", async () => {
+    seed(71, "tracked");
+    gh.open = [ref(71)];
+    store.recordApprovalWithheld(71, { head_sha: "sha71", ci_state: "red", reason: "red-ci" });
+    gh.checksAt.set("sha71", red);
+
+    await reconcileOnce({ cfg, store, adapter: gh, hooks: recordingHooks().hooks });
+
+    expect(store.getPr(71)?.state).toBe("tracked");
+    expect(store.approvalWithheld(71)).toBeDefined();
+    expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'approval_retry_queued'").get()).toEqual({ c: 0 });
+    expect(corrections(store).some((c) => c.what === "withheld-approval-requeued")).toBe(false);
+  });
+
+  it("reads CI only for PRs that actually hold a withheld mark", async () => {
+    seed(72, "tracked");
+    gh.open = [ref(72)];
+
+    await reconcileOnce({ cfg, store, adapter: gh, hooks: recordingHooks().hooks });
+
+    expect(gh.calls.filter((c) => c.startsWith("listChecks"))).toEqual([]);
+  });
+
+  it("skips the sweep entirely on an adapter without a checks read", async () => {
+    seed(73, "tracked");
+    gh.open = [ref(73)];
+    store.recordApprovalWithheld(73, { head_sha: "sha73", ci_state: "red", reason: "red-ci" });
+    const bare = Object.assign(Object.create(Object.getPrototypeOf(gh)), gh) as FakeGitHub & {
+      listChecks?: unknown;
+    };
+    // Simulate a stub wiring with no listChecks at all.
+    (bare as { listChecks?: unknown }).listChecks = undefined;
+
+    const report = await reconcileOnce({ cfg, store, adapter: bare, hooks: recordingHooks().hooks });
+
+    expect(report.errors).toEqual([]);
+    expect(store.getPr(73)?.state).toBe("tracked");
   });
 });
 
