@@ -4,6 +4,7 @@
 // throws; a supplied value the template does not use is fine (templates are
 // edited independently of this renderer).
 import type { MigrationCollision } from "./migrations.js";
+import type { FileClass, RecheckOrder } from "./recheck.js";
 import type { PassPlanEntry, RoundOrder, RoundType } from "./types.js";
 
 const PLACEHOLDER = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
@@ -45,6 +46,40 @@ export const ROUND_TEMPLATE_FILES: Record<RoundType, string> = {
 
 export function roundTemplateFile(roundType: RoundType): string {
   return ROUND_TEMPLATE_FILES[roundType];
+}
+
+/** The fourth template. Not a RoundType: a recheck starts no round,
+ * plans no passes and asks one question. */
+export const RECHECK_TEMPLATE_FILE = "round-recheck.md";
+
+/** Markdown list of the delta, trivial classifications included so the session
+ * can see what the daemon already ruled out and why. */
+export function renderDeltaFiles(files: readonly FileClass[]): string {
+  if (files.length === 0) return "(no files changed)";
+  return files
+    .map((f) => (f.class === "significant" ? `- \`${f.filename}\` — **review this**` : `- \`${f.filename}\` — trivial (${f.reason}), already ruled out`))
+    .join("\n");
+}
+
+/** The full variable set the recheck template may reference. */
+export function recheckVars(order: RecheckOrder): TemplateVars {
+  return {
+    n: String(order.pr),
+    title: order.title,
+    worktree: order.worktree,
+    trigger: order.trigger,
+    standing_verdict: order.standing_verdict,
+    last_reviewed_sha: order.last_reviewed_sha,
+    head_sha: order.head_sha,
+    evidence: order.evidence,
+    delta_files: renderDeltaFiles(order.files),
+    decision_file: order.decision_file,
+  };
+}
+
+/** Render prompts/round-recheck.md against a RecheckOrder. */
+export function renderRecheckPrompt(templateText: string, order: RecheckOrder): string {
+  return render(templateText, recheckVars(order));
 }
 
 // The migration gate survived the escalation scrap (the owner, 2026-08-18) as a

@@ -219,6 +219,28 @@ export const GUARDS_DEFAULTS: GuardsConfig = {
   recheck_pr_state_before_post: true,
 };
 
+/**
+ * [recheck] — the post-approval delta recheck. One knob per trigger,
+ * so a noisy trigger can be taken out of the path deliberately, in one place.
+ * All on: the uphold-by-default design is what makes the broad set affordable.
+ */
+export interface RecheckConfig {
+  enabled: boolean;
+  /** A push landing after an approve — the core case. */
+  on_push: boolean;
+  /** CI completing at the approved head; an adverse conclusion is evidence. */
+  on_ci: boolean;
+  /** The base branch moving under an approved PR (the noisiest by far). */
+  on_base_advance: boolean;
+}
+
+export const RECHECK_DEFAULTS: RecheckConfig = {
+  enabled: true,
+  on_push: true,
+  on_ci: true,
+  on_base_advance: true,
+};
+
 /** Per-model spend rates, keyed by bare model id (e.g. "gpt-5.6-sol"). */
 export interface ModelPricing {
   input_per_mtok: number;
@@ -285,6 +307,7 @@ export interface Config {
   companion: CompanionConfig;
   backfill: BackfillConfig;
   guards: GuardsConfig;
+  recheck: RecheckConfig;
   slack: SlackConfig;
 }
 
@@ -384,6 +407,7 @@ export function parseConfig(toml: string): Config {
     companion: resolveCompanionPaths({ ...COMPANION_DEFAULTS, ...((raw.companion ?? {}) as Partial<CompanionConfig>) }),
     backfill: { ...backfillDefaults(github), ...((raw.backfill ?? {}) as Partial<BackfillConfig>) },
     guards: { ...GUARDS_DEFAULTS, ...((raw.guards ?? {}) as Partial<GuardsConfig>) },
+    recheck: { ...RECHECK_DEFAULTS, ...((raw.recheck ?? {}) as Partial<RecheckConfig>) },
     slack: parseSlack((raw.slack ?? {}) as Record<string, any>),
   };
   for (const k of [

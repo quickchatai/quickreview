@@ -34,7 +34,8 @@ import { SlackRouter } from "./slack/router.js";
 import { SlackSocketClient } from "./slack/socket.js";
 import type { SlackTransport } from "./slack/types.js";
 import type { StateStore } from "./state.js";
-import { renderRoundPrompt, roundTemplateFile } from "./templates.js";
+import type { RecheckOrder } from "./recheck.js";
+import { RECHECK_TEMPLATE_FILE, renderRecheckPrompt, renderRoundPrompt, roundTemplateFile } from "./templates.js";
 import { nodeExec } from "./tmux.js";
 import type { RoundOrder, SessionHooks } from "./types.js";
 
@@ -350,6 +351,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
 
   const renderPrompt = (order: RoundOrder): string =>
     renderRoundPrompt(readFileSync(join(root, "prompts", roundTemplateFile(order.round_type)), "utf8"), order);
+  // The recheck's own template — a nudge, not a round order.
+  const renderRecheck = (order: RecheckOrder): string =>
+    renderRecheckPrompt(readFileSync(join(root, "prompts", RECHECK_TEMPLATE_FILE), "utf8"), order);
 
   let eod: EodTimer | null = null;
   let commands: CommandWatcher | null = null;
@@ -376,6 +380,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     adapter,
     hooks,
     renderPrompt,
+    renderRecheckPrompt: renderRecheck,
     // One network fetch per round, before the order is built: the PR head and
     // the branch it targets, together. Everything downstream (prompt, session,
     // passes) then works from the shas this returns.

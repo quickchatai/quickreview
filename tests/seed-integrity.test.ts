@@ -62,6 +62,7 @@ const NON_SEEDED = [
   "prompts/round-first.md",
   "prompts/round-re-review.md",
   "prompts/round-staleness.md",
+  "prompts/round-recheck.md",
   "prompts/companion.md",
   "prompts/companion-day-open.md",
   "prompts/slack-overseer-appendix.md",
@@ -141,8 +142,9 @@ describe("seed integrity (hard rule 6)", () => {
   });
 
   it("the non-seeded prompts actually exist (guards a rename going unnoticed)", () => {
-    // slack-overseer-appendix.md is created by this slice; the round/companion
-    // templates predate it. All are ours — this only catches silent deletion.
+    // slack-overseer-appendix.md and round-recheck.md were created
+    // by later slices; the other round/companion templates predate them. All
+    // are ours — this only catches silent deletion.
     for (const rel of NON_SEEDED) {
       expect(existsSync(join(repoRoot, rel)), `${rel} vanished from the tree`).toBe(true);
     }

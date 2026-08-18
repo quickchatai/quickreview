@@ -231,6 +231,18 @@ CREATE TABLE IF NOT EXISTS reviewed_heads (
   round_no             INTEGER,
   last_author_reply_at TEXT
 );
+-- Post-approval delta rechecks: one row per nudge actually sent.
+-- The unique fingerprint is the runaway guard — a redelivered webhook or a
+-- reconcile replay re-asks the same question exactly zero times.
+CREATE TABLE IF NOT EXISTS rechecks (
+  pr           INTEGER NOT NULL,
+  fingerprint  TEXT NOT NULL,
+  head_sha     TEXT NOT NULL,
+  trigger      TEXT NOT NULL,
+  reason       TEXT,
+  created_at   TEXT NOT NULL,
+  PRIMARY KEY (pr, fingerprint)
+);
 CREATE TABLE IF NOT EXISTS filed_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   kind TEXT NOT NULL,           -- 'improvement_pr' | 'issue'
@@ -729,6 +741,39 @@ export class StateStore {
         "UPDATE reviewed_heads SET last_author_reply_at = ? WHERE pr = ? AND (last_author_reply_at IS NULL OR last_author_reply_at < ?)",
       )
       .run(at, pr, at);
+  }
+
+  // ---- post-approval delta rechecks ---------------------------
+
+  /**
+   * Claim one recheck nudge. Returns false when this PR has already been
+   * nudged for this fingerprint (trigger + head + evidence) — the guard that
+   * keeps a re-delivered trigger from re-asking a question already asked.
+   */
+  claimRecheck(
+    pr: number,
+    fingerprint: string,
+    mark: { head_sha: string; trigger: string; reason?: string },
+  ): boolean {
+    const info = this.db
+      .prepare(
+        `INSERT OR IGNORE INTO rechecks (pr, fingerprint, head_sha, trigger, reason, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(pr, fingerprint, mark.head_sha, mark.trigger, mark.reason ?? null, this.ts());
+    return info.changes === 1;
+  }
+
+  /** Every recheck nudge sent for a PR, oldest first (TUI/audit). */
+  rechecksFor(pr: number): Array<{ pr: number; fingerprint: string; head_sha: string; trigger: string; reason: string | null; created_at: string }> {
+    return this.db.prepare("SELECT * FROM rechecks WHERE pr = ? ORDER BY created_at").all(pr) as Array<{
+      pr: number;
+      fingerprint: string;
+      head_sha: string;
+      trigger: string;
+      reason: string | null;
+      created_at: string;
+    }>;
   }
 
   // ---- webhook delivery dedupe ------------------------------------------

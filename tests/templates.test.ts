@@ -9,10 +9,14 @@ import {
   renderConversationSystemPrompt,
   renderOverseerSystemPrompt,
   renderPassPlan,
+  renderRecheckPrompt,
   renderRoundPrompt,
+  recheckVars,
   roundTemplateFile,
   roundVars,
+  RECHECK_TEMPLATE_FILE,
 } from "../src/templates.js";
+import type { RecheckOrder } from "../src/recheck.js";
 import type { RoundOrder, RoundType } from "../src/types.js";
 
 const order: RoundOrder = {
@@ -334,5 +338,60 @@ describe("system prompts", () => {
 
   it("passes the overseer prompt through untouched", () => {
     expect(renderOverseerSystemPrompt("You are the overseer.")).toBe("You are the overseer.");
+  });
+});
+
+// ---- the fourth template: the delta recheck ---------------------
+
+const recheckOrder: RecheckOrder = {
+  pr: 5109,
+  title: "Rewrite trimToLimit",
+  trigger: "push",
+  standing_verdict: "APPROVE",
+  last_reviewed_sha: "aaaaaaa",
+  head_sha: "bbbbbbb",
+  worktree: "/sandbox/wt/pr-5109",
+  evidence: "1 changed file(s) this review has not seen",
+  files: [
+    { filename: "src/trim.ts", class: "significant", reason: "content" },
+    { filename: "yarn.lock", class: "trivial", reason: "version-bump" },
+  ],
+  decision_file: "pr-5109-recheck-bbbbbbb.json",
+  issued_at: "2026-08-18T10:00:00Z",
+};
+
+describe("shipped recheck template", () => {
+  const text = readFileSync(resolve(process.cwd(), "prompts", RECHECK_TEMPLATE_FILE), "utf8");
+
+  it("renders fully against a RecheckOrder", () => {
+    const out = renderRecheckPrompt(text, recheckOrder);
+    expect(out).not.toContain("{{");
+    expect(out).toContain("`src/trim.ts` — **review this**");
+    expect(out).toContain("trivial (version-bump)");
+  });
+
+  it("carries the standing verdict, the last-reviewed sha and the delta", () => {
+    const v = recheckVars(recheckOrder);
+    expect(v.standing_verdict).toBe("APPROVE");
+    expect(v.last_reviewed_sha).toBe("aaaaaaa");
+    expect(v.head_sha).toBe("bbbbbbb");
+    expect(v.delta_files).toContain("src/trim.ts");
+  });
+
+  it("uses no placeholder recheckVars does not supply", () => {
+    const supplied = new Set(Object.keys(recheckVars(recheckOrder)));
+    for (const name of placeholdersIn(text)) expect(supplied).toContain(name);
+  });
+
+  it("states the one-way transition and forbids a re-approve or a park", () => {
+    expect(text).toContain("Uphold by default");
+    expect(text).toMatch(/only move available to you is .* REQUEST_CHANGES/);
+    expect(text).toMatch(/cannot re-approve/);
+    expect(text).toMatch(/cannot park/);
+  });
+
+  it("keeps posting on the gated script route", () => {
+    expect(text).toContain("scripts/post-review.sh");
+    expect(text).not.toMatch(/gh api .*-X (POST|PATCH|PUT|DELETE)/);
   });
 });

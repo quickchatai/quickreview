@@ -16,6 +16,14 @@ import { GitHubAdapter } from "./github.js";
 import { TokenMinter } from "./githubAuth.js";
 import { PingPongLedger, ThreadDecisionWatcher, buildWakeMessage, type AuthorReplyEvent } from "./pingpong.js";
 import { reconcileOnce, type ReconcileAdapter } from "./reconcile.js";
+import {
+  RecheckWatcher,
+  runBaseAdvance,
+  runRecheck,
+  type RecheckAdapter,
+  type RecheckDeps,
+  type RecheckOrder,
+} from "./recheck.js";
 import type { DispatchAnnouncer, VerdictAnnouncer } from "./slack/announce.js";
 import { applyEvent } from "./statemachine.js";
 import { buildStatusSnapshot, StateStore, writeStatusJson } from "./state.js";
@@ -25,7 +33,10 @@ import { VerdictWatcher, type VerdictAdapter } from "./verdicts.js";
 import { applyInterpretation, createWebhookServer, type Interpretation } from "./webhook.js";
 import { wakeOrHold } from "./wakes.js";
 
-export type DaemonAdapter = DispatchAdapter & ReconcileAdapter & VerdictAdapter;
+// Partial<RecheckAdapter>: the recheck's two extra reads (compare, files) are a
+// seam, not a requirement — a daemon wired without them simply never rechecks,
+// which is exactly how every legacy caller and test behaves.
+export type DaemonAdapter = DispatchAdapter & ReconcileAdapter & VerdictAdapter & Partial<RecheckAdapter>;
 
 export interface DaemonDeps {
   cfg?: Config;
@@ -36,6 +47,8 @@ export interface DaemonDeps {
   webhookSecret?: string;
   /** B4's prompt renderer; default is the round order as JSON. */
   renderPrompt?: (order: import("./types.js").RoundOrder) => string;
+  /** Renderer for the recheck nudge (prompts/round-recheck.md); default JSON. */
+  renderRecheckPrompt?: (order: RecheckOrder) => string;
   /** Fetch head + base and materialise the worktree before the order is built
    * (wire.ts passes the real WorktreeManager). Absent ⇒ no git: the order
    * falls back to the PR row's sha with no base facts. */
@@ -146,6 +159,19 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     },
   });
 
+  // The post-approval delta recheck. Three of its four triggers are
+  // wired below; the fourth — an author reply — is owned by ping-pong above and
+  // deliberately never reaches this path.
+  const recheckDeps: RecheckDeps = {
+    cfg,
+    store,
+    adapter: gh,
+    inject: (pr, message) => hooks.inject(pr, message),
+    ...(deps.renderRecheckPrompt ? { renderPrompt: deps.renderRecheckPrompt } : {}),
+    log,
+  };
+  const rechecks = new RecheckWatcher({ cfg, store, verdictDir, log });
+
   const timers: NodeJS.Timeout[] = [];
   let server: ReturnType<typeof createWebhookServer> | null = null;
   let stopping = false;
@@ -187,6 +213,24 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         },
         onClosed: async (pr) => {
           await hooks.archiveAndClose(pr);
+        },
+        // A push after an approve — the case that caught 13 real post-approval
+        // regressions in the predecessor system.
+        onSynchronize: async (sync) => {
+          await guard(`recheck #${sync.pr}`, () =>
+            runRecheck(recheckDeps, { pr: sync.pr, trigger: "push", head_sha: sync.meta.head_sha }),
+          );
+        },
+        onCiCompleted: async (ci) => {
+          for (const pr of ci.prs)
+            await guard(`recheck #${pr}`, () =>
+              runRecheck(recheckDeps, { pr, trigger: "ci", head_sha: ci.head_sha, ci: { conclusion: ci.conclusion } }),
+            );
+        },
+        onBaseAdvanced: async (advance) => {
+          await guard(`recheck base ${advance.branch}`, () =>
+            runBaseAdvance(recheckDeps, { branch: advance.branch, before: advance.before, after: advance.after }),
+          );
         },
       },
       i,
@@ -267,6 +311,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
 
       verdicts.start();
       threadDecisions.start();
+      rechecks.start();
       writeStatus();
       await reconcile();
 
@@ -275,6 +320,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
       every(VERDICT_SWEEP_S, () => void guard("verdict sweep", async () => {
         await verdicts.sweep();
         await threadDecisions.sweep();
+        await rechecks.sweep();
       }));
       every(DEADLINE_TICK_S, () => void guard("deadline check", () => verdicts.checkDeadlines()));
       every(STATUS_TICK_S, writeStatus);
@@ -290,6 +336,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
       timers.length = 0;
       verdicts.stop();
       threadDecisions.stop();
+      rechecks.stop();
       if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
       server = null;
       writeStatus();

@@ -52,6 +52,14 @@ export type Interpretation =
       scope: "review_comment";
     }
   | { kind: "bot_comment"; pr: number; comment_id: number; scope: "review_comment" | "issue_comment" }
+  /** CI finished at a head (check_suite / workflow_run). No lifecycle meaning:
+   * the only consumer is the post-approval delta recheck. A suite can
+   * hang off more than one PR (shared head), so `prs` is the honest list and
+   * `pr` is its first entry, for the event log. */
+  | { kind: "ci_completed"; pr: number; prs: number[]; head_sha: string; conclusion: string | null }
+  /** A branch moved (`push`). Fanned out to the PRs that target it, again only
+   * for the recheck — nothing here queues a review. */
+  | { kind: "base_advanced"; branch: string; before: string; after: string }
   | { kind: "ignored"; reason: string; pr?: number };
 
 export interface InterpretDeps {
@@ -95,6 +103,12 @@ export function interpretEvent(event: string, action: string | null, payload: an
       return interpretReviewComment(action, payload, deps);
     case "issue_comment":
       return interpretIssueComment(action, payload, deps);
+    case "check_suite":
+      return interpretCiCompletion(action, payload?.check_suite);
+    case "workflow_run":
+      return interpretCiCompletion(action, payload?.workflow_run);
+    case "push":
+      return interpretPush(payload);
     default:
       return { kind: "ignored", reason: `unhandled event: ${event}` };
   }
@@ -157,6 +171,39 @@ function interpretReviewComment(action: string | null, payload: any, deps: Inter
       scope: "review_comment",
     };
   return { kind: "ignored", reason: "not a reply in this PR's bot thread", pr };
+}
+
+/** check_suite/workflow_run `completed` — the two events that carry both a head
+ * sha and the PRs it belongs to. Everything else about CI is ignored. */
+function interpretCiCompletion(action: string | null, run: any): Interpretation {
+  if (action !== "completed") return { kind: "ignored", reason: `unhandled CI action: ${action}` };
+  if (!run) return { kind: "ignored", reason: "CI payload without a run" };
+  const prs: number[] = (run.pull_requests ?? [])
+    .map((p: any) => Number(p?.number ?? 0))
+    .filter((n: number) => Number.isInteger(n) && n > 0);
+  if (prs.length === 0) return { kind: "ignored", reason: "CI completion not attached to a PR" };
+  return {
+    kind: "ci_completed",
+    pr: prs[0] as number,
+    prs,
+    head_sha: typeof run.head_sha === "string" ? run.head_sha : "",
+    conclusion: typeof run.conclusion === "string" ? run.conclusion : null,
+  };
+}
+
+const ZERO_SHA = "0000000000000000000000000000000000000000";
+
+/** A branch push. Only branch tips matter (tags and branch deletions do not),
+ * and the daemon decides which PRs — if any — target this branch. */
+function interpretPush(payload: any): Interpretation {
+  const ref: string = typeof payload?.ref === "string" ? payload.ref : "";
+  if (!ref.startsWith("refs/heads/")) return { kind: "ignored", reason: `push to a non-branch ref: ${ref}` };
+  const before: string = typeof payload?.before === "string" ? payload.before : "";
+  const after: string = typeof payload?.after === "string" ? payload.after : "";
+  if (!before || !after || after === ZERO_SHA || before === ZERO_SHA)
+    return { kind: "ignored", reason: "branch created or deleted" };
+  if (payload?.deleted === true) return { kind: "ignored", reason: "branch deleted" };
+  return { kind: "base_advanced", branch: ref.slice("refs/heads/".length), before, after };
 }
 
 function interpretIssueComment(action: string | null, payload: any, deps: InterpretDeps): Interpretation {
@@ -249,7 +296,7 @@ export function handleDelivery(
     reviewTeam: deps.cfg.github.review_team,
     botCommentPr: (id) => deps.store.botCommentPr(id),
   });
-  deps.store.logEvent("webhook_event", interpretation.kind === "ignored" ? (interpretation.pr ?? null) : interpretation.pr, {
+  deps.store.logEvent("webhook_event", interpretationPr(interpretation), {
     guid,
     event,
     action,
@@ -257,6 +304,13 @@ export function handleDelivery(
     ...(interpretation.kind === "ignored" ? { reason: interpretation.reason } : {}),
   });
   return { status: 200, reason: interpretation.kind, interpretation };
+}
+
+/** The PR an interpretation is about, when it is about one. */
+function interpretationPr(i: Interpretation): number | null {
+  if (i.kind === "base_advanced") return null;
+  if (i.kind === "ignored") return i.pr ?? null;
+  return i.pr;
 }
 
 export function createWebhookServer(deps: WebhookDeps): Server {
@@ -325,6 +379,10 @@ export async function applyInterpretation(
     onPrTouched?: (pr: number) => void | Promise<void>;
     onAuthorReply?: (i: Extract<Interpretation, { kind: "author_reply" }>) => void | Promise<void>;
     onClosed?: (pr: number) => void | Promise<void>;
+    /** Post-approval recheck triggers — none touches lifecycle. */
+    onSynchronize?: (i: Extract<Interpretation, { kind: "synchronize" }>) => void | Promise<void>;
+    onCiCompleted?: (i: Extract<Interpretation, { kind: "ci_completed" }>) => void | Promise<void>;
+    onBaseAdvanced?: (i: Extract<Interpretation, { kind: "base_advanced" }>) => void | Promise<void>;
   },
   i: Interpretation,
 ): Promise<void> {
@@ -341,6 +399,9 @@ export async function applyInterpretation(
       // The author-response metric needs the push instant; no transition is
       // logged for a synchronize (the state does not change), so log it here.
       store.logEvent("head_push", i.pr, { head_sha: i.meta.head_sha ?? null, source: "webhook" });
+      // Still not a review trigger. It is the post-approval delta recheck's
+      // core trigger, which the daemon decides on separately.
+      await deps.onSynchronize?.(i);
       return;
     case "closed":
       applyEventFor(store, i.pr, { type: "closed" }, i.meta, opts);
@@ -356,6 +417,16 @@ export async function applyInterpretation(
       return;
     case "bot_comment":
       store.registerBotComment(i.comment_id, i.pr, i.scope);
+      return;
+    case "ci_completed":
+      // Recorded, never a transition: CI is evidence for the recheck, not a
+      // trigger for a round.
+      for (const pr of i.prs) store.logEvent("ci_completed", pr, { head_sha: i.head_sha, conclusion: i.conclusion });
+      await deps.onCiCompleted?.(i);
+      return;
+    case "base_advanced":
+      store.logEvent("base_advanced", null, { branch: i.branch, before: i.before, after: i.after });
+      await deps.onBaseAdvanced?.(i);
       return;
     case "ignored":
       return;

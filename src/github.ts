@@ -46,6 +46,8 @@ export interface PrFileEntry {
   status: string;
   /** Unified diff for the file when GitHub returns one (absent for binaries). */
   patch?: string;
+  /** The path before a rename, when GitHub detected one (renumber detection). */
+  previous_filename?: string;
 }
 
 export interface ReviewFull {
@@ -132,6 +134,18 @@ export interface SearchIssueItem {
   user: { login: string; type: string };
   updated_at: string;
   created_at: string;
+}
+
+/** One files-API entry (pulls/files and compare share the shape). */
+function fileEntry(f: any): PrFileEntry {
+  return {
+    filename: f.filename,
+    additions: f.additions,
+    deletions: f.deletions,
+    status: f.status,
+    ...(typeof f.patch === "string" ? { patch: f.patch } : {}),
+    ...(typeof f.previous_filename === "string" ? { previous_filename: f.previous_filename } : {}),
+  };
 }
 
 export class GitHubAdapter {
@@ -363,7 +377,27 @@ export class GitHubAdapter {
         "GET",
         `/repos/${this.owner}/${this.repo}/pulls/${n}/files?per_page=100&page=${page}`,
       );
-      out.push(...batch.map((f) => ({ filename: f.filename, additions: f.additions, deletions: f.deletions, status: f.status, ...(typeof f.patch === "string" ? { patch: f.patch } : {}) })));
+      out.push(...batch.map(fileEntry));
+      if (batch.length < 100) break;
+    }
+    return out;
+  }
+
+  /**
+   * Files a commit range changed (`GET /compare/<base>...<head>`) — the delta
+   * source for the post-approval recheck. Read-only, and paginated
+   * the same way listPrFiles is; GitHub caps a compare at 300 files, which is
+   * far past the point where a delta is "significant" anyway.
+   */
+  async compareFiles(base: string, head: string): Promise<PrFileEntry[]> {
+    const out: PrFileEntry[] = [];
+    for (let page = 1; page <= 10; page++) {
+      const res = await this.request<{ files?: any[] }>(
+        "GET",
+        `/repos/${this.owner}/${this.repo}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}?per_page=100&page=${page}`,
+      );
+      const batch = res.files ?? [];
+      out.push(...batch.map(fileEntry));
       if (batch.length < 100) break;
     }
     return out;
