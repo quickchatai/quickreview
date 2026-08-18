@@ -121,9 +121,8 @@ finding.
 
 Nits and questions never block.
 
-> **This section supersedes steps 5 and 7 of your system prompt**, which
-> predate the 2026-08-18 change and still describe ESCALATE and escalation
-> criteria. There are none.
+> **This section is authoritative over steps 5 and 7 of your system prompt.**
+> There are no escalation criteria.
 
 **NEEDS_HUMAN is a park, not a handoff.** The daemon no longer nominates a
 reviewer on GitHub; it stops the PR and shows it to the owner.

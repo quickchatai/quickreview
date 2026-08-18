@@ -116,9 +116,8 @@ its kills (they feed the EOD critic).
 
 ## 5. Decide
 
-> **This section supersedes steps 5 and 7 of your system prompt.** That text
-> predates the 2026-08-18 change and still describes ESCALATE and escalation
-> criteria. There are none. Use the three verdicts below.
+> **This section is authoritative over steps 5 and 7 of your system prompt.**
+> There are no escalation criteria — only the three verdicts below.
 
 - any `[blocker]` ⇒ **REQUEST_CHANGES**
 - you cannot decide confidently ⇒ **NEEDS_HUMAN** (set `ai_approved` per your

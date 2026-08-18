@@ -36,6 +36,27 @@ const RULE_6 =
   "If you genuinely re-seeded from the assets dir, regenerate " +
   "tests/fixtures/seed-manifest.json in the same commit.";
 
+/**
+ * Seeds that have RATIFIED divergence from the assets.
+ *
+ * Rule 6 freezes the seeds against *unilateral* rewriting, not against the owner.
+ * A file listed here was re-seeded on his explicit order; it stays pinned by the
+ * manifest (so any FURTHER drift is still caught) but is exempt from the
+ * byte-identity comparison against the original asset.
+ *
+ * Adding to this list requires the owner's explicit ratification, recorded here.
+ *
+ * - conversation-system.md, overseer-system.md — 2026-08-18, the owner: reseed to
+ *   remove the retired ESCALATE verdict and the `mark-escalation-worthy`
+ *   command, which the 2026-08-18 no-escalation decision (CLAUDE.md rule 10)
+ *   scrapped. The seeds had been left contradicting the live behaviour, held
+ *   only by downstream supersession.
+ */
+const RATIFIED_DIVERGENCE = new Set<string>([
+  "prompts/conversation-system.md",
+  "prompts/overseer-system.md",
+]);
+
 /** Files that are OURS to edit — they must never be frozen by the manifest. */
 const NON_SEEDED = [
   "prompts/round-first.md",
@@ -108,6 +129,17 @@ describe("seed integrity (hard rule 6)", () => {
     }
   });
 
+  it("every ratified-divergence entry is a real seeded path", () => {
+    // A typo here would silently exempt nothing (harmless) or, worse, look like
+    // cover for a file that was never actually ratified. Keep it honest.
+    for (const rel of RATIFIED_DIVERGENCE) {
+      expect(
+        seededPaths,
+        `${rel} is listed as a ratified divergence but is not a seeded file`,
+      ).toContain(rel);
+    }
+  });
+
   it("the non-seeded prompts actually exist (guards a rename going unnoticed)", () => {
     // slack-overseer-appendix.md is created by this slice; the round/companion
     // templates predate it. All are ours — this only catches silent deletion.
@@ -121,8 +153,10 @@ describe("seed integrity (hard rule 6)", () => {
 
 const haveAssets = assetsDir !== null;
 
+const provenancePaths = seededPaths.filter((p) => !RATIFIED_DIVERGENCE.has(p));
+
 describe.skipIf(!haveAssets)(`seed provenance vs assets (${assetsDir ?? "ABSENT — skipped"})`, () => {
-  it.each(seededPaths)("%s is byte-identical to the asset", (rel) => {
+  it.each(provenancePaths)("%s is byte-identical to the asset", (rel) => {
     const asset = join(assetsDir as string, rel.split("/").pop() as string);
     expect(existsSync(asset), `${rel} has no counterpart in ${assetsDir}`).toBe(true);
     const ours = readFileSync(join(repoRoot, rel));

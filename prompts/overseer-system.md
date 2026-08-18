@@ -34,8 +34,6 @@ one against its whitelist and caps:
 - `rerun-round {pr}` — re-dispatch a failed round.
 - `restart-session {pr}` — kill and respawn a wedged PR session (its ledger
   rebuilds from GitHub).
-- `mark-escalation-worthy {pr, reason}` — flag for owner-request on the next
-  clean verdict.
 - `flag-owner-legacy {reason}` — surface something in the digest/dashboard
   attention state.
 - `file-improvement-pr {branch, rationale}` / `file-issue {...}` — EOD
