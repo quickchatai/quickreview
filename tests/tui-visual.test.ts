@@ -1,5 +1,8 @@
 // The 2026-08-14 usability batch: semantic theme, mouse decode + zones,
 // rich PR rows, legend, section titles, GitHub links, detail enrichment.
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { WhyPayload } from "../src/cli.js";
 import { enrichWhy } from "../src/cli.js";
@@ -214,7 +217,10 @@ describe("live pi mirror pane", () => {
 describe("enrichWhy", () => {
   it("degrades silently when GitHub is unreachable (no secrets locally)", async () => {
     const payload: WhyPayload = { pr: 1, known: false, spend_usd: 0, rounds: [], threads: { open: 0, total: 0 } };
-    const out = await enrichWhy(payload);
+    // Point the credential lookup at an empty dir: on a machine that DOES
+    // carry the real app credential this would otherwise hit the network.
+    const noSecrets = mkdtempSync(join(tmpdir(), "qcr-nosecrets-"));
+    const out = await enrichWhy(payload, noSecrets);
     expect(out.pr).toBe(1);
     // Either enriched (container) or identical (no credentials) — never a throw.
     expect(out.known).toBe(false);

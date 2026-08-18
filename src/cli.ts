@@ -110,15 +110,18 @@ export interface WhyPayload {
 }
 
 /** Best-effort GitHub enrichment for `why --json` (description, labels, last
- * comments). Read-only; any failure leaves the payload un-enriched. */
-export async function enrichWhy(payload: WhyPayload): Promise<WhyPayload> {
+ * comments). Read-only; any failure leaves the payload un-enriched.
+ * `secretsDir` is an injection seam for tests — pointing it at an empty dir
+ * makes the credential lookup fail fast instead of hitting the real network
+ * when the developer machine carries the app credential. */
+export async function enrichWhy(payload: WhyPayload, secretsDir?: string): Promise<WhyPayload> {
   try {
     const { TokenMinter } = await import("./githubAuth.js");
     const { MutationGate } = await import("./gate.js");
     const { GitHubAdapter } = await import("./github.js");
     const cfg = loadConfig();
     const gate = new MutationGate(true, join(sandboxRoot(), "state", "dryrun"), async () => undefined);
-    const adapter = new GitHubAdapter(cfg, new TokenMinter(cfg.github.secrets_dir), gate);
+    const adapter = new GitHubAdapter(cfg, new TokenMinter(secretsDir ?? cfg.github.secrets_dir), gate);
     const convo = await adapter.prConversation(payload.pr, 3);
     return { ...payload, description: convo.body, labels: convo.labels, comments: convo.comments };
   } catch {
