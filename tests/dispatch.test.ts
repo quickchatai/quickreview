@@ -8,6 +8,7 @@ import type { PrFileEntry } from "../src/github.js";
 import { StateStore } from "../src/state.js";
 import { applyEvent } from "../src/statemachine.js";
 import { PASS_TIER_ORDER } from "../src/types.js";
+import { renderRoundPrompt, roundTemplateFile } from "../src/templates.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
 
 const baseCfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "config.toml"), "utf8"));
@@ -522,6 +523,45 @@ describe("dispatchOnce", () => {
     });
     expect(orders[0]!.prompt).toBe("ROUND 1 for #33");
     expect(orders[0]!.order.settled_digest).toBe("SETTLED: thread 12 (perf, conceded)");
+  });
+
+  // the nit treadmill's stopping rule must reach the passes through
+  // their task strings, and passes are blank slates — so the dispatched round
+  // prompt itself must carry the verbatim NIT SCOPE block from round 3 onward,
+  // rendered through the REAL shipped templates.
+  it("arms the NIT SCOPE task-string block in the dispatched prompt from round 3, not before", async () => {
+    const templates = new Map(
+      (["first", "re-review", "staleness"] as const).map((rt) => [
+        rt,
+        readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile(rt)), "utf8"),
+      ]),
+    );
+    const renderPrompt = (o: RoundOrder) => renderRoundPrompt(templates.get(o.round_type)!, o);
+    const { hooks, orders } = recordingHooks();
+    queue(89, "2026-08-13T09:00:00Z", { head: "h1" });
+    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks, renderPrompt });
+    store.finishRound(store.runningRounds()[0]!.id, "REQUEST_CHANGES", 1);
+    queue(89, "2026-08-13T10:00:00Z", { head: "h2" });
+    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks, renderPrompt });
+    store.finishRound(store.runningRounds()[0]!.id, "REQUEST_CHANGES", 1);
+    queue(89, "2026-08-13T11:00:00Z", { head: "h3" });
+    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks, renderPrompt });
+
+    expect(orders.map((o) => [o.order.round_no, o.order.round_type])).toEqual([
+      [1, "first"],
+      [2, "re-review"],
+      [3, "re-review"],
+    ]);
+    // Rounds 1–2: no armed block in what the session was handed.
+    expect(orders[0]!.prompt).not.toContain("NIT SCOPE: this is round");
+    expect(orders[1]!.prompt).not.toContain("NIT SCOPE: this is round");
+    // Round 3: the verbatim block, round number stated, rule + exemption whole.
+    const p3 = orders[2]!.prompt;
+    expect(p3).toContain("fenced block below VERBATIM into every lens pass's task string");
+    expect(p3).toContain("NIT SCOPE: this is round 3 of this PR's review");
+    expect(p3).toContain("inside the current delta");
+    expect(p3).toContain("P0–P2 findings are exempt");
+    expect(p3).toContain("running non-blocking thread");
   });
 
   it("numbers rounds per PR and marks a stale recheck", async () => {

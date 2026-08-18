@@ -4,7 +4,7 @@
 > injected into the PR session (`pr-{{n}}`) by the daemon. Placeholders:
 > `{{n}} {{title}} {{worktree}} {{head_sha}} {{lenses}} {{pass_plan}}
 > {{addable_lenses}} {{base_ref}} {{base_sha}} {{merge_base}} {{migration_gate_note}}
-> {{settled_digest}} {{round_type}} {{round_no}}`.
+> {{settled_digest}} {{round_type}} {{round_no}} {{nit_scope_note}}`.
 
 ---
 
@@ -77,6 +77,7 @@ files **restricted to the post-approval delta**, the SETTLED list, the gate
 notes, and an explicit **staleness note**: "this PR was already approved at an
 earlier head; review the delta since that approval, and flag anything in it
 that would have blocked the approval."
+{{nit_scope_note}}
 
 **Raise protocol.** You MAY swap a pass to a higher-tier variant from its "may
 raise to" column when the diff's semantic complexity demands it — each raise

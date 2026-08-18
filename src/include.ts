@@ -255,6 +255,21 @@ const DATA_SAFETY_NO_EXEC_ADDENDUM =
 const BASELINE_TEST_VACUITY_STATIC_ADDENDUM =
   "\n## Baseline: test vacuity is a STATIC read (sandbox rule, supersedes the lens above)\nYour lens above says to verify that the headline regression test \"actually exercises the guarded branch — a test that passes with the fix reverted proves nothing\". Reverting a fix and re-running the suite is mutation testing: it is execution, and the execution policy forbids it. **That instruction is withdrawn; where it conflicts with this section, this section wins.** The finding class is NOT withdrawn — a vacuous headline test stays a real finding at the severity the lens already gives it.\n\nInstead: **read the assertion and the code it exercises, and establish whether the assertion could ever fail** — what value does it actually compare, and is that value still produced when the bug is present? Use the CI result for whether the suite passes (`gh pr checks`, read-only); never run the suite, never revert anything, never re-trigger a job. Say in `evidence` exactly which value the assertion compares and why it survives the bug.\n\nTwo worked examples, both settled by reading alone:\n\n- The test asserted that the rendered DOM contained `title.unknown`, but the translation helper returns **the key itself** when the key is missing — so the assertion holds for any broken key and proves nothing about the translation.\n- The test's mock replaced the translator with one returning **plain text**, while the real translator returns HTML — so the contract that ships was never the one under test.\n\n**One more reading-only clarification**: where the lens tells you to \"materialize a sample of the final string\" for assembled text, assemble it **by reading** — join the literals and format calls by hand and inspect the seams. Do not execute the code to produce it.\n";
 
+// the "nit treadmill" — each re-review minted 2–3 fresh nits on code
+// already reviewed, the author fixed one, the push re-armed the trigger (one
+// PR ran rounds 10→11→12 inside 65 minutes; another ran 11 rounds). There was
+// no stopping rule on nit generation; this is it. The round number reaches a
+// blank-slate pass only through its task string — the session copies the
+// NIT SCOPE block rendered by `renderNitScopeNote` (src/templates.ts) into
+// every task string from round 3 onward — so this addendum binds on that
+// block's presence, never on inference. `P0`–`P2` are exempt throughout:
+// volume comes out of nits, never out of the blocker bar.
+const NIT_SCOPE_ADDENDUM =
+  "\n## Nit scope — no new nits on unchanged surfaces (sandbox rule)\nWhen your task string carries a **NIT SCOPE** block, it states this PR's round number and means the round is the third or later. From then on, a NEW `nit` (any finding that would post as `[nit]`) is **only raisable on lines inside the current delta** — the commits since the last reviewed head, as your task string describes it. Do not raise a new nit on a surface that did not change since the last round, however true the nit is: a style point on code that survived two rounds unchanged is noise, and each fresh nit thread invites a reply, a push, and another round.\n\n`P0`–`P2` findings are **exempt** — a real defect is raisable whenever it is found, on any surface, at any round. The blocker bar does not move: this rule takes volume out of nits, never out of defects. Absent a NIT SCOPE block in your task string, nits are unrestricted (an early round).\n";
+
+const NIT_SCOPE_VALIDATE_ADDENDUM =
+  "\n## Nit scope — enforce it on nits, never on defects (sandbox rule)\nWhen your task string carries a **NIT SCOPE** block (present from round 3 of a PR's review onward), a NEW nit-class candidate — one that would post as `[nit]` — anchored **outside the current delta** is killed, with the one-word reason `nit-out-of-delta`. This kill applies strictly to nits: never kill, soften, or re-severity a `P0`–`P2` on this rule — a real defect is raisable on any surface at any round, and the blocker bar has not moved. Absent the block, the rule is not armed and nits are audited exactly as before.\n";
+
 /**
  * The composed addendum set, in composition order.
  *
@@ -276,6 +291,8 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
   { id: "migration-numbering", scope: ["pass-data-safety"], text: MIGRATION_NUMBERING_ADDENDUM },
   { id: "data-safety-no-exec", scope: ["pass-data-safety"], text: DATA_SAFETY_NO_EXEC_ADDENDUM },
   { id: "baseline-test-vacuity-static", scope: ["pass-baseline"], text: BASELINE_TEST_VACUITY_STATIC_ADDENDUM },
+  { id: "nit-scope", scope: "lenses", text: NIT_SCOPE_ADDENDUM },
+  { id: "nit-scope-validate", scope: [VALIDATE_PASS], text: NIT_SCOPE_VALIDATE_ADDENDUM },
 ];
 
 /** The addenda binding `pass`, in composition order. */

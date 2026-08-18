@@ -4,7 +4,7 @@
 > injected into the PR session (`pr-{{n}}`) by the daemon. Placeholders:
 > `{{n}} {{title}} {{worktree}} {{head_sha}} {{lenses}} {{pass_plan}}
 > {{addable_lenses}} {{base_ref}} {{base_sha}} {{merge_base}} {{migration_gate_note}}
-> {{settled_digest}} {{round_type}} {{round_no}}`.
+> {{settled_digest}} {{round_type}} {{round_no}} {{nit_scope_note}}`.
 
 ---
 
@@ -83,6 +83,7 @@ launcher. Every task string is blank-slate and self-contained: worktree
 files, the SETTLED list, the gate notes — **plus the prior open findings
 assigned to that lens, with the instruction to verify each mechanically at the
 current head and report its true state before looking for anything new.**
+{{nit_scope_note}}
 
 **Raise protocol.** You MAY swap a pass to a higher-tier variant from its "may
 raise to" column when the diff's semantic complexity demands it — each raise
@@ -159,6 +160,12 @@ Nits and questions never block. Posting map: P0/P1 → `[blocker]`; P2 →
 `[blocker]` if confidence ≥ 0.8 else `[question]`; P3 → `[question]`/`[nit]`.
 Never dismiss anyone's approved review — not yours, not a human's, under any
 theory.
+
+**Nit scope.** When this round carries a NIT SCOPE block (step 2, round 3
+onward), it governs nits end to end: a new nit outside the current delta is
+dropped at merge/validate, and surviving nits append to the one running
+non-blocking nits thread — never a fresh inline thread. `P0`–`P2` are exempt
+and the posting map above is unchanged.
 
 **Reachability gate — apply it BEFORE the posting map.** Every finding carries
 `reachability: routine | plausible | contrived` — how often the triggering state

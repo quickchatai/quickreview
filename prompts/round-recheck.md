@@ -45,6 +45,15 @@ marked **review this**, at `{{head_sha}}`, in `{{worktree}}`.
   marked `deferred`. Findings raised during a recheck obey the same
   reachability gate as a normal round: `contrived` never blocks at any
   severity, and a `plausible` P2 is a question, not a blocker.
+- **Nit scope — always armed in this mode.** A NEW `nit` (anything that would
+  post as `[nit]`) is only raisable on lines inside this delta; new nits on
+  surfaces that did not change are suppressed outright — however true they are.
+  `P0`–`P2` findings are exempt: a real defect is raisable whenever it is
+  found, on any surface. A nit never moves the verdict. On uphold, a surviving
+  nit is at most a ledger entry marked `deferred`; if you DO move the verdict
+  and post, surviving nits **append to the PR's one running non-blocking nits
+  thread** ("nits — take or leave; this thread does not need another round to
+  close") — never a new inline thread, which invites a reply and a push.
 - **Be cheap.** Read the changed lines and what they touch. Do not re-fetch the
   whole PR, do not re-run your previous round, do not re-read files you already
   hold.

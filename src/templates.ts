@@ -164,6 +164,51 @@ export function renderMigrationPrecheckDegradedNote(): string {
   ].join("\n");
 }
 
+/**
+ * The NIT SCOPE note: the stopping rule on nit generation. The retro
+ * named the failure the "nit treadmill" — each re-review minted 2–3 fresh
+ * style points on code already reviewed, the author fixed one, and the push
+ * re-armed the trigger (one PR ran rounds 10→11→12 inside 65 minutes). So from
+ * round 3 onward a NEW `nit` is only raisable on lines inside the current
+ * delta, and surviving nits append to ONE running non-blocking thread instead
+ * of minting fresh inline threads that each invite a reply and a push.
+ *
+ * Passes are blank slates and cannot infer the round number, so the note
+ * carries a fenced block the session must copy VERBATIM into every pass task
+ * string — that is how the round number and the rule reach the passes (the
+ * pass-side half is the `nit-scope` addendum in src/include.ts). Rounds 1–2
+ * render nothing: the treadmill needs a prior round to walk on. `P0`–`P2`
+ * findings are exempt throughout — the blocker bar does not move.
+ */
+export function renderNitScopeNote(roundNo: number): string {
+  if (roundNo < 3) return "";
+  return [
+    "",
+    `**NIT SCOPE — round ${roundNo}, the stopping rule on nits is armed.** Copy the`,
+    "fenced block below VERBATIM into every lens pass's task string (the passes are",
+    "blank slates — this block is the only way the round number and the rule reach",
+    "them), alongside that pass's delta description:",
+    "",
+    "```",
+    `NIT SCOPE: this is round ${roundNo} of this PR's review. From round 3 onward, a`,
+    "NEW nit (any finding that would post as `[nit]`) is only raisable on lines",
+    "inside the current delta — the commits since the last reviewed head. Do not",
+    "raise a new nit on a surface that did not change since the last round, however",
+    "true the nit is. P0–P2 findings are exempt: a real defect is raisable whenever",
+    "it is found, on any surface.",
+    "```",
+    "",
+    "Enforce it yourself at merge/validate: a new nit-class candidate anchored",
+    "outside the current delta is dropped (log it as `nit-out-of-delta`) — strictly",
+    "nits, never a `P0`–`P2`. And at post time, **surviving nits append to ONE",
+    "running non-blocking thread** (\"nits — take or leave; this thread does not",
+    "need another round to close\"): reply to the PR's existing nits thread via",
+    "`scripts/reply-thread.sh` when one exists, otherwise list them under `### Nits`",
+    "in the review body only. **Never open a new inline thread for a nit** — every",
+    "new thread invites a reply and a push, and that is the treadmill.",
+  ].join("\n");
+}
+
 const NO_BASE = "(unknown — the daemon could not resolve the base branch this round)";
 
 /** Markdown table of the round's pass plan — one row per subagent launch. */
@@ -203,6 +248,7 @@ export function roundVars(order: RoundOrder): TemplateVars {
         ? renderMigrationPrecheckDegradedNote()
         : renderMigrationCollisionsNote(order.migration_collisions ?? [])),
     settled_digest: order.settled_digest.trim() || "(nothing settled yet)",
+    nit_scope_note: renderNitScopeNote(order.round_no),
   };
 }
 

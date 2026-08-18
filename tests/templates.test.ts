@@ -7,6 +7,7 @@ import {
   render,
   renderAddableLenses,
   renderConversationSystemPrompt,
+  renderNitScopeNote,
   renderOverseerSystemPrompt,
   renderPassPlan,
   renderRecheckPrompt,
@@ -217,6 +218,48 @@ describe("renderRoundPrompt", () => {
   });
 });
 
+// the nit treadmill's stopping rule: from round 3 onward a new nit
+// is only raisable inside the current delta, and the round number reaches the
+// blank-slate passes only through the task string, so the note carries a
+// verbatim block the session copies into every pass task string.
+describe("renderNitScopeNote", () => {
+  it("renders nothing before round 3 — the treadmill needs a prior round", () => {
+    expect(renderNitScopeNote(1)).toBe("");
+    expect(renderNitScopeNote(2)).toBe("");
+    expect(roundVars(order).nit_scope_note).toBe(""); // order.round_no = 2
+  });
+
+  it("arms the stopping rule from round 3, round number stated", () => {
+    const note = renderNitScopeNote(3);
+    // The verbatim task-string block, round number included.
+    expect(note).toContain("fenced block below VERBATIM into every lens pass's task string");
+    expect(note).toContain("NIT SCOPE: this is round 3 of this PR's review");
+    // The rule: new nits only inside the delta; P0–P2 exempt everywhere.
+    expect(note).toContain("only raisable on lines");
+    expect(note).toContain("inside the current delta");
+    expect(note).toContain("did not change since the last round");
+    expect(note).toContain("P0–P2 findings are exempt");
+    // Session-side enforcement and the one running non-blocking thread.
+    expect(note).toContain("`nit-out-of-delta`");
+    expect(note).toContain("running non-blocking thread");
+    expect(note).toContain("this thread does not");
+    expect(note).toContain("**Never open a new inline thread for a nit**");
+    // The round number is live, not a constant.
+    expect(renderNitScopeNote(7)).toContain("NIT SCOPE: this is round 7 of this PR's review");
+    expect(roundVars({ ...order, round_no: 3 }).nit_scope_note).toBe(note);
+  });
+
+  it("reaches the rendered re-review and staleness prompts at round 3, not at round 2", () => {
+    for (const file of ["round-re-review.md", "round-staleness.md"]) {
+      const tpl = readFileSync(resolve(process.cwd(), "prompts", file), "utf8");
+      expect(renderRoundPrompt(tpl, { ...order, round_no: 2 })).not.toContain("NIT SCOPE: this is round");
+      const r3 = renderRoundPrompt(tpl, { ...order, round_no: 3 });
+      expect(r3).toContain("NIT SCOPE: this is round 3 of this PR's review");
+      expect(r3).toContain("P0–P2 findings are exempt");
+    }
+  });
+});
+
 describe("shipped round templates", () => {
   const roundTypes: RoundType[] = ["first", "re-review", "staleness"];
 
@@ -393,5 +436,20 @@ describe("shipped recheck template", () => {
   it("keeps posting on the gated script route", () => {
     expect(text).toContain("scripts/post-review.sh");
     expect(text).not.toMatch(/gh api .*-X (POST|PATCH|PUT|DELETE)/);
+  });
+
+  // the nit-scope rule holds on the recheck path too, and here it is
+  // always armed: a recheck only ever follows a posted review.
+  it("arms the nit-scope rule unconditionally in recheck mode", () => {
+    expect(text).toContain("**Nit scope — always armed in this mode.**");
+    expect(text).toContain("only raisable on lines inside this delta");
+    expect(text).toContain("surfaces that did not change are suppressed outright");
+    // P0–P2 exempt; the verdict-moving bar untouched.
+    expect(text).toContain("`P0`–`P2` findings are exempt");
+    expect(text).toContain("A nit never moves the verdict");
+    // One running non-blocking thread, never a fresh inline one.
+    expect(text).toContain("running non-blocking nits");
+    expect(text).toContain("never a new inline thread");
+    expect(text).toContain("this thread does not need another round to\n  close");
   });
 });

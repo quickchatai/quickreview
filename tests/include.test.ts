@@ -20,7 +20,7 @@ import {
   splitModelSpec,
   tiersForPass,
 } from "../src/include.js";
-import { renderMigrationPrecheckDegradedNote } from "../src/templates.js";
+import { renderMigrationPrecheckDegradedNote, renderNitScopeNote } from "../src/templates.js";
 
 /** In-memory fs for the pure expansion tests. */
 function fakeFs(files: Record<string, string>) {
@@ -420,6 +420,30 @@ describe("addendum registry", () => {
     expect(renderMigrationPrecheckDegradedNote().toLowerCase()).toContain("migration pre-check did not run");
   });
 
+  // the nit treadmill — each re-review minted fresh nits on code
+  // already reviewed and the push re-armed the trigger. The pass halves of the
+  // stopping rule ride the registry; the round-side half is the NIT SCOPE
+  // block the session copies into every task string (src/templates.ts).
+  it("arms the nit-scope stopping rule for lenses and its enforcement for the validator", () => {
+    const lens = composeAddendum("pass-security");
+    expect(lens).toContain("## Nit scope — no new nits on unchanged surfaces (sandbox rule)");
+    expect(lens).toContain("**only raisable on lines inside the current delta**");
+    expect(lens).toContain("did not change since the last round");
+    // P0–P2 exempt; the blocker bar untouched; unarmed without the block.
+    expect(lens).toContain("`P0`–`P2` findings are **exempt**");
+    expect(lens).toContain("The blocker bar does not move");
+    expect(lens).toContain("Absent a NIT SCOPE block in your task string, nits are unrestricted");
+    const validate = composeAddendum(VALIDATE_PASS);
+    expect(validate).not.toContain("## Nit scope — no new nits on unchanged surfaces");
+    expect(validate).toContain("## Nit scope — enforce it on nits, never on defects (sandbox rule)");
+    expect(validate).toContain("`nit-out-of-delta`");
+    expect(validate).toContain("never kill, soften, or re-severity a `P0`–`P2`");
+    expect(addendaForPass("pass-baseline").map((a) => a.id)).toContain("nit-scope");
+    expect(addendaForPass(VALIDATE_PASS).map((a) => a.id)).toContain("nit-scope-validate");
+    // Both halves key on the exact block the daemon renders from round 3 on.
+    expect(renderNitScopeNote(3)).toContain("NIT SCOPE: this is round 3");
+  });
+
   it("gives pass-validate different text from the lens passes", () => {
     const lens = composeAddendum("pass-security");
     const validate = composeAddendum(VALIDATE_PASS);
@@ -519,6 +543,20 @@ describe("the built pass contract (rules)", () => {
     expect(composeAddendum("pass-baseline")).toContain("shared or global machinery");
     expect(addendaForPass("pass-baseline").map((a) => a.id)).toContain("baseline-shared-machinery");
     expect(addendaForPass("pass-security").map((a) => a.id)).not.toContain("baseline-shared-machinery");
+  });
+
+  // every built lens must carry the nit-scope rule the round-3+ task
+  // string arms, and the validator its enforcement — on the built bodies the
+  // subagents actually read, the seeds untouched.
+  it("delivers the nit-scope rule to every built lens and its enforcement to the validator", () => {
+    for (const [name, text] of bodies) {
+      const isValidate = name.startsWith(`${VALIDATE_PASS}--`);
+      expect(text.includes("## Nit scope — no new nits on unchanged surfaces (sandbox rule)")).toBe(!isValidate);
+      expect(text.includes("## Nit scope — enforce it on nits, never on defects (sandbox rule)")).toBe(isValidate);
+      // Both halves key on the task string's NIT SCOPE block.
+      expect(text).toContain("**NIT SCOPE** block");
+      expect(text).toContain("a real defect is raisable");
+    }
   });
 
   it("fences prompt injection in every built pass, stop-claims included", () => {
