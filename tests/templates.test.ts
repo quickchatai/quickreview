@@ -291,6 +291,12 @@ describe("shipped round templates", () => {
       expect(text).toContain("`subagent` tool");
       expect(text).toMatch(/ONE assistant turn/);
       expect(text).toMatch(/no\n?`pi --no-session`/);
+      // Live incident 2026-08-18: an unregistered pass agent must never be
+      // improvised around — the whole first backlog sweep ran generic workers
+      // "acting as" lenses at the wrong model tier. STOP-and-anomaly instead.
+      expect(text).toContain("Unknown agent = STOP, never improvise");
+      expect(text).toMatch(/do NOT substitute another agent/);
+      expect(text).toContain("produce no\nverdict at all");
       // Raise/add protocols and the no-exec policy are stated.
       expect(text).toContain("Never lower a tier");
       expect(text).toContain("Never drop a planned lens");

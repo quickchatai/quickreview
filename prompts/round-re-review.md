@@ -86,6 +86,15 @@ assigned to that lens, with the instruction to verify each mechanically at the
 current head and report its true state before looking for anything new.**
 {{nit_scope_note}}
 
+**Unknown agent = STOP, never improvise.** If the `subagent` tool answers
+"Unknown agent" for a planned pass name, do NOT substitute another agent — no
+generic `worker`/`researcher`/`scout` "acting as" the lens; that strips the
+lens prompt, its tier, and its execution policy. Report it as an anomaly to
+the overseer (name the round and the missing agent), then decide from the
+passes that DID run. If `pass-validate` itself is unresolvable, produce no
+verdict at all — an overdue round is the correct outcome, a stand-in review
+is not.
+
 **Raise protocol.** You MAY swap a pass to a higher-tier variant from its "may
 raise to" column when the diff's semantic complexity demands it — each raise
 needs a one-line stated reason, and those reasons go into the verdict
