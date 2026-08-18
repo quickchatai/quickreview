@@ -173,9 +173,30 @@ nowhere. **Never inline** — an inline comment is a notification. One sentence 
 framing judgment opening the body is welcome; an enumerated verification
 inventory is not.
 
+**Open in plain language.** The body's FIRST paragraph is 2-4 plain sentences
+that ease a human into the change before any jargon: what this PR does, what
+this round found, where it stands. Same register as the verdict `summary` of
+step 7 — and ideally the **same text, word for word**: write it once, open the
+body with it and copy it into the verdict JSON, so one artifact serves both the
+PR author and the owner. No markdown, no lens names, no severity codes, no
+`[blocker]` tags, no shas. It comes **before** the verdict line.
+
+**Keep the framing judgment.** The one-sentence framing judgment that opens a
+good review — "the diagnosis in the description is excellent and the shape of
+the fix is right; one thing must change before merge" — is not dropped: it
+belongs inside that opening paragraph, said in the same plain words.
+
+**Blocker comments lead with the consequence.** Every inline `[blocker]` opens
+with one clause of plain words naming what actually goes wrong for someone —
+"two people editing the same scenario at once will silently overwrite each
+other" — and only then the mechanism, the evidence and the file refs. The
+mechanism is the second sentence, never the first. Nits and questions may open
+however reads best.
+
 One review, anchored inline comments inside changed-line runs (50 inline,
-overflow to body), summary with verdict + lenses lines (including any
-raises/adds with their one-line reasons), `### Blockers / Nits / Questions`, a
+overflow to body), summary opening with that plain paragraph and only then the
+verdict + lenses lines (including any raises/adds with their one-line reasons),
+`### Blockers / Nits / Questions`, a
 **"Previously deferred, unchanged"** section listing prior findings that are
 still open and unaddressed, "Start here" on NEEDS_HUMAN (what you could not
 decide, and where a person should look first), standard footer. NEEDS_HUMAN
@@ -206,8 +227,10 @@ only) and `summary` are optional — but always write `summary`: 3-4 plain
 sentences telling the owner what is going on with this PR right now (what the
 change does, what this round found, where it stands), plus any tier raises or
 added lenses with their reasons. No markdown, no lens jargon; it renders
-verbatim in his TUI detail pane. Never report spend or cost figures — the
-daemon measures usage itself. Update the ledger — every prior finding must end
+verbatim in his TUI detail pane. This is the **same text** as the body's
+plain opening paragraph (step 6) — write it once and use it in both
+places. Never report spend or cost figures — the daemon measures usage
+itself. Update the ledger — every prior finding must end
 this round marked `fixed@<sha>`, `open`, `conceded`, or `settled`, never
 silently dropped. Labels and the PR's lifecycle state are the daemon's; never
 request a reviewer on GitHub.

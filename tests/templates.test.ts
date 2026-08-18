@@ -222,6 +222,42 @@ describe("shipped round templates", () => {
       expect(text).toContain("**Never inline**");
       expect(text).toContain("verification\ninventory is not");
     });
+
+    // a plain-language opener on every review body, and blocker
+    // comments that lead with the consequence rather than the mechanism.
+    it(`${roundTemplateFile(rt)} opens the review body in plain language, before the verdict line`, () => {
+      expect(text).toContain("**Open in plain language.**");
+      expect(text).toMatch(/body's FIRST paragraph is 2-4 plain\s*\n?sentences/);
+      // It precedes the verdict line, and it is not a second register: it is the
+      // verdict `summary` text.
+      expect(text).toContain("It comes **before** the verdict line.");
+      expect(text).toMatch(/Same register as the verdict `summary` of\s*\n?step 7/);
+      expect(text).toContain("**same text, word for word**");
+      // No markdown / no jargon, same constraints the summary carries.
+      expect(text).toMatch(/No markdown, no lens names, no severity codes/);
+      // The opener is written once and reused in the verdict JSON (step 7).
+      expect(text).toMatch(/This is the \*\*same text\*\* as the body's\s+plain opening paragraph \(step 6\)/);
+      // The plain opener lives in §6 Post and precedes the body recipe that
+      // names the verdict/lenses lines.
+      const post = text.slice(text.indexOf("## 6. Post"), text.indexOf("## 7. Return"));
+      const opener = post.indexOf("**Open in plain language.**");
+      expect(opener).toBeGreaterThanOrEqual(0);
+      expect(post).toMatch(/summary (body opens|opening) with|After the plain opener/);
+      expect(opener).toBeLessThan(post.search(/verdict \+ lenses lines|verdict\s+line\s+and\s+(the\s+)?lenses line/));
+    });
+
+    it(`${roundTemplateFile(rt)} preserves the framing judgment explicitly`, () => {
+      expect(text).toContain("**Keep the framing judgment.**");
+      expect(text).toMatch(/is not\s+dropped/);
+      expect(text).toMatch(/one thing must change before merge/);
+    });
+
+    it(`${roundTemplateFile(rt)} makes blocker comments lead with the consequence`, () => {
+      expect(text).toContain("**Blocker comments lead with the consequence.**");
+      expect(text).toMatch(/one clause of plain words naming what actually goes wrong/);
+      expect(text).toMatch(/silently overwrite each\s+other/);
+      expect(text).toMatch(/mechanism is the second sentence, never the first\./);
+    });
   }
 });
 
