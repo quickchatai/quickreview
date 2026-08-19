@@ -12,6 +12,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, watch, type FSWatcher } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { classifyCi, type CheckSummary } from "./cigate.js";
 import { sandboxRoot, type Config } from "./config.js";
 import { auditExecViolations, collectWindowLines, estimateUsd, measureRoundUsage, type ModelPricing, type UsageFs } from "./usage.js";
 import type { GateResult } from "./gate.js";
@@ -24,6 +25,10 @@ import { flushHeldWakes } from "./wakes.js";
 export interface VerdictAdapter {
   addLabel(n: number, label: string): Promise<GateResult>;
   removeLabel(n: number, label: string): Promise<GateResult>;
+  /** Checks at a head (read-only, cigate's classifier input). Optional: with
+   * it, a session-route withheld approval records WHICH CI state caused the
+   * withhold; without it the mark stores null, as it always did. */
+  listChecks?(ref: string): Promise<CheckSummary[]>;
 }
 
 export interface VerdictDeps {
@@ -249,8 +254,20 @@ export class VerdictWatcher {
     // Anything else clears it: the verdict here supersedes whatever earlier
     // round withheld an approval.
     if (v.head_sha && v.approval_withheld && v.verdict === "APPROVE") {
-      store.recordApprovalWithheld(v.pr, { head_sha: v.head_sha, reason: "red-ci", ci_state: null });
-      store.logEvent("approval_withheld_red_ci", v.pr, { head_sha: v.head_sha, source: "verdict" });
+      // the mark carries the classifier verdict that caused the
+      // withhold (red/pending/none). The session route cannot say which it
+      // was, so the daemon re-reads the checks; an unreadable CI stores null
+      // exactly as before — the mark itself never depends on the read.
+      let ci: string | null = null;
+      if (this.deps.adapter.listChecks) {
+        try {
+          ci = classifyCi(await this.deps.adapter.listChecks(v.head_sha));
+        } catch (err) {
+          this.log(`verdicts: checks read for withheld mark failed on #${v.pr}`, err);
+        }
+      }
+      store.recordApprovalWithheld(v.pr, { head_sha: v.head_sha, reason: "red-ci", ci_state: ci });
+      store.logEvent("approval_withheld_red_ci", v.pr, { head_sha: v.head_sha, source: "verdict", ci_state: ci });
     } else {
       store.clearApprovalWithheld(v.pr);
     }
@@ -352,6 +369,9 @@ export class VerdictWatcher {
       round_no: roundNo,
       message,
     });
+    // The durable anomaly record: the inject below is the wake, this
+    // row is the queryable audit trail. One per anomaly, alongside the wake.
+    store.logAnomaly(kind, pr, roundNo, message);
     // Piggyback pending exec-policy findings on an inject that happens anyway;
     // violations by themselves never trigger an inject (no spam).
     await this.announceSafe((a) =>

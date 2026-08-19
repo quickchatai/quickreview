@@ -559,6 +559,14 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // round itself still runs: the prompt carries the "check collisions
       // yourself" note, so the class is covered either way.
       if (precheck.degraded) {
+        // Durable anomaly record — written before the inject so a
+        // failed wake still leaves the queryable row.
+        store.logAnomaly(
+          "migration_precheck_degraded",
+          row.number,
+          roundNo,
+          "migration pre-check could not run (no base facts, or the base read failed); the round prompt un-muzzles the lens",
+        );
         try {
           await deps.hooks.injectOverseer(
             [

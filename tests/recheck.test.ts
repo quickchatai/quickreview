@@ -372,6 +372,11 @@ describe("runRecheck", () => {
       (e) => e.kind,
     );
     expect(kinds).toContain("recheck_merge_verify_degraded");
+    // degraded is also never unqueryable — a durable anomaly record.
+    const anomalies = h.store.anomalies();
+    expect(anomalies).toHaveLength(1);
+    expect(anomalies[0]).toMatchObject({ kind: "recheck_merge_verify_degraded", pr: PR });
+    expect(anomalies[0]!.detail).toContain("merge-verify degraded");
   });
 
   // Carry-forward (the owner, 2026-08-19): a withheld approval moves with the
@@ -384,6 +389,9 @@ describe("runRecheck", () => {
     h.adapter.own = [file({ filename: "yarn.lock" })];
     await runRecheck(h.deps, { pr: PR, trigger: "push", head_sha: HEAD });
     expect(h.store.approvalWithheld(PR)?.head_sha).toBe(HEAD);
+    // the classifier verdict that caused the withhold rides along.
+    expect(h.store.approvalWithheld(PR)?.ci_state).toBe("red");
+    expect(h.store.approvalWithheld(PR)?.reason).toBe("red-ci");
   });
 
   it("a significant delta does NOT carry the mark — that waits for the session's uphold", async () => {

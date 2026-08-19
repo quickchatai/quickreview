@@ -409,6 +409,10 @@ describe("migration collision pre-check", () => {
     expect(prompts[0]).toContain("YOU must check base-branch migration-number collisions yourself");
     // The degraded case is an overseer anomaly, on the existing inject channel.
     expect(overseer.join("\n")).toContain("migration-precheck");
+    // and a durable, queryable anomaly record beside the wake.
+    const anomalies = store.anomalies();
+    expect(anomalies).toHaveLength(1);
+    expect(anomalies[0]).toMatchObject({ kind: "migration_precheck_degraded", pr: orders[0]!.pr, round_no: orders[0]!.round_no });
     // The round itself still dispatched.
     expect(orders).toHaveLength(1);
   });

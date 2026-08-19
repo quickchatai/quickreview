@@ -302,6 +302,11 @@ export interface Config {
     max_concurrent_rounds: number;
     round_deadline_min: number;
     overseer_rotation_days: number;
+    /** Zombie-round expiry horizon: a round stuck `overdue` for
+     * longer than this — and whose PR has since verdicted or closed, so a
+     * rerun would never touch it — moves to terminal `expired`.
+     * 0 disables the sweep. */
+    expire_overdue_after_h: number;
   };
   eod: { time: string; timezone: string };
   caps: {
@@ -408,7 +413,8 @@ export function parseConfig(toml: string): Config {
     dry_run: Boolean(req(raw, "dry_run")),
     github,
     server: { ...(req(raw, "server") as Config["server"]) },
-    daemon: { ...(req(raw, "daemon") as Config["daemon"]) },
+    // expire_overdue_after_h defaults so legacy configs keep parsing.
+    daemon: { expire_overdue_after_h: 24, ...(req(raw, "daemon") as Partial<Config["daemon"]>) } as Config["daemon"],
     eod: { ...(req(raw, "eod") as Config["eod"]) },
     caps: { ...(req(raw, "caps") as Config["caps"]) },
     models: parseModels(req(raw, "models") as Record<string, any>),

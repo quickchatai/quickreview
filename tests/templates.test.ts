@@ -557,3 +557,25 @@ describe("renderIntentNote", () => {
     }
   });
 });
+
+// item 5 — ledger discipline. Every round template ends with an
+// explicit post-verdict ledger write: the daemon compacts the conversation
+// right after the verdict and only the ledger survives, so a round that skips
+// the write leaves the next round blind (#5306 had no ledger, #5313's was
+// stale). The wording is pinned here; edit template and pin together.
+describe("end-of-round ledger discipline", () => {
+  const PIN = "Last action of every round, after the verdict file is written: update the ledger.";
+  for (const rt of ["first", "re-review", "staleness"] as RoundType[]) {
+    it(`${roundTemplateFile(rt)} orders the ledger write AFTER the verdict file, verbatim`, () => {
+      const raw = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile(rt)), "utf8");
+      const flat = raw.replace(/\s+/g, " ");
+      expect(flat).toContain(`**${PIN}**`);
+      const verdictIdx = flat.indexOf("Write `verdict/pr-");
+      expect(verdictIdx).toBeGreaterThan(-1);
+      expect(flat.indexOf(PIN)).toBeGreaterThan(verdictIdx);
+      // The step carries its own why — the compaction stake.
+      expect(flat).toContain("only the ledger survives compaction");
+      expect(flat).toContain("The round is not finished until the ledger is written");
+    });
+  }
+});

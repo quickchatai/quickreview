@@ -37,6 +37,7 @@ interface RoundSeed {
   round_type?: string;
   lenses?: string;
   verdict?: string | null;
+  /** Seed spend — lands in est_usd, the ONE spend field. */
   spend_usd?: number | null;
   duration_s?: number | null;
   started_at: string;
@@ -53,7 +54,7 @@ interface RoundSeed {
 function insertRound(s: StateStore, r: RoundSeed): void {
   s.db
     .prepare(
-      `INSERT INTO rounds (pr, round_no, round_type, lenses, verdict, spend_usd, duration_s, started_at,
+      `INSERT INTO rounds (pr, round_no, round_type, lenses, verdict, est_usd, duration_s, started_at,
                            deadline_at, finished_at, status, additions, deletions, changed_files, backfilled, trigger_ts)
        VALUES (@pr, @round_no, @round_type, @lenses, @verdict, @spend_usd, @duration_s, @started_at,
                @deadline_at, @finished_at, @status, @additions, @deletions, @changed_files, @backfilled, @trigger_ts)`,
