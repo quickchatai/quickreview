@@ -445,6 +445,34 @@ describe("addendum registry", () => {
     expect(renderNitScopeNote(3)).toContain("NIT SCOPE: this is round 3");
   });
 
+  // first-night audit F6 — the validator killed a one-grep-verifiable
+  // finding as "unverifiable" and a degraded stand-in SURVIVE'd everything
+  // without hunting counterevidence. Kill reasons feed the EOD critic, so the
+  // vocabulary is closed, validator-only, and rides the registry.
+  it("binds the closed kill/downgrade vocabulary to the validator and only the validator", () => {
+    const validate = composeAddendum(VALIDATE_PASS);
+    expect(validate).toContain("## Kill and downgrade reasons — a closed vocabulary (sandbox rule)");
+    // The closed set, each with a definition.
+    for (const reason of ["`refuted`", "`unverifiable`", "`bad-anchor`", "`duplicate`", "`out-of-scope`", "`settled:<thread-id>`", "`nit-out-of-delta`", "`below-bar`"]) {
+      expect(validate).toContain(`- ${reason} — `);
+    }
+    // "unverifiable" means unREADable, never unchecked.
+    expect(validate).toContain("**cannot be verified by reading** the diff, the worktree, or CI output");
+    expect(validate).toContain("If a grep or a file-open could settle it, you MUST do the read");
+    expect(validate).toContain('"I didn\'t check" is not `unverifiable`');
+    // refuted cites its counterevidence.
+    expect(validate).toContain("counterevidence by READING and it contradicts the claim; cite it");
+    // Downgrades name the axis moved and why.
+    expect(validate).toContain("must name the axis moved — **severity**, **confidence**, or **reachability** — and say in one clause WHY");
+    // The counterevidence hunt binds every P0–P2 SURVIVE.
+    expect(validate).toContain("**Hunt counterevidence before SURVIVE.**");
+    expect(validate).toContain("For every `P0`–`P2` candidate, actively search the worktree");
+    // Validator-only: lenses never see it.
+    expect(composeAddendum("pass-security")).not.toContain("closed vocabulary");
+    expect(addendaForPass(VALIDATE_PASS).map((a) => a.id)).toContain("validate-kill-vocabulary");
+    expect(addendaForPass("pass-baseline").map((a) => a.id)).not.toContain("validate-kill-vocabulary");
+  });
+
   it("gives pass-validate different text from the lens passes", () => {
     const lens = composeAddendum("pass-security");
     const validate = composeAddendum(VALIDATE_PASS);
@@ -498,6 +526,26 @@ describe("the built pass contract (rules)", () => {
     expect(text).toContain("reachability: routine | plausible | contrived");
     expect(text).toContain("**never a kill reason on its own**");
     expect(text).toContain("do not let a `routine` P0/P1 be talked down");
+  });
+
+  // the closed kill vocabulary must reach EVERY built validator
+  // variant (the floor fans out to every tier at or above it) and no
+  // lens variant.
+  it("ships the closed kill vocabulary in every built validator variant and no lens", () => {
+    const header = "## Kill and downgrade reasons — a closed vocabulary (sandbox rule)";
+    const validators = [...bodies].filter(([name]) => name.startsWith(`${VALIDATE_PASS}--`));
+    expect(validators.length).toBeGreaterThan(0);
+    for (const [name, text] of bodies) {
+      expect(text.includes(header), name).toBe(name.startsWith(`${VALIDATE_PASS}--`));
+    }
+    for (const [, text] of validators) {
+      for (const reason of ["`refuted`", "`unverifiable`", "`bad-anchor`", "`duplicate`", "`out-of-scope`", "`below-bar`"]) {
+        expect(text).toContain(`- ${reason} — `);
+      }
+      expect(text).toContain('"I didn\'t check" is not `unverifiable`');
+      expect(text).toContain("must name the axis moved — **severity**, **confidence**, or **reachability**");
+      expect(text).toContain("**Hunt counterevidence before SURVIVE.**");
+    }
   });
 
   it("remedy size and the in-flight-PR rule reach every built pass", () => {
