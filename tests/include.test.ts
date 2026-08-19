@@ -473,6 +473,32 @@ describe("addendum registry", () => {
     expect(addendaForPass("pass-baseline").map((a) => a.id)).not.toContain("validate-kill-vocabulary");
   });
 
+  // merge-not-drop. The session's step-3 merge now emits MERGED/FOLDED
+  // disposition lines; the validator echoes them into its kill log (the
+  // telemetry feed), audits wrong merges/folds, and never treats a shared
+  // anchor as a duplicate kill.
+  it("binds the merge-disposition discipline to the validator and only the validator", () => {
+    const validate = composeAddendum(VALIDATE_PASS);
+    expect(validate).toContain("## Merge-stage dispositions — audit the folds, keep the ledger honest (sandbox rule)");
+    // The two exact disposition spellings.
+    expect(validate).toContain("`MERGED <src> into <dst>`");
+    expect(validate).toContain("`FOLDED <src> under <dst>`");
+    // Echoed verbatim into the kill log — merge-stage attrition adds up.
+    expect(validate).toContain("Echo every one of these lines verbatim in your kill log");
+    expect(validate).toContain("must add up in telemetry");
+    // A P1/P2 never rides folded under another finding.
+    expect(validate).toContain("a folded candidate that is a `P1`/`P2` never rides inside another finding's body");
+    // Shared anchor is never a duplicate kill.
+    expect(validate).toContain("Sharing an anchor is NEVER a kill reason");
+    expect(validate).toContain("never kill a candidate as `duplicate` merely because another finding sits on the same lines");
+    // Validator-only, registered, composed after the kill vocabulary.
+    expect(composeAddendum("pass-security")).not.toContain("Merge-stage dispositions");
+    const ids = addendaForPass(VALIDATE_PASS).map((a) => a.id);
+    expect(ids).toContain("merge-dispositions-validate");
+    expect(ids.indexOf("merge-dispositions-validate")).toBeGreaterThan(ids.indexOf("validate-kill-vocabulary"));
+    expect(addendaForPass("pass-baseline").map((a) => a.id)).not.toContain("merge-dispositions-validate");
+  });
+
   it("gives pass-validate different text from the lens passes", () => {
     const lens = composeAddendum("pass-security");
     const validate = composeAddendum(VALIDATE_PASS);

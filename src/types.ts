@@ -145,6 +145,13 @@ export interface VerdictPassEntry {
   survived?: number | null;
   killed?: number | null;
   downgraded?: number | null;
+  /** Merge-stage dispositions, reported on the pass-validate entry:
+   * same-defect candidates collapsed at the session's merge step (`MERGED
+   * <src> into <dst>` lines) and different-defect candidates folded as a
+   * paragraph under a surviving comment (`FOLDED <src> under <dst>` lines).
+   * Additive — older verdicts simply omit them (null/undefined = unknown). */
+  merged?: number | null;
+  folded?: number | null;
 }
 
 /** verdict/pr-<n>-round-<k>.json — written by the PR session at round end. */

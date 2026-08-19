@@ -122,8 +122,25 @@ tests, builds, or package managers — no test runners, no app entrypoints, no
 
 ## 3. Merge
 
-Dedup candidates by `(path, changed-line-run)`: highest severity wins, lens tags
-concatenate.
+Candidates on the same `(path, changed-line-run)` merge ONLY when they are the
+SAME defect: highest severity wins, lens tags concatenate. Candidates on the
+same run that describe DIFFERENT defects both survive — sharing an anchor is
+never a reason to drop a finding. Fold the lesser finding into the surviving
+comment's body as its own paragraph opening "Also on these lines: " (its
+severity tag and evidence kept), EXCEPT a P1/P2 never folds under another
+finding — it posts as its own comment even on a shared run.
+
+Log every merge-stage disposition, one line each, exactly:
+
+```
+MERGED <src> into <dst>
+FOLDED <src> under <dst>
+```
+
+(`MERGED` = same defect collapsed; `FOLDED` = different defect carried as a
+paragraph.) Include these lines in the validate task string so they land in
+the kill log beside the validator's own kills — merge-stage attrition must
+show up in telemetry, never vanish silently.
 
 ## 4. Validate
 
@@ -326,7 +343,8 @@ are not):
   "passes": [
     { "name": "pass-baseline", "tier": "sol-med", "findings": 3 },
     { "name": "pass-validate", "tier": "sol-med", "findings": 0,
-      "survived": 2, "killed": 1, "downgraded": 0 }
+      "survived": 2, "killed": 1, "downgraded": 0,
+      "merged": 1, "folded": 1 }
   ],
   "finished_at": "<ISO-8601 UTC now>"
 }
@@ -340,7 +358,10 @@ was APPROVE and the approval is held back because CI is not green at this head
 AND got a return from — filled from the real returns only, never copied from
 the plan table. `tier` is the variant the pass really ran at (raises included),
 `findings` its candidate-findings count; on `pass-validate` also record its
-outcome counts (`survived`/`killed`/`downgraded`) from the kill log. A pass
+outcome counts (`survived`/`killed`/`downgraded`) from the kill log, plus the
+step-3 merge-stage counts `merged` (same-defect `MERGED` lines) and `folded`
+(different-defect `FOLDED` lines) — merge-stage attrition counts like
+validator kills, so `killed` alone never understates it. A pass
 that never returned gets NO entry. If no passes ran, write `"passes": []` —
 the empty array is the honest record of a solo round, and it must agree with
 the body's `Lenses applied: none — reviewed solo (degraded round)` line: both

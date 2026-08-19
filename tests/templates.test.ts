@@ -327,6 +327,33 @@ describe("shipped round templates", () => {
       expect(text).toMatch(/log\s+(its|the)\s+kills/i);
     });
 
+    // merge-not-drop: the old "highest severity wins" dedup silently
+    // destroyed distinct findings sharing an anchor (#5291), and merge-kills
+    // showed up in no telemetry. Same defect merges; different defects both
+    // survive (fold, or post separately when P1/P2); every disposition logged.
+    it(`${roundTemplateFile(rt)} merge step carries both defects and logs every disposition`, () => {
+      // Same defect merges exactly as before.
+      expect(text).toContain("SAME defect");
+      expect(text).toMatch(/highest severity\s*\n?\s*wins[,;] lens tags\s*\n?\s*concatenate/);
+      // Different defects on one run both survive — never dropped.
+      expect(text).toContain("DIFFERENT defects");
+      expect(text).toMatch(/both survive/);
+      // The fold: lesser finding as its own paragraph, opener pinned.
+      expect(text).toContain('"Also on these lines: "');
+      // A P1/P2 never folds under another finding — posts on its own.
+      expect(text).toMatch(/P1\/P2 never folds under another\s*\n?\s*finding/);
+      // Disposition log lines, exact spellings, into the validate task string.
+      expect(text).toContain("MERGED <src> into <dst>");
+      expect(text).toContain("FOLDED <src> under <dst>");
+      expect(text).toContain("validate task string");
+      // Old rule gone: dedup is no longer unconditional.
+      expect(text).not.toMatch(/Dedup (candidates )?by `\(path, changed-line-run\)`[;:] highest severity wins/);
+      // Telemetry: merged/folded ride the pass-validate entry of the verdict.
+      expect(text).toContain('"merged": 1, "folded": 1');
+      expect(text).toContain("step-3 merge-stage counts `merged`");
+      expect(text).toMatch(/`folded`\s*\n?\s*\(different-defect `FOLDED` lines\)/);
+    });
+
     it(`${roundTemplateFile(rt)} dispatches via the subagent tool, no bash fan-out, no spend_usd`, () => {
       // spend_usd is gone from the verdict contract — the daemon measures usage.
       expect(text).not.toContain("spend_usd");

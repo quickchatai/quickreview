@@ -563,9 +563,29 @@ describe("executed-pass telemetry", () => {
     expect(parsed.ok).toBe(true);
     expect(parsed.passes_note).toContain("dropped");
     expect(parsed.verdict?.passes).toEqual([
-      { name: "pass-baseline", tier: "sol-med", findings: 3, survived: null, killed: null, downgraded: null },
-      { name: "pass-validate", tier: "sol-high", findings: 5, survived: 2, killed: 1, downgraded: 0 },
+      { name: "pass-baseline", tier: "sol-med", findings: 3, survived: null, killed: null, downgraded: null, merged: null, folded: null },
+      { name: "pass-validate", tier: "sol-high", findings: 5, survived: 2, killed: 1, downgraded: 0, merged: null, folded: null },
     ]);
+  });
+
+  // merge-stage dispositions ride the same tolerant normalization —
+  // additive fields, digit-strings coerce, absence stays null (unknown).
+  it("normalizes merge-stage disposition counts (merged/folded) additively", () => {
+    const parsed = validateVerdict(
+      verdictFile({
+        passes: [{ name: "pass-validate", tier: "sol-med", findings: 0, survived: "2", killed: 1, downgraded: 0, merged: "1", folded: 2 }] as never,
+      }),
+    );
+    expect(parsed.ok).toBe(true);
+    expect(parsed.verdict?.passes).toEqual([
+      { name: "pass-validate", tier: "sol-med", findings: 0, survived: 2, killed: 1, downgraded: 0, merged: 1, folded: 2 },
+    ]);
+    // A legacy verdict without the fields is still clean — no note.
+    const old = validateVerdict(verdictFile({ passes: [{ name: "pass-validate", killed: 1 }] as never }));
+    expect(old.ok).toBe(true);
+    expect(old.passes_note).toBeUndefined();
+    expect(old.verdict?.passes?.[0]?.merged).toBeNull();
+    expect(old.verdict?.passes?.[0]?.folded).toBeNull();
   });
 
   it("missing or malformed passes NEVER rejects the verdict — unknown, not error", () => {
