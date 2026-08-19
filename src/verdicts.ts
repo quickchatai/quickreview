@@ -110,6 +110,8 @@ export function normalizePasses(raw: unknown): { passes?: VerdictPassEntry[]; no
       survived: count(e.survived),
       killed: count(e.killed),
       downgraded: count(e.downgraded),
+      merged: count(e.merged),
+      folded: count(e.folded),
     });
   }
   return { passes, ...(dropped > 0 ? { note: `${dropped} malformed entr${dropped === 1 ? "y" : "ies"} dropped` } : {}) };

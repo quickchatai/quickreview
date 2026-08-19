@@ -119,8 +119,14 @@ tests, builds, or package managers — no test runners, no app entrypoints, no
 
 ## 3. Merge
 
-Dedup by `(path, changed-line-run)`; highest severity wins; lens tags
-concatenate.
+Same-run candidates merge ONLY when they are the SAME defect: highest severity
+wins; lens tags concatenate. DIFFERENT defects on one `(path,
+changed-line-run)` both survive — fold the lesser into the survivor's body as
+its own paragraph opening "Also on these lines: " (severity tag and evidence
+kept), EXCEPT a P1/P2 never folds under another finding — it posts on its own.
+Log each disposition exactly as `MERGED <src> into <dst>` /
+`FOLDED <src> under <dst>` and include the lines in the validate task string —
+merge-stage attrition must show up in telemetry.
 
 ## 4. Validate
 
@@ -322,7 +328,8 @@ are not):
   "passes": [
     { "name": "pass-baseline", "tier": "sol-med", "findings": 3 },
     { "name": "pass-validate", "tier": "sol-med", "findings": 0,
-      "survived": 2, "killed": 1, "downgraded": 0 }
+      "survived": 2, "killed": 1, "downgraded": 0,
+      "merged": 1, "folded": 1 }
   ],
   "finished_at": "<ISO-8601 UTC now>"
 }
@@ -336,7 +343,10 @@ was APPROVE and the approval is held back because CI is not green at this head
 AND got a return from — filled from the real returns only, never copied from
 the plan table. `tier` is the variant the pass really ran at (raises included),
 `findings` its candidate-findings count; on `pass-validate` also record its
-outcome counts (`survived`/`killed`/`downgraded`) from the kill log. A pass
+outcome counts (`survived`/`killed`/`downgraded`) from the kill log, plus the
+step-3 merge-stage counts `merged` (same-defect `MERGED` lines) and `folded`
+(different-defect `FOLDED` lines) — merge-stage attrition counts like
+validator kills, so `killed` alone never understates it. A pass
 that never returned gets NO entry. If no passes ran, write `"passes": []` —
 the empty array is the honest record of a solo round, and it must agree with
 the body's `Lenses applied: none — reviewed solo (degraded round)` line: both
