@@ -537,13 +537,22 @@ export class GitHubAdapter {
   }
 
   async removeLabel(n: number, label: string): Promise<GateResult> {
-    return this.gate.execute({
-      kind: "remove_label",
-      method: "DELETE",
-      path: `/repos/${this.owner}/${this.repo}/issues/${n}/labels/${encodeURIComponent(label)}`,
-      note: `remove label "${label}" from #${n}`,
-      pr: n,
-    });
+    try {
+      return await this.gate.execute({
+        kind: "remove_label",
+        method: "DELETE",
+        path: `/repos/${this.owner}/${this.repo}/issues/${n}/labels/${encodeURIComponent(label)}`,
+        note: `remove label "${label}" from #${n}`,
+        pr: n,
+      });
+    } catch (err) {
+      // Removing an already-absent label is the outcome we wanted — GitHub's
+      // 404 ("Label does not exist") is idempotent success, not an error.
+      // Recurring live noise: a label consumed by an earlier failed-dispatch
+      // cycle 404s on the retry (#5309/#5314, 2026-08-19).
+      if (String(err).includes("404")) return { executed: false, response: { already_absent: label } };
+      throw err;
+    }
   }
 
   /** Consume the team trigger: DELETE with the JSON body, then verify. */

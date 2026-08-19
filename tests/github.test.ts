@@ -194,6 +194,25 @@ describe("mutations in dry-run", () => {
     }
   });
 
+  // Live noise fix (2026-08-19, #5309/#5314): removing an already-absent
+  // label 404s — that is idempotent success, not an error to log.
+  it("treats a 404 on remove_label as already-removed (live mode)", async () => {
+    const { adapter } = build(() => {
+      const err = new Error('DELETE .../labels/x → 404: {"message":"Label does not exist"}');
+      throw err;
+    }, false);
+    const out = await adapter.removeLabel(3, "AI review in progress");
+    expect(out.executed).toBe(false);
+    expect(out.response).toMatchObject({ already_absent: "AI review in progress" });
+  });
+
+  it("still throws non-404 remove_label failures (live mode)", async () => {
+    const { adapter } = build(() => {
+      throw new Error("DELETE .../labels/x → 500: upstream broke");
+    }, false);
+    await expect(adapter.removeLabel(3, "AI review in progress")).rejects.toThrow("500");
+  });
+
   it("URL-encodes the label in the remove-label path", async () => {
     const { adapter } = build(() => ({}));
     await adapter.removeLabel(3, "AI review requested");
