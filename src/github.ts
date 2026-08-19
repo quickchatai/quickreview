@@ -423,7 +423,7 @@ export class GitHubAdapter {
       `/repos/${this.owner}/${this.repo}/commits/${enc}/check-runs?per_page=100`,
     );
     for (const r of runs.check_runs ?? [])
-      out.push({ name: r.name ?? "check", status: r.status ?? "", conclusion: r.conclusion ?? null });
+      out.push({ name: r.name ?? "check", status: r.status ?? "", conclusion: r.conclusion ?? null, started_at: r.started_at ?? null });
     const status = await this.request<{ statuses?: any[] }>(
       "GET",
       `/repos/${this.owner}/${this.repo}/commits/${enc}/status?per_page=100`,

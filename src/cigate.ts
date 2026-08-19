@@ -42,6 +42,10 @@ export interface CheckSummary {
   status: string;
   /** `success` | `failure` | `cancelled` | `timed_out` | `skipped` | … */
   conclusion: string | null;
+  /** When the run started — the recency key for latest-run-per-name
+   * (the owner, 2026-08-19). Absent on commit statuses (already deduped by
+   * GitHub's combined endpoint) and in older stored summaries. */
+  started_at?: string | null;
 }
 
 /**
@@ -73,7 +77,31 @@ const UNFINISHED = new Set(["queued", "in_progress", "waiting", "pending", "requ
  * argued into an approval. It reports `red`, because there is no evidence this
  * PR's code passed anything.
  */
-export function classifyCi(checks: readonly CheckSummary[]): CiState {
+/** Only the MOST RECENT run of each check name counts (the owner, 2026-08-19).
+ * GitHub auto-cancels superseded workflow runs, leaving permanent
+ * `completed/cancelled` husks beside the run that actually finished — under
+ * the original any-run rule every such head classified red forever and no
+ * withheld approval could ever release. Recency is `started_at`; entries
+ * without one (commit statuses — already deduped by GitHub — or older data)
+ * fall back to list position, later wins. */
+export function latestRunPerName(checks: readonly CheckSummary[]): CheckSummary[] {
+  const byName = new Map<string, { check: CheckSummary; idx: number }>();
+  checks.forEach((check, idx) => {
+    const prev = byName.get(check.name);
+    if (!prev) {
+      byName.set(check.name, { check, idx });
+      return;
+    }
+    const a = prev.check.started_at ?? "";
+    const b = check.started_at ?? "";
+    // Later start wins; ties (and missing timestamps) resolve to list order.
+    if (b >= a) byName.set(check.name, { check, idx });
+  });
+  return [...byName.values()].sort((x, y) => x.idx - y.idx).map((e) => e.check);
+}
+
+export function classifyCi(allChecks: readonly CheckSummary[]): CiState {
+  const checks = latestRunPerName(allChecks);
   if (checks.length === 0) return "none";
   let pending = false;
   let succeeded = false;
@@ -98,12 +126,15 @@ export function classifyCi(checks: readonly CheckSummary[]): CiState {
 /**
  * Does this CI state make APPROVE unavailable?
  *
- * `none` does not: no check reported at this head is not a red CI, and nothing
- * will ever turn green there, so blocking on it would wedge every PR in a repo
- * (or a path) that runs no CI at all — a permanent park, which is the exact
- * bottleneck this system exists to remove. The gate blocks what it can see.
+ * `none` blocks only when `noChecksIsRed` says so (the owner, 2026-08-19): in a
+ * repo that normally runs CI, a head with zero check-runs — a conflicted PR,
+ * or CI that has not started — carries no execution evidence, so approval
+ * waits for checks to appear and pass. The flag stays off by default so a
+ * repo with no CI at all is never permanently wedged (the original
+ * exemption); example-app turns it on in config.toml.
  */
-export function ciBlocksApproval(state: CiState): boolean {
+export function ciBlocksApproval(state: CiState, opts: { noChecksIsRed?: boolean } = {}): boolean {
+  if (state === "none") return opts.noChecksIsRed === true;
   return state === "red" || state === "pending";
 }
 

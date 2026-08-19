@@ -45,7 +45,7 @@ let reviews: ReviewStub[];
 let dbPath: string;
 /** Check-runs at HEAD (guard 4). Green by default: every pre-existing
  * case here is about another guard and must not trip this one. */
-let checkRuns: Array<{ name: string; status: string; conclusion: string | null }>;
+let checkRuns: Array<{ name: string; status: string; conclusion: string | null; started_at?: string }>;
 
 const CONFIG = (secretsDir: string) =>
   [
@@ -206,6 +206,40 @@ describe("scripts/approve-pr.sh — guard 4 (red CI hard-gates APPROVE)", () => 
     const res = await run("approve-pr.sh", ["5180", bodyFile()]);
     expect(res.ok).toBe(true);
     expect(dryrunRecords()).toHaveLength(3);
+  });
+
+  // Parity with classifyCi's latest-run-per-name rule (the owner, 2026-08-19).
+  it("ignores a cancelled husk when a newer run of the same name succeeded", async () => {
+    checkRuns = [
+      { name: "sync", status: "completed", conclusion: "cancelled", started_at: "2026-08-19T08:00:00Z" },
+      { name: "sync", status: "completed", conclusion: "cancelled", started_at: "2026-08-19T08:05:00Z" },
+      { name: "sync", status: "completed", conclusion: "success", started_at: "2026-08-19T08:10:00Z" },
+    ];
+    const res = await run("approve-pr.sh", ["5180", bodyFile()]);
+    expect(res.ok).toBe(true);
+  });
+
+  it("still refuses when the LATEST run of a name was cancelled", async () => {
+    checkRuns = [
+      { name: "sync", status: "completed", conclusion: "success", started_at: "2026-08-19T08:00:00Z" },
+      { name: "sync", status: "completed", conclusion: "cancelled", started_at: "2026-08-19T08:10:00Z" },
+    ];
+    const res = await run("approve-pr.sh", ["5180", bodyFile()]);
+    expect(res.ok).toBe(false);
+    expect(res.out).toContain("CI is red");
+  });
+
+  // Parity with no_checks_is_red (the owner, 2026-08-19).
+  it("refuses a zero-checks head when no_checks_is_red is on; allows it when off", async () => {
+    checkRuns = [];
+    const base = readFileSync(join(dir, "config.toml"), "utf8");
+    writeFileSync(join(dir, "config.toml"), `${base}\n[guards]\nno_checks_is_red = true\n`);
+    const refused = await run("approve-pr.sh", ["5180", bodyFile()]);
+    expect(refused.ok).toBe(false);
+    expect(refused.out).toContain("no CI has run");
+    writeFileSync(join(dir, "config.toml"), base);
+    const allowed = await run("approve-pr.sh", ["5180", bodyFile()]);
+    expect(allowed.ok).toBe(true);
   });
 
   it("posting the withheld review as a COMMENT is never refused by this guard", async () => {

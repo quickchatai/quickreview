@@ -83,6 +83,54 @@ describe("classifyCi", () => {
   });
 });
 
+// the owner, 2026-08-19: only the MOST RECENT run of each check name counts —
+// GitHub auto-cancels superseded runs, and their permanent cancelled husks
+// were withholding every approval forever (live: 4× sync cancelled + 3× sync
+// success at #5288's head, red under the old any-run rule).
+describe("latest-run-per-name", () => {
+  const at = (c: CheckSummary, started_at: string): CheckSummary => ({ ...c, started_at });
+  it("a cancelled husk beside a newer successful run of the same name is green", () => {
+    expect(
+      classifyCi([
+        at(done("cancelled", "sync"), "2026-08-19T08:00:00Z"),
+        at(done("cancelled", "sync"), "2026-08-19T08:05:00Z"),
+        at(done("success", "sync"), "2026-08-19T08:10:00Z"),
+        done("success", "unit"),
+      ]),
+    ).toBe("green");
+  });
+  it("a LATEST run that failed or was cancelled still blocks", () => {
+    expect(
+      classifyCi([at(done("success", "sync"), "2026-08-19T08:00:00Z"), at(done("cancelled", "sync"), "2026-08-19T08:10:00Z")]),
+    ).toBe("red");
+    expect(
+      classifyCi([at(done("success", "unit"), "2026-08-19T08:00:00Z"), at(done("failure", "unit"), "2026-08-19T08:10:00Z")]),
+    ).toBe("red");
+  });
+  it("a latest run still in progress is pending, not green off the older success", () => {
+    expect(
+      classifyCi([at(done("success", "sync"), "2026-08-19T08:00:00Z"), at(run("in_progress", null, "sync"), "2026-08-19T08:10:00Z")]),
+    ).toBe("pending");
+  });
+  it("entries without started_at resolve by list position — later wins", () => {
+    expect(classifyCi([done("cancelled", "sync"), done("success", "sync")])).toBe("green");
+    expect(classifyCi([done("success", "sync"), done("cancelled", "sync")])).toBe("red");
+  });
+});
+
+// the owner, 2026-08-19: zero checks at a head withholds approval too when the
+// repo normally runs CI (conflicted PR / CI not started = no execution
+// evidence). Off by default — a no-CI repo must never be wedged.
+describe("no_checks_is_red", () => {
+  it("none blocks approval only when the flag is on", () => {
+    expect(ciBlocksApproval("none")).toBe(false);
+    expect(ciBlocksApproval("none", { noChecksIsRed: false })).toBe(false);
+    expect(ciBlocksApproval("none", { noChecksIsRed: true })).toBe(true);
+    expect(ciBlocksApproval("green", { noChecksIsRed: true })).toBe(false);
+    expect(ciBlocksApproval("red", { noChecksIsRed: false })).toBe(true);
+  });
+});
+
 describe("the withheld note", () => {
   it("says both things the author needs: no blockers, and what it waits on", () => {
     const note = withheldApprovalNote("red", HEAD);

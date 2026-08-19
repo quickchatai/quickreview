@@ -339,6 +339,25 @@ describe("runRecheck", () => {
     expect(h.store.getPr(PR)?.state).toBe("tracked");
   });
 
+  // Carry-forward (the owner, 2026-08-19): a withheld approval moves with the
+  // head when the delta upholds — otherwise the retry no-ops on
+  // "head-moved" forever and the never-posted approval is stranded (#5307).
+  it("a trivial-delta noop carries the withheld-approval mark to the new head", async () => {
+    const h = harness();
+    h.store.recordApprovalWithheld(PR, { head_sha: OLD, ci_state: "red", reason: "red-ci" });
+    h.adapter.delta = [file({ filename: "yarn.lock", additions: 2, deletions: 2 })];
+    h.adapter.own = [file({ filename: "yarn.lock" })];
+    await runRecheck(h.deps, { pr: PR, trigger: "push", head_sha: HEAD });
+    expect(h.store.approvalWithheld(PR)?.head_sha).toBe(HEAD);
+  });
+
+  it("a significant delta does NOT carry the mark — that waits for the session's uphold", async () => {
+    const h = harness();
+    h.store.recordApprovalWithheld(PR, { head_sha: OLD, ci_state: "red", reason: "red-ci" });
+    await runRecheck(h.deps, { pr: PR, trigger: "push", head_sha: HEAD });
+    expect(h.store.approvalWithheld(PR)?.head_sha).toBe(OLD);
+  });
+
   it("spends no API call at all on an unchanged head", async () => {
     const h = harness();
     h.store.upsertPr({ ...h.store.getPr(PR)!, head_sha: OLD });
@@ -442,6 +461,23 @@ describe("recheck decisions", () => {
     expect(store.getPr(PR)?.state).toBe("tracked");
     expect(store.reviewedHead(PR)?.head_sha).toBe(OLD);
     expect(kinds()).toContain("recheck_upheld");
+  });
+
+  // the owner, 2026-08-19: an explicit session uphold carries a withheld
+  // approval to the examined head; a request_changes kills the mark outright.
+  it("uphold carries the withheld-approval mark to the upheld head", async () => {
+    store.recordApprovalWithheld(PR, { head_sha: OLD, ci_state: "red", reason: "red-ci" });
+    write({ pr: PR, head_sha: HEAD, outcome: "uphold", reason: "resolution kept both sides" });
+    await watcher.sweep();
+    expect(store.approvalWithheld(PR)?.head_sha).toBe(HEAD);
+    expect(kinds()).toContain("approval_withheld_carried");
+  });
+
+  it("request_changes clears the withheld mark — approval is off the table", async () => {
+    store.recordApprovalWithheld(PR, { head_sha: OLD, ci_state: "red", reason: "red-ci" });
+    write({ pr: PR, head_sha: HEAD, outcome: "request_changes", reason: "regression" });
+    await watcher.sweep();
+    expect(store.approvalWithheld(PR)).toBeUndefined();
   });
 
   it("moves APPROVE → REQUEST_CHANGES when the session found a regression", async () => {

@@ -198,12 +198,17 @@ guard_ci_state() { # guard_ci_state <head-sha> — green|red|pending|none|unknow
   runs="$(guard_api_get "/repos/$REPO/commits/$head/check-runs?per_page=100")"
   status="$(guard_api_get "/repos/$REPO/commits/$head/status?per_page=100")"
   # Mirrors src/cigate.ts classifyCi — keep the two in step.
+  # Latest-run-per-name (the owner, 2026-08-19): GitHub auto-cancels superseded
+  # runs; only the most recent run of each check name counts. group_by sorts,
+  # so max_by(started_at) with a "" fallback keeps the newest; commit statuses
+  # are already deduped per context by the combined endpoint.
   GUARD_CI_RUNS="$runs" GUARD_CI_STATUS="$status" jq -rn '
     [env.GUARD_CI_RUNS // "", env.GUARD_CI_STATUS // ""]
     | map(select(. != "") | try fromjson catch empty) as $docs
     | if ($docs | length) == 0 then "unknown"
       else
-        ( [ $docs[] | select(type == "object") | (.check_runs? // [])[]
+        ( [ [ $docs[] | select(type == "object") | (.check_runs? // [])[] ]
+            | group_by(.name // "check")[] | max_by(.started_at // "")
             | [ ((.status // "") | tostring | ascii_downcase),
                 ((.conclusion // "") | tostring | ascii_downcase) ] ]
         + [ $docs[] | select(type == "object") | (.statuses? // [])[]
@@ -237,7 +242,14 @@ guard_require_green_ci() { # guard_require_green_ci <head-sha>
     red|pending)
       die "CI is ${state} at ${head:0:7} on #$PR — APPROVE is unavailable (guard 4). Post the full review as a COMMENT via scripts/post-review.sh, say plainly that no blockers were found and that approval is withheld pending green CI, and set \"approval_withheld\": true in the verdict file."
       ;;
-    *) ;;   # green, none, unknown: the guard blocks only what it can see
+    none)
+      # the owner 2026-08-19: in a CI-running repo, zero checks at the head
+      # (conflicted PR, CI not started) is no execution evidence — withhold.
+      if [[ "$(cfg guards no_checks_is_red 2>/dev/null || true)" == "true" ]]; then
+        die "no CI has run at ${head:0:7} on #$PR — APPROVE is unavailable (guard 4, no_checks_is_red). Post the full review as a COMMENT via scripts/post-review.sh, say approval is withheld until checks run green, and set \"approval_withheld\": true in the verdict file."
+      fi
+      ;;
+    *) ;;   # green, unknown: the guard blocks only what it can see
   esac
 }
 

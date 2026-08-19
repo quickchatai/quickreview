@@ -214,6 +214,11 @@ export interface GuardsConfig {
   /** No green CI at this head ⇒ APPROVE is unavailable; the review posts as a
    * COMMENT with approval withheld. */
   block_approve_on_red_ci: boolean;
+  /** A head with ZERO check-runs also withholds approval (the owner,
+   * 2026-08-19): in a CI-running repo that is a conflicted PR or CI that has
+   * not started — no execution evidence. Off by default so a repo with no CI
+   * at all is never wedged (the original `none` exemption). */
+  no_checks_is_red: boolean;
 }
 
 export const GUARDS_DEFAULTS: GuardsConfig = {
@@ -221,6 +226,7 @@ export const GUARDS_DEFAULTS: GuardsConfig = {
   skip_unchanged_head: true,
   recheck_pr_state_before_post: true,
   block_approve_on_red_ci: true,
+  no_checks_is_red: false,
 };
 
 /**

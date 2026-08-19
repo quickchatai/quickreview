@@ -300,6 +300,24 @@ export function ciIsAdverse(conclusion: string | null | undefined): boolean {
  * before anything that would cost a classification, and the classification
  * comes before anything that would cost a session turn.
  */
+/** Move a withheld-approval mark to a newer head after an uphold (the owner,
+ * 2026-08-19). This is NOT a re-approve — the approval was never posted; the
+ * retry still demands green CI at the new head before anything posts.
+ * No mark, or a mark already at this head, is a silent no-op. */
+export function carryWithheldMark(
+  store: StateStore,
+  pr: number,
+  newHead: string,
+  via: string,
+  log: (msg: string) => void = () => {},
+): void {
+  const withheld = store.approvalWithheld(pr);
+  if (!withheld || withheld.head_sha === newHead) return;
+  store.recordApprovalWithheld(pr, { head_sha: newHead, ci_state: null, reason: withheld.reason ?? "red-ci" });
+  store.logEvent("approval_withheld_carried", pr, { from: withheld.head_sha, to: newHead, via });
+  log(`recheck: #${pr} withheld approval carried ${withheld.head_sha.slice(0, 7)} → ${newHead.slice(0, 7)} (${via})`);
+}
+
 export function planRecheck(input: RecheckPlanInput): RecheckPlan {
   const noop = (reason: NoopReason, classification?: DeltaClassification): RecheckPlan => ({
     action: "noop",
@@ -475,7 +493,17 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
     prFiles,
     ...(req.ci ? { ci: req.ci } : {}),
   });
-  if (plan.action === "noop") return done(plan);
+  // Carry-forward (the owner, 2026-08-19): a withheld approval whose head moved
+  // used to be stranded — the mark stayed pinned to the old sha, the retry
+  // no-op'd on "head-moved" forever, and the recheck can never approve. When
+  // the delta itself upholds (empty/trivial), the never-posted approval moves
+  // with the head, so green CI at the NEW head releases it. A significant
+  // delta carries only after the session's explicit uphold (watcher below).
+  if (plan.action === "noop") {
+    if ((plan.reason === "empty-delta" || plan.reason === "trivial-delta") && head !== lastReviewed)
+      carryWithheldMark(store, req.pr, head, `recheck-noop:${plan.reason}`, log);
+    return done(plan);
+  }
 
   // The runaway guard: one nudge per (trigger, head, evidence). Without it a
   // reconcile replay or a redelivered webhook re-asks the same question, which
@@ -706,6 +734,10 @@ export class RecheckWatcher {
         this.deps.store.logEvent("recheck_outcome_coerced", pr, { file: name, given: parsed.coerced, applied: "uphold" });
 
       if (d.outcome === "request_changes") {
+        // Approval is off the table now — a lingering withheld mark would let
+        // a later green CI re-queue "for the withheld approval" of a PR whose
+        // standing verdict this very decision just flipped.
+        this.deps.store.clearApprovalWithheld(pr);
         applyEvent(
           this.deps.store,
           pr,
@@ -713,6 +745,11 @@ export class RecheckWatcher {
           { head_sha: d.head_sha },
           { botLogin: this.deps.cfg.github.bot_login, ...(this.deps.now ? { now: this.deps.now } : {}), reason: "recheck:request-changes" },
         );
+      }
+      if (d.outcome === "uphold") {
+        // Session-examined significant delta, verdict upheld: the withheld
+        // approval (if any) follows the head (the owner, 2026-08-19).
+        carryWithheldMark(this.deps.store, pr, d.head_sha, "recheck-uphold", (m) => this.deps.log?.(m));
       }
       this.deps.store.logEvent(d.outcome === "request_changes" ? "recheck_request_changes" : "recheck_upheld", pr, {
         file: name,

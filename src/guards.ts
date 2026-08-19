@@ -256,7 +256,7 @@ export function makePostingGuard(deps: GuardDeps): MutationGuard {
       // --- guard 4: no green CI at this head ⇒ no approval ---
       if (deps.guards.block_approve_on_red_ci && (body.event ?? "").toUpperCase() === "APPROVE") {
         const ci = await readCi(deps, pr, head, log);
-        if (ci && ciBlocksApproval(ci)) {
+        if (ci && ciBlocksApproval(ci, { noChecksIsRed: deps.guards.no_checks_is_red })) {
           log(`guard: #${pr} APPROVE → COMMENT (CI ${ci} at ${head.slice(0, 7)})`);
           deps.store.logEvent("approval_withheld_red_ci", pr, { head_sha: head, ci_state: ci });
           // The promise this note makes to the author — "waiting on CI alone" —
