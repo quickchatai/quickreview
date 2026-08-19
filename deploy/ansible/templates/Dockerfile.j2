@@ -45,6 +45,18 @@ RUN npm install -g {{ pi_memory_package }}@{{ pi_memory_version }} \
     && echo "$url" | grep -Eq 'github\.com[:/]jayzeng/pi-memory' \
     || { echo "FATAL: {{ pi_memory_package }}@{{ pi_memory_version }} is not jayzeng/pi-memory" >&2; exit 1; }
 
+# qmd — the semantic-search CLI pi-memory's `memory_search` shells out to
+#. Same provenance discipline as pi-memory even though the name is
+# scoped: hard-fail unless the installed package's repository resolves to
+# github.com/tobi/qmd, and smoke the binary in the layer — its node-llama-cpp
+# native dep must actually load, not just install.
+RUN npm install -g {{ qmd_npm_package }}@{{ qmd_version }} \
+    && url="$(node -p "String((require(require('child_process').execSync('npm root -g').toString().trim() + '/{{ qmd_npm_package }}/package.json').repository || {}).url)")" \
+    && echo "qmd repository.url: $url" \
+    && echo "$url" | grep -Eq 'github\.com[:/]tobi/qmd' \
+    && qmd --version \
+    || { echo "FATAL: {{ qmd_npm_package }}@{{ qmd_version }} failed verification (not tobi/qmd, or the binary does not run)" >&2; exit 1; }
+
 # pi-subagents extension — amosblomqvist/pi-subagents is a raw extension repo
 # (no package.json, NOT on npm; the npm/pi.dev "pi-subagents" name belongs to
 # nicobailon's unrelated package). Pin by exact commit; verify the checkout.
