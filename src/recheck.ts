@@ -445,7 +445,7 @@ export interface RecheckDeps {
   /** Hand-resolved merge files between two shas (WorktreeManager
    * .resolvedFilesInMerges, wired by the daemon). Absent ⇒ merges classify by
    * the ownership rule alone, as before the 2026-08-19 amendment. */
-  resolvedFilesInMerges?: (from: string, to: string) => Promise<{ files: string[]; degraded: boolean }>;
+  resolvedFilesInMerges?: (from: string, to: string, pr?: number) => Promise<{ files: string[]; degraded: boolean }>;
   now?: () => Date;
   log?: (msg: string, extra?: unknown) => void;
 }
@@ -526,7 +526,7 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
   if (deps.resolvedFilesInMerges) {
     const from = req.trigger === "base_advance" && req.base ? req.base.before : lastReviewed;
     const to = req.trigger === "base_advance" && req.base ? req.base.after : head;
-    const res = await deps.resolvedFilesInMerges(from, to);
+    const res = await deps.resolvedFilesInMerges(from, to, req.pr);
     resolvedFiles = res.files;
     if (res.degraded) {
       store.logEvent("recheck_merge_verify_degraded", req.pr, { from, to });

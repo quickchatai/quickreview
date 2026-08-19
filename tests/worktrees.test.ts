@@ -337,6 +337,16 @@ describe("resolvedFilesInMerges", () => {
     expect(res.files).toEqual(["shared.txt"]);
   });
 
+  it("fetches missing objects on demand instead of degrading (2026-08-19 recheck storm)", async () => {
+    const m = mgr();
+    await m.ensureBaseClone(); // clone BEFORE the merge exists — the live recheck timing
+    const { from, to } = mergeScenario({ conflicting: true, resolution: "line1 SIDE\nline2\nline3\n" });
+    git(origin, "update-ref", "refs/pull/7/head", to);
+    const res = await m.resolvedFilesInMerges(from, to, 7);
+    expect(res.degraded).toBe(false);
+    expect(res.files).toEqual(["shared.txt"]);
+  });
+
   it("reports degraded on unusable shas instead of guessing", async () => {
     const m = mgr();
     await m.ensureBaseClone();

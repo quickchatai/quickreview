@@ -53,7 +53,7 @@ export interface DaemonDeps {
   /** Hand-resolved merge files between two shas (the owner, 2026-08-19 —
    * conflict resolutions are never trivial). wire.ts passes the
    * WorktreeManager's git-level auto-merge comparison. */
-  resolvedFilesInMerges?: (from: string, to: string) => Promise<{ files: string[]; degraded: boolean }>;
+  resolvedFilesInMerges?: (from: string, to: string, pr?: number) => Promise<{ files: string[]; degraded: boolean }>;
   /** Fetch head + base and materialise the worktree before the order is built
    * (wire.ts passes the real WorktreeManager). Absent ⇒ no git: the order
    * falls back to the PR row's sha with no base facts. */

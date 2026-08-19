@@ -387,7 +387,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     renderRecheckPrompt: renderRecheck,
     // Conflict resolutions are never trivial (the owner, 2026-08-19): git-level
     // auto-merge comparison in the base clone names the hand-resolved files.
-    resolvedFilesInMerges: (from, to) => sessions.worktrees.resolvedFilesInMerges(from, to),
+    resolvedFilesInMerges: (from, to, pr) => sessions.worktrees.resolvedFilesInMerges(from, to, pr),
     // One network fetch per round, before the order is built: the PR head and
     // the branch it targets, together. Everything downstream (prompt, session,
     // passes) then works from the shas this returns.

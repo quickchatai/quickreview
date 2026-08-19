@@ -176,10 +176,30 @@ export class WorktreeManager {
    * `degraded: true` means the answer is unknown (old git, missing objects) —
    * the caller decides what that costs; this reader never guesses.
    */
-  async resolvedFilesInMerges(from: string, to: string): Promise<{ files: string[]; degraded: boolean }> {
+  async resolvedFilesInMerges(from: string, to: string, pr?: number): Promise<{ files: string[]; degraded: boolean }> {
     if (!/^[0-9a-f]{7,40}$/i.test(from) || !/^[0-9a-f]{7,40}$/i.test(to))
       return { files: [], degraded: true };
     try {
+      // A recheck classifies a push minutes after it lands — usually before
+      // any round has fetched the new objects into the base clone, which
+      // degraded EVERY live recheck (2026-08-19 anomaly storm). Fetch on
+      // miss: by sha first (GitHub serves reachable want-shas), then the PR
+      // ref as the reliable route for PR-branch heads.
+      const missing = async () => {
+        const out: string[] = [];
+        for (const sha of [from, to]) if (!(await this.hasCommit(sha))) out.push(sha);
+        return out;
+      };
+      let gone = await missing();
+      if (gone.length) {
+        await this.run("git", ["fetch", "--force", "origin", ...gone], { cwd: this.basePath });
+        gone = await missing();
+      }
+      if (gone.length && pr !== undefined) {
+        await this.run("git", ["fetch", "--force", "origin", `+refs/pull/${pr}/head:${this.prRef(pr)}`], { cwd: this.basePath });
+        gone = await missing();
+      }
+      if (gone.length) return { files: [], degraded: true };
       const merges = (await this.git(["rev-list", "--merges", `${from}..${to}`])).stdout
         .split("\n")
         .map((l) => l.trim())
