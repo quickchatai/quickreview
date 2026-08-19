@@ -690,3 +690,44 @@ describe("executed-pass telemetry", () => {
     expect(overseer).toEqual([]);
   });
 });
+
+
+// Durability (the owner, 2026-08-19, #5314): a head that advances while the
+// round runs chains a SYSTEM re-trigger at verdict time — the
+// classifier then decides full-round vs short-circuit. Never on a park.
+describe("mid-round head advance chains a system re-trigger", () => {
+  it("head moved while reviewing ⇒ event + queued with system provenance", async () => {
+    reviewingRound(400);
+    const row = store.getPr(400)!;
+    // The author pushes while the round is in flight (reconcile updates head).
+    store.upsertPr({ ...row, head_sha: "def456" });
+    await watcher().handleFile(write(400, 1, verdictFile({ pr: 400, verdict: "REQUEST_CHANGES", head_sha: "abc123" })));
+
+    const after = store.getPr(400)!;
+    expect(after.state).toBe("queued");
+    expect(after.trigger_provenance).toBe("system");
+    const ev = store.db.prepare("SELECT payload FROM events WHERE kind = 'mid_round_head_advance'").get() as { payload: string };
+    expect(JSON.parse(ev.payload)).toMatchObject({ reviewed_head: "abc123", current_head: "def456", verdict: "REQUEST_CHANGES" });
+    // The reviewed-head mark stays at the reviewed sha — the classifier's
+    // comparison base for the chained trigger.
+    expect(store.reviewedHead(400)!.head_sha).toBe("abc123");
+  });
+
+  it("unchanged head ⇒ no chain", async () => {
+    reviewingRound(401);
+    await watcher().handleFile(write(401, 1, verdictFile({ pr: 401, verdict: "APPROVE", head_sha: "abc123" })));
+    expect(store.getPr(401)!.state).toBe("tracked");
+    expect(store.db.prepare("SELECT COUNT(*) c FROM events WHERE kind = 'mid_round_head_advance'").get()).toMatchObject({ c: 0 });
+  });
+
+  it("a NEEDS_HUMAN park is sticky — never chained", async () => {
+    reviewingRound(402);
+    const row = store.getPr(402)!;
+    store.upsertPr({ ...row, head_sha: "def456" });
+    await watcher().handleFile(
+      write(402, 1, verdictFile({ pr: 402, verdict: "NEEDS_HUMAN", head_sha: "abc123", passes: [{ name: "pass-baseline", tier: "sol-med", findings: 1 }] })),
+    );
+    expect(store.getPr(402)!.state).toBe("awaiting_human");
+    expect(store.db.prepare("SELECT COUNT(*) c FROM events WHERE kind = 'mid_round_head_advance'").get()).toMatchObject({ c: 0 });
+  });
+});

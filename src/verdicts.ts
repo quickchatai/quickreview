@@ -312,6 +312,10 @@ export class VerdictWatcher {
 
     // spend_usd from the file is fiction (template echo) — never stored; the
     // measured figures land via recordRoundUsage below.
+    // Captured BEFORE applyEvent: the transition context writes the verdict's
+    // (possibly stale) head back onto pr_state, which would mask a mid-round
+    // advance (see the chain below).
+    const headBeforeApply = store.getPr(v.pr)?.head_sha ?? null;
     if (round) store.finishRound(round.id, v.verdict, null, v.summary ?? null);
     // Executed-pass telemetry: persist what actually ran beside the
     // plan, and flag plan≠executed. Best-effort side channel — nothing in it
@@ -365,6 +369,38 @@ export class VerdictWatcher {
         duration_s: finished?.duration_s ?? null,
       }),
     );
+    // Durability (the owner, 2026-08-19, #5314): a head that advanced WHILE the
+    // round ran means the review just delivered targets a stale sha, and the
+    // mid-round pushes were consumed by recheck_noop ("no-standing-approval")
+    // — nobody would ever revisit them. Chain a SYSTEM-provenance re-trigger:
+    // the delta classifier then decides for free whether the delta
+    // deserves a full follow-up round (significant) or a short-circuit uphold
+    // (trivial/empty). Never on a park (awaiting_human is sticky by design),
+    // never on closed/paused, and never interleaved — the chained round only
+    // dispatches after this one is fully over (S4 holds).
+    if (v.head_sha && headBeforeApply && headBeforeApply !== v.head_sha) {
+      const rowAfter = store.getPr(v.pr);
+      if (rowAfter && rowAfter.state !== "closed" && rowAfter.state !== "awaiting_human" && !rowAfter.paused) {
+        store.logEvent("mid_round_head_advance", v.pr, {
+          round_no: v.round_no,
+          reviewed_head: v.head_sha,
+          current_head: headBeforeApply,
+          verdict: v.verdict,
+        });
+        // Restore the advanced head (applyEvent stamped the reviewed one) and
+        // queue with system provenance for the classifier.
+        store.upsertPr({
+          ...rowAfter,
+          head_sha: headBeforeApply,
+          state: "queued",
+          trigger_ts: this.now().toISOString(),
+          trigger_provenance: "system",
+        });
+        this.log(
+          `verdicts: #${v.pr} head advanced mid-round (${v.head_sha.slice(0, 7)} → ${headBeforeApply.slice(0, 7)}) — chained a system re-trigger`,
+        );
+      }
+    }
     if (round) this.measureUsage(v.pr, round.id, round.started_at, this.now().toISOString());
     // Round is over: compact the sticky conversation. Cache re-reads of the
     // ever-growing prefix were 41% of measured cost; the continuity that
