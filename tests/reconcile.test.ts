@@ -169,6 +169,45 @@ describe("reconcileOnce", () => {
     expect(row.trigger_ts).toBe("2026-08-13T09:05:00Z");
   });
 
+  // push-trigger backstop (live gap 2026-08-19, #5307): with webhooks
+  // dead, a post-review push was never rechecked and a withheld approval had
+  // no path forward — reconcile must hand detected pushes to the same recheck
+  // route the webhook's onSynchronize uses.
+  it("invokes onHeadPush when a tracked PR's head moved, after updating the row", async () => {
+    seed(30, "tracked", { head: "old-sha" });
+    gh.open = [ref(30, { head_sha: "new-sha" })];
+    const { hooks } = recordingHooks();
+    const pushes: Array<{ pr: number; head: string; rowHeadAtCall: string }> = [];
+    await reconcileOnce({
+      cfg, store, adapter: gh, hooks,
+      onHeadPush: async (pr, head_sha) => {
+        pushes.push({ pr, head: head_sha, rowHeadAtCall: store.getPr(pr)!.head_sha });
+      },
+    });
+    expect(pushes).toEqual([{ pr: 30, head: "new-sha", rowHeadAtCall: "new-sha" }]);
+  });
+
+  it("does not invoke onHeadPush for an unchanged head or a title-only change", async () => {
+    seed(31, "tracked");
+    gh.open = [ref(31, { title: "renamed title" })];
+    const { hooks } = recordingHooks();
+    const pushes: number[] = [];
+    await reconcileOnce({ cfg, store, adapter: gh, hooks, onHeadPush: async (pr) => { pushes.push(pr); } });
+    expect(pushes).toEqual([]);
+  });
+
+  it("contains an onHeadPush failure — the reconcile pass completes and reports the error", async () => {
+    seed(32, "tracked", { head: "old-sha" });
+    gh.open = [ref(32, { head_sha: "new-sha" })];
+    const { hooks } = recordingHooks();
+    const report = await reconcileOnce({
+      cfg, store, adapter: gh, hooks,
+      onHeadPush: async () => { throw new Error("recheck exploded"); },
+    });
+    expect(report.errors.some((e) => e.includes("onHeadPush #32"))).toBe(true);
+    expect(store.getPr(32)!.head_sha).toBe("new-sha"); // track still applied
+  });
+
   it("never adopts a bot-authored PR", async () => {
     gh.open = [ref(11, { author: cfg.github.bot_login })];
     gh.labelTriggered = [item(11, cfg.github.bot_login)];

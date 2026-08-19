@@ -267,7 +267,19 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
 
   const reconcile = async (): Promise<void> => {
     await guard("reconcile", async () => {
-      const report = await reconcileOnce({ cfg, store, adapter: gh, hooks, log });
+      const report = await reconcileOnce({
+        cfg,
+        store,
+        adapter: gh,
+        hooks,
+        log,
+        // push-trigger backstop: same runRecheck the webhook's
+        // onSynchronize calls — a dead/lost webhook no longer means a
+        // post-review push goes unexamined (live gap 2026-08-19, #5307).
+        onHeadPush: async (pr, head_sha) => {
+          await guard(`recheck #${pr}`, () => runRecheck(recheckDeps, { pr, trigger: "push", head_sha }));
+        },
+      });
       log(
         `reconcile: open=${report.open_prs} triggered=${report.triggered.length} ` +
           `closed=${report.closed.length} corrections=${report.corrections} errors=${report.errors.length}`,

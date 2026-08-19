@@ -43,6 +43,13 @@ export interface ReconcileDeps {
   /** Registry backfill is an API call per open PR; the daemon runs it every
    * Nth poll. Default true. */
   backfillRegistry?: boolean;
+  /** Backstop for the push trigger (live gap 2026-08-19, PR #5307):
+   * the webhook's `onSynchronize` is the fast path, but a lost/dead webhook
+   * means a post-review push is otherwise never rechecked — the withheld-
+   * approval retry no-ops on a moved head ("a push re-reviews through its own
+   * route") while that route never fires. Same idiom as the sweep:
+   * the daemon wires runRecheck here, never a copy. */
+  onHeadPush?: (pr: number, head_sha: string) => Promise<void>;
 }
 
 export interface ReconcileReport {
@@ -133,12 +140,23 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
       const local = store.getPr(pr.number);
       if (!local) continue; // untriggered PRs are not tracked (no sweeps, spec §8)
       if (local.head_sha !== pr.head_sha || local.title !== pr.title) {
-        if (local.head_sha !== pr.head_sha) {
+        const pushed = local.head_sha !== pr.head_sha;
+        if (pushed) {
           // Push instant as GitHub-derived truth (webhooks may have been missed)
           // — the author-response metric reads these.
           store.logEvent("head_push", pr.number, { head_sha: pr.head_sha, source: "reconcile" });
         }
         applyEvent(store, pr.number, { type: "track" }, { title: pr.title, head_sha: pr.head_sha, author: pr.author }, { botLogin, now });
+        if (pushed && deps.onHeadPush) {
+          // After the track so the recheck reads the updated row. Errors are
+          // contained: a failed recheck must not abort the reconcile pass.
+          try {
+            await deps.onHeadPush(pr.number, pr.head_sha);
+          } catch (err) {
+            report.errors.push(`onHeadPush #${pr.number}: ${String(err)}`);
+            (deps.log ?? (() => {}))(`reconcile: onHeadPush failed #${pr.number}`, err);
+          }
+        }
       }
       if (local.state === "closed") {
         // GitHub says open, we say closed → GitHub wins.
