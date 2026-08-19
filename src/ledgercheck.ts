@@ -93,7 +93,6 @@ export async function enforceLedgerFreshness(deps: LedgerCheckDeps, target: Ledg
   if (freshness === "fresh") return "fresh";
 
   const detail = `ledger ${freshness} at ${path}: expected header "LEDGER PR #${pr} @ ${headSha}"`;
-  store.logAnomaly("ledger_stale", pr, roundNo, detail);
   log?.(`ledger: #${pr}${roundNo !== null ? ` round ${roundNo}` : ""} ${freshness}`, { path, head_sha: headSha });
 
   // Once-per-round cap: the mark is stamped BEFORE the inject, so no failure
@@ -101,9 +100,14 @@ export async function enforceLedgerFreshness(deps: LedgerCheckDeps, target: Ledg
   // wake itself is best-effort on top of a durable anomaly record.
   const key = roundNo !== null ? `round-${roundNo}` : `head-${headSha}`;
   if (store.ledgerNudgeSent(pr, key)) {
+    // Still stale AFTER the re-nudge: the session ignored its one nudge —
+    // this grade WAKES the overseer (severity map), first-detection
+    // "ledger_stale" stays quiet (the nudge itself is the response).
+    store.logAnomaly("ledger_stale_unresolved", pr, roundNo, detail);
     store.logEvent("ledger_stale_repeat", pr, { round_no: roundNo, head_sha: headSha, freshness });
     return "already_nudged";
   }
+  store.logAnomaly("ledger_stale", pr, roundNo, detail);
   store.recordLedgerNudge(pr, key, { round_no: roundNo, head_sha: headSha, freshness });
   await wakeOrHold(
     { store, inject: deps.inject, ...(log ? { log } : {}) },

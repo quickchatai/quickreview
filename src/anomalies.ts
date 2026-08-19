@@ -44,6 +44,10 @@ const WAKE_KINDS: ReadonlySet<string> = new Set([
   "overdue",
   "pass_plan_mismatch",
   "migration_precheck_degraded",
+  // x: a ledger still stale AFTER its one re-nudge — the
+  // session ignored the nudge, a human-attention grade. First-detection
+  // "ledger_stale" stays quiet: the nudge is the response.
+  "ledger_stale_unresolved",
 ]);
 
 export function anomalySeverity(kind: string): AnomalySeverity {

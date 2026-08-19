@@ -91,7 +91,7 @@ describe("enforceLedgerFreshness", () => {
     // Second stale detection, same round: anomaly recorded again, NO nudge.
     expect(await enforceLedgerFreshness(d, { pr: 7, roundNo: 2, headSha: HEAD })).toBe("already_nudged");
     expect(injects).toHaveLength(1);
-    expect(anomalyKinds()).toEqual(["ledger_stale", "ledger_stale"]);
+    expect(anomalyKinds()).toEqual(["ledger_stale", "ledger_stale_unresolved"]);
 
     // A different round nudges afresh (the cap is per round, not per PR).
     expect(await enforceLedgerFreshness(d, { pr: 7, roundNo: 3, headSha: HEAD })).toBe("nudged");
