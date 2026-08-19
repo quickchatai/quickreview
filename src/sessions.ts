@@ -500,9 +500,12 @@ export class PiSessionManager implements SessionHooks {
 
   /** SessionHooks: PR merged/closed — archive, drop the worktree, kill tmux. */
   /** Post-round compaction: type `/compact` into the session's pane. Manual
-   * /compact is a documented pi command (findings §compaction) —
-   * VERIFY-ON-PIN only for edge behavior (mid-turn arrival is harmless: the
-   * text lands in the composer and the next Enter-less state discards it).
+   * /compact is a documented pi command (findings §compaction).
+   * Verified live 2026-08-19 (tag burned): mid-turn arrival is NOT harmless —
+   * it ABORTS the in-flight turn (stopReason:"aborted"), which cut off every
+   * post-deploy round's tail. The verdict file is therefore the round's LAST
+   * durable write by template order (ledger comes before it); anything a
+   * session does after its verdict write is expendable by design.
    * Best-effort: a missing session is a no-op, never an error. */
   async compactSession(pr: number): Promise<void> {
     const session = prSessionName(pr);
