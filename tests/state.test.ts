@@ -130,6 +130,39 @@ describe("rounds", () => {
     expect(store.totalSpend()).toBeCloseTo(1.25 + 0.1, 6);
   });
 
+  // executed-pass telemetry, stored beside (never instead of) the plan.
+  it("records executed passes per round, distinct from planned lenses; null/unparseable read as unknown", () => {
+    const id = store.startRound(7, "initial", ["pass-baseline", "pass-validate"], 45);
+    expect(store.executedPasses(id)).toBeNull(); // unknown until the verdict reports
+
+    store.recordExecutedPasses(id, [{ name: "pass-baseline", tier: "sol-med", findings: 2 }]);
+    expect(store.executedPasses(id)).toEqual([{ name: "pass-baseline", tier: "sol-med", findings: 2 }]);
+    expect(store.roundsFor(7)[0]!.lenses).toBe("pass-baseline,pass-validate"); // the plan is untouched
+
+    store.recordExecutedPasses(id, []); // a solo round: [] ≠ unknown
+    expect(store.executedPasses(id)).toEqual([]);
+
+    store.db.prepare("UPDATE rounds SET executed_passes = ? WHERE id = ?").run("{not json", id);
+    expect(store.executedPasses(id)).toBeNull(); // unparseable degrades to unknown
+  });
+
+  it("migrates a pre-telemetry store in place (executed_passes ALTER is additive and idempotent)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-state-"));
+    try {
+      const path = join(dir, "state.db");
+      const first = new StateStore(path, now);
+      const id = first.startRound(7, "initial", ["pass-baseline"], 45);
+      first.close();
+      const second = new StateStore(path, now); // boots on an existing DB, re-running ALTERs
+      expect(second.executedPasses(id)).toBeNull();
+      second.recordExecutedPasses(id, [{ name: "pass-baseline" }]);
+      expect(second.executedPasses(id)).toEqual([{ name: "pass-baseline" }]);
+      second.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("migrates a pre-usage store in place (idempotent ALTERs)", () => {
     const dir = mkdtempSync(join(tmpdir(), "qcr-state-"));
     try {

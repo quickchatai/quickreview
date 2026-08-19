@@ -331,6 +331,24 @@ describe("shipped round templates", () => {
       expect(text).toContain("reaches the owner and the overseer");
     });
 
+    // executed-pass telemetry: the "Lenses applied" line derives
+    // from what actually ran, and the verdict carries the `passes` record.
+    it(`${roundTemplateFile(rt)} derives the lenses line from executed passes and orders the telemetry`, () => {
+      // The lenses line: real returns only, never the plan.
+      expect(text).toContain("**The lenses line reports what actually ran — never the plan.**");
+      expect(text).toContain("actually launched via the");
+      expect(text).toMatch(/never returned is not "applied"/);
+      // A solo/degraded round says so plainly — exact wording pinned.
+      expect(text).toContain("`Lenses applied: none — reviewed solo (degraded round)`");
+      // The verdict schema carries the passes array, validator outcomes included.
+      expect(text).toContain('"passes": [');
+      expect(text).toMatch(/"survived": 2, "killed": 1, "downgraded": 0/);
+      // Fill discipline: from real returns, never the plan table; [] is honest.
+      expect(text).toContain("filled from the real returns only, never copied from\nthe plan table");
+      expect(text).toContain("A pass\nthat never returned gets NO entry");
+      expect(text).toContain('"passes": []');
+    });
+
     it(`${roundTemplateFile(rt)} posts only deltas — verified-and-fine material never goes inline`, () => {
       expect(text).toContain("**Only deltas get posted.**");
       expect(text).toContain("collapsible `<details>` section at the bottom of the body");

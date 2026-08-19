@@ -237,6 +237,15 @@ other" — and only then the mechanism, the evidence and the file refs. The
 mechanism is the second sentence, never the first. Nits and questions may open
 however reads best.
 
+**The lenses line reports what actually ran — never the plan.** The body's
+`Lenses applied:` line lists ONLY passes you actually launched via the
+`subagent` tool AND got a return from, at the tier each actually ran (raises
+included) — the same real returns you record in the verdict's `passes` array
+(step 7). A pass that was unknown, failed, or never returned is not "applied"
+and must not appear on the line, whatever the plan table said. If no lens pass
+returned and you reviewed alone, never claim lenses — write exactly:
+`Lenses applied: none — reviewed solo (degraded round)`.
+
 One GitHub review: severity-tagged inline comments anchored **inside changed-line
 runs** on the exact path and side (first 50 inline, overflow to the body,
 unanchorable → body). After the plain opener the body continues with the verdict
@@ -270,6 +279,11 @@ are not):
   "ai_approved": true,
   "head_sha": "{{head_sha}}",
   "summary": "<3-4 plain sentences for the owner>",
+  "passes": [
+    { "name": "pass-baseline", "tier": "sol-med", "findings": 3 },
+    { "name": "pass-validate", "tier": "sol-med", "findings": 0,
+      "survived": 2, "killed": 1, "downgraded": 0 }
+  ],
   "finished_at": "<ISO-8601 UTC now>"
 }
 ```
@@ -277,6 +291,16 @@ are not):
 `approval_withheld` is the step-5 CI gate: `true` only when the code judgment
 was APPROVE and the approval is held back because CI is not green at this head
 (the review went out as a COMMENT). Omit it otherwise.
+
+`passes` is executed-pass telemetry: ONE entry per pass you actually launched
+AND got a return from — filled from the real returns only, never copied from
+the plan table. `tier` is the variant the pass really ran at (raises included),
+`findings` its candidate-findings count; on `pass-validate` also record its
+outcome counts (`survived`/`killed`/`downgraded`) from the kill log. A pass
+that never returned gets NO entry. If no passes ran, write `"passes": []` —
+the empty array is the honest record of a solo round, and it must agree with
+the body's `Lenses applied: none — reviewed solo (degraded round)` line: both
+derive from the same real returns.
 
 `pr` and `round_no` are numbers. `ai_approved` (soundness marker, NEEDS_HUMAN
 only) and `summary` are optional — but always write `summary`: 3-4 plain

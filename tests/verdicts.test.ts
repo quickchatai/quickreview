@@ -513,3 +513,108 @@ describe("digit-string coercion (live-round regression)", () => {
     expect(validateVerdict({ pr: "abc", round_no: 1, verdict: "APPROVE", head_sha: "x", finished_at: "y" }).ok).toBe(false);
   });
 });
+
+describe("executed-pass telemetry", () => {
+  it("validateVerdict normalizes a passes array tolerantly: aliases, digit-strings, dropped junk", () => {
+    const parsed = validateVerdict(
+      verdictFile({
+        passes: [
+          { name: "pass-baseline", tier: "sol-med", findings: "3" },
+          { lens: "pass-validate", tier: " sol-high ", candidates: 5, survived: "2", killed: 1, downgraded: 0 },
+          { tier: "sol-med" }, // nameless — dropped, never fatal
+          "garbage",
+        ] as never,
+      }),
+    );
+    expect(parsed.ok).toBe(true);
+    expect(parsed.passes_note).toContain("dropped");
+    expect(parsed.verdict?.passes).toEqual([
+      { name: "pass-baseline", tier: "sol-med", findings: 3, survived: null, killed: null, downgraded: null },
+      { name: "pass-validate", tier: "sol-high", findings: 5, survived: 2, killed: 1, downgraded: 0 },
+    ]);
+  });
+
+  it("missing or malformed passes NEVER rejects the verdict — unknown, not error", () => {
+    const absent = validateVerdict(verdictFile());
+    expect(absent.ok).toBe(true);
+    expect(absent.verdict?.passes).toBeUndefined();
+    const junk = validateVerdict(verdictFile({ passes: "pass-baseline" as never }));
+    expect(junk.ok).toBe(true);
+    expect(junk.verdict?.passes).toBeUndefined();
+    expect(junk.passes_note).toContain("not an array");
+  });
+
+  it("persists executed passes on the round, distinct from the planned lenses; no anomaly when they match", async () => {
+    const { hooks, overseer } = recordingHooks();
+    const roundId = reviewingRound(200);
+    const passes = [
+      { name: "pass-baseline", tier: "sol-med", findings: 2 },
+      { name: "pass-validate", tier: "sol-med", findings: 0, survived: 1, killed: 1, downgraded: 0 },
+    ];
+    await watcher({}, hooks).handleFile(write(200, 1, verdictFile({ pr: 200, passes })));
+    expect(store.executedPasses(roundId)).toMatchObject(passes);
+    // The plan column is untouched — executed is a second record, not an edit.
+    const round = store.db.prepare("SELECT lenses FROM rounds WHERE id = ?").get(roundId) as { lenses: string };
+    expect(round.lenses).toBe("pass-baseline,pass-validate");
+    expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'pass_plan_mismatch'").get()).toMatchObject({ c: 0 });
+    expect(overseer).toEqual([]);
+  });
+
+  it("plan≠executed logs an anomaly and injects the overseer — the verdict is never blocked", async () => {
+    const { hooks, overseer } = recordingHooks();
+    const roundId = reviewingRound(201);
+    await watcher({}, hooks).handleFile(
+      write(
+        201,
+        1,
+        verdictFile({
+          pr: 201,
+          verdict: "APPROVE",
+          passes: [
+            { name: "pass-baseline", tier: "sol-med", findings: 1 },
+            { name: "pass-extra", tier: "sol-med", findings: 0 },
+          ],
+        }),
+      ),
+    );
+    // Verdict applied normally despite the mismatch.
+    expect(store.getPr(201)!.state).toBe("tracked");
+    expect((store.db.prepare("SELECT status, verdict FROM rounds WHERE id = ?").get(roundId) as any).status).toBe("done");
+    const payload = JSON.parse(
+      (store.db.prepare("SELECT payload FROM events WHERE kind = 'pass_plan_mismatch'").get() as { payload: string }).payload,
+    );
+    expect(payload).toMatchObject({
+      round_id: roundId,
+      planned: ["pass-baseline", "pass-validate"],
+      missing: ["pass-validate"],
+      added: ["pass-extra"],
+    });
+    expect(overseer.length).toBe(1);
+    expect(overseer[0]).toContain("PASS-PLAN MISMATCH — PR #201 round 1");
+    expect(overseer[0]).toContain("pass-validate");
+    expect(overseer[0]).toContain("The verdict stands");
+  });
+
+  it("an empty passes array is a solo round: persisted as [], every planned lens reported missing", async () => {
+    const { hooks, overseer } = recordingHooks();
+    const roundId = reviewingRound(202);
+    await watcher({}, hooks).handleFile(write(202, 1, verdictFile({ pr: 202, passes: [] })));
+    expect(store.executedPasses(roundId)).toEqual([]);
+    const payload = JSON.parse(
+      (store.db.prepare("SELECT payload FROM events WHERE kind = 'pass_plan_mismatch'").get() as { payload: string }).payload,
+    );
+    expect(payload.missing).toEqual(["pass-baseline", "pass-validate"]);
+    expect(overseer[0]).toContain("solo/degraded round");
+  });
+
+  it("an old-prompt verdict with no passes stays UNKNOWN: logged, null record, verdict applied", async () => {
+    const { hooks, overseer } = recordingHooks();
+    const roundId = reviewingRound(203);
+    await watcher({}, hooks).handleFile(write(203, 1, verdictFile({ pr: 203, verdict: "APPROVE" })));
+    expect(store.getPr(203)!.state).toBe("tracked");
+    expect(store.executedPasses(roundId)).toBeNull();
+    expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'verdict_passes_unknown'").get()).toMatchObject({ c: 1 });
+    expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'pass_plan_mismatch'").get()).toMatchObject({ c: 0 });
+    expect(overseer).toEqual([]);
+  });
+});

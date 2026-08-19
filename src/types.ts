@@ -113,6 +113,29 @@ export interface RoundOrder {
   issued_at: string;
 }
 
+/**
+ * Executed-pass telemetry: one entry per pass the session actually
+ * launched via the subagent tool AND got a return from — real returns only,
+ * never the plan table. The first-night audit (F2) found posted "Lenses
+ * applied" lines claiming lenses on rounds where zero passes ran; this record
+ * is what lets the daemon see the difference between the plan
+ * (`rounds.lenses`) and reality.
+ */
+export interface VerdictPassEntry {
+  /** Lens name as planned/launched, e.g. "pass-baseline", "pass-validate". */
+  name: string;
+  /** Tier/model variant the pass actually ran at (raises included),
+   * e.g. "sol-med". Null when the session did not report one. */
+  tier?: string | null;
+  /** Candidate findings the pass returned. */
+  findings?: number | null;
+  /** Validator outcome counts (meaningful on pass-validate): candidates that
+   * survived its veto, were killed, or were downgraded. */
+  survived?: number | null;
+  killed?: number | null;
+  downgraded?: number | null;
+}
+
 /** verdict/pr-<n>-round-<k>.json — written by the PR session at round end. */
 export interface VerdictFile {
   pr: number;
@@ -134,6 +157,13 @@ export interface VerdictFile {
   /** 3-4 sentence plain-prose "what is going on" written by the session for
    * the owner's TUI detail pane. Optional; capped by the consumer. */
   summary?: string;
+  /**
+   * Executed-pass telemetry. Optional: sessions running older round
+   * prompts omit it, and the consumer treats absent/malformed as UNKNOWN —
+   * logged, never a verdict rejection (same tolerant-input discipline as the
+   * pr/round_no digit-string coercion).
+   */
+  passes?: VerdictPassEntry[];
   finished_at: string;
 }
 

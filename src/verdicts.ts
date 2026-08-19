@@ -18,7 +18,7 @@ import type { GateResult } from "./gate.js";
 import { applyEvent } from "./statemachine.js";
 import type { VerdictAnnouncer } from "./slack/announce.js";
 import type { RoundRow, StateStore } from "./state.js";
-import { normalizeVerdict, type SessionHooks, type VerdictFile } from "./types.js";
+import { normalizeVerdict, type SessionHooks, type VerdictFile, type VerdictPassEntry } from "./types.js";
 import { flushHeldWakes } from "./wakes.js";
 
 export interface VerdictAdapter {
@@ -61,6 +61,49 @@ export interface ParsedVerdict {
   ok: boolean;
   verdict?: VerdictFile;
   error?: string;
+  /** Why the `passes` telemetry ended up unknown/reduced — a note
+   * for the log, NEVER a rejection reason. Absent when passes were clean. */
+  passes_note?: string;
+}
+
+/**
+ * Tolerant normalization of the executed-pass telemetry. LLM-written
+ * files: digit-string counts coerce, `lens` is accepted for `name`,
+ * `candidates`/`candidate_findings` for `findings`. Anything unusable —
+ * a non-array, an entry with no name — degrades to UNKNOWN (undefined) or is
+ * dropped with a note; nothing here can fail the verdict.
+ */
+export function normalizePasses(raw: unknown): { passes?: VerdictPassEntry[]; note?: string } {
+  if (raw === undefined || raw === null) return { note: "absent" };
+  if (!Array.isArray(raw)) return { note: `not an array (${typeof raw})` };
+  const count = (val: unknown): number | null => {
+    if (typeof val === "number" && Number.isFinite(val)) return Math.trunc(val);
+    if (typeof val === "string" && /^\d+$/.test(val)) return Number(val);
+    return null;
+  };
+  const passes: VerdictPassEntry[] = [];
+  let dropped = 0;
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null) {
+      dropped++;
+      continue;
+    }
+    const e = entry as Record<string, unknown>;
+    const name = typeof e.name === "string" && e.name.trim() ? e.name.trim() : typeof e.lens === "string" && e.lens.trim() ? e.lens.trim() : null;
+    if (!name) {
+      dropped++;
+      continue;
+    }
+    passes.push({
+      name,
+      tier: typeof e.tier === "string" && e.tier.trim() ? e.tier.trim() : null,
+      findings: count(e.findings) ?? count(e.candidates) ?? count(e.candidate_findings),
+      survived: count(e.survived),
+      killed: count(e.killed),
+      downgraded: count(e.downgraded),
+    });
+  }
+  return { passes, ...(dropped > 0 ? { note: `${dropped} malformed entr${dropped === 1 ? "y" : "ies"} dropped` } : {}) };
 }
 
 /** Shape validation for VerdictFile. Anything off → the anomaly path. */
@@ -97,7 +140,13 @@ export function validateVerdict(raw: unknown): ParsedVerdict {
   if (v.ledger_snapshot !== undefined && typeof v.ledger_snapshot !== "string") return bad("ledger_snapshot must be a string");
   if (v.summary !== undefined && typeof v.summary !== "string") return bad("summary must be a string");
   if (typeof v.summary === "string") v.summary = v.summary.trim().slice(0, 800);
-  return { ok: true, verdict: raw as unknown as VerdictFile };
+  // Executed-pass telemetry: tolerant by design — old-prompt
+  // sessions omit it and malformed shapes degrade to unknown, never to a
+  // rejected verdict.
+  const norm = normalizePasses(v.passes);
+  if (norm.passes) v.passes = norm.passes;
+  else delete v.passes;
+  return { ok: true, verdict: raw as unknown as VerdictFile, ...(norm.note ? { passes_note: norm.note } : {}) };
 }
 
 function sleep(ms: number): Promise<void> {
@@ -211,6 +260,7 @@ export class VerdictWatcher {
         this.archive(name);
         return true;
       }
+      if (parsed.passes_note) this.log(`verdicts: ${name} passes telemetry: ${parsed.passes_note}`);
       await this.apply(parsed.verdict, name);
       this.archive(name);
       return true;
@@ -230,6 +280,10 @@ export class VerdictWatcher {
     // spend_usd from the file is fiction (template echo) — never stored; the
     // measured figures land via recordRoundUsage below.
     if (round) store.finishRound(round.id, v.verdict, null, v.summary ?? null);
+    // Executed-pass telemetry: persist what actually ran beside the
+    // plan, and flag plan≠executed. Best-effort side channel — nothing in it
+    // may disturb the verdict.
+    if (round) await this.recordPassTelemetry(v, round);
     applyEvent(store, v.pr, { type: "verdict", verdict: v.verdict }, { head_sha: v.head_sha }, { botLogin: cfg.github.bot_login, now: () => this.now(), reason: `verdict:${v.verdict}` });
     store.logEvent("verdict_applied", v.pr, {
       file: name,
@@ -275,6 +329,58 @@ export class VerdictWatcher {
     // whatever arrived while it was busy, in arrival order.
     await this.flushWakes(v.pr);
     this.log(`verdicts: #${v.pr} round ${v.round_no} → ${v.verdict}`);
+  }
+
+  // ---- executed-pass telemetry --------------------------------
+
+  /**
+   * Persist the verdict's executed-pass report and compare it with the plan
+   * (`rounds.lenses`). Missing telemetry ⇒ logged as UNKNOWN; plan≠executed ⇒
+   * logged anomaly + overseer inject. NEVER blocks the verdict — everything
+   * here is wrapped, and the verdict was already applied by the caller.
+   */
+  private async recordPassTelemetry(v: VerdictFile, round: RoundRow): Promise<void> {
+    const { store } = this.deps;
+    try {
+      if (!v.passes) {
+        // Old-prompt session (or the session reported nothing usable): the
+        // record stays NULL = unknown, distinct from [] = "ran zero passes".
+        store.logEvent("verdict_passes_unknown", v.pr, { round_id: round.id, round_no: v.round_no });
+        this.log(`verdicts: #${v.pr} round ${v.round_no} executed passes unknown (no telemetry in verdict)`);
+        return;
+      }
+      store.recordExecutedPasses(round.id, v.passes);
+      const planned = round.lenses ? round.lenses.split(",").filter(Boolean) : [];
+      const executed = v.passes.map((p) => p.name);
+      const missing = planned.filter((l) => !executed.includes(l));
+      const added = [...new Set(executed.filter((l) => !planned.includes(l)))];
+      if (missing.length === 0 && added.length === 0) return;
+      store.logEvent("pass_plan_mismatch", v.pr, {
+        round_id: round.id,
+        round_no: v.round_no,
+        planned,
+        executed,
+        missing,
+        added,
+      });
+      this.log(`verdicts: #${v.pr} round ${v.round_no} pass plan mismatch`, { planned, executed, missing, added });
+      await this.safe(
+        () =>
+          this.deps.hooks.injectOverseer(
+            [
+              `PASS-PLAN MISMATCH — PR #${v.pr} round ${v.round_no}`,
+              `Planned: ${planned.join(", ") || "(none)"}`,
+              `Executed (session-reported): ${executed.join(", ") || "(none — solo/degraded round)"}`,
+              ...(missing.length > 0 ? [`Missing (planned but never returned): ${missing.join(", ")}`] : []),
+              ...(added.length > 0 ? [`Added beyond the plan: ${added.join(", ")} (sanctioned only via the add protocol, with a stated reason in the summary)`] : []),
+              "The verdict stands — this is telemetry, not a veto. Check the session if planned passes silently never ran (the posted review must not claim them).",
+            ].join("\n"),
+          ),
+        `inject overseer pass-plan mismatch #${v.pr}`,
+      );
+    } catch (err) {
+      this.log(`verdicts: pass telemetry failed for #${v.pr}`, err);
+    }
   }
 
   // ---- measured usage -----------------------------------------

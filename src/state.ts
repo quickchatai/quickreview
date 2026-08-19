@@ -4,6 +4,7 @@
 import Database from "better-sqlite3";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import type { VerdictPassEntry } from "./types.js";
 
 export type PrLifecycleState =
   | "tracked"
@@ -66,6 +67,11 @@ export interface RoundRow {
    * later audit can tell which tier killed which finding. Null on rounds
    * started before the column existed (and on backfilled history). */
   validate_tier: string | null;
+  /** Executed-pass telemetry: JSON array of VerdictPassEntry — the
+   * passes the session ACTUALLY ran, as reported in the verdict file. Distinct
+   * from `lenses`, which is the daemon's PLAN. Null = unknown (round predates
+   * the field, or the session ran an older prompt and reported nothing). */
+  executed_passes: string | null;
 }
 
 /** PR lifecycle facts for PRs the daemon never tracked (M2 backfill fills it).
@@ -408,6 +414,8 @@ export class StateStore {
       "ALTER TABLE slack_cooldowns ADD COLUMN bypassed INTEGER NOT NULL DEFAULT 0",
       // The validator's tier for the round — nullable, additive.
       "ALTER TABLE rounds ADD COLUMN validate_tier TEXT",
+      // Executed-pass telemetry — JSON array, nullable, additive.
+      "ALTER TABLE rounds ADD COLUMN executed_passes TEXT",
     ]) {
       try {
         this.db.exec(ddl);
@@ -544,6 +552,30 @@ export class StateStore {
     this.db
       .prepare("UPDATE rounds SET tokens_in = ?, tokens_out = ?, tokens_cache_read = ?, est_usd = ? WHERE id = ?")
       .run(usage.tokens_in, usage.tokens_out, usage.tokens_cache_read ?? null, usage.est_usd, id);
+  }
+
+  /**
+   * Executed-pass telemetry for a round — what the session reported
+   * it ACTUALLY ran, stored beside (never instead of) the planned `lenses`.
+   * Overwrites: a re-delivered verdict keeps only the latest report.
+   */
+  recordExecutedPasses(id: number, passes: readonly VerdictPassEntry[]): void {
+    this.db.prepare("UPDATE rounds SET executed_passes = ? WHERE id = ?").run(JSON.stringify(passes), id);
+  }
+
+  /** Parsed executed-pass telemetry; null = unknown (absent or unparseable —
+   * an unparseable stored value reads as unknown, matching the input side). */
+  executedPasses(id: number): VerdictPassEntry[] | null {
+    const row = this.db.prepare("SELECT executed_passes FROM rounds WHERE id = ?").get(id) as
+      | { executed_passes: string | null }
+      | undefined;
+    if (!row?.executed_passes) return null;
+    try {
+      const parsed = JSON.parse(row.executed_passes);
+      return Array.isArray(parsed) ? (parsed as VerdictPassEntry[]) : null;
+    } catch {
+      return null;
+    }
   }
 
   /** A dispatch attempt creates its round row before handing the order to the
