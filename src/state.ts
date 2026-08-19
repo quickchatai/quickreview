@@ -880,6 +880,27 @@ export class StateStore {
     });
   }
 
+  /**
+   * Self-requeues already spent on a PR at a given head (cap
+   * accounting). Counts `round_self_requeued` events whose payload head_sha
+   * matches — a new head resets the budget, exactly like the withheld/reviewed
+   * marks are per-head positions. No recency window: the budget is per head,
+   * not per day.
+   */
+  selfRequeueCount(pr: number, headSha: string): number {
+    const rows = this.db
+      .prepare("SELECT payload FROM events WHERE kind = 'round_self_requeued' AND pr = ?")
+      .all(pr) as Array<{ payload: string | null }>;
+    return rows.filter((r) => {
+      if (!r.payload) return false;
+      try {
+        return (JSON.parse(r.payload) as { head_sha?: unknown }).head_sha === headSha;
+      } catch {
+        return false;
+      }
+    }).length;
+  }
+
   /** Head sha of the last applied verdict for a PR (from the event log). */
   lastVerdictHead(pr: number): string | undefined {
     const row = this.db

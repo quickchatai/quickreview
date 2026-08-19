@@ -12,7 +12,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, watch, type FSWatcher } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { sandboxRoot, type Config } from "./config.js";
+import { DEFAULT_MAX_SELF_REQUEUES, sandboxRoot, type Config } from "./config.js";
 import { auditExecViolations, collectWindowLines, estimateUsd, measureRoundUsage, type ModelPricing, type UsageFs } from "./usage.js";
 import type { GateResult } from "./gate.js";
 import { applyEvent } from "./statemachine.js";
@@ -393,10 +393,100 @@ export class VerdictWatcher {
     );
   }
 
+  /**
+   * Stuck-round triage: is this overdue round one the daemon should
+   * requeue itself? "Stuck" is overdue (the caller already established that)
+   * AND session dead AND no verdict file on disk.
+   * - no `sessionAlive` hook, a hook error, or a live session ⇒ `not_stuck`:
+   *   the legacy anomaly park stands (a live-but-slow session is a
+   *   judgment call for a human, not a respawn).
+   * - session dead but the round's verdict file is sitting unconsumed ⇒
+   *   `verdict_pending`: the sweep will consume it — neither a requeue nor an
+   *   anomaly may race a real verdict (the restart-orphan/self-requeue
+   *   idempotency hinges on never double-owning a round that already decided).
+   */
+  private async stuckDisposition(round: RoundRow): Promise<"not_stuck" | "verdict_pending" | "dead"> {
+    const alive = this.deps.hooks.sessionAlive;
+    if (!alive) return "not_stuck";
+    let dead: boolean;
+    try {
+      dead = !(await alive.call(this.deps.hooks, round.pr));
+    } catch {
+      return "not_stuck";
+    }
+    if (!dead) return "not_stuck";
+    if (existsSync(join(this.deps.verdictDir, `pr-${round.pr}-round-${round.round_no}.json`))) return "verdict_pending";
+    return "dead";
+  }
+
+  /**
+   * Self-requeue a stuck round. Returns true when the round was
+   * handled here (cancelled + PR re-queued for a fresh dispatch through the
+   * NORMAL pump — same move as the overseer's rerun-round and the startup
+   * orphan requeue); false when the per-head cap is exhausted and the caller
+   * must terminalize through the anomaly park instead.
+   *
+   * Session-side only by construction: no label, no review, no gate call —
+   * dry-run and live behave identically. The cancelled round keeps a NULL
+   * verdict, so `priorRoundCount`/review_no never age (a failed round must
+   * not age the PR). Held wakes stay held: the requeued round is about to
+   * dispatch, and its own round-end paths flush them (S4).
+   */
+  private async selfRequeue(round: RoundRow): Promise<boolean> {
+    const { store, cfg } = this.deps;
+    const row = store.getPr(round.pr);
+    const head = row?.head_sha ?? "";
+    const cap = cfg.daemon.max_self_requeues ?? DEFAULT_MAX_SELF_REQUEUES;
+    const attempt = store.selfRequeueCount(round.pr, head) + 1;
+    if (attempt > cap) {
+      store.logEvent("self_requeue_cap_exhausted", round.pr, {
+        round_id: round.id,
+        round_no: round.round_no,
+        head_sha: head,
+        attempts: attempt - 1,
+        cap,
+      });
+      return false;
+    }
+    const reason = `round ${round.round_no} passed its deadline (${round.deadline_at}) with no verdict and its session is dead`;
+    store.markRoundCancelled(round.id, `self-requeue ${attempt}/${cap} — ${reason}`);
+    store.logEvent("round_self_requeued", round.pr, {
+      round_id: round.id,
+      round_no: round.round_no,
+      head_sha: head,
+      attempt,
+      cap,
+      reason,
+    });
+    // Requeue through the normal dispatch path: back to queued with a fresh
+    // trigger_ts; the pump re-dispatches and dispatchRound rebirths the dead
+    // session. Never a parallel session, never a mid-round instruction.
+    if (row && row.state === "reviewing") {
+      store.upsertPr({ ...row, state: "queued", trigger_ts: this.now().toISOString() });
+    }
+    this.log(`verdicts: SELF-REQUEUE #${round.pr} round ${round.round_no} attempt ${attempt}/${cap} — ${reason}`);
+    await this.safe(
+      () =>
+        this.deps.hooks.injectOverseer(
+          [
+            `SELF-REQUEUE (recovery) — PR #${round.pr} round ${round.round_no}, attempt ${attempt}/${cap}`,
+            reason,
+            "The daemon cancelled the dead round and re-queued the PR for a fresh dispatch through the normal path; the session is reborn at dispatch. No GitHub state was touched.",
+            "This is a recovery path, not a normal one — if it recurs on the same PR, investigate why its sessions die mid-round.",
+          ].join("\n"),
+        ),
+      "inject overseer self-requeue",
+    );
+    return true;
+  }
+
   /** Deadline sweep — a running round past `deadline_at` is an anomaly.
    * A superseded round (a newer round exists on the same PR) is cancelled
    * silently instead: its PR state, labels and reviewer requests belong to
-   * the newer round, and yanking them here corrupted live reviews. */
+   * the newer round, and yanking them here corrupted live reviews.
+   * an overdue round with no verdict whose session is DEAD is
+   * self-requeued (capped per head) instead of parked — a stuck round no
+   * longer waits for a deploy restart. */
   async checkDeadlines(): Promise<number[]> {
     const overdue: number[] = [];
     const nowMs = this.now().getTime();
@@ -420,11 +510,19 @@ export class VerdictWatcher {
         this.log(`verdicts: #${round.pr} round ${round.round_no} cancelled (superseded)`);
         continue;
       }
+      const stuck = await this.stuckDisposition(round);
+      if (stuck === "verdict_pending") {
+        // A real verdict is on disk — the sweep consumes it; do nothing here.
+        this.log(`verdicts: #${round.pr} round ${round.round_no} overdue but its verdict file is pending — leaving it to the sweep`);
+        continue;
+      }
+      if (stuck === "dead" && (await this.selfRequeue(round))) continue;
       overdue.push(round.pr);
       await this.handleAnomaly(
         round.pr,
         round.round_no,
-        `round ${round.round_no} passed its deadline (${round.deadline_at}); started ${round.started_at}`,
+        `round ${round.round_no} passed its deadline (${round.deadline_at}); started ${round.started_at}` +
+          (stuck === "dead" ? " — session dead and the self-requeue cap is exhausted; parking" : ""),
         "overdue",
       );
     }

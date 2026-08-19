@@ -153,4 +153,9 @@ export interface SessionHooks {
    * re-reads were 41% of measured cost (2026-08-14 mining) and sessions never
    * compacted on their own. Optional — stubs may omit it. */
   compactSession?(pr: number): Promise<void>;
+  /** Is the PR's session alive (tmux session present)? The stuck-round
+   * detector reads this — the EXISTING liveness signal, not a new one.
+   * Optional: absent (stubs, tests) ⇒ liveness is unknown and the deadline
+   * checker degrades to the legacy anomaly park. */
+  sessionAlive?(pr: number): Promise<boolean>;
 }
