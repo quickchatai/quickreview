@@ -668,22 +668,21 @@ describe("renderIntentNote", () => {
   });
 });
 
-// item 5 — ledger discipline. Every round template ends with an
-// explicit post-verdict ledger write: the daemon compacts the conversation
-// right after the verdict and only the ledger survives, so a round that skips
-// the write leaves the next round blind (#5306 had no ledger, #5313's was
+// item 5 — ledger discipline. Every round template mandates a ledger
+// rewrite, and it must come BEFORE the verdict file: the verdict file is the
+// daemon's round-over signal — consumption compacts the conversation, so a
+// post-verdict ledger write was aborted mid-turn on every live 2026-08-19
+// round (all post-deploy sessions ended stopReason:aborted with ledgers/
 // stale). The wording is pinned here; edit template and pin together.
 describe("end-of-round ledger discipline", () => {
-  const PIN = "Last action of every round, after the verdict file is written: update the ledger.";
+  const PIN = "Update the ledger, then write the verdict file — in that order; nothing comes after the verdict write.";
   for (const rt of ["first", "re-review", "staleness"] as RoundType[]) {
-    it(`${roundTemplateFile(rt)} orders the ledger write AFTER the verdict file, verbatim`, () => {
+    it(`${roundTemplateFile(rt)} orders the ledger write BEFORE the verdict file, verbatim`, () => {
       const raw = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile(rt)), "utf8");
       const flat = raw.replace(/\s+/g, " ");
       expect(flat).toContain(`**${PIN}**`);
-      const verdictIdx = flat.indexOf("Write `verdict/pr-");
-      expect(verdictIdx).toBeGreaterThan(-1);
-      expect(flat.indexOf(PIN)).toBeGreaterThan(verdictIdx);
-      // The step carries its own why — the compaction stake.
+      // The step carries its own why — the compaction stake and the ordering.
+      expect(flat).toContain("it must be written BEFORE the verdict file");
       expect(flat).toContain("only the ledger survives compaction");
       expect(flat).toContain("The round is not finished until the ledger is written");
     });
