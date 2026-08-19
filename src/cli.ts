@@ -49,12 +49,12 @@ function cmdSpend(): void {
   try {
     const total = store.totalSpend();
     const today = new Date().toISOString().slice(0, 10);
-    const todayRounds = store.roundsOn(today);
-    // est_usd (measured from session JSONLs) preferred; spend_usd only covers
-    // historical rows recorded before usage measurement existed.
-    const todaySpend = todayRounds.reduce((n, r) => n + (r.est_usd ?? r.spend_usd ?? 0), 0);
+    // est_usd is the ONE spend field (legacy spend_usd folded into it
+    // at boot); expired zombie rounds never count towards an aggregate.
+    const todayRounds = store.roundsOn(today).filter((r) => r.status !== "expired");
+    const todaySpend = todayRounds.reduce((n, r) => n + (r.est_usd ?? 0), 0);
     const totals = store.db
-      .prepare("SELECT COALESCE(SUM(tokens_in), 0) AS tin, COALESCE(SUM(tokens_out), 0) AS tout FROM rounds")
+      .prepare("SELECT COALESCE(SUM(tokens_in), 0) AS tin, COALESCE(SUM(tokens_out), 0) AS tout FROM rounds WHERE status != 'expired'")
       .get() as { tin: number; tout: number };
     const todayIn = todayRounds.reduce((n, r) => n + (r.tokens_in ?? 0), 0);
     const todayOut = todayRounds.reduce((n, r) => n + (r.tokens_out ?? 0), 0);
@@ -74,7 +74,7 @@ function cmdToday(): void {
     for (const r of rounds) {
       const tokens = r.tokens_in !== null || r.tokens_out !== null ? ` tok=${r.tokens_in ?? 0}/${r.tokens_out ?? 0}` : "";
       console.log(
-        `#${r.pr} round ${r.round_no} (${r.round_type}) [${r.status}] verdict=${r.verdict ?? "—"} spend=$${(r.est_usd ?? r.spend_usd ?? 0).toFixed(2)}${tokens} lenses=${r.lenses}`,
+        `#${r.pr} round ${r.round_no} (${r.round_type}) [${r.status}] verdict=${r.verdict ?? "—"} spend=$${(r.est_usd ?? 0).toFixed(2)}${tokens} lenses=${r.lenses}`,
       );
     }
     const events = store.eventsOn(today);
@@ -136,7 +136,7 @@ export function whyJson(store: StateStore, n: number, archiveDir: string): WhyPa
   const payload: WhyPayload = {
     pr: n,
     known: pr !== undefined || rounds.length > 0,
-    spend_usd: rounds.reduce((s, r) => s + (r.est_usd ?? r.spend_usd ?? 0), 0),
+    spend_usd: rounds.reduce((s, r) => s + (r.status !== "expired" ? (r.est_usd ?? 0) : 0), 0),
     rounds: rounds.map((r) => ({
       round_no: r.round_no,
       round_type: r.round_type,
@@ -177,12 +177,13 @@ export function todayJson(
   today: string,
 ): { date: string; rounds: unknown[]; spend_usd: number; tokens_in: number; tokens_out: number; events: unknown[] } {
   const rounds = store.roundsOn(today);
+  const live = rounds.filter((r) => r.status !== "expired");
   return {
     date: today,
     rounds,
-    spend_usd: rounds.reduce((n, r) => n + (r.est_usd ?? r.spend_usd ?? 0), 0),
-    tokens_in: rounds.reduce((n, r) => n + (r.tokens_in ?? 0), 0),
-    tokens_out: rounds.reduce((n, r) => n + (r.tokens_out ?? 0), 0),
+    spend_usd: live.reduce((n, r) => n + (r.est_usd ?? 0), 0),
+    tokens_in: live.reduce((n, r) => n + (r.tokens_in ?? 0), 0),
+    tokens_out: live.reduce((n, r) => n + (r.tokens_out ?? 0), 0),
     events: store.eventsOn(today),
   };
 }

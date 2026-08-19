@@ -39,6 +39,14 @@ describe("parseConfig", () => {
     expect(cfg.dry_run).toBe(false);
   });
 
+  it("zombie-round expiry horizon: shipped value, and a default for older configs", () => {
+    expect(cfg.daemon.expire_overdue_after_h).toBe(24);
+    const older = readFileSync(configPath, "utf8").replace(/^expire_overdue_after_h.*$/m, "");
+    expect(parseConfig(older).daemon.expire_overdue_after_h).toBe(24);
+    const off = readFileSync(configPath, "utf8").replace(/^expire_overdue_after_h.*$/m, "expire_overdue_after_h = 0");
+    expect(parseConfig(off).daemon.expire_overdue_after_h).toBe(0);
+  });
+
   it("expands secrets_dir to an absolute path", () => {
     expect(cfg.github.secrets_dir.startsWith("~")).toBe(false);
     expect(cfg.github.secrets_dir).toBe(resolve(homedir(), ".config/quickreview-bot"));

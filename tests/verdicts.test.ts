@@ -13,6 +13,8 @@ const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "config.toml
 /** Recording adapter — stands in for GitHubAdapter + MutationGate. */
 class FakeAdapter implements VerdictAdapter {
   calls: string[] = [];
+  /** Optional checks read (ci_state stamping); absent by default. */
+  listChecks?: (ref: string) => Promise<import("../src/cigate.js").CheckSummary[]>;
   async addLabel(n: number, label: string): Promise<GateResult> {
     this.calls.push(`addLabel:${n}:${label}`);
     return { executed: false, dryRunFile: "d" };
@@ -321,6 +323,11 @@ describe("anomaly paths", () => {
     expect(round.status).toBe("overdue");
     expect(round.verdict).toBeNull();
     expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'verdict_malformed'").get()).toMatchObject({ c: 1 });
+    // the durable anomaly record rides beside the inject file.
+    const anomalies = store.anomalies();
+    expect(anomalies).toHaveLength(1);
+    expect(anomalies[0]).toMatchObject({ kind: "malformed", pr: 200, round_no: 1 });
+    expect(anomalies[0]!.detail).toContain("malformed verdict file");
   });
 
   it("a verdict value outside the enum is malformed, never applied", async () => {
@@ -353,6 +360,8 @@ describe("anomaly paths", () => {
 
     expect(await w.checkDeadlines()).toEqual([300]);
     expect(overseer[0]).toContain("ANOMALY (overdue)");
+    // the durable anomaly record rides beside the inject file.
+    expect(overdueStore.anomalies()).toMatchObject([{ kind: "overdue", pr: 300, round_no: 1 }]);
     expect(overdueStore.getPr(300)!.state).toBe("awaiting_human");
     expect((overdueStore.db.prepare("SELECT status FROM rounds WHERE id = ?").get(roundId) as any).status).toBe("overdue");
     // No reviewer nomination anywhere on the anomaly path either.
@@ -450,6 +459,31 @@ describe("approval withheld for red CI, session route", () => {
 
     expect(store.approvalWithheld(100)).toMatchObject({ head_sha: "abc123", reason: "red-ci" });
     expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'approval_withheld_red_ci'").get()).toEqual({ c: 1 });
+  });
+
+  it("stamps ci_state on the mark when the adapter can read checks", async () => {
+    reviewingRound(100);
+    adapter.listChecks = async (ref: string) => {
+      expect(ref).toBe("abc123");
+      return [{ name: "ci", status: "completed", conclusion: "failure" }];
+    };
+    const name = write(100, 1, verdictFile({ verdict: "APPROVE", approval_withheld: true }));
+
+    await watcher().handleFile(name);
+
+    expect(store.approvalWithheld(100)).toMatchObject({ head_sha: "abc123", reason: "red-ci", ci_state: "red" });
+  });
+
+  it("a failed checks read stores a null ci_state, exactly as before", async () => {
+    reviewingRound(100);
+    adapter.listChecks = async () => {
+      throw new Error("boom");
+    };
+    const name = write(100, 1, verdictFile({ verdict: "APPROVE", approval_withheld: true }));
+
+    await watcher().handleFile(name);
+
+    expect(store.approvalWithheld(100)).toMatchObject({ head_sha: "abc123", ci_state: null });
   });
 
   it("clears an older mark when the next verdict does not withhold anything", async () => {

@@ -326,7 +326,10 @@ export function carryWithheldMark(
 ): void {
   const withheld = store.approvalWithheld(pr);
   if (!withheld || withheld.head_sha === newHead) return;
-  store.recordApprovalWithheld(pr, { head_sha: newHead, ci_state: null, reason: withheld.reason ?? "red-ci" });
+  // the classifier verdict that caused the withhold rides along with
+  // the mark — the carried head has no fresher CI read to offer, and the
+  // retry re-classifies at release time anyway.
+  store.recordApprovalWithheld(pr, { head_sha: newHead, ci_state: withheld.ci_state ?? null, reason: withheld.reason ?? "red-ci" });
   store.logEvent("approval_withheld_carried", pr, { from: withheld.head_sha, to: newHead, via });
   log(`recheck: #${pr} withheld approval carried ${withheld.head_sha.slice(0, 7)} → ${newHead.slice(0, 7)} (${via})`);
 }
@@ -514,7 +517,17 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
     const to = req.trigger === "base_advance" && req.base ? req.base.after : head;
     const res = await deps.resolvedFilesInMerges(from, to);
     resolvedFiles = res.files;
-    if (res.degraded) store.logEvent("recheck_merge_verify_degraded", req.pr, { from, to });
+    if (res.degraded) {
+      store.logEvent("recheck_merge_verify_degraded", req.pr, { from, to });
+      // Durable anomaly record — degraded is "never silently
+      // quieter" (the owner, 2026-08-19), and now also never unqueryable.
+      store.logAnomaly(
+        "recheck_merge_verify_degraded",
+        req.pr,
+        null,
+        `merge-verify degraded ${from.slice(0, 7)}→${to.slice(0, 7)} — prior (delta-only) classification kept`,
+      );
+    }
   }
 
   const plan = planRecheck({

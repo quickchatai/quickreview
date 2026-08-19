@@ -358,7 +358,16 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         await threadDecisions.sweep();
         await rechecks.sweep();
       }));
-      every(DEADLINE_TICK_S, () => void guard("deadline check", () => verdicts.checkDeadlines()));
+      every(DEADLINE_TICK_S, () => void guard("deadline check", async () => {
+        await verdicts.checkDeadlines();
+        // Zombie-round expiry: rounds stuck `overdue` past the
+        // horizon whose PR has since verdicted/closed become terminal
+        // `expired`. Rounds a rerun could still service are left standing.
+        if (cfg.daemon.expire_overdue_after_h > 0) {
+          const expired = store.expireOverdueRounds(cfg.daemon.expire_overdue_after_h);
+          if (expired.length > 0) log(`expired ${expired.length} zombie round(s): ids ${expired.join(",")}`);
+        }
+      }));
       every(STATUS_TICK_S, writeStatus);
       if (deps.onStart) await guard("onStart", async () => deps.onStart!(this));
     },

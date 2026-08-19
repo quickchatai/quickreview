@@ -63,19 +63,20 @@ export interface DailyUsage {
   rounds: number;
   tokens_in: number;
   tokens_out: number;
-  /** est_usd (measured) preferred; spend_usd only for pre-measurement rows. */
+  /** est_usd is the ONE spend field (legacy spend_usd folded in). */
   est_usd: number;
 }
 
-/** Aggregate one day's measured usage from the rounds table. */
+/** Aggregate one day's measured usage from the rounds table. Expired zombie
+ * rounds are excluded from every figure. */
 export function dailyUsage(store: StateStore, date: string): DailyUsage {
-  const rounds = store.roundsOn(date);
+  const rounds = store.roundsOn(date).filter((r) => r.status !== "expired");
   return {
     date,
     rounds: rounds.length,
     tokens_in: rounds.reduce((n, r) => n + (r.tokens_in ?? 0), 0),
     tokens_out: rounds.reduce((n, r) => n + (r.tokens_out ?? 0), 0),
-    est_usd: rounds.reduce((n, r) => n + (r.est_usd ?? r.spend_usd ?? 0), 0),
+    est_usd: rounds.reduce((n, r) => n + (r.est_usd ?? 0), 0),
   };
 }
 

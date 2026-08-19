@@ -34,6 +34,9 @@ export interface RoundRow {
   round_type: string;
   lenses: string;
   verdict: string | null;
+  /** LEGACY: the old self-reported spend column. No longer written —
+   * boot folds surviving values into est_usd and every consumer reads est_usd.
+   * Kept in the DDL because a live DB cannot drop it without a table rebuild. */
   spend_usd: number | null;
   duration_s: number | null;
   /** Session-written 3-4 sentence round summary (verdict file `summary`). */
@@ -344,6 +347,16 @@ export interface ApprovalWithheldRow {
   created_at: string;
 }
 
+/** One recorded anomaly — the queryable twin of an overseer inject. */
+export interface AnomalyRecord {
+  ts: string;
+  /** What went wrong: 'malformed' | 'overdue' | 'migration_precheck_degraded' | … */
+  kind: string;
+  pr: number | null;
+  round_no: number | null;
+  detail: string;
+}
+
 /** A wake held while its PR's round was in flight (single-shepherd S4). */
 export interface PendingWakeRow {
   id: number;
@@ -415,6 +428,40 @@ export class StateStore {
         /* column already present */
       }
     }
+    this.runDataMigrations();
+  }
+
+  /**
+   * One-shot, idempotent data migrations — run on every boot, after
+   * the schema ALTERs, and safe on the live VM DB (pure UPDATEs, no DDL).
+   *
+   * 1. Spend fold: `spend_usd` is retired — `est_usd` is the ONE spend field.
+   *    Legacy self-reported figures with no measured value fold into est_usd
+   *    so history keeps its cost; re-running matches nothing.
+   * 2. Zombie expiry: the Aug 13–14 shakeout left rounds stuck `overdue`
+   *    forever, polluting aggregates. Rounds from before 2026-08-15 whose PR
+   *    has since verdicted (a round of the same or higher number delivered a
+   *    verdict) or closed move to terminal `expired`. Rounds a rerun could
+   *    still service (open PR, nothing decided since) are left alone — live
+   *    rerun of a stuck round is's job, never this one's.
+   */
+  private runDataMigrations(): void {
+    this.db
+      .prepare("UPDATE rounds SET est_usd = spend_usd WHERE est_usd IS NULL AND spend_usd IS NOT NULL")
+      .run();
+    const info = this.db
+      .prepare(
+        `UPDATE rounds SET status = 'expired', finished_at = COALESCE(finished_at, @now)
+          WHERE status = 'overdue'
+            AND started_at < '2026-08-15'
+            AND (
+              EXISTS (SELECT 1 FROM pr_state p WHERE p.number = rounds.pr AND p.state = 'closed')
+              OR EXISTS (SELECT 1 FROM rounds r2 WHERE r2.pr = rounds.pr AND r2.id != rounds.id
+                           AND r2.backfilled = 0 AND r2.verdict IS NOT NULL AND r2.round_no >= rounds.round_no)
+            )`,
+      )
+      .run({ now: this.ts() });
+    if (info.changes > 0) this.logEvent("rounds_expired", null, { count: info.changes, one_shot: true });
   }
 
   close(): void {
@@ -527,12 +574,18 @@ export class StateStore {
     return this.db.prepare("SELECT * FROM rounds ORDER BY started_at, id").all() as RoundRow[];
   }
 
-  finishRound(id: number, verdict: string, spendUsd: number | null, summary: string | null = null): void {
+  /** `estUsd` is a caller-supplied initial estimate; it lands in `est_usd` (the
+   * ONE spend field) only when no measured figure exists yet —
+   * recordRoundUsage's measurement always supersedes it. The retired
+   * `spend_usd` column is never written. */
+  finishRound(id: number, verdict: string, estUsd: number | null, summary: string | null = null): void {
     const row = this.db.prepare("SELECT started_at FROM rounds WHERE id = ?").get(id) as { started_at: string } | undefined;
     const duration = row ? (this.now().getTime() - Date.parse(row.started_at)) / 1000 : null;
     this.db
-      .prepare("UPDATE rounds SET verdict = ?, spend_usd = ?, duration_s = ?, finished_at = ?, summary = ?, status = 'done' WHERE id = ?")
-      .run(verdict, spendUsd, duration, this.ts(), summary, id);
+      .prepare(
+        "UPDATE rounds SET verdict = ?, est_usd = COALESCE(est_usd, ?), duration_s = ?, finished_at = ?, summary = ?, status = 'done' WHERE id = ?",
+      )
+      .run(verdict, estUsd, duration, this.ts(), summary, id);
   }
 
   /** Measured usage for a round (pi session JSONLs). Overwrites —
@@ -620,10 +673,42 @@ export class StateStore {
     return this.db.prepare("SELECT * FROM rounds WHERE started_at LIKE ? ORDER BY started_at").all(`${dateIso}%`) as RoundRow[];
   }
 
-  /** Daemon-measured est_usd preferred; self-reported spend_usd only as the
-   * fallback for historical rows recorded before usage measurement existed. */
+  /** est_usd is the ONE spend field (legacy spend_usd folded into it
+   * at boot). Expired zombie rounds are excluded from every aggregate. */
   totalSpend(): number {
-    return (this.db.prepare("SELECT COALESCE(SUM(COALESCE(est_usd, spend_usd)), 0) AS s FROM rounds").get() as { s: number }).s;
+    return (
+      this.db.prepare("SELECT COALESCE(SUM(est_usd), 0) AS s FROM rounds WHERE status != 'expired'").get() as { s: number }
+    ).s;
+  }
+
+  /**
+   * Recurring zombie expiry: move to terminal `expired` every round
+   * stuck `overdue` past `horizonHours` (measured from its deadline) whose PR
+   * has since verdicted (same-or-higher round number delivered a verdict) or
+   * closed. Deliberately narrower than "any old overdue round": a round a
+   * rerun could still service (open PR, nothing decided since) is
+   * to rescue, never this sweep's to bury. Returns the expired round ids.
+   */
+  expireOverdueRounds(horizonHours: number): number[] {
+    const cutoff = new Date(this.now().getTime() - horizonHours * 3_600_000).toISOString();
+    const rows = this.db
+      .prepare(
+        `SELECT id, pr, round_no FROM rounds
+          WHERE status = 'overdue' AND deadline_at < ?
+            AND (
+              EXISTS (SELECT 1 FROM pr_state p WHERE p.number = rounds.pr AND p.state = 'closed')
+              OR EXISTS (SELECT 1 FROM rounds r2 WHERE r2.pr = rounds.pr AND r2.id != rounds.id
+                           AND r2.backfilled = 0 AND r2.verdict IS NOT NULL AND r2.round_no >= rounds.round_no)
+            )`,
+      )
+      .all(cutoff) as Array<{ id: number; pr: number; round_no: number }>;
+    if (rows.length === 0) return [];
+    const stamp = this.db.prepare(
+      "UPDATE rounds SET status = 'expired', finished_at = COALESCE(finished_at, ?) WHERE id = ? AND status = 'overdue'",
+    );
+    for (const r of rows) stamp.run(this.ts(), r.id);
+    this.logEvent("rounds_expired", null, { count: rows.length, rounds: rows.map((r) => ({ id: r.id, pr: r.pr, round_no: r.round_no })) });
+    return rows.map((r) => r.id);
   }
 
   // ---- backfilled rounds (M2 importer writes; nothing live reads them) ----
@@ -858,6 +943,43 @@ export class StateStore {
     this.db
       .prepare("INSERT INTO events (ts, kind, pr, payload) VALUES (?, ?, ?, ?)")
       .run(this.ts(), kind, pr, payload === undefined ? null : JSON.stringify(payload));
+  }
+
+  /**
+   * The durable anomaly record. Every call-site that raises an
+   * overseer anomaly (malformed verdict, blown deadline, degraded migration
+   * pre-check, degraded recheck merge-verify, …) also writes ONE queryable
+   * `anomaly` event here — the inject file stays the wake channel, this is the
+   * audit trail it never was. Kept in the events table (kind = 'anomaly'), so
+   * it needs no new DDL and is boot-safe on the live DB by construction.
+   */
+  logAnomaly(kind: string, pr: number | null, roundNo: number | null, detail: string): void {
+    this.logEvent("anomaly", pr, { kind, round_no: roundNo, detail });
+  }
+
+  /** Recorded anomalies, newest last. The query the inject files never allowed. */
+  anomalies(limit = 100): AnomalyRecord[] {
+    const rows = this.db
+      .prepare(
+        "SELECT ts, pr, payload FROM (SELECT id, ts, pr, payload FROM events WHERE kind = 'anomaly' ORDER BY id DESC LIMIT ?) ORDER BY id",
+      )
+      .all(limit) as Array<{ ts: string; pr: number | null; payload: string | null }>;
+    return rows.map((r) => {
+      let kind = "unknown";
+      let roundNo: number | null = null;
+      let detail = "";
+      if (r.payload) {
+        try {
+          const p = JSON.parse(r.payload) as { kind?: unknown; round_no?: unknown; detail?: unknown };
+          if (typeof p.kind === "string") kind = p.kind;
+          if (typeof p.round_no === "number") roundNo = p.round_no;
+          if (typeof p.detail === "string") detail = p.detail;
+        } catch {
+          /* an unparseable payload still surfaces as an anomaly row */
+        }
+      }
+      return { ts: r.ts, kind, pr: r.pr, round_no: roundNo, detail };
+    });
   }
 
   /**
@@ -1171,8 +1293,9 @@ export function buildStatusSnapshot(
   maxConcurrentRounds?: number,
 ): StatusSnapshot {
   const today = now().toISOString().slice(0, 10);
+  // Expired zombie rounds never count towards any aggregate.
   const roundStats = store.db
-    .prepare("SELECT pr, COUNT(*) AS c, (SELECT verdict FROM rounds r2 WHERE r2.pr = rounds.pr AND verdict IS NOT NULL ORDER BY round_no DESC LIMIT 1) AS v FROM rounds GROUP BY pr")
+    .prepare("SELECT pr, COUNT(*) AS c, (SELECT verdict FROM rounds r2 WHERE r2.pr = rounds.pr AND verdict IS NOT NULL ORDER BY round_no DESC LIMIT 1) AS v FROM rounds WHERE status != 'expired' GROUP BY pr")
     .all() as Array<{ pr: number; c: number; v: string | null }>;
   const byPr = new Map(roundStats.map((r) => [r.pr, r]));
   return {
@@ -1194,7 +1317,7 @@ export function buildStatusSnapshot(
     running_rounds: store.runningRounds().length,
     ...(maxConcurrentRounds !== undefined ? { max_concurrent_rounds: maxConcurrentRounds } : {}),
     total_spend_usd: store.totalSpend(),
-    today_spend_usd: store.roundsOn(today).reduce((n, r) => n + (r.est_usd ?? r.spend_usd ?? 0), 0),
+    today_spend_usd: store.roundsOn(today).reduce((n, r) => n + (r.status !== "expired" ? (r.est_usd ?? 0) : 0), 0),
     ...(digestHeadline ? { digest_headline: digestHeadline } : {}),
     heartbeat: now().toISOString(),
   };

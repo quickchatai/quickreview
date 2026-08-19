@@ -286,6 +286,13 @@ added lenses with their reasons. No markdown, no lens jargon; it renders
 verbatim in his TUI detail pane. This is the **same text** as the body's
 plain opening paragraph (step 6) — write it once and use it in both
 places. Never report spend or cost figures — the daemon measures usage
-itself. Update the ledger to the state at
-`{{head_sha}}`. The daemon owns labels and the PR's lifecycle state — never
+itself. The daemon owns labels and the PR's lifecycle state — never
 touch those yourself, and never request a reviewer on GitHub.
+
+**Last action of every round, after the verdict file is written: update the
+ledger.** Rewrite the pinned ledger to the state at `{{head_sha}}` — header at
+this head, every finding's current status — even when the round found nothing
+(then it says so). The round is not finished until the ledger is written: the
+daemon compacts this conversation right after the verdict, and only the ledger
+survives compaction — a round that skips this step leaves the next round
+blind.

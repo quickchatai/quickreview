@@ -302,12 +302,17 @@ export interface Config {
     max_concurrent_rounds: number;
     round_deadline_min: number;
     overseer_rotation_days: number;
-    /**: how many times the daemon may self-requeue a stuck round
+/**: how many times the daemon may self-requeue a stuck round
      * (overdue + no verdict + session dead) per PR head. Past the cap the
      * round terminalizes through the existing overdue-anomaly park. Optional
      * so hand-rolled test configs keep compiling; readers default to
      * DEFAULT_MAX_SELF_REQUEUES. */
     max_self_requeues?: number;
+    /** Zombie-round expiry horizon: a round stuck `overdue` for
+     * longer than this — and whose PR has since verdicted or closed, so a
+     * rerun would never touch it — moves to terminal `expired`.
+     * 0 disables the sweep. */
+    expire_overdue_after_h: number;
   };
   eod: { time: string; timezone: string };
   caps: {
@@ -418,7 +423,8 @@ export function parseConfig(toml: string): Config {
     dry_run: Boolean(req(raw, "dry_run")),
     github,
     server: { ...(req(raw, "server") as Config["server"]) },
-    daemon: { max_self_requeues: DEFAULT_MAX_SELF_REQUEUES, ...(req(raw, "daemon") as Config["daemon"]) },
+// Both knobs default so legacy configs keep parsing.
+    daemon: { max_self_requeues: DEFAULT_MAX_SELF_REQUEUES, expire_overdue_after_h: 24, ...(req(raw, "daemon") as Partial<Config["daemon"]>) } as Config["daemon"],
     eod: { ...(req(raw, "eod") as Config["eod"]) },
     caps: { ...(req(raw, "caps") as Config["caps"]) },
     models: parseModels(req(raw, "models") as Record<string, any>),

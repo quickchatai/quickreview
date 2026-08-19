@@ -195,7 +195,11 @@ export async function startSlack(opts: SlackWiringOptions): Promise<SlackRuntime
     log,
     version: opts.version,
     statusPath: join(root, "state", "status.json"),
-    onAnomalySignal: (message) => opts.injectOverseer(message),
+    onAnomalySignal: (message) => {
+      // Durable anomaly record beside the overseer wake.
+      store.logAnomaly("slack_connections", null, null, message);
+      return opts.injectOverseer(message);
+    },
   });
   if (!announcer) throw new Error("slack: announcer not built despite enabled = true");
 

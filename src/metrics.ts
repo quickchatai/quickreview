@@ -395,7 +395,7 @@ export function computeWindow(input: WindowInput): MetricsWindow {
   const byRoundType: Record<string, number> = {};
   const byLens: Record<string, number> = {};
   for (const r of live) {
-    const spend = r.spend_usd ?? 0;
+    const spend = r.est_usd ?? 0;
     if (spend === 0) continue;
     perPr.set(r.pr, (perPr.get(r.pr) ?? 0) + spend);
     byRoundType[r.round_type] = round2((byRoundType[r.round_type] ?? 0) + spend);
@@ -406,7 +406,7 @@ export function computeWindow(input: WindowInput): MetricsWindow {
     }
   }
   const perPrValues = [...perPr.values()].map(round2);
-  const spendTotal = round2(live.reduce((n, r) => n + (r.spend_usd ?? 0), 0));
+  const spendTotal = round2(live.reduce((n, r) => n + (r.est_usd ?? 0), 0));
 
   // ---- rounds until resolution (PRs with activity in the window) ----
   const prsInWindow = new Set(rounds.map((r) => r.pr));
@@ -530,7 +530,7 @@ export function dailyRows(rounds: RoundRow[], now: Date, timeZone: string, days 
     if (!row) continue;
     row.rounds++;
     row.prSet.add(r.pr);
-    row.spend_usd += r.spend_usd ?? 0;
+    row.spend_usd += r.est_usd ?? 0;
     if (r.verdict === "APPROVE") row.approvals++;
     if (r.verdict === "REQUEST_CHANGES") row.request_changes++;
   }
@@ -581,7 +581,9 @@ export function computeMetrics(store: StateStore, opts: MetricsOptions = {}): Me
   const timeZone = opts.timeZone ?? "Europe/Warsaw";
   const nowIso = now.toISOString();
 
-  const rounds = store.allRounds();
+  // Expired zombie rounds are excluded from every aggregate window;
+  // the per-PR timeline (computeTimeline) still shows them as history.
+  const rounds = store.allRounds().filter((r) => r.status !== "expired");
   const events = readEvents(store);
   const allEvents = readEventKinds(store);
   const comments = store.db.prepare("SELECT pr, round_no, posted_at FROM bot_comments").all() as CommentRow[];
@@ -704,7 +706,7 @@ export function computeTimeline(store: StateStore, pr: number): TimelinePayload 
     if (r.finished_at) {
       const bits = [
         r.verdict ?? r.status,
-        r.spend_usd !== null ? `$${r.spend_usd.toFixed(2)}` : null,
+        r.est_usd !== null ? `$${r.est_usd.toFixed(2)}` : null,
         r.duration_s !== null ? `${Math.round(r.duration_s)}s` : null,
       ].filter(Boolean);
       push(r.finished_at, "round_finish", `round ${r.round_no} ${r.verdict ?? r.status}`, bits.join(" · "));

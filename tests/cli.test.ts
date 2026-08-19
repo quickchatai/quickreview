@@ -71,12 +71,13 @@ describe("usage-aware spend reporting", () => {
     return store;
   }
 
-  it("whyJson prefers est_usd with spend_usd fallback and exposes tokens per round", () => {
+  it("whyJson sums est_usd — the ONE spend field — and exposes tokens per round", () => {
     const store = seededStore();
     try {
       const payload = whyJson(store, 7, "/nonexistent-archive");
       expect(payload.spend_usd).toBeCloseTo(1.25 + 0.31, 6);
-      expect(payload.rounds[0]).toMatchObject({ est_usd: null, tokens_in: null, tokens_out: null, spend_usd: 1.25 });
+      // finishRound's figure lands in est_usd; the retired spend_usd column stays null.
+      expect(payload.rounds[0]).toMatchObject({ est_usd: 1.25, tokens_in: null, tokens_out: null, spend_usd: null });
       expect(payload.rounds[1]).toMatchObject({ est_usd: 0.31, tokens_in: 120_000, tokens_out: 8_000 });
     } finally {
       store.close();
