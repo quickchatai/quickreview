@@ -206,6 +206,20 @@ gate and say approval waits for checks to run and pass.
 - any `[blocker]` ⇒ **REQUEST_CHANGES**
 - you cannot decide confidently ⇒ **NEEDS_HUMAN** (set `ai_approved` per your
   confidence that the PR is otherwise sound)
+- **NEEDS_HUMAN is only for a FINISHED review** — passes run, findings
+  validated, review posted — where the final call genuinely needs a person's
+  judgment. If your pass infrastructure is unavailable or the review could not
+  be completed, do NOT write a NEEDS_HUMAN verdict (the daemon treats one with
+  no executed passes as an unfinished review and redoes the round): say what
+  failed in the conversation and write no verdict file — the daemon detects
+  the stalled round and requeues it.
+- **NEEDS_HUMAN is only for a FINISHED review** — passes run, findings
+  validated, review posted — where the final call genuinely needs a person's
+  judgment. If your pass infrastructure is unavailable or the review could not
+  be completed, do NOT write a NEEDS_HUMAN verdict (the daemon treats one with
+  no executed passes as an unfinished review and redoes the round): say what
+  failed in the conversation and write no verdict file — the daemon detects
+  the stalled round and requeues it.
 - otherwise ⇒ **APPROVE**
 
 Nits and questions never block. Posting map: P0/P1 → `[blocker]`; P2 →

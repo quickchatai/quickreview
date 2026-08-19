@@ -498,6 +498,13 @@ export class PiSessionManager implements SessionHooks {
     return this.tmux.hasSession(prSessionName(pr));
   }
 
+  /** SessionHooks: kill a wedged session so the requeued round's dispatch
+   * rebirths it fresh (live-but-stuck recovery). The ledger on disk is the
+   * continuity that matters and survives the kill by design. */
+  async killSession(pr: number): Promise<void> {
+    await this.tmux.killSession(prSessionName(pr)).catch(() => {});
+  }
+
   /** SessionHooks: PR merged/closed — archive, drop the worktree, kill tmux. */
   /** Post-round compaction: type `/compact` into the session's pane. Manual
    * /compact is a documented pi command (findings §compaction).

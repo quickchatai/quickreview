@@ -193,6 +193,13 @@ gate and say approval waits for checks to run and pass.
   superseded by the new review — **never dismissed**; dismissal does not exist)
 - doubt about the delta's blast radius, or any other reason you cannot decide
   confidently ⇒ **NEEDS_HUMAN**
+- **NEEDS_HUMAN is only for a FINISHED review** — passes run, findings
+  validated, review posted — where the final call genuinely needs a person's
+  judgment. If your pass infrastructure is unavailable or the review could not
+  be completed, do NOT write a NEEDS_HUMAN verdict (the daemon treats one with
+  no executed passes as an unfinished review and redoes the round): say what
+  failed in the conversation and write no verdict file — the daemon detects
+  the stalled round and requeues it.
 - the delta is clean and the approval still holds ⇒ **APPROVE** at the new head
 
 Nits and questions never block. Posting map: P0/P1 → `[blocker]`; P2 →

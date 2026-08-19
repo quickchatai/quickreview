@@ -148,7 +148,7 @@ describe("stuck-round detection + self-requeue", () => {
     expect(adapter.calls).toEqual([]);
   });
 
-  it("a live session keeps the legacy overdue-anomaly park", async () => {
+  it("a live session with no killSession hook keeps the legacy overdue-anomaly park", async () => {
     const roundId = reviewingRound(301);
     pastDeadline();
     const { hooks, overseer } = hooksWith(true);
@@ -373,5 +373,133 @@ describe("idempotency against the restart orphan-requeue", () => {
     const d = dispatchHooks();
     const orders = await dispatchOnce({ cfg: baseCfg, store, adapter: new FakeDispatchAdapter(), hooks: d.hooks });
     expect(orders).toHaveLength(0);
+  });
+});
+
+
+// 2026-08-19 (the owner): recover, don't park — a live-but-wedged session is
+// killed and its round requeued through the same capped path, and a
+// NEEDS_HUMAN verdict with no executed-pass evidence is an unfinished review
+// that gets redone instead of handed to a person.
+describe("live-but-stuck recovery", () => {
+  it("kills the wedged live session and self-requeues the round", async () => {
+    const roundId = reviewingRound(310);
+    pastDeadline();
+    const { hooks, overseer } = hooksWith(true);
+    const killed: number[] = [];
+    hooks.killSession = async (pr) => {
+      killed.push(pr);
+    };
+
+    expect(await watcher(hooks).checkDeadlines()).toEqual([]);
+    expect(killed).toEqual([310]);
+    expect(roundStatus(roundId)).toBe("cancelled");
+    expect(store.getPr(310)!.state).toBe("queued");
+    const requeued = events("round_self_requeued");
+    expect(requeued).toHaveLength(1);
+    expect(requeued[0]!.payload).toMatchObject({ mode: "alive_stuck" });
+    expect(String(requeued[0]!.payload.reason)).toContain("wedged");
+    expect(overseer.some((m) => m.startsWith("SELF-REQUEUE (recovery) — PR #310"))).toBe(true);
+    expect(events("round_overdue")).toHaveLength(0);
+  });
+
+  it("a live session with a pending verdict file is left to the sweep, never killed", async () => {
+    reviewingRound(311);
+    pastDeadline();
+    const { hooks } = hooksWith(true);
+    const killed: number[] = [];
+    hooks.killSession = async (pr) => {
+      killed.push(pr);
+    };
+    writeFileSync(join(dir, "pr-311-round-1.json"), "{}");
+
+    expect(await watcher(hooks).checkDeadlines()).toEqual([]);
+    expect(killed).toEqual([]);
+    expect(events("round_self_requeued")).toHaveLength(0);
+    expect(events("round_overdue")).toHaveLength(0);
+  });
+
+  it("past the cap a wedged live round still parks through the anomaly path", async () => {
+    const { hooks } = hooksWith(true);
+    hooks.killSession = async () => {};
+    const w = watcher(hooks);
+    for (let i = 0; i < DEFAULT_MAX_SELF_REQUEUES; i++) {
+      reviewingRound(312);
+      pastDeadline();
+      await w.checkDeadlines();
+    }
+    const roundId = reviewingRound(312);
+    pastDeadline();
+    expect(await w.checkDeadlines()).toEqual([312]);
+    expect(roundStatus(roundId)).toBe("overdue");
+    expect(store.getPr(312)!.state).toBe("awaiting_human");
+  });
+});
+
+describe("NEEDS_HUMAN requires a finished review", () => {
+  function needsHumanFile(pr: number, roundNo: number, extra: Record<string, unknown> = {}): void {
+    writeFileSync(
+      join(dir, `pr-${pr}-round-${roundNo}.json`),
+      JSON.stringify({
+        pr,
+        round_no: roundNo,
+        verdict: "NEEDS_HUMAN",
+        ai_approved: true,
+        head_sha: "abc123",
+        finished_at: clock.toISOString(),
+        ...extra,
+      }),
+    );
+  }
+
+  it("no executed passes ⇒ the round is redone (self-requeue), never parked, no reviewed-head mark", async () => {
+    const roundId = reviewingRound(320);
+    const { hooks } = hooksWith();
+    needsHumanFile(320, 1);
+
+    await watcher(hooks).sweep();
+
+    expect(roundStatus(roundId)).toBe("cancelled");
+    const row = store.getPr(320)!;
+    expect(row.state).toBe("queued");
+    expect(events("needs_human_incomplete")).toHaveLength(1);
+    const requeued = events("round_self_requeued");
+    expect(requeued).toHaveLength(1);
+    expect(requeued[0]!.payload).toMatchObject({ mode: "needs_human_incomplete" });
+    // No mark: the redo round must be dispatchable and postable at this head.
+    expect(store.reviewedHead(320)).toBeUndefined();
+    // The in-progress label came off; the reviewed label was NOT applied.
+    expect(adapter.calls.some((c) => c.startsWith("removeLabel:320"))).toBe(true);
+    expect(adapter.calls.some((c) => c.startsWith("addLabel:320"))).toBe(false);
+  });
+
+  it("with executed passes the park is genuine and stands", async () => {
+    reviewingRound(321);
+    const { hooks } = hooksWith();
+    needsHumanFile(321, 1, { passes: [{ name: "pass-baseline", tier: "sol-med", findings: 1 }] });
+
+    await watcher(hooks).sweep();
+
+    expect(store.getPr(321)!.state).toBe("awaiting_human");
+    expect(events("round_self_requeued")).toHaveLength(0);
+    expect(store.reviewedHead(321)).toBeDefined();
+  });
+
+  it("past the cap an incomplete NEEDS_HUMAN parks like any verdict", async () => {
+    const { hooks } = hooksWith();
+    const w = watcher(hooks);
+    const latestRoundNo = () =>
+      (store.db.prepare("SELECT round_no FROM rounds WHERE pr = 322 ORDER BY id DESC LIMIT 1").get() as { round_no: number }).round_no;
+    for (let i = 0; i < DEFAULT_MAX_SELF_REQUEUES; i++) {
+      reviewingRound(322);
+      needsHumanFile(322, latestRoundNo());
+      await w.sweep();
+      expect(store.getPr(322)!.state).toBe("queued");
+    }
+    reviewingRound(322);
+    needsHumanFile(322, latestRoundNo());
+    await w.sweep();
+    expect(store.getPr(322)!.state).toBe("awaiting_human");
+    expect(events("self_requeue_cap_exhausted")).toHaveLength(1);
   });
 });

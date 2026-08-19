@@ -206,4 +206,9 @@ export interface SessionHooks {
    * Optional: absent (stubs, tests) ⇒ liveness is unknown and the deadline
    * checker degrades to the legacy anomaly park. */
   sessionAlive?(pr: number): Promise<boolean>;
+  /** Kill the PR's tmux session so the next dispatch rebirths it fresh. Read
+   * by the live-but-stuck self-requeue (2026-08-19): an overdue round whose
+   * session is alive but wedged is killed + requeued instead of parked.
+   * Optional: absent ⇒ live-but-stuck rounds park exactly as before. */
+  killSession?(pr: number): Promise<void>;
 }

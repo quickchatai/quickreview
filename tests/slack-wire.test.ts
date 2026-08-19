@@ -364,6 +364,27 @@ describe("origin cause, not recency (the belt)", () => {
     expect(wakes).toHaveLength(1);
     expect(runtime.origins.latestAny()).toMatchObject({ source: "local", tier: "owner_legacy", slack_user: "" });
 
+    // The wrap must forward the optional liveness/kill hooks: dropping
+    // sessionAlive here left the stuck-round detector blind in
+    // production (found 2026-08-19) — every stuck round parked.
+    const probed: number[] = [];
+    const killedPrs: number[] = [];
+    const { hooks: fullHooks } = daemonOriginWakes({
+      hooks: {
+        ...noHooks,
+        sessionAlive: async (pr: number) => (probed.push(pr), true),
+        killSession: async (pr: number) => void killedPrs.push(pr),
+      },
+      origins: runtime.origins,
+      enabled: true,
+    });
+    expect(fullHooks.sessionAlive).toBeDefined();
+    expect(fullHooks.killSession).toBeDefined();
+    await fullHooks.sessionAlive!(42);
+    await fullHooks.killSession!(43);
+    expect(probed).toEqual([42]);
+    expect(killedPrs).toEqual([43]);
+
     writeLegacyCommand("blocked", { command: "file-issue", title: "t", body: "b" });
     await legacy(runtime, { ...noopCommandDeps, fileIssue }).sweep();
     expect(legacyResult("blocked")).toMatchObject({ ok: true });

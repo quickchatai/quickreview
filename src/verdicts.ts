@@ -285,6 +285,28 @@ export class VerdictWatcher {
     const { cfg, store, adapter } = this.deps;
     const round = this.runningRound(v.pr, v.round_no);
 
+    // NEEDS_HUMAN discipline (2026-08-19, the owner): a park hands a FINISHED
+    // review to a person for the final call — it is never an escape hatch for
+    // an unfinished one. A NEEDS_HUMAN with no executed-pass evidence (#5303:
+    // "the configured passes were unavailable") did not do the review; redo it
+    // through the capped self-requeue instead of parking. Past the cap (or
+    // with no running round to cancel) the normal park below stands — the cap
+    // guarantees this can never loop. No reviewed-head mark is recorded on
+    // this path, so the redo round can dispatch and post at the same head.
+    if (v.verdict === "NEEDS_HUMAN" && round && round.status === "running" && (!v.passes || v.passes.length === 0)) {
+      store.logEvent("needs_human_incomplete", v.pr, {
+        round_id: round.id,
+        round_no: v.round_no,
+        head_sha: v.head_sha,
+        passes_reported: v.passes ? 0 : null,
+      });
+      if (await this.selfRequeue(round, "needs_human_incomplete")) {
+        await this.safe(() => adapter.removeLabel(v.pr, cfg.github.in_progress_label), `remove ${cfg.github.in_progress_label} on #${v.pr}`);
+        this.log(`verdicts: #${v.pr} round ${v.round_no} NEEDS_HUMAN without executed passes — requeued, not parked`);
+        return;
+      }
+    }
+
     await this.safe(() => adapter.removeLabel(v.pr, cfg.github.in_progress_label), `remove ${cfg.github.in_progress_label} on #${v.pr}`);
     await this.safe(() => adapter.addLabel(v.pr, cfg.github.reviewed_label), `add ${cfg.github.reviewed_label} on #${v.pr}`);
 
@@ -568,7 +590,7 @@ export class VerdictWatcher {
    *   anomaly may race a real verdict (the restart-orphan/self-requeue
    *   idempotency hinges on never double-owning a round that already decided).
    */
-  private async stuckDisposition(round: RoundRow): Promise<"not_stuck" | "verdict_pending" | "dead"> {
+  private async stuckDisposition(round: RoundRow): Promise<"not_stuck" | "verdict_pending" | "dead" | "alive_stuck"> {
     const alive = this.deps.hooks.sessionAlive;
     if (!alive) return "not_stuck";
     let dead: boolean;
@@ -577,9 +599,13 @@ export class VerdictWatcher {
     } catch {
       return "not_stuck";
     }
-    if (!dead) return "not_stuck";
     if (existsSync(join(this.deps.verdictDir, `pr-${round.pr}-round-${round.round_no}.json`))) return "verdict_pending";
-    return "dead";
+    if (dead) return "dead";
+    // Live but past the deadline with nothing on disk (2026-08-19, the owner:
+    // recover, don't park): the session is killed and the round requeued
+    // through the same capped path. Without a kill hook the pre-existing park
+    // stands — never inject a fresh round into a wedged live session.
+    return this.deps.hooks.killSession ? "alive_stuck" : "not_stuck";
   }
 
   /**
@@ -595,7 +621,7 @@ export class VerdictWatcher {
    * not age the PR). Held wakes stay held: the requeued round is about to
    * dispatch, and its own round-end paths flush them (S4).
    */
-  private async selfRequeue(round: RoundRow): Promise<boolean> {
+  private async selfRequeue(round: RoundRow, mode: "dead" | "alive_stuck" | "needs_human_incomplete" = "dead"): Promise<boolean> {
     const { store, cfg } = this.deps;
     const row = store.getPr(round.pr);
     const head = row?.head_sha ?? "";
@@ -608,10 +634,19 @@ export class VerdictWatcher {
         head_sha: head,
         attempts: attempt - 1,
         cap,
+        mode,
       });
       return false;
     }
-    const reason = `round ${round.round_no} passed its deadline (${round.deadline_at}) with no verdict and its session is dead`;
+    const reason =
+      mode === "dead"
+        ? `round ${round.round_no} passed its deadline (${round.deadline_at}) with no verdict and its session is dead`
+        : mode === "alive_stuck"
+          ? `round ${round.round_no} passed its deadline (${round.deadline_at}) with no verdict; its session was alive but wedged and has been killed for a fresh rebirth`
+          : `round ${round.round_no} verdicted NEEDS_HUMAN without executing any passes — the review was not done, so it is redone rather than handed to a person`;
+    if (mode === "alive_stuck" && this.deps.hooks.killSession) {
+      await this.safe(() => this.deps.hooks.killSession!.call(this.deps.hooks, round.pr), `kill wedged session pr-${round.pr}`);
+    }
     store.markRoundCancelled(round.id, `self-requeue ${attempt}/${cap} — ${reason}`);
     store.logEvent("round_self_requeued", round.pr, {
       round_id: round.id,
@@ -619,6 +654,7 @@ export class VerdictWatcher {
       head_sha: head,
       attempt,
       cap,
+      mode,
       reason,
     });
     // Requeue through the normal dispatch path: back to queued with a fresh
@@ -679,13 +715,13 @@ export class VerdictWatcher {
         this.log(`verdicts: #${round.pr} round ${round.round_no} overdue but its verdict file is pending — leaving it to the sweep`);
         continue;
       }
-      if (stuck === "dead" && (await this.selfRequeue(round))) continue;
+      if ((stuck === "dead" || stuck === "alive_stuck") && (await this.selfRequeue(round, stuck))) continue;
       overdue.push(round.pr);
       await this.handleAnomaly(
         round.pr,
         round.round_no,
         `round ${round.round_no} passed its deadline (${round.deadline_at}); started ${round.started_at}` +
-          (stuck === "dead" ? " — session dead and the self-requeue cap is exhausted; parking" : ""),
+          (stuck === "dead" || stuck === "alive_stuck" ? " — the self-requeue cap is exhausted; parking" : ""),
         "overdue",
       );
     }

@@ -345,6 +345,11 @@ export function daemonOriginWakes(opts: {
       inject: (pr, message) => hooks.inject(pr, message),
       archiveAndClose: (pr) => hooks.archiveAndClose(pr),
       ...(hooks.compactSession ? { compactSession: (pr: number) => hooks.compactSession!(pr) } : {}),
+      // Liveness + kill must survive the wrap: dropping sessionAlive here left
+      // the stuck-round detector blind in production (liveness always
+      // unknown ⇒ every stuck round parked). Found 2026-08-19.
+      ...(hooks.sessionAlive ? { sessionAlive: (pr: number) => hooks.sessionAlive!(pr) } : {}),
+      ...(hooks.killSession ? { killSession: (pr: number) => hooks.killSession!(pr) } : {}),
       injectOverseer: (message) => wake("overseer-wake", message),
     },
   };

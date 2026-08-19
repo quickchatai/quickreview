@@ -179,9 +179,12 @@ describe("valid verdicts", () => {
     expect(store.getPr(101)!.state).toBe("tracked");
   });
 
+  // These park pins carry `passes` telemetry: since 2026-08-19 a NEEDS_HUMAN
+  // with no executed-pass evidence is an unfinished review and is requeued,
+  // not parked (see self-requeue.test.ts "NEEDS_HUMAN requires a finished review").
   it("NEEDS_HUMAN parks the PR locally and touches no reviewer on GitHub", async () => {
     reviewingRound(102);
-    await watcher().handleFile(write(102, 1, verdictFile({ pr: 102, verdict: "NEEDS_HUMAN", ai_approved: true })));
+    await watcher().handleFile(write(102, 1, verdictFile({ pr: 102, verdict: "NEEDS_HUMAN", ai_approved: true, passes: [{ name: "pass-baseline", tier: "sol-med", findings: 1 }] })));
     expect(store.getPr(102)!.state).toBe("awaiting_human");
     // The whole GitHub surface of a park: labels, nothing else.
     expect(adapter.calls.every((c) => c.startsWith("addLabel") || c.startsWith("removeLabel"))).toBe(true);
@@ -194,7 +197,7 @@ describe("valid verdicts", () => {
 
   it("accepts a legacy ESCALATE verdict as NEEDS_HUMAN (the frozen seed still emits it)", async () => {
     reviewingRound(105);
-    await watcher().handleFile(write(105, 1, verdictFile({ pr: 105, verdict: "ESCALATE" })));
+    await watcher().handleFile(write(105, 1, verdictFile({ pr: 105, verdict: "ESCALATE", passes: [{ name: "pass-baseline", tier: "sol-med", findings: 1 }] })));
     expect(store.getPr(105)!.state).toBe("awaiting_human");
     const logged = JSON.parse(
       (store.db.prepare("SELECT payload FROM events WHERE kind = 'verdict_applied'").get() as { payload: string }).payload,
@@ -206,7 +209,7 @@ describe("valid verdicts", () => {
     reviewingRound(103);
     reviewingRound(104);
     write(103, 1, verdictFile({ pr: 103, verdict: "APPROVE" }));
-    write(104, 1, verdictFile({ pr: 104, verdict: "NEEDS_HUMAN" }));
+    write(104, 1, verdictFile({ pr: 104, verdict: "NEEDS_HUMAN", passes: [{ name: "pass-baseline", tier: "sol-med", findings: 1 }] }));
     writeFileSync(join(dir, "notes.txt"), "ignore me");
     const done = await watcher().sweep();
     expect(done.sort()).toEqual(["pr-103-round-1.json", "pr-104-round-1.json"]);
