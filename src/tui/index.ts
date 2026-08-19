@@ -310,6 +310,21 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
     });
     consumer.start(Math.max(1, cfg.poll_interval_s) * 1000);
     alerts = consumer;
+
+    // Daemon-detected pi auth failures (status.json `pi_auth_expired`) ride
+    // the same pipeline: on each poll, bridge a fresh flag into one alert
+    // file; the consumer above does badge + notify + inject + cooldown.
+    const { maybeWritePiAuthAlert } = await import("./alerts.js");
+    const piAuthMem = { lastWritten: "" };
+    const prevOnPoll = app.hooks.onPoll;
+    app.hooks.onPoll = (a) => {
+      prevOnPoll?.(a);
+      try {
+        maybeWritePiAuthAlert(full.companion.alerts_dir, a.view.snapshot?.pi_auth_expired, piAuthMem);
+      } catch {
+        // alerting is best-effort; never break the poll loop
+      }
+    };
   }
 
   // Restore a hot-reload snapshot before run(), so the first paint is already

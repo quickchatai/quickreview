@@ -48,6 +48,11 @@ const WAKE_KINDS: ReadonlySet<string> = new Set([
   // session ignored the nudge, a human-attention grade. First-detection
   // "ledger_stale" stays quiet: the nudge is the response.
   "ledger_stale_unresolved",
+  // 2026-08-19 (the owner): pi sessions failing API calls with token-expired
+  // errors — every round in flight is doomed until a human re-logins, so this
+  // is human-attention grade. Detected passively (src/authwatch.ts), never by
+  // a smoke call.
+  "pi_auth_expired",
 ]);
 
 export function anomalySeverity(kind: string): AnomalySeverity {

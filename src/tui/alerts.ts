@@ -361,3 +361,46 @@ export class AlertConsumer {
     this.timer = undefined;
   }
 }
+
+
+// ---- daemon-detected pi auth failures → the same alert pipeline ----------
+
+export interface PiAuthAlertMemory {
+  /** `last_at` of the snapshot flag the last written file covered. */
+  lastWritten: string;
+}
+
+/**
+ * Bridge from the polled status.json flag (`pi_auth_expired`, written by the
+ * daemon's passive src/authwatch.ts) into the alert pipeline: write one
+ * alert-tier file per fresh detection into the alerts dir the AlertConsumer
+ * already watches — badge, notify-send, overseer inject and per-cause
+ * cooldown all come from the existing machinery. Writes at most one file per
+ * distinct `last_at`, and nothing when the flag is absent or stale.
+ */
+export function maybeWritePiAuthAlert(
+  alertsDir: string,
+  flag: { last_at: string; hits: number } | undefined,
+  mem: PiAuthAlertMemory,
+  now: () => Date = () => new Date(),
+): string | undefined {
+  if (!flag || !flag.last_at) return undefined;
+  if (mem.lastWritten === flag.last_at) return undefined;
+  // Stale flags (e.g. a TUI opening hours later) are history, not an alert.
+  if (now().getTime() - new Date(flag.last_at).getTime() > 30 * 60 * 1000) return undefined;
+  const name = `${now().toISOString().replace(/[:.]/g, "-")}-pi-auth-expired.json`;
+  mkdirSync(alertsDir, { recursive: true });
+  writeFileSync(
+    join(alertsDir, name),
+    JSON.stringify({
+      tier: "alert",
+      cause: "pi-auth-expired",
+      pr: null,
+      title: "pi auth: API rejecting tokens as expired",
+      body: `The daemon is seeing token-expired API errors in pi session logs (${flag.hits} hit(s), latest ${flag.last_at}). Reviews will wedge until /login is re-run in the container.`,
+      ts: now().toISOString(),
+    }),
+  );
+  mem.lastWritten = flag.last_at;
+  return name;
+}

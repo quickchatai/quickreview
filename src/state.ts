@@ -1412,6 +1412,9 @@ export interface StatusSnapshot {
   total_spend_usd: number;
   today_spend_usd?: number;
   digest_headline?: string;
+  /** Present while pi sessions are failing API calls with token-expired
+   * errors (src/authwatch.ts, fresh < 30 min). The TUI raises an alert. */
+  pi_auth_expired?: { last_at: string; hits: number };
   heartbeat: string;
 }
 
@@ -1430,6 +1433,7 @@ export function buildStatusSnapshot(
   digestHeadline?: string,
   now: () => Date = () => new Date(),
   maxConcurrentRounds?: number,
+  piAuth?: { last_at: string; hits: number },
 ): StatusSnapshot {
   const today = now().toISOString().slice(0, 10);
   // Expired zombie rounds never count towards any aggregate.
@@ -1458,6 +1462,7 @@ export function buildStatusSnapshot(
     total_spend_usd: store.totalSpend(),
     today_spend_usd: store.roundsOn(today).reduce((n, r) => n + (r.status !== "expired" ? (r.est_usd ?? 0) : 0), 0),
     ...(digestHeadline ? { digest_headline: digestHeadline } : {}),
+    ...(piAuth ? { pi_auth_expired: piAuth } : {}),
     heartbeat: now().toISOString(),
   };
 }

@@ -5,6 +5,7 @@
 // stub-wired, test-friendly core.
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import {
   fsSecretReader,
   loadConfig,
@@ -413,6 +414,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     // never see an announcer.
     announce: () => slack?.announcer,
     digestHeadline: () => latestDigestHeadline(join(root, "digest")),
+    // Passive pi auth-failure watch: pi's session JSONLs under the container
+    // user's home (the pihome volume).
+    piSessionsDir: join(homedir(), ".pi", "agent", "sessions"),
 
     async onStart(d) {
       // Out-of-round wakes (recheck, ping-pong) can now respawn a sticky

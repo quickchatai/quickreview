@@ -30,6 +30,7 @@ import {
 import type { DispatchAnnouncer, VerdictAnnouncer } from "./slack/announce.js";
 import { applyEvent } from "./statemachine.js";
 import { buildStatusSnapshot, StateStore, writeStatusJson } from "./state.js";
+import { PiAuthWatch } from "./authwatch.js";
 import { stubSessionHooks } from "./stubs.js";
 import type { SessionHooks } from "./types.js";
 import { VerdictWatcher, type VerdictAdapter } from "./verdicts.js";
@@ -74,6 +75,9 @@ export interface DaemonDeps {
   listen?: boolean;
   /** Latest digest headline for status.json (B5's digest module). */
   digestHeadline?: () => string | undefined;
+  /** pi's session-JSONL root for the passive auth-failure watch
+   * (src/authwatch.ts). Absent (tests, stubs) ⇒ the watch never runs. */
+  piSessionsDir?: string;
   /**
    * Slack announcer (S5b), resolved LAZILY: wire.ts builds the Slack
    * subsystem in `onStart`, i.e. after the store exists and after this deps
@@ -94,6 +98,7 @@ const DISPATCH_TICK_S = 15;
 const VERDICT_SWEEP_S = 10;
 const DEADLINE_TICK_S = 60;
 const STATUS_TICK_S = 30;
+const AUTHWATCH_TICK_S = 60;
 
 export interface Daemon {
   start(): Promise<void>;
@@ -341,9 +346,38 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     });
   };
 
+  // Passive pi auth-failure watch (the owner, 2026-08-19): no smoke calls, just
+  // the session JSONLs pi already writes. A detection is a WAKE-grade anomaly
+  // (10-min dedup via the sink) and a status.json flag the TUI alerts on.
+  const piAuthWatch = deps.piSessionsDir ? new PiAuthWatch(deps.piSessionsDir) : undefined;
+  const authWatchTick = (): void => {
+    if (!piAuthWatch) return;
+    try {
+      const hits = piAuthWatch.scan();
+      if (hits.length > 0) {
+        const files = hits.map((h) => h.file.split("/").pop()).join(", ");
+        store.logAnomaly(
+          "pi_auth_expired",
+          null,
+          null,
+          `pi API auth failures (token expired) in ${hits.length} session file(s): ${files}`,
+          [
+            "PI AUTH EXPIRED — sessions are failing API calls with token-expired errors.",
+            `Fresh hits in: ${files}`,
+            "Every round in flight will wedge until a human re-runs /login in the container (interactive OAuth — the daemon cannot do it).",
+          ].join("\n"),
+        );
+        log(`authwatch: pi token-expired errors in ${hits.length} session file(s)`, files);
+        writeStatus();
+      }
+    } catch (err) {
+      log("authwatch failed", err);
+    }
+  };
+
   const writeStatus = (): void => {
     try {
-      writeStatusJson(stateDir, buildStatusSnapshot(store, cfg.dry_run, deps.digestHeadline?.(), undefined, cfg.daemon.max_concurrent_rounds));
+      writeStatusJson(stateDir, buildStatusSnapshot(store, cfg.dry_run, deps.digestHeadline?.(), undefined, cfg.daemon.max_concurrent_rounds, piAuthWatch?.status()));
     } catch (err) {
       log("status.json write failed", err);
     }
@@ -405,6 +439,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         }
       }));
       every(STATUS_TICK_S, writeStatus);
+      if (piAuthWatch) every(AUTHWATCH_TICK_S, authWatchTick);
     },
 
     async stop(): Promise<void> {
