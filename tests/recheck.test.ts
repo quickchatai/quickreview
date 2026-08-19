@@ -498,6 +498,29 @@ describe("recheck decisions", () => {
   const kinds = (): string[] =>
     (store.db.prepare("SELECT kind FROM events WHERE pr = ?").all(PR) as Array<{ kind: string }>).map((e) => e.kind);
 
+  // Regression (live, #5315 2026-08-19): fs.watch fires before the session's
+  // write completes; an eager single read ate valid upholds as "unparseable".
+  it("retries a partially-written decision instead of archiving it as malformed", async () => {
+    const name = recheckDecisionFile(PR, HEAD);
+    const path = join(root, "verdict", name);
+    writeFileSync(path, "");
+    watcher = new RecheckWatcher({ cfg, store, verdictDir: join(root, "verdict"), log: () => {}, parseRetries: 4, retryDelayMs: 10 });
+    setTimeout(() => writeFileSync(path, JSON.stringify({ pr: PR, head_sha: HEAD, outcome: "uphold", reason: "late write" })), 15);
+    await watcher.sweep();
+    expect(kinds()).toContain("recheck_upheld");
+    expect(kinds()).not.toContain("recheck_decision_malformed");
+  });
+
+  it("a decision that stays unparseable is still archived as malformed, loudly", async () => {
+    const name = recheckDecisionFile(PR, HEAD);
+    writeFileSync(join(root, "verdict", name), "{never valid");
+    const logs: string[] = [];
+    watcher = new RecheckWatcher({ cfg, store, verdictDir: join(root, "verdict"), log: (m) => logs.push(m), parseRetries: 1, retryDelayMs: 1 });
+    await watcher.sweep();
+    expect(kinds()).toContain("recheck_decision_malformed");
+    expect(logs.some((l) => l.includes("malformed"))).toBe(true);
+  });
+
   it("upholds: nothing posted, nothing moved, the mark left where it was", async () => {
     write({ pr: PR, head_sha: HEAD, outcome: "uphold", reason: "one formatting commit" });
     await watcher.sweep();

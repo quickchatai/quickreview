@@ -405,6 +405,8 @@ export function recheckDecisionFile(pr: number, headSha: string): string {
 
 export const RECHECK_FILE_RE = /^pr-(\d+)-recheck-([0-9a-f]{7,40})\.json$/i;
 
+const recheckSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
 /** Fallback renderer (stub-wired daemon, unit tests): the order as JSON. */
 export function defaultRecheckPrompt(order: RecheckOrder): string {
   return JSON.stringify(order, null, 2);
@@ -695,6 +697,11 @@ export interface RecheckWatcherDeps {
   verdictDir: string;
   now?: () => Date;
   log?: (msg: string, extra?: unknown) => void;
+  /** Parse retries for partially-written files (fs.watch fires on creation,
+   * before the session's write completes — same race the VerdictWatcher
+   * survives with its own retry loop). */
+  parseRetries?: number;
+  retryDelayMs?: number;
 }
 
 /**
@@ -759,16 +766,27 @@ export class RecheckWatcher {
       const path = join(this.deps.verdictDir, name);
       if (!existsSync(path)) return false;
       const pr = Number(match[1]);
-      let parsed: ParsedRecheckDecision;
-      try {
-        parsed = validateRecheckDecision(JSON.parse(readFileSync(path, "utf8")));
-      } catch (err) {
-        parsed = { ok: false, error: `unparseable: ${String(err)}` };
+      // Retry on parse failure: fs.watch fires the moment the file appears,
+      // often before the session's write completes — an eager single read eats
+      // valid uphold decisions as "unparseable" (live on #5315, 2026-08-19).
+      const retries = this.deps.parseRetries ?? 3;
+      const delay = this.deps.retryDelayMs ?? 40;
+      let parsed: ParsedRecheckDecision = { ok: false, error: "unread" };
+      for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+          parsed = validateRecheckDecision(JSON.parse(readFileSync(path, "utf8")));
+        } catch (err) {
+          parsed = { ok: false, error: `unparseable: ${String(err)}` };
+        }
+        if (parsed.ok) break;
+        if (attempt < retries) await recheckSleep(delay);
       }
       if (!parsed.ok || !parsed.decision) {
         // Malformed is the safe direction here — the standing verdict simply
-        // stays standing. No park, no anomaly round, nothing posted.
+        // stays standing. No park, no anomaly round, nothing posted. But say
+        // so out loud: the silent branch hid the partial-read race for hours.
         this.deps.store.logEvent("recheck_decision_malformed", pr, { file: name, error: parsed.error ?? "unknown" });
+        this.deps.log?.(`recheck: #${pr} decision ${name} malformed after ${retries + 1} reads — standing verdict kept (${parsed.error ?? "unknown"})`);
         this.archive(name);
         return true;
       }
