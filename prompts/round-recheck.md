@@ -60,6 +60,10 @@ do not re-derive them, do not report them. Look only at the lines marked
   hold.
 - **No exec, as always.** Never run project code, tests, builds or package
   managers. Reads only: git, rg, cat, `gh` reads.
+- **Never read another PR's posted reviews — for format or anything else.**
+  The round template this session already received is the format authority;
+  sibling PRs' reviews are other sessions' output — a contamination surface,
+  not documentation.
 
 ## If — and only if — you move the verdict
 

@@ -162,6 +162,85 @@ describe("makeToolCallRegistrar", () => {
   });
 });
 
+// the stock researcher/scout/worker pin anthropic models + web
+// extensions that cannot run in this container; they are swept out of the
+// shared registry at tool_call time, every call (activate()'s array
+// reassignment reloads them, so a one-shot removal would not stick).
+describe("stock-agent unregistration", () => {
+  it("names exactly the three dead stock agents", async () => {
+    const { STOCK_AGENT_NAMES } = await import("../extensions/register-lens-agents.js");
+    expect([...STOCK_AGENT_NAMES]).toEqual(["researcher", "scout", "worker"]);
+  });
+
+  it("unregisters researcher/scout/worker on every tool-call sweep, logging once", async () => {
+    const { makeToolCallRegistrar } = await import("../extensions/register-lens-agents.js");
+    const d = tempAgentsDir({ "pass-baseline--sol-med.md": AGENT_MD });
+    const unregistered: string[] = [];
+    const logs: string[] = [];
+    const attempt = makeToolCallRegistrar(
+      () => ({
+        registerAgent: () => {},
+        unregisterAgent: (name: string) => unregistered.push(name),
+      }),
+      d,
+      (m) => logs.push(m),
+    );
+    attempt();
+    expect(unregistered).toEqual(["researcher", "scout", "worker"]);
+    attempt(); // the wipe-healing cadence: swept again on the next call
+    expect(unregistered).toEqual(["researcher", "scout", "worker", "researcher", "scout", "worker"]);
+    expect(logs.filter((l) => l.includes("unregistered stock agents"))).toHaveLength(1);
+    expect(logs.some((l) => l.includes("DEGRADED"))).toBe(false);
+  });
+
+  it("survives an unregisterAgent that throws on an absent name (VERIFY-ON-PIN)", async () => {
+    const { makeToolCallRegistrar } = await import("../extensions/register-lens-agents.js");
+    const d = tempAgentsDir({ "pass-baseline--sol-med.md": AGENT_MD });
+    const seen: string[] = [];
+    const attempt = makeToolCallRegistrar(
+      () => ({
+        registerAgent: (c: LensAgentConfig) => {
+          if (seen.includes(c.name)) throw new Error("dup");
+          seen.push(c.name);
+        },
+        unregisterAgent: () => {
+          throw new Error("Unknown agent");
+        },
+      }),
+      d,
+      () => {},
+    );
+    expect(() => attempt()).not.toThrow();
+    expect(seen).toEqual(["pass-baseline--sol-med"]); // registration unharmed
+  });
+
+  it("degrades loudly (once) when the hook lacks unregisterAgent, still registering passes", async () => {
+    const { makeToolCallRegistrar } = await import("../extensions/register-lens-agents.js");
+    const d = tempAgentsDir({ "pass-baseline--sol-med.md": AGENT_MD });
+    const seen: string[] = [];
+    const logs: string[] = [];
+    // A pin without the API: a hook exposing registerAgent only.
+    const attempt = makeToolCallRegistrar(
+      () => ({
+        registerAgent: (c: LensAgentConfig) => {
+          if (seen.includes(c.name)) throw new Error("dup");
+          seen.push(c.name);
+        },
+      }),
+      d,
+      (m) => logs.push(m),
+    );
+    attempt();
+    attempt();
+    expect(seen).toEqual(["pass-baseline--sol-med"]);
+    const degraded = logs.filter((l) => l.includes("DEGRADED"));
+    expect(degraded).toHaveLength(1);
+    // The degraded path names the fallback: the round templates' by-name ban.
+    expect(degraded[0]).toContain("researcher, scout, worker");
+    expect(degraded[0]).toContain("round templates forbid them by name");
+  });
+});
+
 describe("session wiring", () => {
   it("extensionPaths ships register-lens-agents after the base extensions", async () => {
     const { PiSessionManager } = await import("../src/sessions.js");

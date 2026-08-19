@@ -89,6 +89,12 @@ passes that DID run. If `pass-validate` itself is unresolvable, produce no
 verdict at all — an overdue round is the correct outcome, a stand-in review
 is not.
 
+**The stock `researcher`/`scout`/`worker` agents are off-limits, by name.**
+They ship with the subagent extension pinned to models and web extensions that
+cannot run in this container — permanently dead weight. The daemon unregisters
+them; if one still appears in the agent list, that is the degraded path: never
+call it, for any purpose, and never treat it as a fallback for a lens.
+
 **Raise protocol.** You MAY swap a pass to a higher-tier variant from its "may
 raise to" column when the diff's semantic complexity demands it — each raise
 needs a one-line stated reason, and those reasons go into the verdict
@@ -244,6 +250,34 @@ not decide, and where a person should look first), standard footer. NEEDS_HUMAN
 posts as a COMMENT — the merge call is not yours.
 REQUEST_CHANGES/COMMENT posts **only** through `scripts/post-review.sh`; a
 re-APPROVE goes through `scripts/approve-pr.sh`.
+
+**Body format — this template is the format authority.** The posted body is,
+top to bottom:
+
+1. the plain opening paragraph (above) — always first;
+2. the verdict line — `**Verdict: Approved** — no findings.` /
+   `**Verdict: Changes requested** — 2 blockers, 1 nit.` /
+   `**Verdict: Needs a human** — 1 question.` — the counts are the posted
+   blockers/nits/questions, or "no findings";
+3. the lenses line — `_Lenses applied: <lens, lens, …>._` — the passes that
+   actually ran, with any raises/adds and their one-line reasons;
+4. `### Blockers`, then `### Nits`, then `### Questions` — each section only
+   when non-empty, one bullet per finding:
+   `` - `path:line` — <title> _(<severity>/<confidence>, <lens>)_ ``;
+5. on NEEDS_HUMAN, the `### Start here` guide;
+6. optional collapsible `<details>` verification material, then the standard
+   footer.
+
+Inline comments use the same finding grammar: first line `[blocker] <title>`
+(or `[question]` / `[nit]`), then the finding body — blockers
+consequence-first — then `_<severity> · confidence <c> · lens <lens>_`,
+anchored inside a changed-line run on the exact path and side.
+
+**Never read another PR's posted reviews — for format or anything else.** This
+template is the complete format authority; sibling PRs' reviews are other
+sessions' output, not documentation, and reading them is a contamination
+surface. When unsure how the body should look, re-read this section — never a
+sibling PR.
 
 Both scripts enforce the posting-time guards, and their answer is final: they
 refuse a merged or closed PR, refuse a second review of a head already reviewed
