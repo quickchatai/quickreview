@@ -367,11 +367,39 @@ export class PiSessionManager implements SessionHooks {
     this.injectFile(prSessionName(order.pr), renderedPrompt);
   }
 
-  /** SessionHooks: wake a PR session outside a round (ping-pong, follow-ups). */
+  /** Late-bound title lookup for respawning a dead sticky session (the store
+   * exists only after wire-up; set from onStart). */
+  private titleResolver?: (pr: number) => string | undefined;
+
+  setTitleResolver(fn: (pr: number) => string | undefined): void {
+    this.titleResolver = fn;
+  }
+
+  /** SessionHooks: wake a PR session outside a round (ping-pong, follow-ups).
+   *
+   * Sticky sessions die with the container (restart/deploy) and are only
+   * reborn on round dispatch — but rechecks and ping-pong are exactly the
+   * paths that fire WITHOUT a round (live gap 2026-08-19: every post-restart
+   * push recheck threw "no live session"). If the title is resolvable, the
+   * session is respawned here: same prompt template, same env, worktree
+   * re-ensured best-effort (the wake message cites it). Only when no title is
+   * known (PR never tracked) does the original error stand. */
   async inject(pr: number, message: string): Promise<void> {
     const session = prSessionName(pr);
     if (!(await this.tmux.hasSession(session))) {
-      throw new Error(`no live session ${session} — dispatch a round to birth it first`);
+      const title = this.titleResolver?.(pr);
+      if (title === undefined) {
+        throw new Error(`no live session ${session} — dispatch a round to birth it first`);
+      }
+      const worktree = this.worktrees.worktreePath(pr);
+      try {
+        await this.worktrees.ensureWorktree(pr);
+      } catch {
+        // Best-effort: an unfetchable worktree must not lose the wake — the
+        // session can re-derive state from the message + GitHub reads.
+      }
+      await this.ensurePrSession(pr, title, worktree);
+      console.log(`[quickreviewd] sessions: respawned dead ${session} for an out-of-round wake`);
     }
     this.injectFile(session, message);
   }

@@ -396,6 +396,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     digestHeadline: () => latestDigestHeadline(join(root, "digest")),
 
     async onStart(d) {
+      // Out-of-round wakes (recheck, ping-pong) can now respawn a sticky
+      // session the last restart killed — the title comes from the registry.
+      sessions.setTitleResolver((pr) => d.store.getPr(pr)?.title);
       // Lens agents: expand {{include:...}} + per-pass model overrides into the
       // build dir the register-lens-agents extension reads (state/agents) —
       // each session registers them with pi-subagents at spawn via its

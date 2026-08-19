@@ -232,6 +232,21 @@ describe("injection", () => {
     expect(readdirSync(m.injectDir("pr-42")).filter((f) => f.endsWith(".md"))).toHaveLength(1);
   });
 
+  // Live gap 2026-08-19: sticky sessions die with the container and are only
+  // reborn on round dispatch, but rechecks/ping-pong wake WITHOUT a round —
+  // every post-restart push recheck threw. With a title resolver set, inject
+  // respawns the session instead.
+  it("inject() respawns a dead session when the title resolver knows the PR", async () => {
+    const m = manager();
+    m.setTitleResolver((pr) => (pr === 42 ? "Add rate limiting" : undefined));
+    expect(liveSessions.has("pr-42")).toBe(false);
+    await m.inject(42, "recheck: head moved");
+    expect(liveSessions.has("pr-42")).toBe(true);
+    expect(readdirSync(m.injectDir("pr-42")).filter((f) => f.endsWith(".md"))).toHaveLength(1);
+    // An unknown PR still refuses — no registry row means nothing to respawn from.
+    await expect(m.inject(77, "wake")).rejects.toThrow(/no live session pr-77/);
+  });
+
   it("injectOverseer births the overseer session on demand", async () => {
     const m = manager();
     await m.injectOverseer("EOD sweep");
