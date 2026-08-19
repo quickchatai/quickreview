@@ -16,6 +16,7 @@ import type { PrFileEntry } from "../src/github.js";
 import { reconcileOrphanedRounds } from "../src/reconcile.js";
 import { StateStore } from "../src/state.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
+import { AnomalyWakePolicy } from "../src/anomalies.js";
 import { VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
 
 const baseCfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "config.toml"), "utf8"));
@@ -89,6 +90,9 @@ function reviewingRound(pr: number, head = "abc123"): number {
 }
 
 function watcher(hooks: SessionHooks, cfg: Config = baseCfg): VerdictWatcher {
+  // Mirror daemon.ts's wiring: anomaly wakes flow store → sink → hooks.
+  const policy = new AnomalyWakePolicy({ injectOverseer: (m) => hooks.injectOverseer(m) });
+  store.setAnomalySink((sig) => policy.onAnomaly(sig));
   return new VerdictWatcher({
     cfg,
     store,

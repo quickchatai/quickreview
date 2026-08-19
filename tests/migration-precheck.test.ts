@@ -12,6 +12,7 @@ import { parseConfig, type Config } from "../src/config.js";
 import { dispatchOnce, type DispatchAdapter } from "../src/dispatch.js";
 import { MutationGate, type MutationIntent, type GateResult } from "../src/gate.js";
 import type { PrFileEntry } from "../src/github.js";
+import { AnomalyWakePolicy } from "../src/anomalies.js";
 import { StateStore } from "../src/state.js";
 import { renderRoundPrompt } from "../src/templates.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
@@ -382,6 +383,14 @@ describe("migration collision pre-check", () => {
     adapter.files = [file("backend/chat/migrations/0042_x.py")];
     const prompts: string[] = [];
     const overseer: string[] = [];
+    // Mirror daemon.ts's wiring: the degraded pre-check wake now flows
+    // through the store's anomaly sink rather than a call-site inject.
+    const policy = new AnomalyWakePolicy({
+      injectOverseer: async (m) => {
+        overseer.push(m);
+      },
+    });
+    store.setAnomalySink((sig) => policy.onAnomaly(sig));
     const template = readFileSync(resolve(process.cwd(), "prompts/round-first.md"), "utf8");
 
     await dispatchOnce({
@@ -453,6 +462,14 @@ describe("migration collision pre-check", () => {
     adapter.files = [file("backend/chat/views.py", "modified")];
     const prompts: string[] = [];
     const overseer: string[] = [];
+    // Mirror daemon.ts's wiring: the degraded pre-check wake now flows
+    // through the store's anomaly sink rather than a call-site inject.
+    const policy = new AnomalyWakePolicy({
+      injectOverseer: async (m) => {
+        overseer.push(m);
+      },
+    });
+    store.setAnomalySink((sig) => policy.onAnomaly(sig));
     const template = readFileSync(resolve(process.cwd(), "prompts/round-first.md"), "utf8");
 
     await dispatchOnce({

@@ -415,19 +415,22 @@ export class VerdictWatcher {
         added,
       });
       this.log(`verdicts: #${v.pr} round ${v.round_no} pass plan mismatch`, { planned, executed, missing, added });
-      await this.safe(
-        () =>
-          this.deps.hooks.injectOverseer(
-            [
-              `PASS-PLAN MISMATCH — PR #${v.pr} round ${v.round_no}`,
-              `Planned: ${planned.join(", ") || "(none)"}`,
-              `Executed (session-reported): ${executed.join(", ") || "(none — solo/degraded round)"}`,
-              ...(missing.length > 0 ? [`Missing (planned but never returned): ${missing.join(", ")}`] : []),
-              ...(added.length > 0 ? [`Added beyond the plan: ${added.join(", ")} (sanctioned only via the add protocol, with a stated reason in the summary)`] : []),
-              "The verdict stands — this is telemetry, not a veto. Check the session if planned passes silently never ran (the posted review must not claim them).",
-            ].join("\n"),
-          ),
-        `inject overseer pass-plan mismatch #${v.pr}`,
+      // Durable anomaly row + (WAKE class) the overseer inject, both
+      // through the one logAnomaly funnel.
+      store.logAnomaly(
+        "pass_plan_mismatch",
+        v.pr,
+        v.round_no,
+        `plan≠executed — planned [${planned.join(",")}] vs executed [${executed.join(",")}]` +
+          `${missing.length > 0 ? `; missing ${missing.join(",")}` : ""}${added.length > 0 ? `; added ${added.join(",")}` : ""}`,
+        [
+          `PASS-PLAN MISMATCH — PR #${v.pr} round ${v.round_no}`,
+          `Planned: ${planned.join(", ") || "(none)"}`,
+          `Executed (session-reported): ${executed.join(", ") || "(none — solo/degraded round)"}`,
+          ...(missing.length > 0 ? [`Missing (planned but never returned): ${missing.join(", ")}`] : []),
+          ...(added.length > 0 ? [`Added beyond the plan: ${added.join(", ")} (sanctioned only via the add protocol, with a stated reason in the summary)`] : []),
+          "The verdict stands — this is telemetry, not a veto. Check the session if planned passes silently never ran (the posted review must not claim them).",
+        ].join("\n"),
       );
     } catch (err) {
       this.log(`verdicts: pass telemetry failed for #${v.pr}`, err);
@@ -495,7 +498,7 @@ export class VerdictWatcher {
   /** Malformed verdict or blown deadline: overseer anomaly, round marked, and
    * the PR parked on awaiting_human. Never an approve path. */
   private async handleAnomaly(pr: number, roundNo: number | null, message: string, kind: "malformed" | "overdue"): Promise<void> {
-    const { cfg, store, adapter, hooks } = this.deps;
+    const { cfg, store, adapter } = this.deps;
     const round = this.runningRound(pr, roundNo ?? undefined);
     if (round && round.status === "running") store.markRoundOverdue(round.id);
 
@@ -509,30 +512,30 @@ export class VerdictWatcher {
       round_no: roundNo,
       message,
     });
-    // The durable anomaly record: the inject below is the wake, this
-    // row is the queryable audit trail. One per anomaly, alongside the wake.
-    store.logAnomaly(kind, pr, roundNo, message);
-    // Piggyback pending exec-policy findings on an inject that happens anyway;
+    // Piggyback pending exec-policy findings on a wake that happens anyway;
     // violations by themselves never trigger an inject (no spam).
-    await this.announceSafe((a) =>
-      a.anomaly({ pr, round_no: roundNo, kind, deadline_min: cfg.daemon.round_deadline_min }),
-    );
     const pendingViolations = this.execViolations.get(pr);
     this.execViolations.delete(pr);
-    await this.safe(
-      () =>
-        hooks.injectOverseer(
-          [
-            `ANOMALY (${kind}) — PR #${pr}${roundNo !== null ? ` round ${roundNo}` : ""}`,
-            message,
-            "Treated as NEEDS_HUMAN / no-approve: the in-progress label was cleared and the PR is parked on awaiting_human. No reviewer was requested on GitHub — parking is daemon-side only.",
-            "Investigate the session and decide whether to rerun the round (commands/rerun-round) or restart the session.",
-            ...(pendingViolations && pendingViolations.length > 0
-              ? [`Also: exec-policy violations were audited on this PR — ${pendingViolations.join(" · ")}`]
-              : []),
-          ].join("\n"),
-        ),
-      "inject overseer anomaly",
+    // The durable anomaly record — and,, the ONE wake
+    // funnel: both kinds here are WAKE classes, so the store's sink writes the
+    // overseer inject (dedup'd per kind+pr) from the message passed along.
+    store.logAnomaly(
+      kind,
+      pr,
+      roundNo,
+      message,
+      [
+        `ANOMALY (${kind}) — PR #${pr}${roundNo !== null ? ` round ${roundNo}` : ""}`,
+        message,
+        "Treated as NEEDS_HUMAN / no-approve: the in-progress label was cleared and the PR is parked on awaiting_human. No reviewer was requested on GitHub — parking is daemon-side only.",
+        "Investigate the session and decide whether to rerun the round (commands/rerun-round) or restart the session.",
+        ...(pendingViolations && pendingViolations.length > 0
+          ? [`Also: exec-policy violations were audited on this PR — ${pendingViolations.join(" · ")}`]
+          : []),
+      ].join("\n"),
+    );
+    await this.announceSafe((a) =>
+      a.anomaly({ pr, round_no: roundNo, kind, deadline_min: cfg.daemon.round_deadline_min }),
     );
     // The round is abandoned, not running: an author reply held behind it must
     // not be stranded (S4). The session may be wedged — flushHeldWakes logs a

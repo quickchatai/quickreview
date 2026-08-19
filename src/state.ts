@@ -1020,13 +1020,31 @@ export class StateStore {
   /**
    * The durable anomaly record. Every call-site that raises an
    * overseer anomaly (malformed verdict, blown deadline, degraded migration
-   * pre-check, degraded recheck merge-verify, …) also writes ONE queryable
-   * `anomaly` event here — the inject file stays the wake channel, this is the
-   * audit trail it never was. Kept in the events table (kind = 'anomaly'), so
+   * pre-check, degraded recheck merge-verify, …) writes ONE queryable
+   * `anomaly` event here. Kept in the events table (kind = 'anomaly'), so
    * it needs no new DDL and is boot-safe on the live DB by construction.
+   *
+   * this is also the ONE funnel to the overseer wake — the record is
+   * forwarded to the optional sink (the daemon wires `AnomalyWakePolicy`),
+   * which applies the severity map + dedup and injects for WAKE classes only.
+   * `injectMessage` is the call site's richer wake text; it is NOT persisted
+   * (the `detail` field is the audit trail). No sink (bare store, tests, CLI)
+   * ⇒ the row is written and nothing wakes, exactly as before.
    */
-  logAnomaly(kind: string, pr: number | null, roundNo: number | null, detail: string): void {
+  logAnomaly(kind: string, pr: number | null, roundNo: number | null, detail: string, injectMessage?: string): void {
     this.logEvent("anomaly", pr, { kind, round_no: roundNo, detail });
+    if (this.anomalySink) {
+      const ts = this.ts();
+      this.anomalySink({ ts, kind, pr, round_no: roundNo, detail, injectMessage });
+    }
+  }
+
+  private anomalySink: ((signal: AnomalyRecord & { injectMessage?: string | undefined }) => void) | null = null;
+
+  /** Install the overseer wake sink. The sink must never throw —
+   * logAnomaly sits inside posting paths and stays sync. */
+  setAnomalySink(sink: (signal: AnomalyRecord & { injectMessage?: string | undefined }) => void): void {
+    this.anomalySink = sink;
   }
 
   /** Recorded anomalies, newest last. The query the inject files never allowed. */
@@ -1052,6 +1070,28 @@ export class StateStore {
       }
       return { ts: r.ts, kind, pr: r.pr, round_no: roundNo, detail };
     });
+  }
+
+  // ---- overseer heartbeat --------------------------------------
+
+  /** Record that the daily heartbeat fired for `date` (local "YYYY-MM-DD"). */
+  recordHeartbeat(date: string): void {
+    this.logEvent("overseer_heartbeat", null, { date });
+  }
+
+  /** The last local date the heartbeat fired, or null. Events-table backed, so
+   * it survives restarts — the boot catch-up's at-most-once guard. */
+  lastHeartbeatDate(): string | null {
+    const row = this.db
+      .prepare("SELECT payload FROM events WHERE kind = 'overseer_heartbeat' ORDER BY id DESC LIMIT 1")
+      .get() as { payload: string | null } | undefined;
+    if (!row?.payload) return null;
+    try {
+      const p = JSON.parse(row.payload) as { date?: unknown };
+      return typeof p.date === "string" ? p.date : null;
+    } catch {
+      return null;
+    }
   }
 
   /**

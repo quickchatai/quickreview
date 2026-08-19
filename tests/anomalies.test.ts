@@ -1,0 +1,268 @@
+// overseer wake policy: severity map + dedup on the logAnomaly
+// funnel, and the daily 09:00 Warsaw heartbeat (fake inject sink, fake clock).
+import { describe, expect, it } from "vitest";
+import {
+  ANOMALY_DEDUP_WINDOW_MS,
+  AnomalyWakePolicy,
+  anomalySeverity,
+  renderHeartbeatMessage,
+  startHeartbeat,
+} from "../src/anomalies.js";
+import { StateStore } from "../src/state.js";
+
+const TZ = "Europe/Warsaw";
+
+/** A store whose logAnomaly forwards to a wake policy writing into `injected`. */
+function storeWithPolicy(opts: { nowMs?: () => number; failInject?: boolean } = {}): {
+  store: StateStore;
+  injected: string[];
+} {
+  const injected: string[] = [];
+  const store = new StateStore(":memory:");
+  const policy = new AnomalyWakePolicy({
+    injectOverseer: (m) => {
+      if (opts.failInject) return Promise.reject(new Error("tmux gone"));
+      injected.push(m);
+      return Promise.resolve();
+    },
+    ...(opts.nowMs ? { now: () => new Date(opts.nowMs!()) } : {}),
+  });
+  store.setAnomalySink((s) => policy.onAnomaly(s));
+  return { store, injected };
+}
+
+describe("anomalySeverity — the map", () => {
+  it("wake classes: malformed/overdue verdicts, plan≠executed, degraded migration pre-check", () => {
+    for (const kind of ["malformed", "overdue", "pass_plan_mismatch", "migration_precheck_degraded"]) {
+      expect(anomalySeverity(kind), kind).toBe("wake");
+    }
+  });
+
+  it("quiet classes and anything unlisted default quiet — new kinds never spam", () => {
+    for (const kind of ["recheck_merge_verify_degraded", "recheck_delta_failed", "slack_connections", "brand_new_kind"]) {
+      expect(anomalySeverity(kind), kind).toBe("quiet");
+    }
+  });
+});
+
+describe("logAnomaly → wake funnel", () => {
+  it("a wake-class anomaly writes the DB row AND the overseer inject, verbatim from injectMessage", () => {
+    const { store, injected } = storeWithPolicy();
+    store.logAnomaly("malformed", 42, 3, "bad verdict json", "ANOMALY (malformed) — PR #42 round 3\nbespoke body");
+    expect(store.anomalies().map((a) => a.kind)).toEqual(["malformed"]);
+    expect(injected).toEqual(["ANOMALY (malformed) — PR #42 round 3\nbespoke body"]);
+  });
+
+  it("builds a generic inject when the call site passes no message", () => {
+    const { store, injected } = storeWithPolicy();
+    store.logAnomaly("overdue", 7, 2, "round blew the deadline");
+    expect(injected).toEqual(["ANOMALY (overdue) — PR #7 round 2\nround blew the deadline"]);
+  });
+
+  it("quiet classes stay DB-only", () => {
+    const { store, injected } = storeWithPolicy();
+    store.logAnomaly("recheck_merge_verify_degraded", 5, null, "merge-verify degraded");
+    store.logAnomaly("recheck_delta_failed", 5, null, "delta read failed");
+    expect(store.anomalies()).toHaveLength(2);
+    expect(injected).toEqual([]);
+  });
+
+  it("an UNLISTED kind is quiet even when the caller offers an inject message (default-quiet rule)", () => {
+    const { store, injected } = storeWithPolicy();
+    store.logAnomaly("slack_connections", null, null, "2 consumers", "should not be used by the funnel");
+    store.logAnomaly("never_seen_before", 9, 1, "novel failure", "also unused");
+    expect(store.anomalies()).toHaveLength(2);
+    expect(injected).toEqual([]);
+  });
+
+  it("dedups identical kind+pr inside the window — the row is still written every time", () => {
+    let nowMs = 1_000_000;
+    const { store, injected } = storeWithPolicy({ nowMs: () => nowMs });
+    store.logAnomaly("overdue", 10, 1, "first");
+    nowMs += ANOMALY_DEDUP_WINDOW_MS - 1;
+    store.logAnomaly("overdue", 10, 2, "second — suppressed wake");
+    expect(injected).toHaveLength(1);
+    expect(store.anomalies()).toHaveLength(2); // audit trail never deduped
+    // Past the window it wakes again.
+    nowMs += 2;
+    store.logAnomaly("overdue", 10, 3, "third — window elapsed");
+    expect(injected).toHaveLength(2);
+  });
+
+  it("does not dedup across different PRs or different kinds", () => {
+    const { store, injected } = storeWithPolicy();
+    store.logAnomaly("overdue", 1, 1, "a");
+    store.logAnomaly("overdue", 2, 1, "b");
+    store.logAnomaly("malformed", 1, 1, "c");
+    expect(injected).toHaveLength(3);
+  });
+
+  it("a failed inject never throws out of logAnomaly, and the row survives", () => {
+    const { store } = storeWithPolicy({ failInject: true });
+    expect(() => store.logAnomaly("malformed", 3, 1, "detail")).not.toThrow();
+    expect(store.anomalies()).toHaveLength(1);
+  });
+
+  it("a bare store (no sink) still records — nothing wakes, nothing throws", () => {
+    const store = new StateStore(":memory:");
+    store.logAnomaly("malformed", 1, 1, "no sink wired");
+    expect(store.anomalies()).toHaveLength(1);
+  });
+});
+
+// ---- heartbeat -------------------------------------------------------------
+
+class FakeClock {
+  private timers: Array<{ cb: () => void; at: number }> = [];
+  constructor(public nowMs: number) {}
+  now = (): Date => new Date(this.nowMs);
+  setTimer = (cb: () => void, ms: number): unknown => {
+    const t = { cb, at: this.nowMs + ms };
+    this.timers.push(t);
+    return t;
+  };
+  clearTimer = (h: unknown): void => {
+    this.timers = this.timers.filter((t) => t !== h);
+  };
+  /** Advance wall time, running due timers (and their microtasks) in order. */
+  async advanceTo(iso: string): Promise<void> {
+    const targetMs = new Date(iso).getTime();
+    for (;;) {
+      const due = this.timers.filter((t) => t.at <= targetMs).sort((a, b) => a.at - b.at)[0];
+      if (!due) break;
+      this.timers = this.timers.filter((t) => t !== due);
+      this.nowMs = Math.max(this.nowMs, due.at);
+      due.cb();
+      await new Promise((r) => setImmediate(r));
+    }
+    this.nowMs = targetMs;
+  }
+}
+
+function heartbeatHarness(startIso: string, store = new StateStore(":memory:")): {
+  clock: FakeClock;
+  store: StateStore;
+  injected: string[];
+  start: () => ReturnType<typeof startHeartbeat>;
+} {
+  const clock = new FakeClock(new Date(startIso).getTime());
+  const injected: string[] = [];
+  return {
+    clock,
+    store,
+    injected,
+    start: () =>
+      startHeartbeat({
+        timeHHMM: "09:00",
+        timeZone: TZ,
+        lastFired: () => store.lastHeartbeatDate(),
+        recordFired: (date) => store.recordHeartbeat(date),
+        injectOverseer: (m) => {
+          injected.push(m);
+          return Promise.resolve();
+        },
+        now: clock.now,
+        setTimer: clock.setTimer,
+        clearTimer: clock.clearTimer,
+      }),
+  };
+}
+
+describe("heartbeat persistence (StateStore)", () => {
+  it("records and reads back the last fired date across an events-table round trip", () => {
+    const store = new StateStore(":memory:");
+    expect(store.lastHeartbeatDate()).toBeNull();
+    store.recordHeartbeat("2026-08-19");
+    store.recordHeartbeat("2026-08-20");
+    expect(store.lastHeartbeatDate()).toBe("2026-08-20");
+  });
+});
+
+describe("renderHeartbeatMessage", () => {
+  it("names the date, the since-hint, and the read-and-report boundary", () => {
+    const m = renderHeartbeatMessage("2026-08-20", "2026-08-19");
+    expect(m).toContain("OVERSEER HEARTBEAT — 2026-08-20");
+    expect(m).toContain("since the last heartbeat (2026-08-19)");
+    expect(m).toContain("Flag-owner-legacy");
+    expect(renderHeartbeatMessage("2026-08-20", null)).toContain("first heartbeat on record");
+  });
+});
+
+describe("startHeartbeat — daily fire", () => {
+  it("boot before 09:00 Warsaw: no catch-up, fires at 09:00, then once per following day", async () => {
+    // 2026-08-19 06:00Z = 08:00 Warsaw (CEST).
+    const h = heartbeatHarness("2026-08-19T06:00:00Z");
+    const hb = h.start();
+    await hb.booted;
+    expect(h.injected).toEqual([]);
+    expect(hb.nextFire().toISOString()).toBe("2026-08-19T07:00:00.000Z"); // 09:00 CEST
+
+    await h.clock.advanceTo("2026-08-19T07:00:01Z");
+    expect(h.injected).toHaveLength(1);
+    expect(h.injected[0]).toContain("OVERSEER HEARTBEAT — 2026-08-19");
+    expect(h.store.lastHeartbeatDate()).toBe("2026-08-19");
+
+    await h.clock.advanceTo("2026-08-20T12:00:00Z");
+    expect(h.injected).toHaveLength(2);
+    expect(h.injected[1]).toContain("2026-08-20");
+    expect(h.injected[1]).toContain("since the last heartbeat (2026-08-19)");
+    hb.stop();
+  });
+
+  it("boot AFTER 09:00 with no fire today: exactly one catch-up, then tomorrow", async () => {
+    const h = heartbeatHarness("2026-08-19T12:00:00Z"); // 14:00 Warsaw
+    const hb = h.start();
+    await hb.booted;
+    expect(h.injected).toHaveLength(1);
+    expect(h.injected[0]).toContain("2026-08-19");
+    expect(h.store.lastHeartbeatDate()).toBe("2026-08-19");
+    expect(hb.nextFire().toISOString()).toBe("2026-08-20T07:00:00.000Z");
+    hb.stop();
+  });
+
+  it("catch-up is at most ONE even after days of downtime — missed days are not replayed", async () => {
+    const store = new StateStore(":memory:");
+    store.recordHeartbeat("2026-08-14"); // last fire five days ago
+    const h = heartbeatHarness("2026-08-19T12:00:00Z", store);
+    const hb = h.start();
+    await hb.booted;
+    expect(h.injected).toHaveLength(1); // today only, not 15th–18th
+    expect(h.injected[0]).toContain("OVERSEER HEARTBEAT — 2026-08-19");
+    expect(h.injected[0]).toContain("(2026-08-14)"); // the reading window is named
+    hb.stop();
+  });
+
+  it("restart after today's fire: no second inject (persisted date is the guard)", async () => {
+    const store = new StateStore(":memory:");
+    store.recordHeartbeat("2026-08-19");
+    const h = heartbeatHarness("2026-08-19T12:00:00Z", store);
+    const hb = h.start();
+    await hb.booted;
+    expect(h.injected).toEqual([]);
+    expect(hb.nextFire().toISOString()).toBe("2026-08-20T07:00:00.000Z");
+    hb.stop();
+  });
+
+  it("fires once per Warsaw day across spring-forward (2026-03-29), offset flipping", async () => {
+    const h = heartbeatHarness("2026-03-28T00:00:00Z");
+    const hb = h.start();
+    await hb.booted;
+    await h.clock.advanceTo("2026-03-30T23:00:00Z");
+    expect(h.injected).toHaveLength(3);
+    expect(h.injected.map((m) => m.split("\n")[0])).toEqual([
+      "OVERSEER HEARTBEAT — 2026-03-28",
+      "OVERSEER HEARTBEAT — 2026-03-29",
+      "OVERSEER HEARTBEAT — 2026-03-30",
+    ]);
+    hb.stop();
+  });
+
+  it("stop() disarms — nothing fires after", async () => {
+    const h = heartbeatHarness("2026-08-19T06:00:00Z");
+    const hb = h.start();
+    await hb.booted;
+    hb.stop();
+    await h.clock.advanceTo("2026-08-21T12:00:00Z");
+    expect(h.injected).toEqual([]);
+  });
+});
