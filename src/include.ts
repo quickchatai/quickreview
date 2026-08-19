@@ -279,6 +279,16 @@ const NIT_SCOPE_VALIDATE_ADDENDUM =
 const INTENT_CAP_VALIDATE_ADDENDUM =
   "\n## Intent findings are capped — questions and nits only (sandbox rule)\nA candidate from the `pass-intent` lens (the PR-body-vs-diff intent pass) is a judgment about author communication, never about the code: it may post only as a `[question]` or `[nit]`. Cap any `pass-intent` candidate arriving above `P3` down to `P3` with the one-word reason `intent-over-cap` — never let one through as a `P0`–`P2` or a `[blocker]`. A genuine code defect surfaced by the body-vs-diff comparison belongs to whichever lens owns it: judge it as that lens's class at its own severity only when another pass raised it; from `pass-intent` alone it stays a capped question.\n";
 
+// first-night audit finding F6. The validator's kill reasons feed
+// the EOD critic, and with the vocabulary undefined it stretched words: a
+// one-grep-verifiable funnel-scope finding was killed as "unverifiable"
+// (losing a legitimate question), and in degraded rounds a stock stand-in
+// SURVIVE'd everything without hunting counterevidence. Wrong labels poison
+// the critic's diet, so the vocabulary is CLOSED here — the seed's own
+// structured reasons and the earlier addenda's reasons fold in unchanged.
+const VALIDATE_KILL_VOCABULARY_ADDENDUM =
+  "\n## Kill and downgrade reasons — a closed vocabulary (sandbox rule)\nYour kill-log feeds the EOD critic: a wrong label teaches it wrong lessons. Every kill reason comes from this closed set — never a free-text phrase, never a stretched word:\n\n- `refuted` — you found counterevidence by READING and it contradicts the claim; cite it (file:line or the command and what it showed) in the kill-log line.\n- `unverifiable` — the claim **cannot be verified by reading** the diff, the worktree, or CI output. If a grep or a file-open could settle it, you MUST do the read — \"I didn't check\" is not `unverifiable`. A claim one read could settle is never `unverifiable`: after the read it is either `refuted` (the read contradicts it) or it survives.\n- `bad-anchor` — the evidence is real but the `path:line` is wrong and the claim depends on the location. Your step 3 comes first: fix the anchor, or strip to a body-only finding, when the finding itself is sound; kill as `bad-anchor` only when the misplacement is the defect.\n- `duplicate` — the same defect as another finding this round, differently phrased; name the surviving finding it merges into.\n- `out-of-scope` — the finding is not about this PR's change or its blast radius (e.g. pre-existing code no changed line touches or depends on, or review of the review process itself).\n- `settled:<thread-id>` — re-raises a settled thread (your step 2, unchanged).\n- `nit-out-of-delta` — a new nit-class candidate outside the current delta while a NIT SCOPE block is armed (unchanged from the nit-scope rule above).\n- `below-bar` — true but beneath posting: too minor to clear the bar even as a `[nit]`. Severity honesty — use this word rather than inflating `unverifiable` or `out-of-scope` to cover it.\n\n**Downgrades are not kills and carry their own discipline.** A demotion or adjustment (`security-demoted`, `intent-over-cap`, `inflated`, `understated`, `overreachable`, `understated-reach`) must name the axis moved — **severity**, **confidence**, or **reachability** — and say in one clause WHY that axis moved (e.g. `inflated — severity P1→P2: the error path logs and continues, no data loss`). An axis change without a why is not auditable and teaches the critic nothing.\n\n**Hunt counterevidence before SURVIVE.** For every `P0`–`P2` candidate, actively search the worktree for what would make the claim false — the guard clause upstream, the caller that already checks, the config default, the test that pins the behaviour — before you let it survive. Failing to refute is not the same as confirming: a validator that SURVIVEs everything untouched is not validating. If the hunt finds the counterevidence, the kill is `refuted` with the citation; if it finds nothing, say what you looked for.\n";
+
 /**
  * The composed addendum set, in composition order.
  *
@@ -303,6 +313,7 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
   { id: "nit-scope", scope: "lenses", text: NIT_SCOPE_ADDENDUM },
   { id: "nit-scope-validate", scope: [VALIDATE_PASS], text: NIT_SCOPE_VALIDATE_ADDENDUM },
   { id: "intent-cap-validate", scope: [VALIDATE_PASS], text: INTENT_CAP_VALIDATE_ADDENDUM },
+  { id: "validate-kill-vocabulary", scope: [VALIDATE_PASS], text: VALIDATE_KILL_VOCABULARY_ADDENDUM },
 ];
 
 /** The addenda binding `pass`, in composition order. */
