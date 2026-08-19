@@ -608,27 +608,21 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // round itself still runs: the prompt carries the "check collisions
       // yourself" note, so the class is covered either way.
       if (precheck.degraded) {
-        // Durable anomaly record — written before the inject so a
-        // failed wake still leaves the queryable row.
+        // Durable anomaly record + the overseer wake (WAKE class,
+        //) — one logAnomaly call, the store's sink writes the inject.
         store.logAnomaly(
           "migration_precheck_degraded",
           row.number,
           roundNo,
           "migration pre-check could not run (no base facts, or the base read failed); the round prompt un-muzzles the lens",
+          [
+            `ANOMALY (migration-precheck) — PR #${row.number} round ${roundNo}`,
+            "The migration-number pre-check could not run this round (no base facts, or the base read failed) — " +
+              "see the migration_precheck_skipped/failed event on this PR.",
+            "The round prompt tells the session to check base-branch migration-number collisions itself, so nothing is lost — " +
+              "but a recurring degraded pre-check means the base clone or worktree preparation is broken and needs a look.",
+          ].join("\n"),
         );
-        try {
-          await deps.hooks.injectOverseer(
-            [
-              `ANOMALY (migration-precheck) — PR #${row.number} round ${roundNo}`,
-              "The migration-number pre-check could not run this round (no base facts, or the base read failed) — " +
-                "see the migration_precheck_skipped/failed event on this PR.",
-              "The round prompt tells the session to check base-branch migration-number collisions itself, so nothing is lost — " +
-                "but a recurring degraded pre-check means the base clone or worktree preparation is broken and needs a look.",
-            ].join("\n"),
-          );
-        } catch (err) {
-          log(`dispatch: overseer inject for degraded pre-check failed on #${row.number}`, err);
-        }
       }
 
       // First-party directive edits: detect them and pick the ONE

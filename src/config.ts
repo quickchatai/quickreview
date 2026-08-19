@@ -333,7 +333,12 @@ export interface Config {
      * 0 disables the sweep. */
     expire_overdue_after_h: number;
   };
-  eod: { time: string; timezone: string };
+  eod: {
+    time: string;
+    timezone: string;
+    /** Daily overseer heartbeat wall time; same zone as `time`. */
+    heartbeat_time: string;
+  };
   caps: {
     improvement_pr_max_lines: number;
     improvement_pr_max_files: number;
@@ -445,7 +450,8 @@ export function parseConfig(toml: string): Config {
     server: { ...(req(raw, "server") as Config["server"]) },
 // Both knobs default so legacy configs keep parsing.
     daemon: { max_self_requeues: DEFAULT_MAX_SELF_REQUEUES, expire_overdue_after_h: 24, ...(req(raw, "daemon") as Partial<Config["daemon"]>) } as Config["daemon"],
-    eod: { ...(req(raw, "eod") as Config["eod"]) },
+    // heartbeat_time defaults so legacy configs keep parsing.
+    eod: { heartbeat_time: "09:00", ...(req(raw, "eod") as Partial<Config["eod"]>) } as Config["eod"],
     caps: { ...(req(raw, "caps") as Config["caps"]) },
     models: parseModels(req(raw, "models") as Record<string, any>),
     pi: { ...(req(raw, "pi") as Config["pi"]) },

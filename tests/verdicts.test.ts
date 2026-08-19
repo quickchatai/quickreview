@@ -6,6 +6,7 @@ import { parseConfig, type Config } from "../src/config.js";
 import type { GateResult } from "../src/gate.js";
 import { StateStore } from "../src/state.js";
 import type { SessionHooks, VerdictFile } from "../src/types.js";
+import { AnomalyWakePolicy } from "../src/anomalies.js";
 import { validateVerdict, VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
 
 const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "config.toml"), "utf8"));
@@ -23,6 +24,12 @@ class FakeAdapter implements VerdictAdapter {
     this.calls.push(`removeLabel:${n}:${label}`);
     return { executed: false, dryRunFile: "d" };
   }
+}
+
+/** Mirror daemon.ts's wiring: anomaly wakes flow store → sink → hooks. */
+function wireWake(s: StateStore, hooks: SessionHooks): void {
+  const policy = new AnomalyWakePolicy({ injectOverseer: (m) => hooks.injectOverseer(m) });
+  s.setAnomalySink((sig) => policy.onAnomaly(sig));
 }
 
 function recordingHooks(): { hooks: SessionHooks; overseer: string[]; injects: string[] } {
@@ -90,11 +97,13 @@ const verdictFile = (over: Partial<VerdictFile> = {}): VerdictFile => ({
 });
 
 function watcher(over: Partial<ConstructorParameters<typeof VerdictWatcher>[0]> = {}, hooks?: SessionHooks): VerdictWatcher {
+  const h = hooks ?? recordingHooks().hooks;
+  wireWake((over.store as StateStore | undefined) ?? store, h);
   return new VerdictWatcher({
     cfg,
     store,
     adapter,
-    hooks: hooks ?? recordingHooks().hooks,
+    hooks: h,
     verdictDir: dir,
     root: dir, // usage measurement stays inside the temp dir…
     usage: { globalStoreDir: null }, // …and never scans the real ~/.pi store
@@ -356,6 +365,7 @@ describe("anomaly paths", () => {
     const roundId = overdueStore.startRound(300, "first", ["pass-baseline"], cfg.daemon.round_deadline_min);
     clock = later;
     const { hooks, overseer } = recordingHooks();
+    wireWake(overdueStore, hooks);
     const w = new VerdictWatcher({ cfg, store: overdueStore, adapter, hooks, verdictDir: dir, now: () => clock });
 
     expect(await w.checkDeadlines()).toEqual([300]);
@@ -399,6 +409,7 @@ describe("anomaly paths", () => {
     const newId = s.startRound(4844, "re-review", ["pass-baseline"], cfg.daemon.round_deadline_min);
     clock = new Date("2026-08-14T14:03:00Z"); // old round overdue, new one inside its deadline
     const { hooks, overseer } = recordingHooks();
+    wireWake(s, hooks);
     const w = new VerdictWatcher({ cfg, store: s, adapter, hooks, verdictDir: dir, now: () => clock });
 
     expect(await w.checkDeadlines()).toEqual([]);
@@ -433,6 +444,7 @@ describe("held wakes are flushed at round end", () => {
     reviewingRound(101);
     store.holdWake(101, "author says: ping", "author_reply");
     const { hooks, injects } = recordingHooks();
+    wireWake(store, hooks);
     const w = new VerdictWatcher({ cfg, store, adapter, hooks, verdictDir: dir, now: () => later });
 
     expect(await w.checkDeadlines()).toEqual([101]);

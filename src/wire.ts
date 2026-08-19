@@ -17,6 +17,7 @@ import {
 import { CommandWatcher, type CommandDeps } from "./commands.js";
 import { createDaemon, type Daemon } from "./daemon.js";
 import { latestDigestHeadline } from "./digest.js";
+import { startHeartbeat, type HeartbeatTimer } from "./anomalies.js";
 import { promptReader, startEodTimer, type EodTimer } from "./eod.js";
 import { MutationGate, type MutationIntent } from "./gate.js";
 import { GitHubAdapter } from "./github.js";
@@ -360,6 +361,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     renderRecheckPrompt(readFileSync(join(root, "prompts", RECHECK_TEMPLATE_FILE), "utf8"), order);
 
   let eod: EodTimer | null = null;
+  let heartbeat: HeartbeatTimer | null = null;
   let commands: CommandWatcher | null = null;
   let slack: SlackRuntime | null = null;
 
@@ -534,6 +536,20 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       });
       log(`EOD timer armed for ${eod.nextFire().toISOString()}`);
 
+      // Daily overseer heartbeat — same Warsaw wall-clock machinery,
+      // morning slot. At most one boot catch-up if the daemon was down at the
+      // hour; the fired-date lives in the store, so restarts never double-fire.
+      heartbeat = startHeartbeat({
+        timeHHMM: cfg.eod.heartbeat_time,
+        timeZone: cfg.eod.timezone,
+        lastFired: () => d.store.lastHeartbeatDate(),
+        recordFired: (date) => d.store.recordHeartbeat(date),
+        injectOverseer: (m) => wakeOverseerAsDaemon("overseer-heartbeat", m),
+        log,
+        onError: (err) => log("heartbeat injection failed", err),
+      });
+      log(`heartbeat armed for ${heartbeat.nextFire().toISOString()}`);
+
       // Weekly overseer rotation, checked hourly.
       const rotation = setInterval(() => {
         void sessions.rotateOverseerIfDue().then((rotated) => {
@@ -545,6 +561,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
 
     async onStop(reason = "shutdown") {
       eod?.stop();
+      heartbeat?.stop();
       commands?.stop();
       // Runs before the store closes, so the goodbye is ledgered; bounded by
       // the announcer itself, so it can never delay the exit.

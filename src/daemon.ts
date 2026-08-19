@@ -9,6 +9,7 @@
 // the disk-logging stub without touching this file.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { AnomalyWakePolicy } from "./anomalies.js";
 import { retryWithheldApproval, type CiAdapter, type WithheldRetryDeps } from "./cigate.js";
 import { loadConfig, sandboxRoot, type Config } from "./config.js";
 import { dispatchOnce, type DispatchAdapter } from "./dispatch.js";
@@ -123,6 +124,12 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
   const log = deps.log ?? ((msg: string, extra?: unknown) => console.log(`[quickreviewd] ${msg}`, extra ?? ""));
   const store = deps.store ?? new StateStore(join(stateDir, "state.db"));
   const hooks = deps.hooks ?? stubSessionHooks(root, log);
+
+  // Overseer wake policy: every logAnomaly flows through the ONE
+  // severity map + dedup; WAKE classes write an overseer inject, QUIET classes
+  // stay DB-only. Wired here so stub-wired daemons behave identically.
+  const wakePolicy = new AnomalyWakePolicy({ injectOverseer: (m) => hooks.injectOverseer(m), log });
+  store.setAnomalySink((signal) => wakePolicy.onAnomaly(signal));
 
   const gh: DaemonAdapter = deps.adapter ?? buildGitHubAdapter(cfg, stateDir);
 

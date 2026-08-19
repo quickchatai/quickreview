@@ -516,6 +516,9 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
     // poll and the next trigger both come round again.
     log(`recheck: #${req.pr} delta read failed`, err);
     store.logEvent("recheck_delta_failed", req.pr, { trigger: req.trigger, error: String(err) });
+    // Durable anomaly row. QUIET class: DB-only, reviewed
+    // at the daily heartbeat — the reconcile poll retries this on its own.
+    store.logAnomaly("recheck_delta_failed", req.pr, null, `delta read failed (${req.trigger}): ${String(err)}`);
     return done({ action: "noop", reason: "no-delta-source", class: "empty" });
   }
 
