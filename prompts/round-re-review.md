@@ -28,6 +28,12 @@ before hunting anything new.**
 > nothing else will be asked of you until you finish. Every agent you need
 > comes from the `subagent` tool; you never launch one any other way.
 
+**Notes from other PRs are noise.** Memory lookups are not scoped to this PR:
+when a memory result surfaces notes about another PR, that is read-side bleed —
+never cite them, never reuse them as evidence, precedent, or format, and never
+let them steer this round. Only this PR's own ledger and history inform this
+round.
+
 ## GitHub routine — use the scripts
 
 Routine GitHub work goes through the repo's contained scripts, never
@@ -37,6 +43,10 @@ hand-rolled multi-part `gh`/GraphQL spells:
   checks, latest reviews, unresolved threads. Start here.
 - `scripts/pr-checks.sh {{n}}` — CI status.
 - `scripts/pr-threads.sh {{n}}` — unresolved threads with ids.
+- `scripts/pr-self.sh {{n}} <reviews|threads|head|checks>` — self-verification
+  reads about YOUR OWN footprint on this PR: my posted reviews, unresolved
+  threads with ids, the current head sha, the CI rollup. Read-only by
+  construction — it has no mutation path.
 - `scripts/post-review.sh {{n}} <REQUEST_CHANGES|COMMENT> <body-file>
   [comments-json]` — the ONLY way to post the review; never raw `gh` mutations.
 - `scripts/reply-thread.sh {{n}} <comment-id> <body-file>` — author ping-pong
@@ -52,7 +62,8 @@ Token hygiene (measured on live rounds, 2026-08-14):
 
 - `scripts/approve-pr.sh` — APPROVE (posts and clears both triggers).
 
-Raw `gh` is for additional READS only; every mutation goes through a script.
+Raw `gh` reads are a fallback only — when a script above already answers the
+question, use the script; every mutation goes through a script.
 
 ## 1. Sync — verify the ledger first
 
@@ -85,6 +96,12 @@ files, the SETTLED list, the gate notes — **plus the prior open findings
 assigned to that lens, with the instruction to verify each mechanically at the
 current head and report its true state before looking for anything new.**
 {{nit_scope_note}}
+
+**`pass-validate` is never in this batch.** Dispatch pass-validate only after
+every discovery pass has returned its results — never in the same batch as the
+discovery passes: launched early it vets an empty candidate set, and the round
+pays for the validator twice. The one-turn parallel launch above covers the
+discovery passes only; the validator waits for step 4.
 
 **Unknown agent = STOP, never improvise.** If the `subagent` tool answers
 "Unknown agent" for a planned pass name, do NOT substitute another agent — no
@@ -318,8 +335,17 @@ something to work around — record what happened in the verdict and stop.
 ## 7. Return
 
 Write `verdict/pr-{{n}}-round-{{round_no}}.json` with EXACTLY this JSON shape —
-the daemon rejects anything else (extra fields are fine, missing/renamed ones
-are not):
+the daemon rejects anything else (missing or renamed fields are fatal).
+
+**Scratch paths are pinned — same discipline as the verdict path.** Every
+working file this round writes goes at EXACTLY these paths, no variants: the
+review body at `state/pr-{{n}}-round-{{round_no}}-review.md`, the
+inline-comments JSON at `state/pr-{{n}}-round-{{round_no}}-comments.json`, and
+pass outputs under `state/pr-{{n}}-round-{{round_no}}-passes/`. Never invent a
+naming scheme — free-form scratch names are how sessions ended up hunting other
+rounds' files for format exemplars. The path is the contract.
+
+The verdict shape:
 
 ```json
 {
@@ -337,6 +363,13 @@ are not):
   "finished_at": "<ISO-8601 UTC now>"
 }
 ```
+
+**Emit exactly the schema fields — no extras.** The parser tolerating an
+unknown field is not licence to invent one: a field this template does not name
+is noise at best and a false signal at worst — sessions have emitted a rogue
+`ai_approved: true` on a plain approval, where it reads as a decision marker.
+Optional fields (`ai_approved`, `summary`, `approval_withheld`) appear only
+under their stated conditions below; nothing else, ever.
 
 `approval_withheld` is the step-5 CI gate: `true` only when the code judgment
 was APPROVE and the approval is held back because CI is not green at this head

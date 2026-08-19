@@ -674,6 +674,70 @@ describe("renderIntentNote", () => {
 // post-verdict ledger write was aborted mid-turn on every live 2026-08-19
 // round (all post-deploy sessions ended stopReason:aborted with ledgers/
 // stale). The wording is pinned here; edit template and pin together.
+// template & script cleanups (second-day audit, the owner 2026-08-19):
+// pinned scratch paths, the pr-self.sh read helper, verdict-schema discipline,
+// validator batching, and the memory-noise rule. The wording is pinned here;
+// edit template and pin together.
+describe("template & script cleanups", () => {
+  for (const rt of ["first", "re-review", "staleness"] as RoundType[]) {
+    const text = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile(rt)), "utf8");
+
+    it(`${roundTemplateFile(rt)} pins the scratch paths next to the verdict path`, () => {
+      expect(text).toContain("**Scratch paths are pinned — same discipline as the verdict path.**");
+      expect(text).toContain("`state/pr-{{n}}-round-{{round_no}}-review.md`");
+      expect(text).toContain("`state/pr-{{n}}-round-{{round_no}}-comments.json`");
+      expect(text).toContain("`state/pr-{{n}}-round-{{round_no}}-passes/`");
+      expect(text).toContain("Never invent a\nnaming scheme");
+      expect(text).toContain("The path is the contract.");
+      // Both live in step 7, beside the verdict-path instruction.
+      const ret = text.slice(text.indexOf("## 7. Return"));
+      expect(ret).toContain("**Scratch paths are pinned");
+      // …and the placeholders render into the concrete per-round paths.
+      const out = renderRoundPrompt(text, { ...order, round_type: rt });
+      expect(out).toContain("state/pr-412-round-2-review.md");
+      expect(out).toContain("state/pr-412-round-2-comments.json");
+      expect(out).toContain("state/pr-412-round-2-passes/");
+    });
+
+    it(`${roundTemplateFile(rt)} routes self-verification reads through pr-self.sh, raw gh as fallback only`, () => {
+      expect(text).toContain("`scripts/pr-self.sh {{n}} <reviews|threads|head|checks>`");
+      expect(text).toContain("Read-only by\n  construction — it has no mutation path.");
+      // The old blanket "additional READS" phrasing is gone: raw gh is a
+      // fallback, not routine.
+      expect(text).toContain("Raw `gh` reads are a fallback only");
+      expect(text).not.toContain("Raw `gh` is for additional READS only");
+      expect(text).toContain("every mutation goes through a script");
+    });
+
+    it(`${roundTemplateFile(rt)} demands exactly the schema fields — no extras`, () => {
+      expect(text).toContain("**Emit exactly the schema fields — no extras.**");
+      expect(text).toContain("not licence to invent one");
+      // The live incident: a rogue ai_approved on a plain approval.
+      expect(text).toMatch(/rogue\s*\n?`ai_approved: true` on a plain approval/);
+      expect(text).toContain("appear only\nunder their stated conditions below; nothing else, ever.");
+      // The old tolerance phrasing no longer invites extras.
+      expect(text).not.toContain("extra fields are fine");
+    });
+
+    it(`${roundTemplateFile(rt)} keeps pass-validate out of the discovery batch`, () => {
+      expect(text).toContain("**`pass-validate` is never in this batch.**");
+      expect(text).toContain("only after\nevery discovery pass has returned its results");
+      expect(text).toContain("never in the same batch");
+      // The why: an early validator vets nothing and is paid for twice.
+      expect(text).toContain("empty candidate set");
+      expect(text).toContain("pays for the validator twice");
+      expect(text).toContain("the validator waits for step 4");
+    });
+
+    it(`${roundTemplateFile(rt)} declares other PRs' memory notes noise — never cited, never reused`, () => {
+      expect(text).toContain("**Notes from other PRs are noise.**");
+      expect(text).toContain("read-side bleed");
+      expect(text).toContain("never cite them, never reuse them as evidence, precedent, or format");
+      expect(text).toContain("Only this PR's own ledger and history inform this\nround.");
+    });
+  }
+});
+
 describe("end-of-round ledger discipline", () => {
   const PIN = "Update the ledger, then write the verdict file — in that order; nothing comes after the verdict write.";
   for (const rt of ["first", "re-review", "staleness"] as RoundType[]) {
