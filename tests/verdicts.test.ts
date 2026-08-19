@@ -731,3 +731,19 @@ describe("mid-round head advance chains a system re-trigger", () => {
     expect(store.db.prepare("SELECT COUNT(*) c FROM events WHERE kind = 'mid_round_head_advance'").get()).toMatchObject({ c: 0 });
   });
 });
+
+
+// x compaction race (2026-08-19, #5290 r7): the post-round ledger
+// check is DELAYED past the compaction window; 0 keeps it inline for tests.
+describe("post-round ledger check settle delay", () => {
+  it("delay 0 ⇒ inline check fires during apply; default ⇒ deferred (no immediate event)", async () => {
+    reviewingRound(500);
+    const w = watcher({ ledgerCheckDelayMs: 0 });
+    await w.handleFile(write(500, 1, verdictFile({ pr: 500, verdict: "APPROVE", head_sha: "abc123" })));
+    expect(store.db.prepare("SELECT COUNT(*) c FROM events WHERE kind = 'ledger_stale_nudged' AND pr = 500").get()).toMatchObject({ c: 1 });
+
+    reviewingRound(501);
+    await watcher().handleFile(write(501, 1, verdictFile({ pr: 501, verdict: "APPROVE", head_sha: "abc123" })));
+    expect(store.db.prepare("SELECT COUNT(*) c FROM events WHERE kind = 'ledger_stale_nudged' AND pr = 501").get()).toMatchObject({ c: 0 });
+  });
+});

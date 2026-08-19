@@ -39,6 +39,11 @@ export interface VerdictDeps {
   hooks: SessionHooks;
   /** Directory the sessions write into (sandbox `verdict/`). */
   verdictDir: string;
+  /** Settle time between sending /compact and the ledger check.
+   * compactSession only SENDS the keystrokes — an inject typed while the pane
+   * is still compacting is lost with the aborted turn (live 2026-08-19,
+   * #5290 round 7). 0 ⇒ inline (tests). Default 90s. */
+  ledgerCheckDelayMs?: number;
   /** Slack announcer (S4). Optional: absent ⇒ no Slack, exactly as
    * every existing caller and test sees it. Never allowed to throw in here. */
   announce?: VerdictAnnouncer;
@@ -407,9 +412,20 @@ export class VerdictWatcher {
     // matters (SETTLED digest, ledger) survives compaction by design.
     await this.safe(() => this.deps.hooks.compactSession?.(v.pr) ?? Promise.resolve(), `compact pr-${v.pr}`);
     // Ledger freshness: AFTER compaction, so ledger-pin's mirror has
-    // had its chance. Stale/missing ⇒ anomaly + at most ONE re-nudge per round;
-    // best-effort — nothing here may disturb the applied verdict.
-    await this.safe(() => this.checkLedger(v.pr, v.round_no, v.head_sha), `ledger check pr-${v.pr}`);
+    // had its chance — and DELAYED, because compactSession only sends the
+    // keystrokes: the pane is still compacting when apply continues, and a
+    // nudge typed into that window is lost with the aborted turn (live
+    // 2026-08-19, #5290 round 7: wake delivered to .done, never a turn).
+    // Best-effort fire-and-forget — nothing here may disturb the verdict.
+    const settleMs = this.deps.ledgerCheckDelayMs ?? 90_000;
+    if (settleMs <= 0) {
+      await this.safe(() => this.checkLedger(v.pr, v.round_no, v.head_sha), `ledger check pr-${v.pr}`);
+    } else {
+      const timer = setTimeout(() => {
+        void this.safe(() => this.checkLedger(v.pr, v.round_no, v.head_sha), `ledger check pr-${v.pr}`);
+      }, settleMs);
+      timer.unref?.();
+    }
     // The round is over, so the PR's one main pi is free again (S4): deliver
     // whatever arrived while it was busy, in arrival order.
     await this.flushWakes(v.pr);

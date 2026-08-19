@@ -190,6 +190,9 @@ describe("VerdictWatcher round-end ledger check", () => {
       usage: { globalStoreDir: null },
       parseRetries: 0,
       retryDelayMs: 1,
+      // Inline: the production settle delay (compaction race, 2026-08-19) is
+      // covered in verdicts.test.ts; these tests pin the check itself.
+      ledgerCheckDelayMs: 0,
     });
     return { watcher, injects, compacted };
   }
