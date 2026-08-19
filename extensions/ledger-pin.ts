@@ -11,12 +11,31 @@
 // every turn — that snapshot is what archiveAndClose() copies into
 // archive/pr-<n>/ (the session JSONL alone would need parsing).
 //
+// (first-night audit F3): only a block whose PR number equals the
+// session's OWN PR (QCR_PR, riding the pi command line per session) is ever
+// mirrored or pinned. Sessions quote sibling PRs' ledger headers when reading
+// their posted reviews for format reference; without the filter six sessions
+// persisted PR #5288's ledger over their own. A session with no / garbage
+// QCR_PR (the overseer) mirrors NO PR ledger, ever — fail safe is no mirror.
+//
 // pi is not installed here — everything touching the pi API is VERIFY-ON-PIN.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { CompactHandlerResult, Pi, PiEventPayload } from "@earendil-works/pi-coding-agent";
 
-const LEDGER_RE = /(^|\n)\s*LEDGER\s+PR\s+#\d+[^\n]*\n[\s\S]*?(?=\n```|\n\s*\n\s*#|$)/g;
+// A block runs from its "LEDGER PR #<n>" header to the next fence / blank
+// line + heading / NEXT ledger header / end — the last terminator keeps a
+// quoted sibling header from being swallowed into the preceding block's body.
+const LEDGER_RE =
+  /(^|\n)\s*LEDGER\s+PR\s+#(\d+)[^\n]*\n[\s\S]*?(?=\n```|\n\s*\n\s*#|\n\s*LEDGER\s+PR\s+#|$)/g;
+
+/** The session's own PR number from QCR_PR — undefined for the overseer (no
+ * QCR_PR) and for anything that is not a plain digit string (fail safe). */
+export function parseOwnPr(raw: string | undefined): number | undefined {
+  const trimmed = raw?.trim();
+  if (!trimmed || !/^\d+$/.test(trimmed)) return undefined;
+  return Number(trimmed);
+}
 
 /** Deep-walk an unknown payload collecting every string that could be message
  * text. // VERIFY-ON-PIN: the event payload shape is undocumented, so this is
@@ -37,12 +56,22 @@ export function collectText(value: unknown, out: string[] = [], depth = 0): stri
   return out;
 }
 
-/** The last (most recent) LEDGER block found in the given texts, trimmed. */
-export function extractLedger(texts: string[]): string | undefined {
+/** The last (most recent) LEDGER block for the session's OWN PR, trimmed.
+ * Blocks naming any other PR are ignored (reported via onIgnore) — even when
+ * they appear after the own-PR block. With no own PR (overseer / garbage
+ * QCR_PR) every block is ignored and nothing is returned. */
+export function extractLedger(
+  texts: string[],
+  ownPr: number | undefined,
+  onIgnore: (pr: number) => void = () => {},
+): string | undefined {
   let found: string | undefined;
   for (const text of texts) {
-    const matches = text.match(LEDGER_RE);
-    if (matches && matches.length > 0) found = matches[matches.length - 1]?.trim();
+    for (const match of text.matchAll(LEDGER_RE)) {
+      const pr = Number(match[2]);
+      if (ownPr !== undefined && pr === ownPr) found = match[0].trim();
+      else onIgnore(pr);
+    }
   }
   return found;
 }
@@ -82,11 +111,16 @@ export const activate: (pi: Pi) => void = (pi) => {
   const env = process.env;
   const session = env.QCR_SESSION_NAME?.trim() || "session";
   const meta = env.QCR_PR_META?.trim() ?? "";
+  const ownPr = parseOwnPr(env.QCR_PR);
   const snapshotPath = ledgerSnapshotPath(env, session);
   let lastLedger = "";
 
   const capture = (event: PiEventPayload): string => {
-    const ledger = extractLedger(collectText(event)) ?? lastLedger;
+    const onIgnore = (pr: number): void => {
+      const who = ownPr === undefined ? "session has no QCR_PR" : `own PR is #${ownPr}`;
+      console.error(`[ledger-pin] debug: ignoring LEDGER PR #${pr} (${who})`);
+    };
+    const ledger = extractLedger(collectText(event), ownPr, onIgnore) ?? lastLedger;
     if (ledger && ledger !== lastLedger) {
       lastLedger = ledger;
       try {
