@@ -302,6 +302,12 @@ export interface Config {
     max_concurrent_rounds: number;
     round_deadline_min: number;
     overseer_rotation_days: number;
+    /**: how many times the daemon may self-requeue a stuck round
+     * (overdue + no verdict + session dead) per PR head. Past the cap the
+     * round terminalizes through the existing overdue-anomaly park. Optional
+     * so hand-rolled test configs keep compiling; readers default to
+     * DEFAULT_MAX_SELF_REQUEUES. */
+    max_self_requeues?: number;
   };
   eod: { time: string; timezone: string };
   caps: {
@@ -368,6 +374,10 @@ export const COMPANION_DEFAULTS: CompanionConfig = {
   cooldown_min: 20,
 };
 
+/** Default self-requeue budget per PR head when [daemon] carries no
+ * `max_self_requeues` — the brief's recommended N=2. */
+export const DEFAULT_MAX_SELF_REQUEUES = 2;
+
 export function sandboxRoot(): string {
   // Robust under both dist/src (built) and src (vitest): walk up to package.json.
   let dir = dirname(fileURLToPath(import.meta.url));
@@ -408,7 +418,7 @@ export function parseConfig(toml: string): Config {
     dry_run: Boolean(req(raw, "dry_run")),
     github,
     server: { ...(req(raw, "server") as Config["server"]) },
-    daemon: { ...(req(raw, "daemon") as Config["daemon"]) },
+    daemon: { max_self_requeues: DEFAULT_MAX_SELF_REQUEUES, ...(req(raw, "daemon") as Config["daemon"]) },
     eod: { ...(req(raw, "eod") as Config["eod"]) },
     caps: { ...(req(raw, "caps") as Config["caps"]) },
     models: parseModels(req(raw, "models") as Record<string, any>),

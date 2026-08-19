@@ -491,6 +491,13 @@ export class PiSessionManager implements SessionHooks {
     return written;
   }
 
+  /** SessionHooks: is the PR's tmux session alive? Read by the
+   * stuck-round detector (verdicts.ts checkDeadlines) — the same tmux
+   * has-session signal every other lifecycle decision here uses. */
+  async sessionAlive(pr: number): Promise<boolean> {
+    return this.tmux.hasSession(prSessionName(pr));
+  }
+
   /** SessionHooks: PR merged/closed — archive, drop the worktree, kill tmux. */
   /** Post-round compaction: type `/compact` into the session's pane. Manual
    * /compact is a documented pi command (findings §compaction) —
