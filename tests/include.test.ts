@@ -442,7 +442,7 @@ describe("addendum registry", () => {
     expect(addendaForPass("pass-baseline").map((a) => a.id)).toContain("nit-scope");
     expect(addendaForPass(VALIDATE_PASS).map((a) => a.id)).toContain("nit-scope-validate");
     // Both halves key on the exact block the daemon renders from round 3 on.
-    expect(renderNitScopeNote(3)).toContain("NIT SCOPE: this is round 3");
+    expect(renderNitScopeNote(3)).toContain("NIT SCOPE: this is review 3");
   });
 
   // first-night audit F6 — the validator killed a one-grep-verifiable

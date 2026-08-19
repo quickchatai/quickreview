@@ -88,6 +88,8 @@ Write `verdict/{{decision_file}}` with EXACTLY this shape:
 ```
 
 `outcome` has exactly those two values — anything else the daemon reads as
-`uphold`. Update the ledger if the delta settled or re-opened a finding. Labels
+`uphold`. If the delta settled or re-opened a finding, update the ledger
+BEFORE writing the outcome file — the outcome file tells the daemon you are
+done, and anything after it may be cut off. Labels
 and the PR's lifecycle state are the daemon's; never request a reviewer on
 GitHub.

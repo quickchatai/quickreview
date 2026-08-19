@@ -203,13 +203,14 @@ export function renderNitScopeNote(roundNo: number): string {
   if (roundNo < 3) return "";
   return [
     "",
-    `**NIT SCOPE — round ${roundNo}, the stopping rule on nits is armed.** Copy the`,
+    `**NIT SCOPE — review ${roundNo}, the stopping rule on nits is armed.** Copy the`,
     "fenced block below VERBATIM into every lens pass's task string (the passes are",
     "blank slates — this block is the only way the round number and the rule reach",
     "them), alongside that pass's delta description:",
     "",
     "```",
-    `NIT SCOPE: this is round ${roundNo} of this PR's review. From round 3 onward, a`,
+    `NIT SCOPE: this is review ${roundNo} of this PR (only rounds that posted a`,
+    `review count — cancelled rounds do not). From review 3 onward, a`,
     "NEW nit (any finding that would post as `[nit]`) is only raisable on lines",
     "inside the current delta — the commits since the last reviewed head. Do not",
     "raise a new nit on a surface that did not change since the last round, however",

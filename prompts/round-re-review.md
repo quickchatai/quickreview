@@ -363,10 +363,13 @@ places. Never report spend or cost figures — the daemon measures usage
 itself. Labels and the PR's lifecycle state are the daemon's; never
 request a reviewer on GitHub.
 
-**Last action of every round, after the verdict file is written: update the
-ledger.** Rewrite the pinned ledger to the state at `{{head_sha}}`: every prior
-finding must end this round marked `fixed@<sha>`, `open`, `conceded`, or
-`settled` — never silently dropped — and new findings enter with their status.
-The round is not finished until the ledger is written: the daemon compacts this
-conversation right after the verdict, and only the ledger survives compaction —
-a round that skips this step leaves the next round blind.
+**Update the ledger, then write the verdict file — in that order; nothing
+comes after the verdict write.** Rewrite the pinned ledger to the state at
+`{{head_sha}}`: every prior finding must end this round marked `fixed@<sha>`,
+`open`, `conceded`, or `settled` — never silently dropped — and new findings
+enter with their status. The round is not finished until the ledger is
+written, and it must be written BEFORE the verdict file: the verdict file is
+the daemon's round-over signal — the moment it appears the daemon compacts
+this conversation, whatever is still unwritten is lost, and only the ledger
+survives compaction. A round that writes the verdict first gets its ledger
+update cut off and leaves the next round blind.

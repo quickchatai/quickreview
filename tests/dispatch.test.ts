@@ -604,12 +604,12 @@ describe("dispatchOnce", () => {
       [3, "re-review"],
     ]);
     // Rounds 1–2: no armed block in what the session was handed.
-    expect(orders[0]!.prompt).not.toContain("NIT SCOPE: this is round");
-    expect(orders[1]!.prompt).not.toContain("NIT SCOPE: this is round");
+    expect(orders[0]!.prompt).not.toContain("NIT SCOPE: this is review");
+    expect(orders[1]!.prompt).not.toContain("NIT SCOPE: this is review");
     // Round 3: the verbatim block, round number stated, rule + exemption whole.
     const p3 = orders[2]!.prompt;
     expect(p3).toContain("fenced block below VERBATIM into every lens pass's task string");
-    expect(p3).toContain("NIT SCOPE: this is round 3 of this PR's review");
+    expect(p3).toContain("NIT SCOPE: this is review 3 of this PR");
     expect(p3).toContain("inside the current delta");
     expect(p3).toContain("P0–P2 findings are exempt");
     expect(p3).toContain("running non-blocking thread");

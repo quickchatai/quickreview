@@ -235,7 +235,7 @@ describe("renderNitScopeNote", () => {
     const note = renderNitScopeNote(3);
     // The verbatim task-string block, round number included.
     expect(note).toContain("fenced block below VERBATIM into every lens pass's task string");
-    expect(note).toContain("NIT SCOPE: this is round 3 of this PR's review");
+    expect(note).toContain("NIT SCOPE: this is review 3 of this PR");
     // The rule: new nits only inside the delta; P0–P2 exempt everywhere.
     expect(note).toContain("only raisable on lines");
     expect(note).toContain("inside the current delta");
@@ -247,16 +247,16 @@ describe("renderNitScopeNote", () => {
     expect(note).toContain("this thread does not");
     expect(note).toContain("**Never open a new inline thread for a nit**");
     // The round number is live, not a constant.
-    expect(renderNitScopeNote(7)).toContain("NIT SCOPE: this is round 7 of this PR's review");
+    expect(renderNitScopeNote(7)).toContain("NIT SCOPE: this is review 7 of this PR");
     expect(roundVars({ ...order, round_no: 3 }).nit_scope_note).toBe(note);
   });
 
   it("reaches the rendered re-review and staleness prompts at round 3, not at round 2", () => {
     for (const file of ["round-re-review.md", "round-staleness.md"]) {
       const tpl = readFileSync(resolve(process.cwd(), "prompts", file), "utf8");
-      expect(renderRoundPrompt(tpl, { ...order, round_no: 2 })).not.toContain("NIT SCOPE: this is round");
+      expect(renderRoundPrompt(tpl, { ...order, round_no: 2 })).not.toContain("NIT SCOPE: this is review");
       const r3 = renderRoundPrompt(tpl, { ...order, round_no: 3 });
-      expect(r3).toContain("NIT SCOPE: this is round 3 of this PR's review");
+      expect(r3).toContain("NIT SCOPE: this is review 3 of this PR");
       expect(r3).toContain("P0–P2 findings are exempt");
     }
   });
