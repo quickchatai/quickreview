@@ -280,3 +280,70 @@ describe("listMigrationFiles", () => {
     await expect(m.listMigrationFiles("0".repeat(40))).rejects.toThrow();
   });
 });
+
+// the owner, 2026-08-19 (amendment): a clean merge stays trivial; a
+// hand-resolved conflict must be named so the recheck reviews it — the
+// dropped-master-change bug lives exactly in the difference between git's own
+// auto-merge and what the author committed.
+describe("resolvedFilesInMerges", () => {
+  /** Base → `side` branch; master edits shared.txt; merge master into side.
+   * Conflicting scenarios resolve by hand with `resolution`. Returns the
+   * span (base sha → merge sha). */
+  function mergeScenario(opts: { conflicting: boolean; resolution?: string }): { from: string; to: string } {
+    writeFileSync(join(origin, "shared.txt"), "line1\nline2\nline3\n");
+    git(origin, "add", "-A");
+    git(origin, "commit", "-q", "-m", "base");
+    const from = git(origin, "rev-parse", "HEAD").trim();
+    git(origin, "checkout", "-q", "-b", "side");
+    writeFileSync(
+      join(origin, opts.conflicting ? "shared.txt" : "other.txt"),
+      opts.conflicting ? "line1 SIDE\nline2\nline3\n" : "side\n",
+    );
+    git(origin, "add", "-A");
+    git(origin, "commit", "-q", "-m", "side edit");
+    git(origin, "checkout", "-q", "master");
+    writeFileSync(join(origin, "shared.txt"), "line1 MASTER\nline2\nline3\n");
+    git(origin, "add", "-A");
+    git(origin, "commit", "-q", "-m", "master edit");
+    git(origin, "checkout", "-q", "side");
+    try {
+      git(origin, "merge", "-q", "master");
+    } catch {
+      // conflict: resolve by hand (possibly dropping master's change)
+      writeFileSync(join(origin, "shared.txt"), opts.resolution ?? "line1 SIDE\nline2\nline3\n");
+      git(origin, "add", "-A");
+      git(origin, "commit", "-q", "-m", "resolve");
+    }
+    const to = git(origin, "rev-parse", "HEAD").trim();
+    return { from, to };
+  }
+
+  it("a clean merge names no files", async () => {
+    const { from, to } = mergeScenario({ conflicting: false });
+    const m = mgr();
+    await m.ensureBaseClone();
+    git(join(root, "example-app"), "fetch", "-q", "origin", "side", "master");
+    const res = await m.resolvedFilesInMerges(from, to);
+    expect(res).toEqual({ files: [], degraded: false });
+  });
+
+  it("a hand-resolved conflict names the file — including one that dropped master's change", async () => {
+    const { from, to } = mergeScenario({ conflicting: true, resolution: "line1 SIDE\nline2\nline3\n" });
+    const m = mgr();
+    await m.ensureBaseClone();
+    git(join(root, "example-app"), "fetch", "-q", "origin", "side", "master");
+    const res = await m.resolvedFilesInMerges(from, to);
+    expect(res.degraded).toBe(false);
+    expect(res.files).toEqual(["shared.txt"]);
+  });
+
+  it("reports degraded on unusable shas instead of guessing", async () => {
+    const m = mgr();
+    await m.ensureBaseClone();
+    expect(await m.resolvedFilesInMerges("not-a-sha", "also-not")).toEqual({ files: [], degraded: true });
+    expect(
+      (await m.resolvedFilesInMerges("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"))
+        .degraded,
+    ).toBe(true);
+  });
+});

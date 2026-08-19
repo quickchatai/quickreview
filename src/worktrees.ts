@@ -161,6 +161,47 @@ export class WorktreeManager {
       .filter((l) => /(^|\/)migrations\/[^/]+\.py$/.test(l));
   }
 
+  /**
+   * Files whose content in a merge commit differs from git's own auto-merge
+   * of that merge's parents — i.e. files a human (or their agent) resolved by
+   * hand (the owner, 2026-08-19: amendment — a CLEAN base merge stays a
+   * trivial no-op, a conflict RESOLUTION is significant and gets reviewed for
+   * the dropped-master-change bug).
+   *
+   * `git merge-tree --write-tree` (git ≥ 2.38) recomputes the auto-merge
+   * without touching any worktree; on conflicts it exits 1 but still writes
+   * the tree (with conflict-marker blobs), so diffing it against the merge
+   * commit's real tree names exactly the hand-resolved paths.
+   *
+   * `degraded: true` means the answer is unknown (old git, missing objects) —
+   * the caller decides what that costs; this reader never guesses.
+   */
+  async resolvedFilesInMerges(from: string, to: string): Promise<{ files: string[]; degraded: boolean }> {
+    if (!/^[0-9a-f]{7,40}$/i.test(from) || !/^[0-9a-f]{7,40}$/i.test(to))
+      return { files: [], degraded: true };
+    try {
+      const merges = (await this.git(["rev-list", "--merges", `${from}..${to}`])).stdout
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean);
+      const files = new Set<string>();
+      for (const m of merges) {
+        const parents = (await this.git(["rev-list", "--parents", "-n", "1", m])).stdout.trim().split(/\s+/).slice(1);
+        if (parents.length !== 2) continue; // octopus/odd merges: skip, stay honest below
+        // merge-tree exits 1 on conflicts while still printing the tree oid —
+        // run unchecked and read the first line.
+        const mt = await this.run("git", ["merge-tree", "--write-tree", parents[0]!, parents[1]!], { cwd: this.basePath });
+        const tree = (mt.stdout.split("\n")[0] ?? "").trim();
+        if (!/^[0-9a-f]{40,64}$/.test(tree)) return { files: [...files], degraded: true };
+        const diff = await this.git(["diff", "--name-only", tree, `${m}^{tree}`]);
+        for (const f of diff.stdout.split("\n").map((l) => l.trim()).filter(Boolean)) files.add(f);
+      }
+      return { files: [...files], degraded: false };
+    } catch {
+      return { files: [], degraded: true };
+    }
+  }
+
   /** True when `sha` is present in the base clone (no fetch needed). */
   async hasCommit(sha: string): Promise<boolean> {
     if (!/^[0-9a-f]{7,40}$/i.test(sha)) return false;

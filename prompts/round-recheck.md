@@ -4,7 +4,7 @@
 > (`renderRecheckPrompt`) and injected into the PR session (`pr-{{n}}`) by the
 > daemon. Placeholders: `{{n}} {{title}} {{worktree}} {{trigger}}
 > {{standing_verdict}} {{last_reviewed_sha}} {{head_sha}} {{evidence}}
-> {{delta_files}} {{decision_file}}`.
+> {{delta_files}} {{conflict_audit_note}} {{decision_file}}`.
 
 ---
 
@@ -24,10 +24,11 @@ ledger and the reasoning; the daemon has classified what changed since
 
 {{delta_files}}
 
-Files marked trivial were classified by the daemon (base-branch merge, conflict
-resolution, migration renumber, version bump, formatting) and are **already
-ruled out** — do not re-derive them, do not report them. Look only at the lines
-marked **review this**, at `{{head_sha}}`, in `{{worktree}}`.
+Files marked trivial were classified by the daemon (CLEAN base-branch merge,
+migration renumber, version bump, formatting) and are **already ruled out** —
+do not re-derive them, do not report them. Look only at the lines marked
+**review this**, at `{{head_sha}}`, in `{{worktree}}`.
+{{conflict_audit_note}}
 
 ## The rules of this mode
 

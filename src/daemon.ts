@@ -50,6 +50,10 @@ export interface DaemonDeps {
   renderPrompt?: (order: import("./types.js").RoundOrder) => string;
   /** Renderer for the recheck nudge (prompts/round-recheck.md); default JSON. */
   renderRecheckPrompt?: (order: RecheckOrder) => string;
+  /** Hand-resolved merge files between two shas (the owner, 2026-08-19 —
+   * conflict resolutions are never trivial). wire.ts passes the
+   * WorktreeManager's git-level auto-merge comparison. */
+  resolvedFilesInMerges?: (from: string, to: string) => Promise<{ files: string[]; degraded: boolean }>;
   /** Fetch head + base and materialise the worktree before the order is built
    * (wire.ts passes the real WorktreeManager). Absent ⇒ no git: the order
    * falls back to the PR row's sha with no base facts. */
@@ -169,6 +173,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     adapter: gh,
     inject: (pr, message) => hooks.inject(pr, message),
     ...(deps.renderRecheckPrompt ? { renderPrompt: deps.renderRecheckPrompt } : {}),
+    ...(deps.resolvedFilesInMerges ? { resolvedFilesInMerges: deps.resolvedFilesInMerges } : {}),
     log,
   };
   const rechecks = new RecheckWatcher({ cfg, store, verdictDir, log });

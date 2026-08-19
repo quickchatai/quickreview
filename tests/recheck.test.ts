@@ -339,6 +339,41 @@ describe("runRecheck", () => {
     expect(h.store.getPr(PR)?.state).toBe("tracked");
   });
 
+  // the owner, 2026-08-19 (amendment): a hand-resolved conflict is
+  // never trivial — the resolved file escapes the base-merge ownership rule
+  // and the session is asked to audit it against both merge parents.
+  it("a resolved conflict file turns an otherwise-trivial base merge into a session recheck", async () => {
+    const h = harness({ resolvedFilesInMerges: async () => ({ files: ["src/base_only.py"], degraded: false }) });
+    // The delta is entirely outside the PR's own files — trivially base-merge
+    // under the old rule.
+    h.adapter.delta = [file({ filename: "src/base_only.py", additions: 5, deletions: 5 })];
+    h.adapter.own = [file({ filename: "src/app.ts" })];
+    const out = await runRecheck(h.deps, { pr: PR, trigger: "push", head_sha: HEAD });
+    expect(out).toMatchObject({ action: "recheck" });
+    expect(out.order?.resolved_files).toEqual(["src/base_only.py"]);
+    expect(h.injected).toHaveLength(1);
+  });
+
+  it("a clean merge (detector finds nothing) stays a trivial no-op", async () => {
+    const h = harness({ resolvedFilesInMerges: async () => ({ files: [], degraded: false }) });
+    h.adapter.delta = [file({ filename: "src/base_only.py", additions: 5, deletions: 5 })];
+    h.adapter.own = [file({ filename: "src/app.ts" })];
+    const out = await runRecheck(h.deps, { pr: PR, trigger: "push", head_sha: HEAD });
+    expect(out).toMatchObject({ action: "noop", reason: "trivial-delta" });
+    expect(h.injected).toHaveLength(0);
+  });
+
+  it("a degraded merge check keeps prior behaviour but logs — never silently quieter", async () => {
+    const h = harness({ resolvedFilesInMerges: async () => ({ files: [], degraded: true }) });
+    h.adapter.delta = [file({ filename: "src/base_only.py", additions: 5, deletions: 5 })];
+    h.adapter.own = [file({ filename: "src/app.ts" })];
+    await runRecheck(h.deps, { pr: PR, trigger: "push", head_sha: HEAD });
+    const kinds = (h.store.db.prepare("SELECT kind FROM events WHERE pr = ?").all(PR) as Array<{ kind: string }>).map(
+      (e) => e.kind,
+    );
+    expect(kinds).toContain("recheck_merge_verify_degraded");
+  });
+
   // Carry-forward (the owner, 2026-08-19): a withheld approval moves with the
   // head when the delta upholds — otherwise the retry no-ops on
   // "head-moved" forever and the never-posted approval is stranded (#5307).

@@ -73,8 +73,27 @@ export function recheckVars(order: RecheckOrder): TemplateVars {
     head_sha: order.head_sha,
     evidence: order.evidence,
     delta_files: renderDeltaFiles(order.files),
+    conflict_audit_note: renderConflictAuditNote(order.resolved_files),
     decision_file: order.decision_file,
   };
+}
+
+/** The conflict-resolution audit block (the owner, 2026-08-19): files whose
+ * merge-commit content differs from git's own auto-merge were resolved by
+ * hand, and hand resolutions have dropped the base branch's changes before.
+ * Empty when the delta's merges were all clean. */
+export function renderConflictAuditNote(resolved: readonly string[]): string {
+  if (resolved.length === 0) return "";
+  const list = resolved.map((f) => `- \`${f}\``).join("\n");
+  return (
+    `\n**CONFLICT RESOLUTION AUDIT** — these files were hand-resolved inside a merge\n` +
+    `commit (their content differs from git's own auto-merge of the parents):\n\n${list}\n\n` +
+    `For EACH, diff the merge commit against **both** parents in the worktree\n` +
+    "(`git diff <merge>^1 <merge> -- <file>` and `git diff <merge>^2 <merge> -- <file>`)\n" +
+    `and verify the resolution kept BOTH sides' intent — in particular that no\n` +
+    `base-branch change was silently dropped. A dropped base change is a\n` +
+    `regression: REQUEST_CHANGES, whatever the rest of the delta says.\n`
+  );
 }
 
 /** Render prompts/round-recheck.md against a RecheckOrder. */

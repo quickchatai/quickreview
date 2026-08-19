@@ -187,6 +187,12 @@ export interface ClassifyOpts {
    * on the base are not yours". Omitted ⇒ ownership is not consulted.
    */
   prFiles?: ReadonlySet<string>;
+  /** Files hand-resolved inside a merge commit (their content differs from
+   * git's own auto-merge of the parents). A clean base merge is trivial; a
+   * conflict RESOLUTION is a human/agent decision and classifies significant
+   * even outside prFiles — the dropped-master-change bug lives exactly there
+   * (the owner, 2026-08-19). */
+  resolvedFiles?: ReadonlySet<string>;
 }
 
 /** Classify one file. The rules are deliberately narrow: anything a rule does
@@ -194,6 +200,9 @@ export interface ClassifyOpts {
 export function classifyFile(file: DeltaFile, opts: ClassifyOpts = {}): FileClass {
   const name = file.filename;
   const trivial = (reason: TrivialReason): FileClass => ({ filename: name, class: "trivial", reason });
+
+  // A hand-resolved merge conflict is never trivial, wherever the file lives.
+  if (opts.resolvedFiles?.has(name)) return { filename: name, class: "significant", reason: "content" };
 
   if (opts.prFiles && !opts.prFiles.has(name) && !(file.previous_filename && opts.prFiles.has(file.previous_filename)))
     return trivial("base-merge");
@@ -241,6 +250,8 @@ export function classifyDelta(files: readonly DeltaFile[], opts: ClassifyOpts = 
   }
 
   const classified = files.map((f): FileClass => {
+    // A hand-resolved conflict beats every trivial rule, renumber included.
+    if (opts.resolvedFiles?.has(f.filename)) return { filename: f.filename, class: "significant", reason: "content" };
     if (renumbered.has(f.filename)) {
       // Ownership still wins: a migration that arrived with the base is a
       // base-merge file whatever its number does.
@@ -278,6 +289,8 @@ export interface RecheckPlanInput {
   delta: readonly DeltaFile[];
   /** The PR's own changed files (ownership, see ClassifyOpts.prFiles). */
   prFiles?: readonly string[];
+  /** Hand-resolved merge files (see ClassifyOpts.resolvedFiles). */
+  resolvedFiles?: readonly string[];
   /** CI conclusion for the `ci` trigger, as GitHub spells it. */
   ci?: { conclusion: string | null };
 }
@@ -345,6 +358,7 @@ export function planRecheck(input: RecheckPlanInput): RecheckPlan {
 
   const classification = classifyDelta(input.delta, {
     ...(input.prFiles ? { prFiles: new Set(input.prFiles) } : {}),
+    ...(input.resolvedFiles ? { resolvedFiles: new Set(input.resolvedFiles) } : {}),
   });
   if (adverseCi)
     return { action: "recheck", class: classification.class, evidence: `CI concluded ${input.ci?.conclusion}`, classification };
@@ -373,6 +387,9 @@ export interface RecheckOrder {
   worktree: string;
   evidence: string;
   files: FileClass[];
+  /** Files hand-resolved inside merge commits of this delta — the session
+   * must audit each against BOTH merge parents (the owner, 2026-08-19). */
+  resolved_files: string[];
   /** Relative name of the decision file the session must write. */
   decision_file: string;
   issued_at: string;
@@ -411,6 +428,10 @@ export interface RecheckDeps {
   inject: (pr: number, message: string) => Promise<void>;
   renderPrompt?: (order: RecheckOrder) => string;
   worktreeFor?: (pr: number) => string;
+  /** Hand-resolved merge files between two shas (WorktreeManager
+   * .resolvedFilesInMerges, wired by the daemon). Absent ⇒ merges classify by
+   * the ownership rule alone, as before the 2026-08-19 amendment. */
+  resolvedFilesInMerges?: (from: string, to: string) => Promise<{ files: string[]; degraded: boolean }>;
   now?: () => Date;
   log?: (msg: string, extra?: unknown) => void;
 }
@@ -484,6 +505,18 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
     return done({ action: "noop", reason: "no-delta-source", class: "empty" });
   }
 
+  // Conflict resolutions are never trivial (the owner, 2026-08-19): ask git
+  // which files in this delta's merges were hand-resolved. Degraded/unknown
+  // keeps prior behaviour but is LOGGED — never silently quieter.
+  let resolvedFiles: string[] = [];
+  if (deps.resolvedFilesInMerges) {
+    const from = req.trigger === "base_advance" && req.base ? req.base.before : lastReviewed;
+    const to = req.trigger === "base_advance" && req.base ? req.base.after : head;
+    const res = await deps.resolvedFilesInMerges(from, to);
+    resolvedFiles = res.files;
+    if (res.degraded) store.logEvent("recheck_merge_verify_degraded", req.pr, { from, to });
+  }
+
   const plan = planRecheck({
     trigger: req.trigger,
     standing: mark!.verdict,
@@ -491,6 +524,7 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
     head_sha: head,
     delta,
     prFiles,
+    resolvedFiles,
     ...(req.ci ? { ci: req.ci } : {}),
   });
   // Carry-forward (the owner, 2026-08-19): a withheld approval whose head moved
@@ -522,6 +556,7 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
     worktree: (deps.worktreeFor ?? ((n: number): string => `wt/pr-${n}`))(req.pr),
     evidence: plan.evidence,
     files: plan.classification.files,
+    resolved_files: resolvedFiles,
     decision_file: recheckDecisionFile(req.pr, head),
     issued_at: now().toISOString(),
   };

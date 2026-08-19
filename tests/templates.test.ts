@@ -406,9 +406,25 @@ const recheckOrder: RecheckOrder = {
     { filename: "src/trim.ts", class: "significant", reason: "content" },
     { filename: "yarn.lock", class: "trivial", reason: "version-bump" },
   ],
+  resolved_files: [],
   decision_file: "pr-5109-recheck-bbbbbbb.json",
   issued_at: "2026-08-18T10:00:00Z",
 };
+
+// the owner, 2026-08-19: hand-resolved merge files get an explicit audit block
+// telling the session to diff against BOTH parents; clean deltas get nothing.
+describe("conflict audit note", () => {
+  it("renders the audit block only when resolved files exist", () => {
+    const tpl = readFileSync(resolve(process.cwd(), "prompts", RECHECK_TEMPLATE_FILE), "utf8");
+    const clean = renderRecheckPrompt(tpl, recheckOrder);
+    expect(clean).not.toContain("CONFLICT RESOLUTION AUDIT");
+    const conflicted = renderRecheckPrompt(tpl, { ...recheckOrder, resolved_files: ["src/handlers.py"] });
+    expect(conflicted).toContain("CONFLICT RESOLUTION AUDIT");
+    expect(conflicted).toContain("`src/handlers.py`");
+    expect(conflicted).toContain("both");
+    expect(conflicted).toMatch(/dropped base change is a\nregression/);
+  });
+});
 
 describe("shipped recheck template", () => {
   const text = readFileSync(resolve(process.cwd(), "prompts", RECHECK_TEMPLATE_FILE), "utf8");
