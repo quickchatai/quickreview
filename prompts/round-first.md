@@ -212,6 +212,15 @@ gate and say approval waits for checks to run and pass.
   review body: short, concrete bullets a person can verify in minutes. An
   approval with double-check items is a real approval; the section is a
   spotlight, never a hedge, and never an excuse for a shortened review.
+- **every double-check item is ALSO an inline `[check this]` comment.** The
+  repo's merge rule requires every conversation resolved before merge, so each
+  item must open a thread a person has to touch: first line
+  `[check this] <title>`, then the doubt and what would settle it, anchored by
+  the normal changed-line-run rules (nearest changed line in the most relevant
+  file when no exact line applies). These threads belong to the author or
+  another human reviewer: **you never resolve a `[check this]` thread** — not
+  in this round, not in ping-pong (the daemon refuses it structurally); reply
+  when the author answers, and leave the resolution to a person.
 - if your pass infrastructure is unavailable or the review could not be
   completed, write NO verdict file: say what failed in the conversation and
   stop — the daemon detects the stalled round and requeues it. Never convert
@@ -327,7 +336,8 @@ top to bottom:
 4. `### Blockers`, then `### Nits`, then `### Questions` — each section only
    when non-empty, one bullet per finding:
    `` - `path:line` — <title> _(<severity>/<confidence>, <lens>)_ ``;
-5. the optional `### For a human to double-check` section;
+5. the optional `### For a human to double-check` section (each item also
+   posted as an inline `[check this]` comment — see the Decide step);
 6. optional collapsible `<details>` verification material, then the standard
    footer.
 

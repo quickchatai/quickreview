@@ -139,3 +139,15 @@ export function deriveVerdict(v: VerdictInput): VerdictType {
   if (v.needsHuman || v.firstPartyDirectiveInjection) return "NEEDS_HUMAN";
   return "APPROVE";
 }
+
+/**
+ * The "[check this]" inline-comment grammar (addendum, the owner
+ * 2026-08-19): every "For a human to double-check" item is ALSO posted as an
+ * inline review comment whose first line starts with this tag. The repo's
+ * merge rule requires every conversation resolved, so each item opens a
+ * thread a person must touch — and the reviewer never resolves one:
+ * github.ts resolveOwnReviewThread refuses on this marker, so only the author
+ * or another human can clear it.
+ */
+export const CHECK_THIS_TAG = "[check this]";
+export const CHECK_THIS_RE = /^\s*(?:[*_`~>]|\[?!?\[)*\s*\[check this\]/i;

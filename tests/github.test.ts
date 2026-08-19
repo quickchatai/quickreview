@@ -221,12 +221,12 @@ describe("mutations in dry-run", () => {
 });
 
 describe("resolveOwnReviewThread ownership gate", () => {
-  const threadPayload = (author = cfg.github.bot_login, isResolved = false) => ({
+  const threadPayload = (author = cfg.github.bot_login, isResolved = false, body = "[blocker] something") => ({
     data: {
       repository: {
         pullRequest: {
           reviewThreads: {
-            nodes: [{ id: "PRRT_node", isResolved, comments: { nodes: [{ databaseId: 555, author: { login: author } }] } }],
+            nodes: [{ id: "PRRT_node", isResolved, comments: { nodes: [{ databaseId: 555, author: { login: author }, body }] } }],
             pageInfo: { hasNextPage: false, endCursor: null },
           },
         },
@@ -256,6 +256,21 @@ describe("resolveOwnReviewThread ownership gate", () => {
     const own = build(() => threadPayload(cfg.github.bot_login, true));
     expect(await own.adapter.resolveOwnReviewThread(3, 555)).toEqual({ skipped: "already-resolved" });
     expect(dryrunRecords()).toHaveLength(0);
+  });
+
+  // addendum (the owner, 2026-08-19): a [check this] thread is resolved
+  // by a human, never by the reviewer — the repo merge rule (every
+  // conversation resolved) is what forces human eyes onto it.
+  it("never resolves a [check this] thread — human-only, even when bot-owned and unresolved", async () => {
+    for (const body of ["[check this] auth boundary judgment", "  [Check This] casing and leading space", "**[check this]** bolded tag"]) {
+      const own = build(() => threadPayload(cfg.github.bot_login, false, body));
+      expect(await own.adapter.resolveOwnReviewThread(3, 555)).toEqual({ skipped: "check-this-human-only" });
+      expect(dryrunRecords()).toHaveLength(0);
+    }
+    // A mention deeper in the body is not the tag: an ordinary finding whose
+    // prose references check-this still resolves normally.
+    const ordinary = build(() => threadPayload(cfg.github.bot_login, false, "[question] please [check this] value"));
+    expect((await ordinary.adapter.resolveOwnReviewThread(3, 555)).skipped).toBeNull();
   });
 });
 

@@ -470,6 +470,10 @@ describe("shipped round templates", () => {
       expect(text).toContain("`### Blockers`, then `### Nits`, then `### Questions`");
       expect(text).toContain("- `path:line` — <title> _(<severity>/<confidence>, <lens>)_");
       expect(text).toContain("`### For a human to double-check` section");
+      // addendum: every double-check item is also an inline
+      // resolvable thread a human must touch, never resolved by the reviewer.
+      expect(text).toContain("inline `[check this]` comment");
+      expect(text).toContain("you never resolve a `[check this]` thread");
       expect(text).toMatch(/optional collapsible `<details>`[^]*standard\s+footer/);
       // The inline-comment grammar: tag-first, consequence-first blockers,
       // severity/confidence/lens tail, changed-line-run anchoring.

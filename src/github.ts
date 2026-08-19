@@ -4,6 +4,7 @@
 // review-dismissal function in this adapter, by design — never add one.
 import type { CheckSummary } from "./cigate.js";
 import type { Config } from "./config.js";
+import { CHECK_THIS_RE } from "./severity.js";
 import { MutationGate, type MutationIntent, type GateResult } from "./gate.js";
 import { TokenMinter, type FetchFn } from "./githubAuth.js";
 
@@ -607,12 +608,12 @@ export class GitHubAdapter {
   async resolveOwnReviewThread(
     n: number,
     rootCommentId: number,
-  ): Promise<{ skipped: "already-resolved" | null; result?: GateResult }> {
+  ): Promise<{ skipped: "already-resolved" | "check-this-human-only" | null; result?: GateResult }> {
     const query = `query ($owner: String!, $repo: String!, $number: Int!, $after: String) {
       repository(owner: $owner, name: $repo) {
         pullRequest(number: $number) {
           reviewThreads(first: 100, after: $after) {
-            nodes { id isResolved comments(first: 1) { nodes { databaseId author { login } } } }
+            nodes { id isResolved comments(first: 1) { nodes { databaseId author { login } body } } }
             pageInfo { hasNextPage endCursor }
           }
         }
@@ -620,12 +621,12 @@ export class GitHubAdapter {
     }`;
     type ThreadPage = {
       repository?: { pullRequest?: { reviewThreads?: {
-        nodes: Array<{ id: string; isResolved: boolean; comments: { nodes: Array<{ databaseId: number; author?: { login?: string } }> } }>;
+        nodes: Array<{ id: string; isResolved: boolean; comments: { nodes: Array<{ databaseId: number; author?: { login?: string }; body?: string }> } }>;
         pageInfo: { hasNextPage: boolean; endCursor: string | null };
       } } };
     };
     let after: string | null = null;
-    let found: { id: string; isResolved: boolean; author: string } | undefined;
+    let found: { id: string; isResolved: boolean; author: string; body: string } | undefined;
     do {
       const data: ThreadPage = await this.graphql(query, { owner: this.owner, repo: this.repo, number: n, after });
       const threads = data.repository?.pullRequest?.reviewThreads;
@@ -633,7 +634,7 @@ export class GitHubAdapter {
       for (const thread of threads.nodes) {
         const root = thread.comments.nodes[0];
         if (root?.databaseId === rootCommentId) {
-          found = { id: thread.id, isResolved: thread.isResolved, author: root.author?.login ?? "" };
+          found = { id: thread.id, isResolved: thread.isResolved, author: root.author?.login ?? "", body: root.body ?? "" };
           break;
         }
       }
@@ -645,6 +646,10 @@ export class GitHubAdapter {
     if (found.author !== this.cfg.github.bot_login) {
       throw new Error(`refusing to resolve thread ${rootCommentId} on #${n}: root author is ${found.author || "unknown"}`);
     }
+    // addendum (the owner, 2026-08-19): a "[check this]" thread exists to
+    // force a human's eyes before merge (repo rule: every conversation must be
+    // resolved). The reviewer NEVER resolves one — author or another human only.
+    if (CHECK_THIS_RE.test(found.body)) return { skipped: "check-this-human-only" };
     if (found.isResolved) return { skipped: "already-resolved" };
 
     const mutation = `mutation ($threadId: ID!) {
