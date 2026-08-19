@@ -2,6 +2,13 @@
 // at most `daemon.max_concurrent_rounds` rounds in flight, triggers consumed at
 // dispatch, lenses/gates derived from the files API by the ported heuristics.
 //
+// before paying for a re-review round, a SYSTEM-provenance trigger
+// (push / CI / staleness — `pr_state.trigger_provenance`, stamped by
+// statemachine.applyEvent) is run through the delta classifier;
+// an empty/trivial delta since the reviewed head consumes the trigger and
+// upholds the standing verdict instead of dispatching. A human ask (fresh
+// label, fresh team re-review request, author reply) always gets its round.
+//
 // The round order (types.ts `RoundOrder`) is the daemon↔session contract; the
 // prompt renderer is injected (B4 owns src/templates.ts) so this module has no
 // content dependency.
@@ -17,10 +24,11 @@ import {
 } from "./migrations.js";
 import { VALIDATE_PASS } from "./include.js";
 import { hasNewEvidence } from "./guards.js";
+import { carryWithheldMark, classifyDelta, recheckFingerprint, type DeltaClass, type DeltaFile } from "./recheck.js";
 import { isFirstPartyDirectivePath } from "./severity.js";
 import type { DispatchAnnouncer } from "./slack/announce.js";
 import { applyEvent, setPrGates } from "./statemachine.js";
-import type { PrStateRow, StateStore } from "./state.js";
+import type { PrStateRow, ReviewedHeadRow, StateStore } from "./state.js";
 import { higherTier, normalizeVerdict, PASS_TIER_ORDER } from "./types.js";
 import type { PassPlanEntry, PassTier, RoundOrder, RoundType, SessionHooks } from "./types.js";
 
@@ -42,6 +50,11 @@ export interface DispatchAdapter {
     n: number,
     payload: { commit_id: string; event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT"; body: string; comments?: unknown[] },
   ): Promise<GateResult>;
+  /** `GET /compare/<base>...<head>` — read-only, the short-circuit's
+   * delta source. Optional: an adapter without it (stub-wired core, legacy
+   * fakes) simply never short-circuits — every re-trigger pays a full round,
+   * exactly the prior behaviour. */
+  compareFiles?(base: string, head: string): Promise<DeltaFile[]>;
 }
 
 export interface DispatchDeps {
@@ -80,6 +93,11 @@ export interface DispatchDeps {
    * `[review] escalation_mention_default`.
    */
   directiveAuthor?: (sha: string, paths: string[]) => Promise<{ login: string | null; name: string; email: string } | null>;
+  /** Hand-resolved merge files between two shas (the owner, 2026-08-19 —
+   * conflict resolutions are never trivial), for the short-circuit's
+   * classification. Same seam RecheckDeps carries. Absent ⇒ merges classify by
+   * the ownership rule alone. */
+  resolvedFilesInMerges?: (from: string, to: string, pr?: number) => Promise<{ files: string[]; degraded: boolean }>;
   /** Slack announcer (S4). Optional: absent ⇒ no Slack at all, which
    * is what the stub-wired daemon core and every non-Slack test see. */
   announce?: DispatchAnnouncer;
@@ -265,6 +283,80 @@ async function directiveEscalationFor(
     sha: sha || null,
   });
   return { files: directiveFiles, mention };
+}
+
+/** The short-circuit's answer for one system-provenance re-trigger. */
+type ShortCircuit =
+  | { skip: false }
+  | {
+      skip: true;
+      reason: "unchanged-head" | "empty-delta" | "trivial-delta";
+      class: DeltaClass;
+      files: string[];
+    };
+
+/**
+ * classify the delta (last reviewed head → current head) for a
+ * SYSTEM-provenance re-trigger, using the ONE classifier
+ * (`recheck.classifyDelta`) — never a copy. Every uncertainty resolves to
+ * "run the full round": an unknown head, a missing compare seam, or a failed
+ * read must never quietly swallow a review.
+ */
+async function classifySystemRetrigger(
+  deps: DispatchDeps,
+  row: PrStateRow,
+  mark: ReviewedHeadRow,
+): Promise<ShortCircuit> {
+  const log = deps.log ?? (() => {});
+  // Unknown head is always "new" — the same reading guards.hasNewEvidence takes.
+  if (!row.head_sha) return { skip: false };
+  if (row.head_sha === mark.head_sha) {
+    // Same head. An author reply pending on the mark is a person's ask (the
+    // rule guard 2 reads) → full round; anything else is the #5308 r2 case — a
+    // full round whose output posting-time guard 2 would throw away.
+    if (hasNewEvidence(mark, row.head_sha)) return { skip: false };
+    return { skip: true, reason: "unchanged-head", class: "empty", files: [] };
+  }
+  if (!deps.adapter.compareFiles) return { skip: false };
+  try {
+    const delta = await deps.adapter.compareFiles(mark.head_sha, row.head_sha);
+    const own = await deps.adapter.listPrFiles(row.number);
+    const prFiles = new Set(
+      own.flatMap((f: DeltaFile) => (f.previous_filename ? [f.filename, f.previous_filename] : [f.filename])),
+    );
+    let resolvedFiles: Set<string> | undefined;
+    if (deps.resolvedFilesInMerges) {
+      const res = await deps.resolvedFilesInMerges(mark.head_sha, row.head_sha, row.number);
+      resolvedFiles = new Set(res.files);
+      if (res.degraded) {
+        // Same bar as recheck.ts: a degraded merge-verify keeps the delta-only
+        // classification but is never silently quieter (the owner, 2026-08-19).
+        deps.store.logEvent("recheck_merge_verify_degraded", row.number, {
+          from: mark.head_sha,
+          to: row.head_sha,
+          via: "dispatch",
+        });
+        deps.store.logAnomaly(
+          "recheck_merge_verify_degraded",
+          row.number,
+          null,
+          `merge-verify degraded ${mark.head_sha.slice(0, 7)}→${row.head_sha.slice(0, 7)} at dispatch — delta-only classification kept`,
+        );
+      }
+    }
+    const cls = classifyDelta(delta, { prFiles, ...(resolvedFiles ? { resolvedFiles } : {}) });
+    if (cls.class === "significant") return { skip: false };
+    return {
+      skip: true,
+      reason: cls.class === "empty" ? "empty-delta" : "trivial-delta",
+      class: cls.class,
+      files: cls.files.map((f) => `${f.filename} (${f.reason})`),
+    };
+  } catch (err) {
+    log(`dispatch: #${row.number} delta classification failed — full round`, err);
+    deps.store.logEvent("dispatch_classifier_failed", row.number, { error: String(err) });
+    return { skip: false };
+  }
 }
 
 /** Consume both triggers at dispatch: the label and the team review request.
@@ -524,6 +616,52 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           reason: "no-new-evidence",
         });
         continue;
+      }
+
+      // a SYSTEM-provenance re-trigger (push / CI / staleness at an
+      // existing trigger state — never a fresh human ask, which applyEvent
+      // stamps "human") consults the delta classifier before paying
+      // for a full round. Empty/trivial delta since the reviewed head ⇒
+      // consume the trigger and leave state as an uphold would; significant ⇒
+      // the full round below runs as today. First reviews never short-circuit,
+      // and a withheld approval at this head is its own new evidence
+      //: that round must run so the approval can finally post.
+      if (roundType !== "first" && standing && mark?.head_sha && !withheldHere && row.trigger_provenance === "system") {
+        const sc = await classifySystemRetrigger(deps, row, mark);
+        if (sc.skip) {
+          await consumeTriggers(deps, row.number, { markInProgress: false });
+          if (row.head_sha !== mark.head_sha) {
+            // The uphold semantics of amendment ③, daemon-side: a
+            // never-posted approval follows the head on a trivial/empty delta.
+            carryWithheldMark(store, row.number, row.head_sha, `dispatch-short-circuit:${sc.reason}`, (m) => log(m));
+            if (standing === "APPROVE") {
+              // This head's push question is answered (trivially). Claim the
+              // same fingerprint the reconcile push-backstop checks so it is
+              // not re-asked every sweep; INSERT OR IGNORE means a claim a
+              // real recheck already holds is left untouched.
+              store.claimRecheck(row.number, recheckFingerprint({ trigger: "push" }, row.head_sha), {
+                head_sha: row.head_sha,
+                trigger: "push",
+                reason: `dispatch-short-circuit:${sc.reason}`,
+              });
+            }
+          }
+          log(`dispatch: #${row.number} short-circuited (${sc.reason}) — system re-trigger, standing ${standing}`);
+          store.logEvent("dispatch_short_circuit", row.number, {
+            reason: sc.reason,
+            delta_class: sc.class,
+            head_sha: row.head_sha,
+            last_reviewed_sha: mark.head_sha,
+            standing_verdict: standing,
+            files: sc.files,
+          });
+          applyEvent(store, row.number, { type: "verdict", verdict: standing }, {}, {
+            botLogin: cfg.github.bot_login,
+            now,
+            reason: `dispatch-short-circuit:${sc.reason}`,
+          });
+          continue;
+        }
       }
 
       const consumed = await consumeTriggers(deps, row.number);

@@ -132,3 +132,65 @@ describe("applyEvent", () => {
     store.close();
   });
 });
+
+describe("trigger provenance", () => {
+  const open = () => new StateStore(":memory:");
+
+  it.each([
+    [{ type: "trigger", source: "label" } as SmEvent, "human"],
+    [{ type: "trigger", source: "team_request" } as SmEvent, "human"],
+    [{ type: "trigger", source: "manual" } as SmEvent, "human"],
+    [{ type: "trigger", source: "reconcile" } as SmEvent, "system"],
+    [{ type: "stale_detected" } as SmEvent, "system"],
+  ])("%o queues with provenance %s", (event, provenance) => {
+    const store = open();
+    applyEvent(store, 20, event, { author: "alice" }, {});
+    const row = store.getPr(20)!;
+    expect(row.state).toBe("queued");
+    expect(row.trigger_provenance).toBe(provenance);
+    store.close();
+  });
+
+  it("a system re-trigger never downgrades a queued human ask", () => {
+    const store = open();
+    applyEvent(store, 21, { type: "trigger", source: "label" }, { author: "alice" }, {});
+    applyEvent(store, 21, { type: "trigger", source: "reconcile" }, {}, {});
+    expect(store.getPr(21)!.trigger_provenance).toBe("human");
+    store.close();
+  });
+
+  it("a fresh human ask upgrades a system-queued PR", () => {
+    const store = open();
+    applyEvent(store, 22, { type: "trigger", source: "reconcile" }, { author: "alice" }, {});
+    expect(store.getPr(22)!.trigger_provenance).toBe("system");
+    applyEvent(store, 22, { type: "trigger", source: "team_request" }, {}, {});
+    expect(store.getPr(22)!.trigger_provenance).toBe("human");
+    store.close();
+  });
+
+  it("an author reply while queued makes the pending round a human ask", () => {
+    const store = open();
+    applyEvent(store, 23, { type: "trigger", source: "reconcile" }, { author: "alice" }, {});
+    applyEvent(store, 23, { type: "author_reply" }, {}, {});
+    expect(store.getPr(23)!.trigger_provenance).toBe("human");
+    store.close();
+  });
+
+  it("dispatch clears provenance with the trigger", () => {
+    const store = open();
+    applyEvent(store, 24, { type: "trigger", source: "label" }, { author: "alice" }, {});
+    applyEvent(store, 24, { type: "dispatched" }, {}, {});
+    expect(store.getPr(24)!.trigger_provenance).toBeNull();
+    store.close();
+  });
+
+  it("a fresh system trigger after the queue drained is system again — human never lingers", () => {
+    const store = open();
+    applyEvent(store, 25, { type: "trigger", source: "label" }, { author: "alice" }, {});
+    applyEvent(store, 25, { type: "dispatched" }, {}, {});
+    applyEvent(store, 25, { type: "verdict", verdict: "APPROVE" }, {}, {});
+    applyEvent(store, 25, { type: "trigger", source: "reconcile" }, {}, {});
+    expect(store.getPr(25)!.trigger_provenance).toBe("system");
+    store.close();
+  });
+});

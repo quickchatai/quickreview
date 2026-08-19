@@ -5,6 +5,7 @@ import { parseConfig, type Config } from "../src/config.js";
 import { ALL_PASSES, buildPassPlan, capacity, dispatchOnce, queuedInOrder, roundTypeFor, validatorTier, type DispatchAdapter } from "../src/dispatch.js";
 import type { GateResult } from "../src/gate.js";
 import type { PrFileEntry } from "../src/github.js";
+import { recheckFingerprint } from "../src/recheck.js";
 import { StateStore } from "../src/state.js";
 import { applyEvent } from "../src/statemachine.js";
 import { PASS_TIER_ORDER } from "../src/types.js";
@@ -27,6 +28,15 @@ class FakeAdapter implements DispatchAdapter {
   /** PR → base branch; absent means "master". Set to throw via failGetPrOn. */
   baseRefs = new Map<number, string>();
   failGetPrOn = new Set<number>();
+  /** `${base}..${head}` → delta files. Absent range ⇒ empty delta. */
+  compares = new Map<string, PrFileEntry[]>();
+  failCompare = false;
+
+  async compareFiles(base: string, head: string): Promise<PrFileEntry[]> {
+    this.calls.push({ fn: "compareFiles", pr: 0, arg: `${base}..${head}` });
+    if (this.failCompare) throw new Error("compare boom");
+    return this.compares.get(`${base}..${head}`) ?? [];
+  }
 
   async getPr(n: number): Promise<{ base_ref: string }> {
     this.calls.push({ fn: "getPr", pr: n });
@@ -85,7 +95,11 @@ beforeEach(() => {
   adapter = new FakeAdapter();
 });
 
-function queue(pr: number, triggerTs: string | null, over: Partial<{ title: string; head: string }> = {}): void {
+function queue(
+  pr: number,
+  triggerTs: string | null,
+  over: Partial<{ title: string; head: string; provenance: "human" | "system" | null }> = {},
+): void {
   store.upsertPr({
     number: pr,
     state: "queued",
@@ -93,6 +107,7 @@ function queue(pr: number, triggerTs: string | null, over: Partial<{ title: stri
     title: over.title ?? `PR ${pr}`,
     author: "alice",
     trigger_ts: triggerTs,
+    trigger_provenance: over.provenance ?? null,
     stale_recheck: 0,
     migration_gate: 0,
   });
@@ -788,5 +803,213 @@ describe("first-party directive escalation pick", () => {
     });
     expect(orders[0]!.order.first_party_directives).toBeUndefined();
     expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'escalation_mention_selected'").get()).toMatchObject({ c: 0 });
+  });
+});
+
+describe("system re-trigger short-circuit", () => {
+  const OLD = "aaa1111111111111111111111111111111111111";
+  const NEW = "bbb2222222222222222222222222222222222222";
+
+  /** A prior VERDICTED round + the reviewed-head mark — the re-review shape. */
+  function reviewed(pr: number, head: string, verdict = "APPROVE"): void {
+    const id = store.startRound(pr, "first", ["pass-baseline"], 60);
+    store.finishRound(id, verdict, null);
+    store.recordReviewedHead(pr, { head_sha: head, verdict, round_no: 1 });
+  }
+
+  /** skip_unchanged_head OFF so the daemon skip cannot mask the
+   * short-circuit under test. */
+  const cfg: Config = { ...baseCfg, guards: { ...baseCfg.guards, skip_unchanged_head: false } };
+
+  function shortCircuitEvents(pr: number): Array<{ reason: string; delta_class: string; standing_verdict: string }> {
+    return (store.db.prepare("SELECT payload FROM events WHERE pr = ? AND kind = 'dispatch_short_circuit'").all(pr) as Array<{ payload: string }>).map(
+      (r) => JSON.parse(r.payload) as { reason: string; delta_class: string; standing_verdict: string },
+    );
+  }
+
+  it("unchanged-head system re-trigger short-circuits — the #5308 r2 case", async () => {
+    queue(41, "2026-08-19T10:00:00Z", { head: OLD, provenance: "system" });
+    reviewed(41, OLD, "APPROVE");
+    const { hooks, orders } = recordingHooks();
+
+    expect(await dispatchOnce({ cfg, store, adapter, hooks })).toEqual([]);
+
+    expect(orders).toEqual([]);
+    expect(store.priorRoundCount(41)).toBe(1); // no new round
+    expect(store.getPr(41)!.state).toBe("tracked"); // as the APPROVE uphold leaves it
+    expect(shortCircuitEvents(41)).toMatchObject([{ reason: "unchanged-head", delta_class: "empty", standing_verdict: "APPROVE" }]);
+    // The trigger is consumed but the PR is never painted "in progress".
+    const fns = adapter.calls.map((c) => `${c.fn}:${c.pr}`);
+    expect(fns).toContain("removeLabel:41");
+    expect(fns).toContain("deleteTeamReviewRequest:41");
+    expect(adapter.calls.filter((c) => c.fn === "addLabel")).toEqual([]);
+  });
+
+  it("a clean base merge touching no PR-owned files short-circuits — the #5308 r6 case", async () => {
+    queue(42, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
+    reviewed(42, OLD, "APPROVE");
+    adapter.files.set(42, [file("mine.ts")]);
+    adapter.compares.set(`${OLD}..${NEW}`, [file("base/other.py", 30, 4), file("base/second.py", 8, 1)]);
+    const { hooks, orders } = recordingHooks();
+
+    expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toEqual([]);
+
+    expect(orders).toEqual([]);
+    expect(store.priorRoundCount(42)).toBe(1);
+    expect(store.getPr(42)!.state).toBe("tracked");
+    const [ev] = shortCircuitEvents(42);
+    expect(ev).toMatchObject({ reason: "trivial-delta", delta_class: "trivial", standing_verdict: "APPROVE" });
+    // Terminal for this head: the reconcile push-backstop's exact fingerprint
+    // is claimed, so the same question is never re-asked every sweep.
+    expect(store.hasRecheck(42, recheckFingerprint({ trigger: "push" }, NEW))).toBe(true);
+  });
+
+  it("a significant delta dispatches the full round as today", async () => {
+    queue(43, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
+    reviewed(43, OLD, "APPROVE");
+    adapter.files.set(43, [file("mine.ts")]);
+    adapter.compares.set(`${OLD}..${NEW}`, [file("mine.ts", 12, 3)]); // PR-owned content change
+    const { hooks, orders } = recordingHooks();
+
+    expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toHaveLength(1);
+    expect(orders).toHaveLength(1);
+    expect(shortCircuitEvents(43)).toEqual([]);
+  });
+
+  it("human provenance never short-circuits, even on an empty delta", async () => {
+    queue(44, "2026-08-19T10:00:00Z", { head: NEW, provenance: "human" });
+    reviewed(44, OLD, "APPROVE");
+    const { hooks } = recordingHooks();
+    expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toHaveLength(1);
+    expect(shortCircuitEvents(44)).toEqual([]);
+  });
+
+  it("legacy null provenance never short-circuits (full round is the safe default)", async () => {
+    queue(45, "2026-08-19T10:00:00Z", { head: NEW, provenance: null });
+    reviewed(45, OLD, "APPROVE");
+    const { hooks } = recordingHooks();
+    expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toHaveLength(1);
+  });
+
+  it("first reviews never short-circuit", async () => {
+    queue(46, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
+    const { hooks } = recordingHooks();
+    expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toHaveLength(1);
+    expect(shortCircuitEvents(46)).toEqual([]);
+  });
+
+  it("a withheld approval at this head still dispatches —'s retry must post", async () => {
+    queue(47, "2026-08-19T10:00:00Z", { head: OLD, provenance: "system" });
+    reviewed(47, OLD, "APPROVE");
+    store.recordApprovalWithheld(47, { head_sha: OLD });
+    const { hooks } = recordingHooks();
+    expect(await dispatchOnce({ cfg, store, adapter, hooks })).toHaveLength(1);
+    expect(shortCircuitEvents(47)).toEqual([]);
+  });
+
+  it("an author reply pending on the mark blocks the unchanged-head skip", async () => {
+    queue(48, "2026-08-19T10:00:00Z", { head: OLD, provenance: "system" });
+    reviewed(48, OLD, "APPROVE");
+    store.noteAuthorReply(48, "2099-01-01T00:00:00.000Z");
+    const { hooks } = recordingHooks();
+    expect(await dispatchOnce({ cfg, store, adapter, hooks })).toHaveLength(1);
+    expect(shortCircuitEvents(48)).toEqual([]);
+  });
+
+  it("standing REQUEST_CHANGES short-circuits back to awaiting_author and claims no recheck", async () => {
+    queue(49, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
+    reviewed(49, OLD, "REQUEST_CHANGES");
+    const { hooks } = recordingHooks();
+
+    expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toEqual([]);
+    expect(store.getPr(49)!.state).toBe("awaiting_author");
+    expect(shortCircuitEvents(49)).toMatchObject([{ reason: "empty-delta", standing_verdict: "REQUEST_CHANGES" }]);
+    // The rechecks table is the APPROVE path's guard — untouched here.
+    expect(store.rechecksFor(49)).toEqual([]);
+  });
+
+  it("carries a withheld approval to the new head on a trivial short-circuit (amendment 3)", async () => {
+    queue(50, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
+    reviewed(50, OLD, "APPROVE");
+    store.recordApprovalWithheld(50, { head_sha: OLD, ci_state: "red", reason: "red-ci" });
+    const { hooks } = recordingHooks();
+
+    expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toEqual([]);
+    expect(store.approvalWithheld(50)).toMatchObject({ head_sha: NEW });
+    expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE pr = 50 AND kind = 'approval_withheld_carried'").get()).toEqual({ c: 1 });
+  });
+
+  it("an existing recheck claim is left untouched — no double-claim against", async () => {
+    queue(51, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
+    reviewed(51, OLD, "APPROVE");
+    const fp = recheckFingerprint({ trigger: "push" }, NEW);
+    store.claimRecheck(51, fp, { head_sha: NEW, trigger: "push", reason: "real-recheck" });
+    const { hooks } = recordingHooks();
+
+    expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toEqual([]);
+    const claims = store.rechecksFor(51);
+    expect(claims).toHaveLength(1);
+    expect(claims[0]).toMatchObject({ fingerprint: fp, reason: "real-recheck" });
+  });
+
+  it("a failed compare read falls back to the full round", async () => {
+    queue(52, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
+    reviewed(52, OLD, "APPROVE");
+    adapter.failCompare = true;
+    const { hooks } = recordingHooks();
+
+    expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toHaveLength(1);
+    expect(shortCircuitEvents(52)).toEqual([]);
+    expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE pr = 52 AND kind = 'dispatch_classifier_failed'").get()).toEqual({ c: 1 });
+  });
+
+  it("an adapter without the compare seam never short-circuits a moved head", async () => {
+    queue(53, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
+    reviewed(53, OLD, "APPROVE");
+    const legacy = new FakeAdapter();
+    (legacy as { compareFiles?: unknown }).compareFiles = undefined;
+    const { hooks } = recordingHooks();
+
+    expect(await dispatchOnce({ cfg: baseCfg, store, adapter: legacy, hooks })).toHaveLength(1);
+    expect(shortCircuitEvents(53)).toEqual([]);
+  });
+
+  it("a hand-resolved merge conflict in the delta classifies significant — full round", async () => {
+    queue(54, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
+    reviewed(54, OLD, "APPROVE");
+    adapter.files.set(54, [file("mine.ts")]);
+    adapter.compares.set(`${OLD}..${NEW}`, [file("base/other.py", 30, 4)]);
+    const { hooks } = recordingHooks();
+
+    const orders = await dispatchOnce({
+      cfg: baseCfg,
+      store,
+      adapter,
+      hooks,
+      resolvedFilesInMerges: async () => ({ files: ["base/other.py"], degraded: false }),
+    });
+    expect(orders).toHaveLength(1);
+    expect(shortCircuitEvents(54)).toEqual([]);
+  });
+
+  it("a degraded merge-verify keeps the delta-only classification but is never quiet", async () => {
+    queue(55, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
+    reviewed(55, OLD, "APPROVE");
+    adapter.files.set(55, [file("mine.ts")]);
+    adapter.compares.set(`${OLD}..${NEW}`, [file("base/other.py", 30, 4)]);
+    const { hooks } = recordingHooks();
+
+    const orders = await dispatchOnce({
+      cfg: baseCfg,
+      store,
+      adapter,
+      hooks,
+      resolvedFilesInMerges: async () => ({ files: [], degraded: true }),
+    });
+    expect(orders).toEqual([]); // delta-only classification: trivial base-merge
+    expect(shortCircuitEvents(55)).toMatchObject([{ reason: "trivial-delta" }]);
+    expect(
+      store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE pr = 55 AND kind = 'recheck_merge_verify_degraded'").get(),
+    ).toEqual({ c: 1 });
   });
 });

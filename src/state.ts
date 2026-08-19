@@ -14,6 +14,15 @@ export type PrLifecycleState =
   | "awaiting_human"
   | "closed";
 
+/** Who asked for the queued round. `human` = a fresh label add, a
+ * fresh team re-review request, an overseer/manual trigger, or an author reply
+ * landing while queued — a person acted and expects a full round. `system` = a
+ * push/CI/staleness re-trigger at an existing trigger state — the dispatcher
+ * may consult the delta classifier and short-circuit an empty/trivial
+ * delta. Null (legacy rows, direct requeues) is treated as human: the safe
+ * default is a full round. */
+export type TriggerProvenance = "human" | "system";
+
 export interface PrStateRow {
   number: number;
   state: PrLifecycleState;
@@ -21,6 +30,7 @@ export interface PrStateRow {
   title: string;
   author: string;
   trigger_ts: string | null;
+  trigger_provenance: TriggerProvenance | null;
   stale_recheck: number;
   migration_gate: number;
   /** Overseer pause-pr: no dispatch/re-trigger until resumed (or closed). */
@@ -429,6 +439,9 @@ export class StateStore {
       "ALTER TABLE rounds ADD COLUMN validate_tier TEXT",
       // Executed-pass telemetry — JSON array, nullable, additive.
       "ALTER TABLE rounds ADD COLUMN executed_passes TEXT",
+      // Trigger provenance — "human" | "system", nullable, additive.
+      // Null = legacy/unknown, which dispatch treats as human (full round).
+      "ALTER TABLE pr_state ADD COLUMN trigger_provenance TEXT",
     ]) {
       try {
         this.db.exec(ddl);
@@ -491,17 +504,31 @@ export class StateStore {
   }
 
   /** `paused` is deliberately not part of the upsert: it is owned by
-   * setPaused() so state transitions can never clobber an overseer pause. */
-  upsertPr(row: Omit<PrStateRow, "updated_at" | "paused"> & { paused?: number }): void {
+   * setPaused() so state transitions can never clobber an overseer pause.
+   * `trigger_provenance` is optional for callers that predate it —
+   * absent means null, i.e. the full-round default. */
+  upsertPr(
+    row: Omit<PrStateRow, "updated_at" | "paused" | "trigger_provenance"> & {
+      paused?: number;
+      trigger_provenance?: TriggerProvenance | null;
+    },
+  ): void {
     this.db
       .prepare(
-        `INSERT INTO pr_state (number, state, head_sha, title, author, trigger_ts, stale_recheck, migration_gate, updated_at)
-         VALUES (@number, @state, @head_sha, @title, @author, @trigger_ts, @stale_recheck, @migration_gate, @updated_at)
+        `INSERT INTO pr_state (number, state, head_sha, title, author, trigger_ts, trigger_provenance, stale_recheck, migration_gate, updated_at)
+         VALUES (@number, @state, @head_sha, @title, @author, @trigger_ts, @trigger_provenance, @stale_recheck, @migration_gate, @updated_at)
          ON CONFLICT(number) DO UPDATE SET
            state=@state, head_sha=@head_sha, title=@title, author=@author, trigger_ts=@trigger_ts,
-           stale_recheck=@stale_recheck, migration_gate=@migration_gate, updated_at=@updated_at`,
+           trigger_provenance=@trigger_provenance, stale_recheck=@stale_recheck, migration_gate=@migration_gate,
+           updated_at=@updated_at`,
       )
-      .run((({ paused: _paused, ...cols }) => ({ ...cols, updated_at: this.ts() }))(row));
+      .run(
+        (({ paused: _paused, ...cols }) => ({
+          ...cols,
+          trigger_provenance: row.trigger_provenance ?? null,
+          updated_at: this.ts(),
+        }))(row),
+      );
   }
 
   setPaused(n: number, paused: boolean): void {

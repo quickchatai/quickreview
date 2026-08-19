@@ -307,6 +307,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         prepareWorktree: deps.prepareWorktree,
         listBaseMigrations: deps.listBaseMigrations,
         directiveAuthor: deps.directiveAuthor,
+        resolvedFilesInMerges: deps.resolvedFilesInMerges,
         announce,
         log,
       });

@@ -51,7 +51,7 @@
 //
 // The never-retract-an-approval invariant is structural: no event and no
 // transition in this module touches an existing review (spec §8).
-import type { PrLifecycleState, StateStore } from "./state.js";
+import type { PrLifecycleState, StateStore, TriggerProvenance } from "./state.js";
 import type { Verdict } from "./types.js";
 
 export type SmEventType =
@@ -179,6 +179,22 @@ export function applyEvent(
   }
   if (event.type === "dispatched") triggerTs = null;
 
+  // Trigger provenance: who asked for the queued round. A fresh
+  // label / team re-review request / manual trigger is a HUMAN ask; a
+  // reconcile re-derivation, CI-green retry or staleness detection is SYSTEM.
+  // Human sticks while the PR is queued — a system re-trigger never
+  // downgrades a pending human ask — and dispatch clears it with the trigger.
+  let provenance: TriggerProvenance | null = existing?.trigger_provenance ?? null;
+  if ((event.type === "trigger" || event.type === "stale_detected") && to === "queued") {
+    const fresh: TriggerProvenance =
+      event.type === "trigger" && event.source !== "reconcile" ? "human" : "system";
+    if (fresh === "human" || !(base === "queued" && provenance === "human")) provenance = fresh;
+  }
+  // An author reply on a queued PR is a person expecting attention:
+  // the queued round dispatches in full whoever queued it first.
+  if (event.type === "author_reply" && base === "queued") provenance = "human";
+  if (event.type === "dispatched") provenance = null;
+
   store.upsertPr({
     number: pr,
     state: to,
@@ -186,6 +202,7 @@ export function applyEvent(
     title: meta.title ?? existing?.title ?? "",
     author,
     trigger_ts: triggerTs,
+    trigger_provenance: provenance,
     stale_recheck: staleRecheck,
     migration_gate: existing?.migration_gate ?? 0,
   });
@@ -208,6 +225,7 @@ export function setPrGates(store: StateStore, pr: number, migrationGate: boolean
     title: row.title,
     author: row.author,
     trigger_ts: row.trigger_ts,
+    trigger_provenance: row.trigger_provenance,
     stale_recheck: row.stale_recheck,
     migration_gate: migrationGate ? 1 : 0,
   });
