@@ -67,16 +67,40 @@ get "/repos/$REPO/commits/$HEAD_SHA/check-runs?per_page=100"
 python3 - "$OUT" <<'PY'
 import json, sys
 runs = json.load(open(sys.argv[1])).get("check_runs", [])
+# Latest-run-per-name (the owner, 2026-08-19; mirrors src/cigate.ts classifyCi):
+# GitHub auto-cancels superseded runs — only the most recent run of each check
+# name counts. Superseded husks are shown, marked, and excluded from the tally.
+latest = {}
+for c in runs:
+    key = c.get("name") or "check"
+    prev = latest.get(key)
+    if prev is None or (c.get("started_at") or "") >= (prev.get("started_at") or ""):
+        latest[key] = c
+current = set(id(c) for c in latest.values())
 passed = failed = pending = 0
 for c in runs:
     concl = c.get("conclusion")
     state = f"{c['status']}/{concl or '-'}"
-    print(f"{c['name']}: {state}  {c.get('html_url') or '-'}")
+    superseded = id(c) not in current
+    tag = "  [superseded — does not count]" if superseded else ""
+    print(f"{c['name']}: {state}  {c.get('html_url') or '-'}{tag}")
+    if superseded:
+        continue
     if c["status"] != "completed":
         pending += 1
     elif concl in ("success", "neutral", "skipped"):
         passed += 1
     else:
         failed += 1
-print(f"SUMMARY: {passed} passed / {failed} failed / {pending} pending")
+print(f"SUMMARY: {passed} passed / {failed} failed / {pending} pending (latest run per check only)")
+# The one line the Decide step reads. Same table as the daemon gate + guards.sh.
+if not latest:
+    print("CLASSIFIED: none")
+elif pending:
+    print("CLASSIFIED: pending")
+elif failed:
+    print("CLASSIFIED: red")
+else:
+    succeeded = any((c.get("conclusion") == "success") for c in latest.values())
+    print("CLASSIFIED: green" if succeeded else "CLASSIFIED: red")
 PY

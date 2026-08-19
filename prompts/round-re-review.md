@@ -135,17 +135,20 @@ all candidates + the SETTLED list. Only survivors post. Log the kills.
 **CI gate — apply it BEFORE the mapping below. No green CI at this head makes
 APPROVE unavailable, regardless of findings.** Read CI at `{{head_sha}}` with
 `scripts/pr-checks.sh {{n}}` (a read — you never trigger, re-run or cancel
-anything). Green means every check at this head finished and at least one really
-succeeded; failing, cancelled, timed-out or still-running is not green. **An
-infrastructure failure, a cancelled run or an all-skipped suite blocks exactly
-like a failing test** — there is no case to argue, which is the point of having
-a rule: the predecessor system improvised this eleven times and approved over a
-genuinely red required check.
+anything). **Its final `CLASSIFIED:` line IS the CI verdict — never re-derive
+it from the raw run list.** The classifier counts only the LATEST run of each
+check name (the owner, 2026-08-19): GitHub auto-cancels superseded runs, and a
+`cancelled` husk beside a newer successful run of the same name does NOT make
+CI red — runs marked `[superseded — does not count]` are exactly that. A
+failing, cancelled or timed-out **latest** run — infrastructure included —
+still blocks exactly like a failing test; there is no case to argue, which is
+the point of having a rule: the predecessor system improvised this eleven
+times and approved over a genuinely red required check.
 
-A head with **no CI checks configured at all** is not gated: the gate applies
-only when checks exist and are not all green — where nothing reports at this
-head, there is nothing to wait on and APPROVE stays available on the findings
-alone.
+`CLASSIFIED: none` (zero check runs at this head — a conflicted PR, or CI
+that never started) also withholds approval in this repo (the owner,
+2026-08-19): no checks means no execution evidence. Treat it like red for the
+gate and say approval waits for checks to run and pass.
 
 - **red CI and no blockers ⇒ post the full review as a COMMENT with the approval
   withheld.** Say plainly in the opening paragraph that **no blockers were found

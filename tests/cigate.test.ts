@@ -177,14 +177,25 @@ describe("the round templates carry the gate in their Decide step", () => {
     expect(decide).toContain("never **NEEDS_HUMAN** on red CI alone");
   });
 
-  it.each(templates)("%s exempts a head with no checks at all, matching ciBlocksApproval('none')", (name) => {
-    // ciBlocksApproval deliberately lets `none` through — a repo (or
-    // path) with no CI at all must not park forever. The templates must state
-    // the same rule, or the session gates harder than the code does.
+  it.each(templates)("%s defers to the pr-checks.sh CLASSIFIED verdict and the latest-run rule", (name) => {
+    // the owner, 2026-08-19: sessions re-deriving CI from the raw run list is
+    // exactly the loop that burned rounds on cancelled husks — the CLASSIFIED
+    // line (same table as classifyCi/guards.sh) is the single verdict source.
     const text = read(name);
-    expect(text).toContain("no CI checks configured at all");
-    expect(text).toContain("the gate applies only when checks exist and are not all green");
-    expect(ciBlocksApproval("none")).toBe(false);
+    expect(text).toContain("`CLASSIFIED:` line IS the CI verdict");
+    expect(text).toContain("LATEST run of each check name");
+    expect(text).toContain("[superseded — does not count]");
+  });
+
+  it.each(templates)("%s withholds on a zero-checks head, matching this repo's no_checks_is_red = true", (name) => {
+    // the owner, 2026-08-19: a conflicted / CI-less head carries no execution
+    // evidence. The code default stays exempt (a no-CI repo must never wedge);
+    // example-app's config and its templates both gate it.
+    const text = read(name);
+    expect(text).toContain("`CLASSIFIED: none`");
+    expect(text).toContain("also withholds approval in this repo");
+    expect(ciBlocksApproval("none")).toBe(false); // code default unchanged
+    expect(ciBlocksApproval("none", { noChecksIsRed: true })).toBe(true);
   });
 
   it.each(templates)("%s treats infra, cancelled and skipped identically, and only ever READS CI", (name) => {
