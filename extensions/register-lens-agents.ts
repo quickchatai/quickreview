@@ -44,8 +44,22 @@ export interface LensAgentConfig {
 
 interface SubagentsHook {
   registerAgent(config: LensAgentConfig): void;
-  unregisterAgent(name: string): void;
+  // VERIFY-ON-PIN: unregisterAgent is exposed alongside registerAgent on the
+  // globalThis hook at the pinned pi-subagents commit (index.ts ~line 156),
+  // but it has never been exercised live and its absence must not break
+  // registration — hence optional here, with a loud degraded path below.
+  unregisterAgent?(name: string): void;
 }
+
+/** The stock agents pi-subagents loads from its hardcoded agents dir. They pin
+ * anthropic models and web-search/web-fetch extensions that cannot run in this
+ * container (auth is ChatGPT OAuth — `openai-codex/` only; no anthropic key,
+ * no web extensions), so all three are permanently dead weight a session can
+ * mistake for a usable fallback (first-night audit F7). They are
+ * unregistered on EVERY tool_call sweep, not once: pi-subagents' activate()
+ * reloads them whenever it reassigns the shared agents array — the same wipe
+ * the register loop heals from. */
+export const STOCK_AGENT_NAMES = ["researcher", "scout", "worker"] as const;
 
 /** Same `---` frontmatter split pi-subagents' own loadAgents performs. */
 export function parseAgentFile(content: string): { frontmatter: Record<string, string>; body: string } {
@@ -135,6 +149,8 @@ export function makeToolCallRegistrar(
   let cached: LensAgentConfig[] | undefined;
   let everRegistered = false;
   let warnedNoHook = false;
+  let everUnregisteredStock = false;
+  let warnedNoUnregister = false;
   return () => {
     const hook = getHook();
     if (!hook) {
@@ -165,6 +181,37 @@ export function makeToolCallRegistrar(
     } else if (n > 0) {
       // A later re-registration means something wiped the shared array again.
       log(`register-lens-agents: re-registered ${n} pass agents (registry was reset)`);
+    }
+
+    // sweep the dead stock agents out on every call, same cadence as
+    // registration — activate()'s array reassignment reloads them, so a
+    // one-shot removal would not stick.
+    // VERIFY-ON-PIN: whether unregisterAgent throws on an already-absent name
+    // is unverified at 0.84.1 — hence the per-name try/catch.
+    if (typeof hook.unregisterAgent === "function") {
+      for (const name of STOCK_AGENT_NAMES) {
+        try {
+          hook.unregisterAgent(name);
+        } catch {
+          // already gone — fine
+        }
+      }
+      if (!everUnregisteredStock) {
+        everUnregisteredStock = true;
+        log(
+          `register-lens-agents: unregistered stock agents (${STOCK_AGENT_NAMES.join(", ")}) — ` +
+            "their model pins/extensions cannot run in this container",
+        );
+      }
+    } else if (!warnedNoUnregister) {
+      warnedNoUnregister = true;
+      // DEGRADED, never silent: the round templates' by-name ban ("stock
+      // researcher/scout/worker are off-limits") becomes the only defence.
+      log(
+        "register-lens-agents: DEGRADED — __pi_subagents.unregisterAgent unavailable at this pin; " +
+          `stock agents (${STOCK_AGENT_NAMES.join(", ")}) stay advertised. ` +
+          "The round templates forbid them by name; sessions must not call them.",
+      );
     }
   };
 }

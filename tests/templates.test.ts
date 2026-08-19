@@ -385,6 +385,46 @@ describe("shipped round templates", () => {
       expect(text).toMatch(/one thing must change before merge/);
     });
 
+    // the posted-body format is specified by the template itself
+    // (first-night audit F7: an under-specified format sent four sessions
+    // reading sibling PRs' posted reviews for examples).
+    it(`${roundTemplateFile(rt)} specifies the posted body format explicitly`, () => {
+      expect(text).toContain("**Body format — this template is the format authority.**");
+      // The skeleton, in order: plain opener → verdict line → lenses line →
+      // sections → Start here → details/footer.
+      expect(text).toContain("the plain opening paragraph (above) — always first");
+      expect(text).toContain("`**Verdict: Approved** — no findings.`");
+      expect(text).toContain("`**Verdict: Changes requested** — 2 blockers, 1 nit.`");
+      expect(text).toContain("`**Verdict: Needs a human** — 1 question.`");
+      expect(text).toContain("`_Lenses applied: <lens, lens, …>._`");
+      expect(text).toContain("`### Blockers`, then `### Nits`, then `### Questions`");
+      expect(text).toContain("- `path:line` — <title> _(<severity>/<confidence>, <lens>)_");
+      expect(text).toContain("`### Start here` guide");
+      expect(text).toMatch(/optional collapsible `<details>`[^]*standard\s+footer/);
+      // The inline-comment grammar: tag-first, consequence-first blockers,
+      // severity/confidence/lens tail, changed-line-run anchoring.
+      expect(text).toContain("first line `[blocker] <title>`");
+      expect(text).toContain("(or `[question]` / `[nit]`)");
+      expect(text).toContain("`_<severity> · confidence <c> · lens <lens>_`");
+      expect(text).toMatch(/anchored inside a changed-line run on the exact path and side/);
+    });
+
+    it(`${roundTemplateFile(rt)} forbids reading sibling PRs' posted reviews`, () => {
+      expect(text).toContain("**Never read another PR's posted reviews — for format or anything else.**");
+      expect(text).toContain("complete format authority");
+      expect(text).toContain("contamination");
+      expect(text).toMatch(/re-read this section — never a\s+sibling PR/);
+    });
+
+    // half 1 — the dead stock agents are banned by name in the
+    // template (the belt to the extension-side unregistration's braces).
+    it(`${roundTemplateFile(rt)} declares the stock researcher/scout/worker agents off-limits by name`, () => {
+      expect(text).toContain("**The stock `researcher`/`scout`/`worker` agents are off-limits, by name.**");
+      expect(text).toContain("cannot run in this container");
+      expect(text).toContain("The daemon unregisters\nthem");
+      expect(text).toContain("never treat it as a fallback for a lens");
+    });
+
     it(`${roundTemplateFile(rt)} makes blocker comments lead with the consequence`, () => {
       expect(text).toContain("**Blocker comments lead with the consequence.**");
       expect(text).toMatch(/one clause of plain words naming what actually goes wrong/);
@@ -492,6 +532,14 @@ describe("shipped recheck template", () => {
     expect(text).toContain("running non-blocking nits");
     expect(text).toContain("never a new inline thread");
     expect(text).toContain("this thread does not need another round to\n  close");
+  });
+
+  // the sibling-review ban holds on the recheck path too; the
+  // format authority is the round template the session already holds.
+  it("forbids reading sibling PRs' posted reviews in recheck mode too", () => {
+    expect(text).toContain("**Never read another PR's posted reviews — for format or anything else.**");
+    expect(text).toContain("format authority");
+    expect(text).toContain("contamination surface");
   });
 });
 
