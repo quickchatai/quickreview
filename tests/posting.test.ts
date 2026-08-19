@@ -2,9 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import {
   approvalActions,
   assembleReview,
+  directiveEscalationFiles,
   eventForVerdict,
   INLINE_COMMENT_CAP,
   inlineBody,
+  renderDirectiveEscalationComment,
   REVIEW_FOOTER,
   submitReview,
   type Finding,
@@ -205,6 +207,89 @@ describe("assembleReview", () => {
     });
     expect(review.payload.body).toContain("### Previously deferred, unchanged");
     expect(review.payload.body).toContain("unbounded retry loop");
+  });
+});
+
+describe("first-party directive escalation", () => {
+  const directive = (path: string, over: Partial<Finding> = {}): Finding =>
+    finding({
+      path,
+      kind: "injection",
+      severity: "P1",
+      title: "instruction-shaped content",
+      body: "The file body instructs agents.",
+      lens: "pass-security",
+      ...over,
+    });
+
+  it("tags a first-party directive injection as a question, never a blocker", () => {
+    const review = assembleReview({
+      pr: 5306,
+      head_sha: "sha",
+      verdict: "NEEDS_HUMAN",
+      lenses: ["pass-security"],
+      findings: [directive(".claude/skills/user-journey-analysis/SKILL.md")],
+      escalation_mention: "alex",
+    });
+    expect([...review.tags.values()]).toEqual(["question"]);
+    expect(review.payload.event).toBe("COMMENT");
+    expect(review.payload.body).not.toContain("### Blockers");
+  });
+
+  it("carries EXACTLY ONE escalation comment, @-mentioning the picked teammate and naming the file", () => {
+    const review = assembleReview({
+      pr: 5306,
+      head_sha: "sha",
+      verdict: "NEEDS_HUMAN",
+      lenses: ["pass-security"],
+      findings: [directive(".claude/skills/a/SKILL.md"), directive(".claude/skills/b/SKILL.md", { line: 3 })],
+      escalation_mention: "alex",
+    });
+    const body = review.payload.body;
+    const sections = body.split("### Human approval needed — agent-directive change").length - 1;
+    expect(sections).toBe(1); // one comment total, however many directive files
+    expect(body).toContain("@alex");
+    expect(body).toContain("`.claude/skills/a/SKILL.md`");
+    expect(body).toContain("`.claude/skills/b/SKILL.md`");
+  });
+
+  it("the escalation comment stays within three sentences", () => {
+    const text = renderDirectiveEscalationComment("alex", [".claude/skills/a/SKILL.md", "CLAUDE.md"]);
+    expect(text.startsWith("@alex")).toBe(true);
+    const sentences = text.match(/[.!?](\s|$)/g) ?? [];
+    expect(sentences.length).toBeLessThanOrEqual(3);
+    expect(text).toContain("human approval");
+  });
+
+  it("renders without an @ when no mention could be picked", () => {
+    const text = renderDirectiveEscalationComment("", ["CLAUDE.md"]);
+    expect(text).not.toContain("@");
+    expect(text).toContain("a maintainer");
+  });
+
+  it("third-party/vendored directive content keeps the blocker and gets no escalation section", () => {
+    const review = assembleReview({
+      pr: 7,
+      head_sha: "sha",
+      verdict: "REQUEST_CHANGES",
+      lenses: ["pass-security"],
+      findings: [directive("node_modules/pkg/CLAUDE.md")],
+      escalation_mention: "alex",
+    });
+    expect([...review.tags.values()]).toEqual(["blocker"]);
+    expect(review.payload.body).not.toContain("Human approval needed");
+    expect(review.payload.event).toBe("REQUEST_CHANGES");
+  });
+
+  it("directiveEscalationFiles deduplicates and ignores non-injection findings on directive paths", () => {
+    expect(
+      directiveEscalationFiles([
+        directive(".claude/skills/a/SKILL.md"),
+        directive(".claude/skills/a/SKILL.md", { line: 9 }),
+        finding({ path: ".claude/skills/a/SKILL.md", kind: "security" }),
+        finding({ path: "src/app.py", kind: "injection" }),
+      ]),
+    ).toEqual([".claude/skills/a/SKILL.md"]);
   });
 });
 

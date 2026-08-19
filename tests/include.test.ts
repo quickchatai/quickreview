@@ -573,6 +573,22 @@ describe("the built pass contract (rules)", () => {
     }
   });
 
+  // the first-party carve-out rides every built pass — the REPORT is
+  // unchanged (P1, kind: injection), only the ROUTING moves (session/daemon
+  // park it instead of blocking), and vendored content keeps the bright line.
+  it("delivers the first-party directive routing note to every built pass, after the injection fencing", () => {
+    for (const text of everyBody()) {
+      expect(text).toContain("## First-party agent-directive files — same report, different routing (sandbox rule)");
+      expect(text).toContain("never soften, drop, or re-severity the finding yourself");
+      expect(text).toContain("the ordinary bright line above applies to it unchanged");
+      // Composition order: the carve-out refers to "above", so the fencing
+      // must precede it in the built body.
+      expect(text.indexOf("`severity: P1`, `kind: injection`")).toBeLessThan(
+        text.indexOf("## First-party agent-directive files"),
+      );
+    }
+  });
+
   // the two seed rules that demanded evidence the execution policy
   // forbids gathering (`sqlmigrate` output, a replica row count). The seeds are
   // frozen (rule 6), so the withdrawal + replacement rides the addendum — and

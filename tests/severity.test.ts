@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   deriveVerdict,
+  isFirstPartyDirectiveInjection,
+  isFirstPartyDirectivePath,
   normalizeReachability,
   postTag,
   type Reachability,
@@ -76,6 +78,81 @@ describe("reachability gate", () => {
     }
     // And a high-confidence routine P2 still blocks exactly as before.
     expect(postTag("P2", 0.9, "routine")).toBe("blocker");
+  });
+});
+
+describe("first-party directive gate", () => {
+  it("recognizes the reviewed repo's own agent-directive paths", () => {
+    for (const p of [
+      ".claude/skills/user-journey-analysis/SKILL.md", // the #5306 false positive
+      ".claude/settings.json",
+      "prompts/round-first.md",
+      "CLAUDE.md",
+      "AGENTS.md",
+      "backend/AGENTS.md",
+      "src/deep/CLAUDE.md",
+      ".cursorrules",
+      ".cursor/rules/style.mdc",
+      ".github/copilot-instructions.md",
+    ]) {
+      expect(isFirstPartyDirectivePath(p), p).toBe(true);
+    }
+  });
+
+  it("does NOT match ordinary code, nested prompts dirs, or vendored trees", () => {
+    for (const p of [
+      "src/app.py",
+      "docs/prompts.md",
+      "backend/prompts/system.md", // prompts/** binds at the repo root only
+      "README.md",
+      "node_modules/pkg/CLAUDE.md",
+      "vendor/tool/.claude/skills/x.md",
+      "third_party/agents/AGENTS.md",
+      "",
+    ]) {
+      expect(isFirstPartyDirectivePath(p), p || "(empty)").toBe(false);
+    }
+    expect(isFirstPartyDirectivePath(undefined)).toBe(false);
+    expect(isFirstPartyDirectivePath(null)).toBe(false);
+  });
+
+  it("gates only injection-kind findings", () => {
+    expect(isFirstPartyDirectiveInjection("injection", ".claude/skills/x/SKILL.md")).toBe(true);
+    expect(isFirstPartyDirectiveInjection("Injection", "CLAUDE.md")).toBe(true);
+    expect(isFirstPartyDirectiveInjection("security", ".claude/skills/x/SKILL.md")).toBe(false);
+    expect(isFirstPartyDirectiveInjection(undefined, ".claude/skills/x/SKILL.md")).toBe(false);
+    expect(isFirstPartyDirectiveInjection("injection", "src/app.py")).toBe(false);
+    expect(isFirstPartyDirectiveInjection("injection", "node_modules/pkg/CLAUDE.md")).toBe(false);
+  });
+
+  it("an injection finding on a first-party directive path never blocks, at any severity", () => {
+    const ctx = { kind: "injection", path: ".claude/skills/x/SKILL.md" };
+    for (const sev of ["P0", "P1", "P2", "P3"] as Severity[]) {
+      expect(postTag(sev, 1, "routine", ctx)).toBe("question");
+      expect(postTag(sev, 0.5, undefined, ctx)).toBe("question");
+    }
+    expect(postTag("nit", 1, "routine", ctx)).toBe("nit");
+  });
+
+  it("keeps the P1 bright line for third-party/vendored and non-directive paths", () => {
+    expect(postTag("P1", 1, "routine", { kind: "injection", path: "src/app.py" })).toBe("blocker");
+    expect(postTag("P1", 1, "routine", { kind: "injection", path: "node_modules/pkg/CLAUDE.md" })).toBe("blocker");
+    expect(postTag("P1", 1, "routine", { kind: "injection", path: "vendor/x/.claude/y.md" })).toBe("blocker");
+  });
+
+  it("leaves every non-injection finding on a directive path untouched", () => {
+    const ctx = { kind: "security", path: ".claude/skills/x/SKILL.md" };
+    expect(postTag("P1", 1, "routine", ctx)).toBe("blocker");
+    expect(postTag("P2", 0.9, "routine", { path: ".claude/skills/x/SKILL.md" })).toBe("blocker");
+  });
+
+  it("routes the verdict to NEEDS_HUMAN — never REQUEST_CHANGES — and a real blocker elsewhere still wins", () => {
+    expect(deriveVerdict({ hasBlockers: false, needsHuman: false, firstPartyDirectiveInjection: true })).toBe("NEEDS_HUMAN");
+    expect(deriveVerdict({ hasBlockers: false, needsHuman: true, firstPartyDirectiveInjection: true })).toBe("NEEDS_HUMAN");
+    // The park never softens a genuine blocker on another surface.
+    expect(deriveVerdict({ hasBlockers: true, needsHuman: false, firstPartyDirectiveInjection: true })).toBe("REQUEST_CHANGES");
+    // Absent flag: legacy behaviour exactly.
+    expect(deriveVerdict({ hasBlockers: false, needsHuman: false })).toBe("APPROVE");
   });
 });
 

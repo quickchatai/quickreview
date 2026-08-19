@@ -251,6 +251,25 @@ export const RECHECK_DEFAULTS: RecheckConfig = {
   on_base_advance: true,
 };
 
+/**
+ * [review] — review-content knobs. Distinct from [guards] (posting-
+ * time refusals) and [recheck] (post-approval triggers): these shape what a
+ * review says, not whether it posts.
+ */
+export interface ReviewConfig {
+  /**
+   * Fallback @-mention for the first-party-directive escalation comment when
+   * git history yields no attributable human author login for the touched
+   * directive files. "" ⇒ the comment renders without an @ (addressed to
+   * "a maintainer") — it still posts.
+   */
+  escalation_mention_default: string;
+}
+
+export const REVIEW_DEFAULTS: ReviewConfig = {
+  escalation_mention_default: "",
+};
+
 /** Per-model spend rates, keyed by bare model id (e.g. "gpt-5.6-sol"). */
 export interface ModelPricing {
   input_per_mtok: number;
@@ -318,6 +337,7 @@ export interface Config {
   backfill: BackfillConfig;
   guards: GuardsConfig;
   recheck: RecheckConfig;
+  review: ReviewConfig;
   slack: SlackConfig;
 }
 
@@ -418,6 +438,7 @@ export function parseConfig(toml: string): Config {
     backfill: { ...backfillDefaults(github), ...((raw.backfill ?? {}) as Partial<BackfillConfig>) },
     guards: { ...GUARDS_DEFAULTS, ...((raw.guards ?? {}) as Partial<GuardsConfig>) },
     recheck: { ...RECHECK_DEFAULTS, ...((raw.recheck ?? {}) as Partial<RecheckConfig>) },
+    review: { ...REVIEW_DEFAULTS, ...((raw.review ?? {}) as Partial<ReviewConfig>) },
     slack: parseSlack((raw.slack ?? {}) as Record<string, any>),
   };
   for (const k of [

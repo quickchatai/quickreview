@@ -202,6 +202,43 @@ export class WorktreeManager {
     }
   }
 
+  /**
+   * The most recent HUMAN author of `paths` in the history reachable from
+   * `sha` (the teammate the first-party-directive escalation comment
+   * @-mentions). Read-only git in the base clone; the caller passes the
+   * round's merge base so the PR's own commits never elect the PR author.
+   *
+   * Returns the newest non-bot author entry: `login` is derived from a GitHub
+   * noreply email (`NNN+login@users.noreply.github.com` or
+   * `login@users.noreply.github.com`) and is null when the email carries no
+   * derivable login — the caller then falls back to its configured default
+   * rather than walking further back (mentioning an older, uninvolved author
+   * would be worse than the fallback). Null when no human touched the paths.
+   */
+  async lastHumanAuthor(
+    sha: string,
+    paths: string[],
+    opts: { botLogins?: string[] } = {},
+  ): Promise<{ login: string | null; name: string; email: string } | null> {
+    if (!/^[0-9a-f]{7,40}$/i.test(sha) || paths.length === 0) return null;
+    const bots = new Set((opts.botLogins ?? []).map((b) => b.toLowerCase()));
+    const res = await this.git(["log", "--format=%ae%x09%an", sha, "--", ...paths]);
+    for (const line of res.stdout.split("\n")) {
+      const [email = "", name = ""] = line.split("\t");
+      if (!email && !name) continue;
+      const login = /^(?:\d+\+)?([^@]+)@users\.noreply\.github\.com$/i.exec(email.trim())?.[1] ?? null;
+      const isBot =
+        /\[bot\]/i.test(name) ||
+        /\[bot\]/i.test(email) ||
+        (login !== null && bots.has(login.toLowerCase())) ||
+        bots.has(name.trim().toLowerCase()) ||
+        bots.has(email.trim().toLowerCase());
+      if (isBot) continue;
+      return { login, name: name.trim(), email: email.trim() };
+    }
+    return null;
+  }
+
   /** True when `sha` is present in the base clone (no fetch needed). */
   async hasCommit(sha: string): Promise<boolean> {
     if (!/^[0-9a-f]{7,40}$/i.test(sha)) return false;

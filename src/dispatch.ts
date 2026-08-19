@@ -17,6 +17,7 @@ import {
 } from "./migrations.js";
 import { VALIDATE_PASS } from "./include.js";
 import { hasNewEvidence } from "./guards.js";
+import { isFirstPartyDirectivePath } from "./severity.js";
 import type { DispatchAnnouncer } from "./slack/announce.js";
 import { applyEvent, setPrGates } from "./statemachine.js";
 import type { PrStateRow, StateStore } from "./state.js";
@@ -71,6 +72,14 @@ export interface DispatchDeps {
    * is skipped and logged, never fatal.
    */
   listBaseMigrations?: (baseSha: string) => Promise<string[]>;
+  /**
+   * The most recent human author of `paths` in the history reachable from
+   * `sha` (WorktreeManager.lastHumanAuthor). Read-only git in the
+   * base clone. Optional: absent (stub-wired core, unit tests without git) ⇒
+   * the escalation mention falls back to config
+   * `[review] escalation_mention_default`.
+   */
+  directiveAuthor?: (sha: string, paths: string[]) => Promise<{ login: string | null; name: string; email: string } | null>;
   /** Slack announcer (S4). Optional: absent ⇒ no Slack at all, which
    * is what the stub-wired daemon core and every non-Slack test see. */
   announce?: DispatchAnnouncer;
@@ -221,6 +230,43 @@ async function migrationPreCheck(
   return { collisions, degraded: false };
 }
 
+/**
+ * First-party directive detection + the deterministic escalation-mention pick
+ *, run per round after the worktree is prepared. Pure path predicate
+ * over the files API (`isFirstPartyDirectivePath`), plus one read-only git log
+ * at the round's MERGE BASE — pre-PR history, so the PR's own commits never
+ * elect the PR author as their own approver. The pick is logged
+ * (`escalation_mention_selected`) with its source; every failure degrades to
+ * the config fallback, never to a lost round.
+ */
+async function directiveEscalationFor(
+  deps: DispatchDeps,
+  args: { pr: number; files: PrFileEntry[]; merge_base: string; base_sha: string },
+): Promise<{ files: string[]; mention: string } | undefined> {
+  const log = deps.log ?? (() => {});
+  const directiveFiles = args.files.filter((f) => isFirstPartyDirectivePath(f.filename)).map((f) => f.filename);
+  if (directiveFiles.length === 0) return undefined;
+  const fallback = deps.cfg.review.escalation_mention_default;
+  const sha = args.merge_base || args.base_sha;
+  let author: { login: string | null; name: string; email: string } | null = null;
+  if (deps.directiveAuthor && sha) {
+    try {
+      author = await deps.directiveAuthor(sha, directiveFiles);
+    } catch (err) {
+      log(`dispatch: directive-author lookup failed on #${args.pr}`, err);
+    }
+  }
+  const mention = author?.login ?? fallback;
+  deps.store.logEvent("escalation_mention_selected", args.pr, {
+    files: directiveFiles,
+    mention,
+    source: author?.login ? "git-log" : "config-default",
+    author_name: author?.name ?? null,
+    sha: sha || null,
+  });
+  return { files: directiveFiles, mention };
+}
+
 /** Consume both triggers at dispatch: the label and the team review request.
  * Both go through the adapter (and therefore the dry-run gate); failures are
  * logged, never fatal — the reconcile poll re-derives the truth. */
@@ -364,6 +410,8 @@ export function buildRoundOrder(args: {
   /** True when the PR touches migrations and the pre-check could NOT run —
    * the prompt must tell the session to check collisions itself. */
   migrationPrecheckDegraded?: boolean;
+  /** First-party directive files + the picked escalation mention. */
+  firstPartyDirectives?: { files: string[]; mention: string };
   /** The PR body as GitHub returned it: pass-intent's whole intent
    * artifact and the substance-bar input. Absent (stub-wired core, unit tests
    * without an adapter body) ⇒ the intent lens is never selected. */
@@ -385,6 +433,7 @@ export function buildRoundOrder(args: {
     migration_gate: migrationGate(args.files),
     migration_collisions: args.migrationCollisions ?? [],
     migration_precheck_degraded: args.migrationPrecheckDegraded ?? false,
+    ...(args.firstPartyDirectives !== undefined ? { first_party_directives: args.firstPartyDirectives } : {}),
     head_sha: args.tree?.head_sha || args.row.head_sha,
     base_ref: args.tree?.base_ref ?? "",
     base_sha: args.tree?.base_sha ?? "",
@@ -574,10 +623,21 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         }
       }
 
+      // First-party directive edits: detect them and pick the ONE
+      // teammate the escalation comment @-mentions, deterministically, before
+      // the session hears about the round.
+      const firstPartyDirectives = await directiveEscalationFor(deps, {
+        pr: row.number,
+        files,
+        merge_base: tree?.merge_base ?? "",
+        base_sha: tree?.base_sha ?? "",
+      });
+
       const order = buildRoundOrder({
         tree,
         migrationCollisions,
         migrationPrecheckDegraded: precheck.degraded,
+        ...(firstPartyDirectives !== undefined ? { firstPartyDirectives } : {}),
         cfg,
         row,
         files,
@@ -607,6 +667,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         migration_gate: order.migration_gate,
         migration_collisions: migrationCollisions.length,
         migration_precheck_degraded: precheck.degraded,
+        first_party_directive_files: firstPartyDirectives?.files.length ?? 0,
         head_sha: order.head_sha,
         base_ref: order.base_ref,
         base_sha: order.base_sha,

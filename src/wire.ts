@@ -391,6 +391,11 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     // Migration-number pre-check input: the base branch's migrations
     // at the sha the round pinned. Local git in the just-fetched base clone.
     listBaseMigrations: (baseSha) => sessions.worktrees.listMigrationFiles(baseSha),
+    // Escalation-mention pick: most recent human author of the
+    // touched first-party directive files at the round's merge base, read from
+    // the base clone; the daemon's own bot identity never qualifies.
+    directiveAuthor: (sha, paths) =>
+      sessions.worktrees.lastHumanAuthor(sha, paths, { botLogins: [cfg.github.bot_login, cfg.github.app_slug] }),
     log,
     // Lazy on purpose: the Slack subsystem is built in onStart, after the
     // store exists. Off ⇒ this resolves undefined forever and dispatch/verdicts

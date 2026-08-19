@@ -91,6 +91,17 @@ export interface RoundOrder {
    * never quieter). Absent on orders built before the field existed.
    */
   migration_precheck_degraded?: boolean;
+  /**
+   * the PR touches first-party agent-directive files (.claude/**,
+   * prompts/**, AGENTS.md/CLAUDE.md and kin — `isFirstPartyDirectivePath`).
+   * `files` lists them; `mention` is the deterministically-picked teammate the
+   * ONE escalation comment must @-mention (most recent human author of the
+   * touched directive files at the merge base, falling back to config
+   * `[review] escalation_mention_default`; the pick is logged). Absent when
+   * the PR touches no such file — and on orders built before the field
+   * existed.
+   */
+  first_party_directives?: { files: string[]; mention: string };
   /** The sha the worktree is ACTUALLY at — reconciled against the fetched
    * `refs/pull/<n>/head` before the order is built, not the webhook snapshot. */
   head_sha: string;

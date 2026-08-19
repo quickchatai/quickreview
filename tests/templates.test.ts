@@ -7,6 +7,7 @@ import {
   render,
   renderAddableLenses,
   renderConversationSystemPrompt,
+  renderDirectiveEscalationNote,
   renderIntentNote,
   renderNitScopeNote,
   renderOverseerSystemPrompt,
@@ -257,6 +258,49 @@ describe("renderNitScopeNote", () => {
       const r3 = renderRoundPrompt(tpl, { ...order, round_no: 3 });
       expect(r3).toContain("NIT SCOPE: this is round 3 of this PR's review");
       expect(r3).toContain("P0–P2 findings are exempt");
+    }
+  });
+});
+
+describe("renderDirectiveEscalationNote", () => {
+  const fpd = { files: [".claude/skills/a/SKILL.md", "CLAUDE.md"], mention: "alex" };
+
+  it("renders empty when the order carries no first-party directive files", () => {
+    expect(renderDirectiveEscalationNote(order)).toBe("");
+    expect(renderDirectiveEscalationNote({ ...order, first_party_directives: { files: [], mention: "x" } })).toBe("");
+  });
+
+  it("names the files, the @-mention, the single-comment cap and the park", () => {
+    const note = renderDirectiveEscalationNote({ ...order, first_party_directives: fpd });
+    expect(note).toContain("FIRST-PARTY DIRECTIVES");
+    expect(note).toContain("`.claude/skills/a/SKILL.md`");
+    expect(note).toContain("`CLAUDE.md`");
+    expect(note).toContain("@alex");
+    expect(note).toContain("EXACTLY ONE short escalation comment");
+    expect(note).toContain("NEEDS_HUMAN");
+    // Rule 10: a comment @-mention, never a reviewer nomination.
+    expect(note).toContain("never request a reviewer on");
+    // Third-party keeps the bright line.
+    expect(note).toContain("keep the P1 bright line unchanged");
+  });
+
+  it("degrades to a descriptive addressee when no login was resolvable", () => {
+    const note = renderDirectiveEscalationNote({ ...order, first_party_directives: { ...fpd, mention: "" } });
+    expect(note).not.toContain("@alex");
+    expect(note).toContain("no login was resolvable");
+  });
+
+  it("lands in every round prompt via {{directive_note}} — and only when armed", () => {
+    for (const rt of ["first", "re-review", "staleness"] as RoundType[]) {
+      const tpl = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile(rt)), "utf8");
+      expect(tpl).toContain("{{directive_note}}");
+      const armed = renderRoundPrompt(tpl, { ...order, round_type: rt, first_party_directives: fpd });
+      expect(armed).toContain("FIRST-PARTY DIRECTIVES — park and escalate, never block.");
+      expect(armed).toContain("@alex");
+      const unarmed = renderRoundPrompt(tpl, { ...order, round_type: rt });
+      expect(unarmed).not.toContain("FIRST-PARTY DIRECTIVES — park and escalate");
+      // The carve-out itself is stated in the template regardless.
+      expect(unarmed).toContain("first-party carve-out");
     }
   });
 });

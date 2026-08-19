@@ -698,3 +698,95 @@ describe("dispatchOnce", () => {
     expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'dispatch_failed'").get()).toMatchObject({ c: 1 });
   });
 });
+
+describe("first-party directive escalation pick", () => {
+  const tree = { head_sha: "sha70", base_ref: "master", base_sha: "basetip", merge_base: "forkpoint" };
+
+  it("puts the directive files and the git-picked mention on the order, deterministically and logged", async () => {
+    queue(70, "2026-08-13T10:00:00Z", { head: "sha70" });
+    adapter.files.set(70, [file(".claude/skills/uja/SKILL.md"), file("src/app.py")]);
+    const { hooks, orders } = recordingHooks();
+    const lookups: Array<{ sha: string; paths: string[] }> = [];
+    await dispatchOnce({
+      cfg: baseCfg,
+      store,
+      adapter,
+      hooks,
+      prepareWorktree: async () => tree,
+      directiveAuthor: async (sha, paths) => {
+        lookups.push({ sha, paths });
+        return { login: "alex", name: "Alex", email: "7+alex@users.noreply.github.com" };
+      },
+    });
+    // The lookup runs at the MERGE BASE over the directive files only — the
+    // PR's own commits can never elect the PR author as their own approver.
+    expect(lookups).toEqual([{ sha: "forkpoint", paths: [".claude/skills/uja/SKILL.md"] }]);
+    expect(orders[0]!.order.first_party_directives).toEqual({
+      files: [".claude/skills/uja/SKILL.md"],
+      mention: "alex",
+    });
+    const ev = store.db.prepare("SELECT payload FROM events WHERE kind = 'escalation_mention_selected'").get() as { payload: string };
+    expect(JSON.parse(ev.payload)).toMatchObject({ mention: "alex", source: "git-log", sha: "forkpoint" });
+  });
+
+  it("falls back to config [review].escalation_mention_default when git yields no login", async () => {
+    queue(71, "2026-08-13T10:00:00Z", { head: "sha70" });
+    adapter.files.set(71, [file("CLAUDE.md")]);
+    const { hooks, orders } = recordingHooks();
+    await dispatchOnce({
+      cfg: baseCfg,
+      store,
+      adapter,
+      hooks,
+      prepareWorktree: async () => tree,
+      directiveAuthor: async () => null,
+    });
+    expect(orders[0]!.order.first_party_directives).toEqual({
+      files: ["CLAUDE.md"],
+      mention: baseCfg.review.escalation_mention_default,
+    });
+    const ev = store.db.prepare("SELECT payload FROM events WHERE kind = 'escalation_mention_selected'").get() as { payload: string };
+    expect(JSON.parse(ev.payload)).toMatchObject({ source: "config-default" });
+  });
+
+  it("degrades to the fallback — never a lost round — when the author lookup throws or is absent", async () => {
+    queue(72, "2026-08-13T10:00:00Z", { head: "sha70" });
+    adapter.files.set(72, [file("prompts/system.md")]);
+    const { hooks, orders } = recordingHooks();
+    const dispatched = await dispatchOnce({
+      cfg: baseCfg,
+      store,
+      adapter,
+      hooks,
+      prepareWorktree: async () => tree,
+      directiveAuthor: async () => {
+        throw new Error("git exploded");
+      },
+    });
+    expect(dispatched).toHaveLength(1);
+    expect(orders[0]!.order.first_party_directives!.mention).toBe(baseCfg.review.escalation_mention_default);
+
+    // No seam at all (stub-wired core): same fallback.
+    queue(73, "2026-08-13T11:00:00Z", { head: "sha70" });
+    adapter.files.set(73, [file("AGENTS.md")]);
+    const second = recordingHooks();
+    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks: second.hooks });
+    expect(second.orders[0]!.order.first_party_directives!.mention).toBe(baseCfg.review.escalation_mention_default);
+  });
+
+  it("a PR touching no directive file carries no field and logs no pick", async () => {
+    queue(74, "2026-08-13T10:00:00Z", { head: "sha70" });
+    adapter.files.set(74, [file("src/app.py"), file("backend/prompts/nested.md"), file("node_modules/x/CLAUDE.md")]);
+    const { hooks, orders } = recordingHooks();
+    await dispatchOnce({
+      cfg: baseCfg,
+      store,
+      adapter,
+      hooks,
+      prepareWorktree: async () => tree,
+      directiveAuthor: async () => ({ login: "alex", name: "Alex", email: "e" }),
+    });
+    expect(orders[0]!.order.first_party_directives).toBeUndefined();
+    expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'escalation_mention_selected'").get()).toMatchObject({ c: 0 });
+  });
+});
