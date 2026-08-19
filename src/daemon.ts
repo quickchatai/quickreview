@@ -64,6 +64,9 @@ export interface DaemonDeps {
   /** Base-branch migration paths at a sha, for the collision pre-check
    *. Absent ⇒ no git: the pre-check is skipped and logged. */
   listBaseMigrations?: (baseSha: string) => Promise<string[]>;
+  /** Most recent human author of paths at a sha (the escalation
+   * mention pick). Absent ⇒ no git: the config fallback mention is used. */
+  directiveAuthor?: (sha: string, paths: string[]) => Promise<{ login: string | null; name: string; email: string } | null>;
   log?: (msg: string, extra?: unknown) => void;
   /** Skip binding the HTTP port (tests). */
   listen?: boolean;
@@ -303,6 +306,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         renderPrompt: deps.renderPrompt,
         prepareWorktree: deps.prepareWorktree,
         listBaseMigrations: deps.listBaseMigrations,
+        directiveAuthor: deps.directiveAuthor,
         announce,
         log,
       });

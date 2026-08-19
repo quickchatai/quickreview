@@ -13,7 +13,7 @@ import type { GitHubAdapter } from "./github.js";
 import type { GateResult } from "./gate.js";
 import type { StateStore } from "./state.js";
 import { partitionByAnchor, ANCHOR_REASON_TEXT, type AnchorRequest, type Side } from "./anchors.js";
-import { postTag, type PostTag, type Reachability, type Severity, type Verdict } from "./severity.js";
+import { isFirstPartyDirectiveInjection, postTag, type PostTag, type Reachability, type Severity, type Verdict } from "./severity.js";
 
 /** GitHub caps a single review at 50 inline comments (ported constraint). */
 export const INLINE_COMMENT_CAP = 50;
@@ -27,6 +27,9 @@ export interface Finding {
   confidence: number;
   /** How often the triggering state arises. Absent ⇒ `routine`. */
   reachability?: Reachability;
+  /** The pass's finding class (e.g. "injection"). Absent ⇒ no
+   * kind-keyed gate applies. */
+  kind?: string;
   path: string;
   /** Anchor end line (GitHub `line`). Absent ⇒ unanchorable ⇒ body-only. */
   line?: number;
@@ -51,6 +54,43 @@ export interface ReviewInput {
   ai_approved?: boolean;
   /** Prior findings still open and unchanged (re-review sections). */
   deferred?: string[];
+  /**
+   * the deterministically-picked teammate to @-mention in the ONE
+   * escalation comment a first-party-directive review carries (dispatch picks
+   * it: most recent human author of the touched directive files, falling back
+   * to config `[review] escalation_mention_default`). Rendered only when the
+   * findings actually contain a first-party directive injection.
+   */
+  escalation_mention?: string;
+}
+
+/** The first-party directive paths this review's injection findings sit on,
+ * in finding order, deduplicated. Non-empty ⇒ the review parks
+ * (NEEDS_HUMAN) and carries exactly one escalation comment. */
+export function directiveEscalationFiles(findings: readonly Finding[]): string[] {
+  const files: string[] = [];
+  for (const f of findings) {
+    if (isFirstPartyDirectiveInjection(f.kind, f.path) && !files.includes(f.path)) files.push(f.path);
+  }
+  return files;
+}
+
+/**
+ * The ONE escalation comment: max three sentences, an explicit
+ * @-mention, and the named part needing extra human approval. One comment
+ * total, however many directive files the PR touches. It is a comment inside
+ * the gated review — never a GitHub reviewer nomination (`request_reviewer`
+ * stays a rejected non-kind; CLAUDE.md rule 10).
+ */
+export function renderDirectiveEscalationComment(mention: string, files: readonly string[]): string {
+  const at = mention ? `@${mention.replace(/^@/, "")}` : "a maintainer";
+  const list = files.map((f) => `\`${f}\``).join(", ");
+  const part = files.length === 1 ? `the agent-directive file ${list}` : `the agent-directive files ${list}`;
+  return (
+    `${at} — this PR edits ${part}, which instructs the team's own automated agents, ` +
+    "so the automated review will not decide it alone. " +
+    "Please give that part an explicit human approval (the rest of the review is posted as usual and nothing here blocks the merge)."
+  );
 }
 
 export interface InlineComment extends AnchorRequest {
@@ -111,7 +151,7 @@ export function inlineBody(f: Finding, tag: PostTag): string {
 /** Assemble the full review POST payload from a round's surviving findings. */
 export function assembleReview(input: ReviewInput): AssembledReview {
   const tags = new Map<Finding, PostTag>();
-  for (const f of input.findings) tags.set(f, postTag(f.severity, f.confidence, f.reachability));
+  for (const f of input.findings) tags.set(f, postTag(f.severity, f.confidence, f.reachability, { kind: f.kind, path: f.path }));
 
   // 1. anchorable candidates vs. findings with no anchor at all
   const overflow: AssembledReview["overflow"] = [];
@@ -169,7 +209,8 @@ export function renderBody(
   overflow: AssembledReview["overflow"],
 ): string {
   const counts: Record<PostTag, number> = { blocker: 0, question: 0, nit: 0 };
-  for (const f of input.findings) counts[tags.get(f) ?? postTag(f.severity, f.confidence, f.reachability)] += 1;
+  for (const f of input.findings)
+    counts[tags.get(f) ?? postTag(f.severity, f.confidence, f.reachability, { kind: f.kind, path: f.path })] += 1;
 
   const of = (tag: PostTag) => input.findings.filter((f) => tags.get(f) === tag);
   const out: string[] = [verdictLine(input.verdict, counts), "", `_Lenses applied: ${input.lenses.join(", ")}._`];
@@ -191,6 +232,17 @@ export function renderBody(
       "Additional findings (not posted inline)",
       overflow.map(({ finding, reason }) => `- ${bullet(finding).slice(2)} — _${reason}_\n\n  ${finding.body}`),
     );
+  }
+
+  // EXACTLY ONE escalation comment per review carrying first-party
+  // directive injection findings — rendered once here, however many directive
+  // files the PR touches. It rides the one gated review mutation (dry-run
+  // records it in state/dryrun/ with the rest of the payload).
+  const directiveFiles = directiveEscalationFiles(input.findings);
+  if (directiveFiles.length > 0) {
+    section("Human approval needed — agent-directive change", [
+      renderDirectiveEscalationComment(input.escalation_mention ?? "", directiveFiles),
+    ]);
   }
 
   if (input.verdict === "NEEDS_HUMAN") {

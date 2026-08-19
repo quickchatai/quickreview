@@ -67,6 +67,19 @@ describe("parseConfig", () => {
   });
 });
 
+describe("[review]", () => {
+  it("reads the shipped escalation-mention fallback", () => {
+    const cfg = parseConfig(readFileSync(configPath, "utf8"));
+    expect(cfg.review.escalation_mention_default).toBe("mhale");
+  });
+
+  it("defaults to an empty mention when [review] is absent — older configs keep parsing", () => {
+    const without = readFileSync(configPath, "utf8").replace(/\[review\][\s\S]*?(?=\n\[slack\])/, "");
+    const cfg = parseConfig(without);
+    expect(cfg.review.escalation_mention_default).toBe("");
+  });
+});
+
 describe("[models] tiered pass scheme", () => {
   const cfg = parseConfig(readFileSync(configPath, "utf8"));
 

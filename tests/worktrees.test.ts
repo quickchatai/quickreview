@@ -5,7 +5,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { WorktreeManager, cloneUrlFor } from "../src/worktrees.js";
 import type { ExecFn } from "../src/tmux.js";
@@ -345,5 +345,47 @@ describe("resolvedFilesInMerges", () => {
       (await m.resolvedFilesInMerges("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"))
         .degraded,
     ).toBe(true);
+  });
+});
+
+describe("lastHumanAuthor", () => {
+  /** Commit `body` to `f` with an explicit author (committer stays "t"). */
+  function commitAs(f: string, body: string, author: string): string {
+    mkdirSync(dirname(join(origin, f)), { recursive: true });
+    writeFileSync(join(origin, f), body);
+    git(origin, "add", f);
+    git(origin, "commit", "-q", "-m", `edit ${f}`, "--author", author);
+    return git(origin, "rev-parse", "HEAD").trim();
+  }
+
+  it("returns the newest NON-BOT author of the paths, with the login off a noreply email", async () => {
+    const skill = ".claude/skills/uja/SKILL.md";
+    commitAs(skill, "v1\n", "Alex <7+alex@users.noreply.github.com>");
+    commitAs("other.txt", "x\n", "Alice <1+alice@users.noreply.github.com>");
+    const tip = commitAs(skill, "v2\n", "example-review[bot] <12+example-review[bot]@users.noreply.github.com>");
+    const m = mgr();
+    await m.ensureBaseClone();
+    // The bot's later edit is skipped; Alice never touched the path.
+    expect(await m.lastHumanAuthor(tip, [skill], { botLogins: ["example-review[bot]"] })).toEqual({
+      login: "alex",
+      name: "Alex",
+      email: "7+alex@users.noreply.github.com",
+    });
+  });
+
+  it("returns a null login (caller falls back to config) for a non-noreply human email", async () => {
+    const tip = commitAs("CLAUDE.md", "rules\n", "Bob <bob@example.com>");
+    const m = mgr();
+    await m.ensureBaseClone();
+    expect(await m.lastHumanAuthor(tip, ["CLAUDE.md"])).toEqual({ login: null, name: "Bob", email: "bob@example.com" });
+  });
+
+  it("returns null for untouched paths, empty path lists, and non-shas", async () => {
+    const tip = git(origin, "rev-parse", "HEAD").trim();
+    const m = mgr();
+    await m.ensureBaseClone();
+    expect(await m.lastHumanAuthor(tip, ["never-touched.md"])).toBeNull();
+    expect(await m.lastHumanAuthor(tip, [])).toBeNull();
+    expect(await m.lastHumanAuthor("not-a-sha", ["CLAUDE.md"])).toBeNull();
   });
 });
