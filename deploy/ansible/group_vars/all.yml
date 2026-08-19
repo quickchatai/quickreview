@@ -39,6 +39,16 @@ pi_subagents_commit: "1f541897588b995144f0bb8e71a335d1c85b1e62"
 pi_memory_package: "pi-memory"
 pi_memory_version: "0.4.2"
 
+# qmd: the semantic-search CLI pi-memory's `memory_search` shells out to
+# (without it every session pays a failed memory_search per round).
+# Scoped npm package @tobilu/qmd, repo github.com/tobi/qmd (registry-verified
+# 2026-08-19: dist-tags.latest = 2.8.3, repository.url = tobi/qmd, engines
+# node >=22 — matches node_major). The Dockerfile hard-fails the build if the
+# installed package's repository does not resolve to tobi/qmd, and smokes
+# `qmd --version` in the layer (node-llama-cpp native dep must actually load).
+qmd_npm_package: "@tobilu/qmd"
+qmd_version: "2.8.3"
+
 # tmux ≥3.5 for csi-u extended keys end-to-end (§3E):
 # Ubuntu 24.04 apt ships 3.4, so the image builds this release from source.
 tmux_version: "3.5a"

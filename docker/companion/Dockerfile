@@ -63,6 +63,18 @@ RUN npm install -g --ignore-scripts ${PI_MEMORY_SPEC} \
   && node -e "const p=require('/usr/local/lib/node_modules/pi-memory/package.json'); const r=(p.repository&&(p.repository.url||p.repository))||''; if(!/github\.com[:\/]jayzeng\/pi-memory/.test(r)) { console.error('pi-memory is NOT jayzeng/pi-memory:', r); process.exit(1); }" \
   && chmod -R a+rX /usr/local/lib/node_modules/pi-memory
 
+# qmd — the semantic-search CLI pi-memory's `memory_search` shells out to
+# (pin must equal deploy/ansible/group_vars qmd_version — same
+# discipline as the pi pin above). Installed WITH scripts (unlike pi-memory's
+# git-spec workaround): the registry package's node-llama-cpp dep needs its
+# postinstall to set up the native binding, and `qmd --version` proves it
+# loads. Repository must resolve to github.com/tobi/qmd.
+ARG QMD_SPEC=@tobilu/qmd@2.8.3
+RUN npm install -g ${QMD_SPEC} \
+  && node -e "const p=require('/usr/local/lib/node_modules/@tobilu/qmd/package.json'); const r=(p.repository&&(p.repository.url||p.repository))||''; if(!/github\.com[:\/]tobi\/qmd/.test(r)) { console.error('qmd is NOT tobi/qmd:', r); process.exit(1); }" \
+  && qmd --version \
+  && chmod -R a+rX /usr/local/lib/node_modules/@tobilu/qmd
+
 # Non-root, and the uid MUST match the invoking host user: every interesting
 # mount here is a host bind mount the companion writes (/alerts, /feed,
 # /workspace, /tracker), so a mismatched uid means "Permission denied" on the

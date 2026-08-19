@@ -318,6 +318,15 @@ describe("companion image", () => {
     expect(dockerfile).toMatch(/npm install -g --ignore-scripts \$\{PI_MEMORY_SPEC\}/);
   });
 
+  it("pins qmd to the same version as the VM image's group_vars —", () => {
+    const gv = readFileSync(resolve(root, "deploy/ansible/group_vars/all.yml"), "utf8");
+    const pkgName = /^qmd_npm_package:\s*"([^"]+)"/m.exec(gv);
+    const version = /^qmd_version:\s*"([^"]+)"/m.exec(gv);
+    expect(pkgName?.[1]).toBe("@tobilu/qmd");
+    expect(version?.[1]).toBeTruthy();
+    expect(dockerfile).toContain(`QMD_SPEC=${pkgName![1]}@${version![1]}`);
+  });
+
   it("takes its uid from the host user — bind mounts are written, not just read", () => {
     // the first real container run failed "Permission denied" writing
     // /alerts because the image baked uid 1001.
