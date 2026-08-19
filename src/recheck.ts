@@ -407,6 +407,15 @@ export const RECHECK_FILE_RE = /^pr-(\d+)-recheck-([0-9a-f]{7,40})\.json$/i;
 
 const recheckSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
+/** The runaway-guard identity of one recheck question: (trigger, head, ci
+ * conclusion, base target). Shared by runRecheck's claim and the reconcile
+ * backstop's has-this-been-asked check. */
+export function recheckFingerprint(req: { trigger: RecheckTrigger; head_sha?: string; ci?: { conclusion?: string | null } | null; base?: { after?: string } | null }, headOverride?: string): string {
+  const head = headOverride ?? req.head_sha ?? "";
+  return [req.trigger, head, req.ci?.conclusion ?? "", req.base?.after ?? ""].join(":");
+}
+
+
 /** Fallback renderer (stub-wired daemon, unit tests): the order as JSON. */
 export function defaultRecheckPrompt(order: RecheckOrder): string {
   return JSON.stringify(order, null, 2);
@@ -549,15 +558,20 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
   // with the head, so green CI at the NEW head releases it. A significant
   // delta carries only after the session's explicit uphold (watcher below).
   if (plan.action === "noop") {
-    if ((plan.reason === "empty-delta" || plan.reason === "trivial-delta") && head !== lastReviewed)
+    if ((plan.reason === "empty-delta" || plan.reason === "trivial-delta") && head !== lastReviewed) {
       carryWithheldMark(store, req.pr, head, `recheck-noop:${plan.reason}`, log);
+      // A trivial/empty answer is terminal for this head: claim it, so the
+      // reconcile backstop (below in reconcile.ts) never re-classifies the
+      // same question every sweep.
+      store.claimRecheck(req.pr, recheckFingerprint(req, head), { head_sha: head, trigger: req.trigger, reason: `noop:${plan.reason}` });
+    }
     return done(plan);
   }
 
   // The runaway guard: one nudge per (trigger, head, evidence). Without it a
   // reconcile replay or a redelivered webhook re-asks the same question, which
   // is how the old staleness gate burned 19% of all output.
-  const fingerprint = [req.trigger, head, req.ci?.conclusion ?? "", req.base?.after ?? ""].join(":");
+  const fingerprint = recheckFingerprint(req, head);
   if (!store.claimRecheck(req.pr, fingerprint, { head_sha: head, trigger: req.trigger, reason: plan.evidence }))
     return done({ action: "noop", reason: "already-rechecked", class: plan.class, classification: plan.classification });
 

@@ -5,6 +5,7 @@
 // `reconcile_correction` event: a rising correction rate is the webhook-health
 // signal the operator watches.
 import { retryWithheldApproval, type CheckSummary } from "./cigate.js";
+import { recheckFingerprint } from "./recheck.js";
 import type { Config } from "./config.js";
 import type { PrRef } from "./github.js";
 import { applyEvent, isBotAuthor } from "./statemachine.js";
@@ -155,6 +156,28 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
           } catch (err) {
             report.errors.push(`onHeadPush #${pr.number}: ${String(err)}`);
             (deps.log ?? (() => {}))(`reconcile: onHeadPush failed #${pr.number}`, err);
+          }
+        }
+      } else if (deps.onHeadPush) {
+        // Lost-recheck backstop (live: #5290, 2026-08-19): change-detection
+        // fires onHeadPush exactly once, so a recheck that failed to deliver
+        // (or died with the process) never retried once the head was tracked.
+        // A standing reviewed head that differs from the current head, with
+        // this exact question unclaimed, is re-asked; claimed questions
+        // (nudged, or answered trivially) dedupe before any classification.
+        const reviewed = store.reviewedHead(pr.number);
+        if (
+          reviewed &&
+          reviewed.verdict === "APPROVE" &&
+          reviewed.head_sha !== pr.head_sha &&
+          !store.hasRecheck(pr.number, recheckFingerprint({ trigger: "push" }, pr.head_sha))
+        ) {
+          (deps.log ?? (() => {}))(`reconcile: recheck backstop #${pr.number} — reviewed ${reviewed.head_sha.slice(0, 7)} != head ${pr.head_sha.slice(0, 7)}, unclaimed`);
+          try {
+            await deps.onHeadPush(pr.number, pr.head_sha);
+          } catch (err) {
+            report.errors.push(`onHeadPush(backstop) #${pr.number}: ${String(err)}`);
+            (deps.log ?? (() => {}))(`reconcile: onHeadPush backstop failed #${pr.number}`, err);
           }
         }
       }

@@ -187,6 +187,36 @@ describe("reconcileOnce", () => {
     expect(pushes).toEqual([{ pr: 30, head: "new-sha", rowHeadAtCall: "new-sha" }]);
   });
 
+  // Lost-recheck backstop (live gap 2026-08-19, #5290): a recheck that failed
+  // to deliver never retried once the head was tracked — change-detection
+  // fires exactly once. A standing APPROVE at a stale reviewed head with the
+  // question unclaimed is re-asked; a claimed question dedupes.
+  it("backstop: re-invokes onHeadPush for a standing APPROVE at a stale reviewed head, unless claimed", async () => {
+    seed(35, "tracked", { head: "cur-sha" });
+    store.recordReviewedHead(35, { head_sha: "approved-sha", verdict: "APPROVE", round_no: 1 });
+    gh.open = [ref(35, { head_sha: "cur-sha" })]; // head unchanged — no push detection
+    const { hooks } = recordingHooks();
+    const pushes: number[] = [];
+    await reconcileOnce({ cfg, store, adapter: gh, hooks, onHeadPush: async (pr) => { pushes.push(pr); } });
+    expect(pushes).toEqual([35]);
+
+    // Claimed (a nudge or a terminal noop answered it) → silent.
+    store.claimRecheck(35, "push:cur-sha::", { head_sha: "cur-sha", trigger: "push" });
+    const again: number[] = [];
+    await reconcileOnce({ cfg, store, adapter: gh, hooks, onHeadPush: async (pr) => { again.push(pr); } });
+    expect(again).toEqual([]);
+  });
+
+  it("backstop stays quiet for a non-APPROVE standing verdict", async () => {
+    seed(36, "tracked", { head: "cur-sha" });
+    store.recordReviewedHead(36, { head_sha: "rc-sha", verdict: "REQUEST_CHANGES", round_no: 1 });
+    gh.open = [ref(36, { head_sha: "cur-sha" })];
+    const { hooks } = recordingHooks();
+    const pushes: number[] = [];
+    await reconcileOnce({ cfg, store, adapter: gh, hooks, onHeadPush: async (pr) => { pushes.push(pr); } });
+    expect(pushes).toEqual([]);
+  });
+
   it("does not invoke onHeadPush for an unchanged head or a title-only change", async () => {
     seed(31, "tracked");
     gh.open = [ref(31, { title: "renamed title" })];

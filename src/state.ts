@@ -947,6 +947,12 @@ export class StateStore {
     return info.changes === 1;
   }
 
+  /** Has this exact recheck question already been claimed? (reconcile
+   * backstop pre-check — keeps the sweep from re-classifying per tick). */
+  hasRecheck(pr: number, fingerprint: string): boolean {
+    return this.db.prepare("SELECT 1 FROM rechecks WHERE pr = ? AND fingerprint = ?").get(pr, fingerprint) !== undefined;
+  }
+
   /** Release a claimed recheck whose delivery failed — the claim must not
    * outlive a nudge that never reached the session (live: #5290 boot-order
    * inject failure burned the head's only recheck, 2026-08-19). */

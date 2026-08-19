@@ -351,7 +351,10 @@ describe("runRecheck", () => {
     const out = await runRecheck(h.deps, { pr: PR, trigger: "push", head_sha: HEAD });
     expect(out).toMatchObject({ action: "noop", reason: "trivial-delta" });
     expect(h.injected).toHaveLength(0);
-    expect(h.store.rechecksFor(PR)).toHaveLength(0);
+    // A trivial answer is terminal for this head: the claim is recorded so
+    // the reconcile backstop never re-classifies the same question per sweep.
+    expect(h.store.rechecksFor(PR)).toHaveLength(1);
+    expect(h.store.rechecksFor(PR)[0]?.reason).toBe("noop:trivial-delta");
     // The standing verdict is untouched — uphold is the default, not an action.
     expect(h.store.reviewedHead(PR)?.verdict).toBe("APPROVE");
     expect(h.store.getPr(PR)?.state).toBe("tracked");
