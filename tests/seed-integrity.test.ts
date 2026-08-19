@@ -52,6 +52,10 @@ const RULE_6 =
  *   scrapped. The seeds had been left contradicting the live behaviour, held
  *   only by downstream supersession.
  */
+// conversation-system.md carries TWO ratified reseeds: 2026-08-18 (rule 10
+// de-escalation) and 2026-08-19 (the owner: NEEDS_HUMAN retired — the review is
+// never handed to a human; verdict always on the merits + a
+// "For a human to double-check" section). Hash re-pinned each time.
 const RATIFIED_DIVERGENCE = new Set<string>([
   "prompts/conversation-system.md",
   "prompts/overseer-system.md",

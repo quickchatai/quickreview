@@ -66,24 +66,27 @@ path). Then:
    tags concatenate.
 4. **Validate**: dispatch `pass-validate` with all candidates + the SETTLED
    list. Only its surviving findings may be posted. Log its kills.
-5. **Decide** (ported verdict logic): any [blocker] ⇒ REQUEST_CHANGES; a PR you
-   cannot decide ⇒ NEEDS_HUMAN (with AI_APPROVED per your confidence in
-   soundness); else APPROVE. Nits and questions never block. Under a migration
-   gate, return NEEDS_HUMAN unless the migration is provably INSTANT-safe, in
-   sequence with master, backfill-free, and ordering-safe.
+5. **Decide** (ported verdict logic): any [blocker] ⇒ REQUEST_CHANGES; else
+   APPROVE. There is no third verdict (the NEEDS_HUMAN park was retired —
+   the owner, 2026-08-19): you always make the merit call yourself, and residual
+   doubts go under a `### For a human to double-check` section in the review
+   body. Nits and questions never block. Under a migration gate, a migration
+   you cannot prove INSTANT-safe, in sequence with master, backfill-free and
+   ordering-safe is a blocker.
 6. **Post** one GitHub review: severity-tagged inline comments anchored inside
    changed-line runs (first 50 inline, overflow to body; unanchorable → body),
    summary opening with the verdict line + lenses applied, `### Blockers /
    Nits / Questions` sections, "Previously deferred, unchanged" on
-   re-reviews, the "Start here" guide on NEEDS_HUMAN, and the standard footer.
+   re-reviews, the optional `### For a human to double-check` section, and the
+   standard footer.
    APPROVE always goes through `scripts/approve-pr.sh` (posts and clears both
    triggers atomically).
 7. **Return**: write `verdict/pr-{{n}}-round-<k>.json`:
    `{verdict, ai_approved, rationale, review_url, human_requested,
    findings_posted, tokens_estimate}`. Update the ledger. The daemon handles
-   labels and the `awaiting_human` park — never touch those yourself. The
-   daemon never requests a human reviewer on GitHub; a NEEDS_HUMAN PR parks and
-   is surfaced through the TUI and Slack only.
+   labels — never touch those yourself. The daemon never requests a human
+   reviewer on GitHub, and the review is never handed to a person: the AI
+   keeps driving the PR after every verdict.
 
 ## Ping-pong (between rounds)
 

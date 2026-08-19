@@ -6,6 +6,7 @@
 // signal the operator watches.
 import { retryWithheldApproval, type CheckSummary } from "./cigate.js";
 import { recheckFingerprint } from "./recheck.js";
+import { normalizeVerdict } from "./types.js";
 import type { Config } from "./config.js";
 import type { PrRef } from "./github.js";
 import { applyEvent, isBotAuthor } from "./statemachine.js";
@@ -301,12 +302,22 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
     });
   }
 
-  // ---- 6. parked-PR census -----------------------------------------------
-  // Until 2026-08-18 this step searched GitHub for PRs where the escalation
-  // reviewer was awaited and parked them locally. With escalation scrapped,
-  // nothing requests a reviewer, so the GitHub side carries no such signal:
-  // awaiting_human is now purely a local state and the report just counts it.
-  report.awaiting_human.push(...store.allPrs().filter((p) => p.state === "awaiting_human").map((p) => p.number));
+  // ---- 6. retired-park migration -------------------------------------------
+  // awaiting_human was RETIRED on 2026-08-19 (the owner: the review is never
+  // handed to a human — the AI keeps driving). Nothing transitions into it any
+  // more; any lingering legacy row is migrated here to the state its standing
+  // verdict implies (REQUEST_CHANGES ⇒ awaiting_author, else tracked — never
+  // an approval that was not posted). Idempotent: after one pass the census
+  // stays empty.
+  for (const parked of store.allPrs().filter((p) => p.state === "awaiting_human")) {
+    const standing = normalizeVerdict(store.reviewedHead(parked.number)?.verdict);
+    const to = standing === "REQUEST_CHANGES" ? ("awaiting_author" as const) : ("tracked" as const);
+    store.upsertPr({ ...parked, state: to });
+    store.logEvent("unparked_retired_state", parked.number, { from: "awaiting_human", to, standing: standing ?? null });
+    report.corrections += 1;
+    (deps.log ?? (() => {}))(`reconcile: unparked #${parked.number} (awaiting_human retired) → ${to}`);
+    report.awaiting_human.push(parked.number);
+  }
 
   store.logEvent("reconcile_pass", null, {
     open_prs: report.open_prs,

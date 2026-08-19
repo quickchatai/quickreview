@@ -270,14 +270,14 @@ describe("renderDirectiveEscalationNote", () => {
     expect(renderDirectiveEscalationNote({ ...order, first_party_directives: { files: [], mention: "x" } })).toBe("");
   });
 
-  it("names the files, the @-mention, the single-comment cap and the park", () => {
+  it("names the files, the @-mention, the single-comment cap and the double-check routing", () => {
     const note = renderDirectiveEscalationNote({ ...order, first_party_directives: fpd });
     expect(note).toContain("FIRST-PARTY DIRECTIVES");
     expect(note).toContain("`.claude/skills/a/SKILL.md`");
     expect(note).toContain("`CLAUDE.md`");
     expect(note).toContain("@alex");
     expect(note).toContain("EXACTLY ONE short escalation comment");
-    expect(note).toContain("NEEDS_HUMAN");
+    expect(note).toContain("For a human to double-check");
     // Rule 10: a comment @-mention, never a reviewer nomination.
     expect(note).toContain("never request a reviewer on");
     // Third-party keeps the bright line.
@@ -295,10 +295,10 @@ describe("renderDirectiveEscalationNote", () => {
       const tpl = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile(rt)), "utf8");
       expect(tpl).toContain("{{directive_note}}");
       const armed = renderRoundPrompt(tpl, { ...order, round_type: rt, first_party_directives: fpd });
-      expect(armed).toContain("FIRST-PARTY DIRECTIVES — park and escalate, never block.");
+      expect(armed).toContain("FIRST-PARTY DIRECTIVES — flag and escalate, never block.");
       expect(armed).toContain("@alex");
       const unarmed = renderRoundPrompt(tpl, { ...order, round_type: rt });
-      expect(unarmed).not.toContain("FIRST-PARTY DIRECTIVES — park and escalate");
+      expect(unarmed).not.toContain("FIRST-PARTY DIRECTIVES — flag and escalate");
       // The carve-out itself is stated in the template regardless.
       expect(unarmed).toContain("first-party carve-out");
     }
@@ -466,11 +466,10 @@ describe("shipped round templates", () => {
       expect(text).toContain("the plain opening paragraph (above) — always first");
       expect(text).toContain("`**Verdict: Approved** — no findings.`");
       expect(text).toContain("`**Verdict: Changes requested** — 2 blockers, 1 nit.`");
-      expect(text).toContain("`**Verdict: Needs a human** — 1 question.`");
       expect(text).toContain("`_Lenses applied: <lens, lens, …>._`");
       expect(text).toContain("`### Blockers`, then `### Nits`, then `### Questions`");
       expect(text).toContain("- `path:line` — <title> _(<severity>/<confidence>, <lens>)_");
-      expect(text).toContain("`### Start here` guide");
+      expect(text).toContain("`### For a human to double-check` section");
       expect(text).toMatch(/optional collapsible `<details>`[^]*standard\s+footer/);
       // The inline-comment grammar: tag-first, consequence-first blockers,
       // severity/confidence/lens tail, changed-line-run anchoring.
@@ -741,7 +740,7 @@ describe("template & script cleanups", () => {
       expect(text).toContain("not licence to invent one");
       // The live incident: a rogue ai_approved on a plain approval.
       expect(text).toMatch(/rogue\s*\n?`ai_approved: true` on a plain approval/);
-      expect(text).toContain("appear only\nunder their stated conditions below; nothing else, ever.");
+      expect(text).toContain("appear only under their\nstated conditions below; nothing else, ever.");
       // The old tolerance phrasing no longer invites extras.
       expect(text).not.toContain("extra fields are fine");
     });

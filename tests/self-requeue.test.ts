@@ -148,14 +148,14 @@ describe("stuck-round detection + self-requeue", () => {
     expect(adapter.calls).toEqual([]);
   });
 
-  it("a live session with no killSession hook keeps the legacy overdue-anomaly park", async () => {
+  it("a live session with no killSession hook keeps the legacy overdue-anomaly path (no park since 2026-08-19)", async () => {
     const roundId = reviewingRound(301);
     pastDeadline();
     const { hooks, overseer } = hooksWith(true);
 
     expect(await watcher(hooks).checkDeadlines()).toEqual([301]);
     expect(roundStatus(roundId)).toBe("overdue");
-    expect(store.getPr(301)!.state).toBe("awaiting_human");
+    expect(store.getPr(301)!.state).toBe("tracked"); // no park (retired 2026-08-19): returned to standing state
     expect(overseer.some((m) => m.startsWith("ANOMALY (overdue)"))).toBe(true);
     expect(events("round_self_requeued")).toHaveLength(0);
   });
@@ -166,7 +166,7 @@ describe("stuck-round detection + self-requeue", () => {
     const { hooks } = hooksWith(undefined);
 
     expect(await watcher(hooks).checkDeadlines()).toEqual([302]);
-    expect(store.getPr(302)!.state).toBe("awaiting_human");
+    expect(store.getPr(302)!.state).toBe("tracked");
     expect(events("round_self_requeued")).toHaveLength(0);
   });
 
@@ -179,7 +179,7 @@ describe("stuck-round detection + self-requeue", () => {
     };
 
     expect(await watcher(hooks).checkDeadlines()).toEqual([303]);
-    expect(store.getPr(303)!.state).toBe("awaiting_human");
+    expect(store.getPr(303)!.state).toBe("tracked");
     expect(events("round_self_requeued")).toHaveLength(0);
   });
 
@@ -210,7 +210,7 @@ describe("stuck-round detection + self-requeue", () => {
 });
 
 describe("the per-head cap", () => {
-  it("past the cap the round terminalizes through the anomaly park, with its own event", async () => {
+  it("past the cap the round terminalizes through the anomaly path, with its own event", async () => {
     const cap = baseCfg.daemon.max_self_requeues ?? DEFAULT_MAX_SELF_REQUEUES;
     const { hooks, overseer } = hooksWith(false);
     const w = watcher(hooks);
@@ -229,7 +229,7 @@ describe("the per-head cap", () => {
     pastDeadline();
     expect(await w.checkDeadlines()).toEqual([310]);
     expect(roundStatus(lastRoundId)).toBe("overdue");
-    expect(store.getPr(310)!.state).toBe("awaiting_human");
+    expect(store.getPr(310)!.state).toBe("tracked"); // no park: returned to standing state, anomaly raised
     expect(events("round_self_requeued")).toHaveLength(cap); // unchanged
     expect(events("self_requeue_cap_exhausted")).toHaveLength(1);
     expect(events("self_requeue_cap_exhausted")[0]!.payload).toMatchObject({ head_sha: "abc123", attempts: cap, cap });
@@ -419,7 +419,7 @@ describe("live-but-stuck recovery", () => {
     expect(events("round_overdue")).toHaveLength(0);
   });
 
-  it("past the cap a wedged live round still parks through the anomaly path", async () => {
+  it("past the cap a wedged live round still terminalizes through the anomaly path", async () => {
     const { hooks } = hooksWith(true);
     hooks.killSession = async () => {};
     const w = watcher(hooks);
@@ -432,7 +432,7 @@ describe("live-but-stuck recovery", () => {
     pastDeadline();
     expect(await w.checkDeadlines()).toEqual([312]);
     expect(roundStatus(roundId)).toBe("overdue");
-    expect(store.getPr(312)!.state).toBe("awaiting_human");
+    expect(store.getPr(312)!.state).toBe("tracked");
   });
 });
 
@@ -473,19 +473,19 @@ describe("NEEDS_HUMAN requires a finished review", () => {
     expect(adapter.calls.some((c) => c.startsWith("addLabel:320"))).toBe(false);
   });
 
-  it("with executed passes the park is genuine and stands", async () => {
+  it("with executed passes a legacy NEEDS_HUMAN lands tracked (park retired), not requeued", async () => {
     reviewingRound(321);
     const { hooks } = hooksWith();
     needsHumanFile(321, 1, { passes: [{ name: "pass-baseline", tier: "sol-med", findings: 1 }] });
 
     await watcher(hooks).sweep();
 
-    expect(store.getPr(321)!.state).toBe("awaiting_human");
+    expect(store.getPr(321)!.state).toBe("tracked");
     expect(events("round_self_requeued")).toHaveLength(0);
     expect(store.reviewedHead(321)).toBeDefined();
   });
 
-  it("past the cap an incomplete NEEDS_HUMAN parks like any verdict", async () => {
+  it("past the cap an incomplete NEEDS_HUMAN applies like any verdict (tracked, no park)", async () => {
     const { hooks } = hooksWith();
     const w = watcher(hooks);
     const latestRoundNo = () =>
@@ -499,7 +499,7 @@ describe("NEEDS_HUMAN requires a finished review", () => {
     reviewingRound(322);
     needsHumanFile(322, latestRoundNo());
     await w.sweep();
-    expect(store.getPr(322)!.state).toBe("awaiting_human");
+    expect(store.getPr(322)!.state).toBe("tracked");
     expect(events("self_requeue_cap_exhausted")).toHaveLength(1);
   });
 });

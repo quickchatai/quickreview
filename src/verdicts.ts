@@ -570,7 +570,9 @@ export class VerdictWatcher {
   }
 
   /** Malformed verdict or blown deadline: overseer anomaly, round marked, and
-   * the PR parked on awaiting_human. Never an approve path. */
+   * the PR returned to its standing-verdict state (the owner, 2026-08-19: no
+   * park — the AI keeps driving). Never an approve path: "tracked" here means
+   * "no work owed", not approved. */
   private async handleAnomaly(pr: number, roundNo: number | null, message: string, kind: "malformed" | "overdue"): Promise<void> {
     const { cfg, store, adapter } = this.deps;
     const round = this.runningRound(pr, roundNo ?? undefined);
@@ -580,7 +582,8 @@ export class VerdictWatcher {
     // deliberately NOT applied — no review was soundly produced.
     await this.safe(() => adapter.removeLabel(pr, cfg.github.in_progress_label), `remove ${cfg.github.in_progress_label} on #${pr}`);
 
-    applyEvent(store, pr, { type: "round_overdue" }, {}, { botLogin: cfg.github.bot_login, now: () => this.now(), reason: `anomaly:${kind}` });
+    const standing = normalizeVerdict(store.reviewedHead(pr)?.verdict) ?? null;
+    applyEvent(store, pr, { type: "round_overdue", standing }, {}, { botLogin: cfg.github.bot_login, now: () => this.now(), reason: `anomaly:${kind}` });
     store.logEvent(kind === "overdue" ? "round_overdue" : "verdict_malformed", pr, {
       round_id: round?.id ?? null,
       round_no: roundNo,
@@ -601,7 +604,7 @@ export class VerdictWatcher {
       [
         `ANOMALY (${kind}) — PR #${pr}${roundNo !== null ? ` round ${roundNo}` : ""}`,
         message,
-        "Treated as NEEDS_HUMAN / no-approve: the in-progress label was cleared and the PR is parked on awaiting_human. No reviewer was requested on GitHub — parking is daemon-side only.",
+        "No review was produced: the in-progress label was cleared and the PR returned to its standing-verdict state (never an approve). No reviewer was requested on GitHub.",
         "Investigate the session and decide whether to rerun the round (commands/rerun-round) or restart the session.",
         ...(pendingViolations && pendingViolations.length > 0
           ? [`Also: exec-policy violations were audited on this PR — ${pendingViolations.join(" · ")}`]

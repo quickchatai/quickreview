@@ -626,7 +626,13 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // the full round below runs as today. First reviews never short-circuit,
       // and a withheld approval at this head is its own new evidence
       //: that round must run so the approval can finally post.
-      if (roundType !== "first" && standing && mark?.head_sha && !withheldHere && row.trigger_provenance === "system") {
+      if (
+        roundType !== "first" &&
+        (standing === "APPROVE" || standing === "REQUEST_CHANGES") &&
+        mark?.head_sha &&
+        !withheldHere &&
+        row.trigger_provenance === "system"
+      ) {
         const sc = await classifySystemRetrigger(deps, row, mark);
         if (sc.skip) {
           await consumeTriggers(deps, row.number, { markInProgress: false });

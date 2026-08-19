@@ -43,6 +43,7 @@
 // powers are to refuse a mutation and to soften an event from REQUEST_CHANGES
 // to COMMENT.
 import { ciBlocksApproval, classifyCi, withholdApproval, type CheckSummary, type CiState } from "./cigate.js";
+import { normalizeVerdict } from "./types.js";
 import type { GuardsConfig } from "./config.js";
 import type { GateResult, MutationGuard, MutationIntent } from "./gate.js";
 import { isBotAuthor } from "./statemachine.js";
@@ -148,6 +149,10 @@ export function downgradeForHumanApproval(body: ReviewBody, approver: string, he
  */
 export function hasNewEvidence(mark: ReviewedHeadRow | undefined, headSha: string): boolean {
   if (!mark || !headSha) return true;
+  // A NEEDS_HUMAN/ESCALATE mark is an UNDECIDED review (legacy vocabulary,
+  // retired 2026-08-19): it must never suppress a re-run or a posting — a
+  // re-triggered PR with only an undecided mark deserves a full round.
+  if (normalizeVerdict(mark.verdict) === "NEEDS_HUMAN") return true;
   if (mark.head_sha !== headSha) return true;
   // `>=`, not `>`: a reply stamped in the same millisecond as the review is
   // ambiguous, and the safe reading of an ambiguous reply is "new evidence".

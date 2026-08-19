@@ -9,29 +9,32 @@ const STATES: PrLifecycleState[] = ["tracked", "queued", "reviewing", "awaiting_
 const TABLE: Array<[SmEvent, PrLifecycleState[]]> = [
   [{ type: "track" }, ["tracked", "queued", "reviewing", "awaiting_author", "awaiting_human", "closed"]],
   [{ type: "trigger", source: "label" }, ["queued", "queued", "reviewing", "queued", "queued", "closed"]],
-  [{ type: "stale_detected" }, ["queued", "queued", "reviewing", "queued", "awaiting_human", "closed"]],
+  [{ type: "stale_detected" }, ["queued", "queued", "reviewing", "queued", "queued", "closed"]],
   [{ type: "dispatched" }, ["reviewing", "reviewing", "reviewing", "reviewing", "reviewing", "closed"]],
   [
     { type: "verdict", verdict: "APPROVE" },
-    ["tracked", "tracked", "tracked", "tracked", "awaiting_human", "closed"],
+    ["tracked", "tracked", "tracked", "tracked", "tracked", "closed"],
   ],
   [
     { type: "verdict", verdict: "REQUEST_CHANGES" },
-    ["awaiting_author", "awaiting_author", "awaiting_author", "awaiting_author", "awaiting_human", "closed"],
+    ["awaiting_author", "awaiting_author", "awaiting_author", "awaiting_author", "awaiting_author", "closed"],
   ],
   [
     { type: "verdict", verdict: "NEEDS_HUMAN" },
-    ["awaiting_human", "awaiting_human", "awaiting_human", "awaiting_human", "awaiting_human", "closed"],
+    // Legacy input only (retired 2026-08-19): review posted, no approval, no park.
+    ["tracked", "tracked", "tracked", "tracked", "tracked", "closed"],
   ],
   [
     { type: "round_overdue" },
-    ["awaiting_human", "awaiting_human", "awaiting_human", "awaiting_human", "awaiting_human", "closed"],
+    // No standing verdict on the event ⇒ tracked everywhere (no park, never an approve).
+    ["tracked", "tracked", "tracked", "tracked", "tracked", "closed"],
   ],
   [{ type: "author_reply" }, ["tracked", "queued", "reviewing", "awaiting_author", "awaiting_human", "closed"]],
   [{ type: "synchronize" }, ["tracked", "queued", "reviewing", "awaiting_author", "awaiting_human", "closed"]],
   [
     { type: "human_requested" },
-    ["awaiting_human", "queued", "reviewing", "awaiting_human", "awaiting_human", "closed"],
+    // Noted, never a handover (2026-08-19): the AI keeps working.
+    ["tracked", "queued", "reviewing", "awaiting_author", "awaiting_human", "closed"],
   ],
   [{ type: "closed" }, ["closed", "closed", "closed", "closed", "closed", "closed"]],
   [{ type: "reopened" }, ["tracked", "queued", "reviewing", "awaiting_author", "awaiting_human", "tracked"]],
@@ -56,16 +59,43 @@ describe("invariants", () => {
     }
   });
 
-  it("awaiting_human is never demoted to tracked by a verdict", () => {
-    expect(transition("awaiting_human", { type: "verdict", verdict: "APPROVE" })).toBe("awaiting_human");
-    expect(transition("awaiting_human", { type: "verdict", verdict: "REQUEST_CHANGES" })).toBe("awaiting_human");
+  it("a verdict drains a legacy awaiting_human row into normal flow (park retired 2026-08-19)", () => {
+    expect(transition("awaiting_human", { type: "verdict", verdict: "APPROVE" })).toBe("tracked");
+    expect(transition("awaiting_human", { type: "verdict", verdict: "REQUEST_CHANGES" })).toBe("awaiting_author");
   });
 
-  it("an overdue round can never land on an approve state", () => {
-    for (const state of STATES) {
-      const next = transition(state, { type: "round_overdue" });
-      expect(["awaiting_human", "closed"]).toContain(next);
+  it("nothing transitions INTO awaiting_human any more", () => {
+    const events: SmEvent[] = [
+      { type: "track" },
+      { type: "trigger", source: "label" },
+      { type: "stale_detected" },
+      { type: "dispatched" },
+      { type: "verdict", verdict: "APPROVE" },
+      { type: "verdict", verdict: "REQUEST_CHANGES" },
+      { type: "verdict", verdict: "NEEDS_HUMAN" },
+      { type: "round_overdue" },
+      { type: "round_overdue", standing: "REQUEST_CHANGES" },
+      { type: "author_reply" },
+      { type: "synchronize" },
+      { type: "human_requested" },
+      { type: "closed" },
+      { type: "reopened" },
+    ];
+    for (const state of STATES.filter((st) => st !== "awaiting_human")) {
+      for (const event of events) {
+        expect(transition(state, event), `${state} + ${event.type}`).not.toBe("awaiting_human");
+      }
     }
+  });
+
+  it("an overdue round returns to the standing-verdict state and can never land on an approve state", () => {
+    for (const state of STATES) {
+      expect(["tracked", "closed"]).toContain(transition(state, { type: "round_overdue" }));
+      expect(["awaiting_author", "closed"]).toContain(transition(state, { type: "round_overdue", standing: "REQUEST_CHANGES" }));
+    }
+    // "tracked" after APPROVE-standing means "no work owed" — the approval was
+    // already posted by the earlier round, never by this event.
+    expect(transition("reviewing", { type: "round_overdue", standing: "APPROVE" })).toBe("tracked");
   });
 
   it("a push never queues a review, even when changes were previously requested", () => {

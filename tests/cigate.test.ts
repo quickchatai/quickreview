@@ -168,13 +168,14 @@ describe("the round templates carry the gate in their Decide step", () => {
     expect(gate).toBeLessThan(decide.indexOf("`[blocker]`"));
   });
 
-  it.each(templates)("%s prescribes a COMMENT with the approval withheld, and forbids the other two verdicts", (name) => {
+  it.each(templates)("%s prescribes a COMMENT with the approval withheld, and forbids blocking on red CI alone", (name) => {
     const decide = read(name);
     expect(decide).toContain("post the full review as a COMMENT with the approval withheld");
     expect(decide).toContain("no blockers were found");
     expect(decide).toContain("approval is withheld pending green CI");
     expect(decide).toContain("never **REQUEST_CHANGES** on red CI alone");
-    expect(decide).toContain("never **NEEDS_HUMAN** on red CI alone");
+    // NEEDS_HUMAN retired 2026-08-19: there is no third verdict to forbid.
+    expect(decide).toContain("there is no third verdict");
   });
 
   it.each(templates)("%s defers to the pr-checks.sh CLASSIFIED verdict and the latest-run rule", (name) => {

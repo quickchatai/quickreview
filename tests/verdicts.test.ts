@@ -182,10 +182,10 @@ describe("valid verdicts", () => {
   // These park pins carry `passes` telemetry: since 2026-08-19 a NEEDS_HUMAN
   // with no executed-pass evidence is an unfinished review and is requeued,
   // not parked (see self-requeue.test.ts "NEEDS_HUMAN requires a finished review").
-  it("NEEDS_HUMAN parks the PR locally and touches no reviewer on GitHub", async () => {
+  it("a legacy NEEDS_HUMAN lands the PR tracked (park retired 2026-08-19), no reviewer touched", async () => {
     reviewingRound(102);
     await watcher().handleFile(write(102, 1, verdictFile({ pr: 102, verdict: "NEEDS_HUMAN", ai_approved: true, passes: [{ name: "pass-baseline", tier: "sol-med", findings: 1 }] })));
-    expect(store.getPr(102)!.state).toBe("awaiting_human");
+    expect(store.getPr(102)!.state).toBe("tracked");
     // The whole GitHub surface of a park: labels, nothing else.
     expect(adapter.calls.every((c) => c.startsWith("addLabel") || c.startsWith("removeLabel"))).toBe(true);
     const logged = JSON.parse(
@@ -198,7 +198,7 @@ describe("valid verdicts", () => {
   it("accepts a legacy ESCALATE verdict as NEEDS_HUMAN (the frozen seed still emits it)", async () => {
     reviewingRound(105);
     await watcher().handleFile(write(105, 1, verdictFile({ pr: 105, verdict: "ESCALATE", passes: [{ name: "pass-baseline", tier: "sol-med", findings: 1 }] })));
-    expect(store.getPr(105)!.state).toBe("awaiting_human");
+    expect(store.getPr(105)!.state).toBe("tracked");
     const logged = JSON.parse(
       (store.db.prepare("SELECT payload FROM events WHERE kind = 'verdict_applied'").get() as { payload: string }).payload,
     );
@@ -214,7 +214,7 @@ describe("valid verdicts", () => {
     const done = await watcher().sweep();
     expect(done.sort()).toEqual(["pr-103-round-1.json", "pr-104-round-1.json"]);
     expect(store.getPr(103)!.state).toBe("tracked");
-    expect(store.getPr(104)!.state).toBe("awaiting_human");
+    expect(store.getPr(104)!.state).toBe("tracked");
   });
 
   it("tolerates a partial write by retrying the parse", async () => {
@@ -330,7 +330,7 @@ describe("anomaly paths", () => {
     expect(overseer[0]).toContain("ANOMALY (malformed)");
     expect(adapter.calls).toEqual([`removeLabel:200:${cfg.github.in_progress_label}`]);
     expect(adapter.calls.some((c) => c.includes(cfg.github.reviewed_label))).toBe(false);
-    expect(store.getPr(200)!.state).toBe("awaiting_human");
+    expect(store.getPr(200)!.state).toBe("tracked"); // no park (retired 2026-08-19)
     const round = store.db.prepare("SELECT status, verdict FROM rounds WHERE id = ?").get(roundId) as any;
     expect(round.status).toBe("overdue");
     expect(round.verdict).toBeNull();
@@ -347,10 +347,10 @@ describe("anomaly paths", () => {
     const { hooks, overseer } = recordingHooks();
     await watcher({}, hooks).handleFile(write(201, 1, verdictFile({ pr: 201, verdict: "APPROVED" as any })));
     expect(overseer[0]).toContain("ANOMALY (malformed)");
-    expect(store.getPr(201)!.state).toBe("awaiting_human");
+    expect(store.getPr(201)!.state).toBe("tracked");
   });
 
-  it("an overdue round is parked, never approved", async () => {
+  it("an overdue round returns to the standing state, never approved", async () => {
     const past = new Date("2026-08-13T10:00:00Z");
     const later = new Date("2026-08-13T12:00:00Z");
     let clock = past;
@@ -375,7 +375,7 @@ describe("anomaly paths", () => {
     expect(overseer[0]).toContain("ANOMALY (overdue)");
     // the durable anomaly record rides beside the inject file.
     expect(overdueStore.anomalies()).toMatchObject([{ kind: "overdue", pr: 300, round_no: 1 }]);
-    expect(overdueStore.getPr(300)!.state).toBe("awaiting_human");
+    expect(overdueStore.getPr(300)!.state).toBe("tracked");
     expect((overdueStore.db.prepare("SELECT status FROM rounds WHERE id = ?").get(roundId) as any).status).toBe("overdue");
     // No reviewer nomination anywhere on the anomaly path either.
     expect(adapter.calls.every((c) => c.startsWith("addLabel") || c.startsWith("removeLabel"))).toBe(true);
@@ -720,15 +720,15 @@ describe("mid-round head advance chains a system re-trigger", () => {
     expect(store.db.prepare("SELECT COUNT(*) c FROM events WHERE kind = 'mid_round_head_advance'").get()).toMatchObject({ c: 0 });
   });
 
-  it("a NEEDS_HUMAN park is sticky — never chained", async () => {
+  it("a legacy NEEDS_HUMAN no longer parks — it chains like any other verdict", async () => {
     reviewingRound(402);
     const row = store.getPr(402)!;
     store.upsertPr({ ...row, head_sha: "def456" });
     await watcher().handleFile(
       write(402, 1, verdictFile({ pr: 402, verdict: "NEEDS_HUMAN", head_sha: "abc123", passes: [{ name: "pass-baseline", tier: "sol-med", findings: 1 }] })),
     );
-    expect(store.getPr(402)!.state).toBe("awaiting_human");
-    expect(store.db.prepare("SELECT COUNT(*) c FROM events WHERE kind = 'mid_round_head_advance'").get()).toMatchObject({ c: 0 });
+    expect(store.getPr(402)!.state).toBe("queued");
+    expect(store.db.prepare("SELECT COUNT(*) c FROM events WHERE kind = 'mid_round_head_advance'").get()).toMatchObject({ c: 1 });
   });
 });
 

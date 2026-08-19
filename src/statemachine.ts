@@ -10,30 +10,32 @@
 //   queued          a trigger is outstanding; waiting for a dispatch slot
 //   reviewing       a round is running (trigger already consumed)
 //   awaiting_author REQUEST_CHANGES posted; the author owes a push/reply
-//   awaiting_human  parked for a person — the round ended without a decision
-//                   (never auto-approved). NOTE (2026-08-18): the escalation
-//                   mechanics were scrapped; reaching this state no longer
-//                   requests a reviewer on GitHub. It is a daemon-side park,
-//                   surfaced in the TUI and Slack, cleared by a re-trigger.
+//   awaiting_human  RETIRED (the owner, 2026-08-19): the review is never handed
+//                   to a human — the AI decides on the merits and keeps
+//                   driving, attaching a "for a human to double-check" list
+//                   where it is unsure. The enum value remains valid only for
+//                   legacy rows; NOTHING transitions into it any more, and the
+//                   reconcile poll migrates lingering rows to their
+//                   verdict-implied state.
 //   closed          merged or closed; session archived, worktree dropped
 // `stale_recheck` remains as legacy state for old rows/rounds; ordinary pushes
 // never set it or queue work. Only an explicit review re-request starts a round.
 //
 // ┌─────────────────┬──────────────────────────────────────────────────────────┐
-// │ event \ state   │ tracked   queued   reviewing  awaiting_  awaiting_ closed │
-// │                 │                                author    human           │
+// │ event \ state   │ tracked   queued   reviewing  awaiting_  (legacy)  closed │
+// │                 │                                author    aw_human         │
 // ├─────────────────┼──────────────────────────────────────────────────────────┤
 // │ track           │ tracked   queued   reviewing  aw_author  aw_human  closed │  (idempotent adopt)
 // │ trigger         │ queued    queued   reviewing¹ queued     queued    closed²│
-// │ stale_detected  │ queued    queued   reviewing¹ queued     aw_human³ closed │
-// │ dispatched      │ reviewing reviewing reviewing reviewing  reviewing closed⁴│
-// │ verdict APPROVE │ tracked   tracked  tracked    tracked    aw_human⁵ closed │
-// │ verdict R_C     │ aw_author aw_author aw_author aw_author  aw_human⁵ closed │
-// │ verdict N_HUMAN │ aw_human  aw_human aw_human   aw_human   aw_human  closed │
-// │ round_overdue   │ aw_human  aw_human aw_human   aw_human   aw_human  closed │  (never an approve path)
+// │ stale_detected  │ queued    queued   reviewing¹ queued     queued    closed │
+// │ dispatched      │ reviewing reviewing reviewing reviewing  reviewing closed³│
+// │ verdict APPROVE │ tracked   tracked  tracked    tracked    tracked   closed │
+// │ verdict R_C     │ aw_author aw_author aw_author aw_author  aw_author closed │
+// │ verdict N_HUMAN │ tracked   tracked  tracked    tracked    tracked   closed │  (legacy input: review posted, no approval — AI keeps driving)
+// │ round_overdue   │ standing⁴ standing⁴ standing⁴ standing⁴  standing⁴ closed │  (never an approve path)
 // │ author_reply    │ tracked   queued   reviewing  aw_author  aw_human  closed │  (ping-pong: no lifecycle change)
 // │ synchronize     │ tracked   queued   reviewing  aw_author  aw_human  closed │
-// │ human_requested │ aw_human  queued⁷  reviewing⁷ aw_human   aw_human  closed │
+// │ human_requested │ tracked   queued   reviewing  aw_author  aw_human  closed │  (noted, never a handover — AI keeps working)
 // │ closed          │ closed    closed   closed     closed     closed    closed │
 // │ reopened        │ tracked   queued   reviewing  aw_author  aw_human  tracked│
 // └─────────────────┴──────────────────────────────────────────────────────────┘
@@ -41,13 +43,11 @@
 //   current head, and the reconcile poll re-derives the triggered set after it
 //   finishes (GitHub truth wins — spec §3).
 // ² closed is terminal for the lifecycle; a reopened PR must first `reopened`.
-// ³ once parked, the human owns the PR. Only an explicit re-trigger queues
-//   another full review.
-// ⁴ dispatch never runs against a closed PR (dispatch filters on `queued`).
-// ⁵ a verdict cannot un-park a PR: awaiting_human is sticky against
-//   APPROVE/REQUEST_CHANGES — the never-auto-approve-a-parked-PR invariant.
-// ⁷ an author asking for a human mid-round does not cancel the round; the
-//   verdict then lands on awaiting_human.
+// ³ dispatch never runs against a closed PR (dispatch filters on `queued`).
+// ⁴ a blown/malformed round returns the PR to the state its STANDING verdict
+//   implies (REQUEST_CHANGES ⇒ awaiting_author, anything else ⇒ tracked),
+//   carried on the event by the caller. No park: the AI keeps driving; the
+//   anomaly + self-requeue cap are the safety net (the owner, 2026-08-19).
 //
 // The never-retract-an-approval invariant is structural: no event and no
 // transition in this module touches an existing review (spec §8).
@@ -73,11 +73,14 @@ export type SmEvent =
   | { type: "stale_detected" }
   | { type: "dispatched" }
   | { type: "verdict"; verdict: Verdict }
-  | { type: "round_overdue" }
+  /** `standing` = the PR's last applied verdict (normalized), so the return
+   * state can be derived without a park. Absent ⇒ tracked. */
+  | { type: "round_overdue"; standing?: Verdict | null }
   | { type: "author_reply" }
   | { type: "synchronize" }
   /** Someone asked for a person on this PR (author ping-pong `human_requested`).
-   * Parks it; no GitHub reviewer is requested. */
+   * Noted for the record only — the AI keeps driving (the owner, 2026-08-19):
+   * never a handover, never a park, no GitHub reviewer requested. */
   | { type: "human_requested" }
   | { type: "closed" }
   | { type: "reopened" };
@@ -101,19 +104,22 @@ export function transition(current: PrLifecycleState, event: SmEvent): PrLifecyc
 
     case "stale_detected":
       if (current === "reviewing") return "reviewing";
-      if (current === "awaiting_human") return "awaiting_human";
       return "queued";
 
     case "dispatched":
       return "reviewing";
 
     case "verdict":
-      if (event.verdict === "NEEDS_HUMAN") return "awaiting_human";
-      if (current === "awaiting_human") return "awaiting_human";
+      // NEEDS_HUMAN is retired as an outcome (the owner, 2026-08-19): a legacy
+      // session emitting it posted its review without an approval — the PR
+      // stays in normal flow and the AI keeps driving. Never a park.
+      if (event.verdict === "NEEDS_HUMAN") return "tracked";
       return event.verdict === "REQUEST_CHANGES" ? "awaiting_author" : "tracked";
 
     case "round_overdue":
-      return "awaiting_human";
+      // No park: return to the standing verdict's state. Never an approve
+      // path — "tracked" here means "known, no work owed", not approved.
+      return event.standing === "REQUEST_CHANGES" ? "awaiting_author" : "tracked";
 
     case "author_reply":
       return current;
@@ -124,8 +130,7 @@ export function transition(current: PrLifecycleState, event: SmEvent): PrLifecyc
       return current;
 
     case "human_requested":
-      if (current === "queued" || current === "reviewing") return current;
-      return "awaiting_human";
+      return current;
   }
 }
 
