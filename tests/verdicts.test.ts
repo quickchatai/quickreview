@@ -417,6 +417,9 @@ describe("anomaly paths", () => {
 describe("held wakes are flushed at round end", () => {
   it("delivers them after a verdict is applied", async () => {
     const roundId = reviewingRound(100);
+    // A fresh ledger keeps's re-nudge out of this test's injects.
+    mkdirSync(join(dir, "state", "ledgers"), { recursive: true });
+    writeFileSync(join(dir, "state", "ledgers", "pr-100.md"), "LEDGER PR #100 @ abc123\n");
     store.holdWake(100, "author says: fixed in abc123", "author_reply");
     const { hooks, injects } = recordingHooks();
 

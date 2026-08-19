@@ -15,6 +15,7 @@ import { dispatchOnce, type DispatchAdapter } from "./dispatch.js";
 import { MutationGate, type MutationIntent } from "./gate.js";
 import { GitHubAdapter } from "./github.js";
 import { TokenMinter } from "./githubAuth.js";
+import { enforceLedgerFreshness } from "./ledgercheck.js";
 import { PingPongLedger, ThreadDecisionWatcher, buildWakeMessage, type AuthorReplyEvent } from "./pingpong.js";
 import { reconcileOnce, type ReconcileAdapter } from "./reconcile.js";
 import {
@@ -179,7 +180,25 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     ...(deps.resolvedFilesInMerges ? { resolvedFilesInMerges: deps.resolvedFilesInMerges } : {}),
     log,
   };
-  const rechecks = new RecheckWatcher({ cfg, store, verdictDir, log });
+  const rechecks = new RecheckWatcher({
+    cfg,
+    store,
+    verdictDir,
+    log,
+    // Ledger freshness after a recheck uphold — same enforcement the
+    // VerdictWatcher runs at round end, keyed by head (no round in flight).
+    checkLedger: async (pr, headSha) => {
+      await enforceLedgerFreshness(
+        {
+          store,
+          ledgerPathFor: (n) => join(root, "state", "ledgers", `pr-${n}.md`),
+          inject: (n, message) => hooks.inject(n, message),
+          log,
+        },
+        { pr, roundNo: null, headSha },
+      );
+    },
+  });
 
   // The withheld-approval retry — same `ci_completed` event, opposite
   // direction: the recheck above asks whether a standing approval must fall,

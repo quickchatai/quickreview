@@ -720,6 +720,12 @@ export interface RecheckWatcherDeps {
   cfg: Config;
   store: StateStore;
   verdictDir: string;
+  /** Ledger freshness enforcement, run after an uphold — the
+   * session just examined a significant delta, so its ledger should name the
+   * upheld head. Optional: absent (stubs, tests) ⇒ no check, exactly the
+   * legacy behaviour. Best-effort — never allowed to disturb the
+   * decision (the caller wraps it). */
+  checkLedger?: (pr: number, headSha: string) => Promise<void>;
   now?: () => Date;
   log?: (msg: string, extra?: unknown) => void;
   /** Parse retries for partially-written files (fs.watch fires on creation,
@@ -841,6 +847,14 @@ export class RecheckWatcher {
         // Session-examined significant delta, verdict upheld: the withheld
         // approval (if any) follows the head (the owner, 2026-08-19).
         carryWithheldMark(this.deps.store, pr, d.head_sha, "recheck-uphold", (m) => this.deps.log?.(m));
+        // Ledger freshness after the uphold (optional wiring).
+        if (this.deps.checkLedger) {
+          try {
+            await this.deps.checkLedger(pr, d.head_sha);
+          } catch (err) {
+            this.deps.log?.(`recheck: ledger check failed on #${pr}`, err);
+          }
+        }
       }
       this.deps.store.logEvent(d.outcome === "request_changes" ? "recheck_request_changes" : "recheck_upheld", pr, {
         file: name,

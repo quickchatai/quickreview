@@ -1055,6 +1055,33 @@ export class StateStore {
   }
 
   /**
+   * The once-per-round ledger re-nudge mark. Kept in the events
+   * table (kind = 'ledger_stale_nudged'), same move as the anomaly
+   * record: no new DDL, boot-safe on the live DB by construction. The key is
+   * `round-<no>` on the round-end path and `head-<sha>` on the round-less
+   * recheck path; a scan with no recency window — the cap is per round, not
+   * per recent history.
+   */
+  recordLedgerNudge(pr: number, key: string, extra?: Record<string, unknown>): void {
+    this.logEvent("ledger_stale_nudged", pr, { key, ...(extra ?? {}) });
+  }
+
+  /** Was the ledger re-nudge for this (pr, key) already sent? */
+  ledgerNudgeSent(pr: number, key: string): boolean {
+    const rows = this.db
+      .prepare("SELECT payload FROM events WHERE kind = 'ledger_stale_nudged' AND pr = ?")
+      .all(pr) as Array<{ payload: string | null }>;
+    return rows.some((r) => {
+      if (!r.payload) return false;
+      try {
+        return (JSON.parse(r.payload) as { key?: unknown }).key === key;
+      } catch {
+        return false;
+      }
+    });
+  }
+
+  /**
    * Has the migration-collision COMMENT with this fingerprint already been
    * posted for this PR? Scans every such event for the PR — no
    * recency window, because a PR that accumulates rounds must not start

@@ -19,6 +19,7 @@ import type { GateResult } from "./gate.js";
 import { applyEvent } from "./statemachine.js";
 import type { VerdictAnnouncer } from "./slack/announce.js";
 import type { RoundRow, StateStore } from "./state.js";
+import { enforceLedgerFreshness } from "./ledgercheck.js";
 import { normalizeVerdict, type SessionHooks, type VerdictFile, type VerdictPassEntry } from "./types.js";
 import { flushHeldWakes } from "./wakes.js";
 
@@ -53,6 +54,9 @@ export interface VerdictDeps {
     pricing?: Record<string, ModelPricing>;
     fs?: UsageFs;
   };
+  /** Where a PR's mirrored ledger snapshot lives. Defaults to
+   * `<root>/state/ledgers/pr-<n>.md` — sessions.ts ledgerPath's shape. */
+  ledgerPathFor?: (pr: number) => string;
   now?: () => Date;
   log?: (msg: string, extra?: unknown) => void;
   /** Parse retries for partially-written files. */
@@ -342,10 +346,38 @@ export class VerdictWatcher {
     // ever-growing prefix were 41% of measured cost; the continuity that
     // matters (SETTLED digest, ledger) survives compaction by design.
     await this.safe(() => this.deps.hooks.compactSession?.(v.pr) ?? Promise.resolve(), `compact pr-${v.pr}`);
+    // Ledger freshness: AFTER compaction, so ledger-pin's mirror has
+    // had its chance. Stale/missing ⇒ anomaly + at most ONE re-nudge per round;
+    // best-effort — nothing here may disturb the applied verdict.
+    await this.safe(() => this.checkLedger(v.pr, v.round_no, v.head_sha), `ledger check pr-${v.pr}`);
     // The round is over, so the PR's one main pi is free again (S4): deliver
     // whatever arrived while it was busy, in arrival order.
     await this.flushWakes(v.pr);
     this.log(`verdicts: #${v.pr} round ${v.round_no} → ${v.verdict}`);
+  }
+
+  // ---- ledger freshness ---------------------------------------
+
+  private ledgerPathFor(pr: number): string {
+    const custom = this.deps.ledgerPathFor;
+    if (custom) return custom(pr);
+    const root = this.deps.root ?? sandboxRoot();
+    return join(root, "state", "ledgers", `pr-${pr}.md`);
+  }
+
+  /** Enforce the end-of-round ledger rewrite: header must read
+   * `LEDGER PR #<n> @ <head>`. Stale ⇒ anomaly + one capped re-nudge. */
+  private async checkLedger(pr: number, roundNo: number, headSha: string): Promise<void> {
+    if (!headSha) return;
+    await enforceLedgerFreshness(
+      {
+        store: this.deps.store,
+        ledgerPathFor: (n) => this.ledgerPathFor(n),
+        inject: (n, message) => this.deps.hooks.inject(n, message),
+        log: this.log.bind(this),
+      },
+      { pr, roundNo, headSha },
+    );
   }
 
   // ---- executed-pass telemetry --------------------------------
