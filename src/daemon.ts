@@ -353,6 +353,11 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
       threadDecisions.start();
       rechecks.start();
       writeStatus();
+      // onStart BEFORE the first reconcile: the sweep can nudge a recheck at a
+      // dead session immediately (boot after a deploy restart), and the
+      // respawn path needs the title resolver wired in onStart. Live failure
+      // 2026-08-19: "no live session pr-5290" thrown by the boot sweep.
+      if (deps.onStart) await guard("onStart", async () => deps.onStart!(this));
       await reconcile();
 
       every(cfg.daemon.poll_interval_s, () => void reconcile());
@@ -373,7 +378,6 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         }
       }));
       every(STATUS_TICK_S, writeStatus);
-      if (deps.onStart) await guard("onStart", async () => deps.onStart!(this));
     },
 
     async stop(): Promise<void> {

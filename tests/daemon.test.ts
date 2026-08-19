@@ -65,6 +65,38 @@ describe("daemon wiring", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
+  // Boot-order regression (live, #5290 2026-08-19): the first reconcile can
+  // nudge a recheck at a dead session immediately; the respawn path needs the
+  // title resolver wired by onStart, so onStart must run BEFORE the sweep.
+  it("runs onStart before the first reconcile", async () => {
+    const order: string[] = [];
+    const recorded: string[] = [];
+    const adapter = fakeAdapter(recorded, join(root, "state", "dryrun"));
+    const listPrs = adapter.listOpenPrs.bind(adapter);
+    adapter.listOpenPrs = async (...a: Parameters<typeof listPrs>) => {
+      order.push("reconcile");
+      return listPrs(...a);
+    };
+    const daemon = createDaemon({
+      cfg: { ...loadConfig(), dry_run: true },
+      root,
+      store,
+      adapter,
+      listen: false,
+      log: () => {},
+      onStart: () => {
+        order.push("onStart");
+      },
+    });
+    await daemon.start();
+    try {
+      expect(order[0]).toBe("onStart");
+      expect(order).toContain("reconcile");
+    } finally {
+      await daemon.stop();
+    }
+  });
+
   it("runs reconcile → dispatch → verdict apply end to end in dry-run", async () => {
     const recorded: string[] = [];
     const daemon = createDaemon({

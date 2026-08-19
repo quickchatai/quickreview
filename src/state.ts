@@ -947,6 +947,13 @@ export class StateStore {
     return info.changes === 1;
   }
 
+  /** Release a claimed recheck whose delivery failed — the claim must not
+   * outlive a nudge that never reached the session (live: #5290 boot-order
+   * inject failure burned the head's only recheck, 2026-08-19). */
+  releaseRecheck(pr: number, fingerprint: string): void {
+    this.db.prepare("DELETE FROM rechecks WHERE pr = ? AND fingerprint = ?").run(pr, fingerprint);
+  }
+
   /** Every recheck nudge sent for a PR, oldest first (TUI/audit). */
   rechecksFor(pr: number): Array<{ pr: number; fingerprint: string; head_sha: string; trigger: string; reason: string | null; created_at: string }> {
     return this.db.prepare("SELECT * FROM rechecks WHERE pr = ? ORDER BY created_at").all(pr) as Array<{

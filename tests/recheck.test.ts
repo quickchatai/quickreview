@@ -305,6 +305,24 @@ describe("runRecheck", () => {
     expect(h.injected).toHaveLength(1);
   });
 
+  // Regression (live, #5290 2026-08-19): a failed inject burned the head's
+  // only recheck — the claim deduped every retry forever.
+  it("releases the claim when delivery fails, so the next sweep retries", async () => {
+    const h = harness();
+    const realInject = h.deps.inject;
+    h.deps.inject = async () => {
+      throw new Error("no live session pr-101 — dispatch a round to birth it first");
+    };
+    const failed = await runRecheck(h.deps, { pr: PR, trigger: "push", head_sha: HEAD });
+    expect(failed).toMatchObject({ action: "noop", reason: "delivery-failed" });
+    expect(h.store.rechecksFor(PR)).toHaveLength(0);
+
+    h.deps.inject = realInject;
+    const retried = await runRecheck(h.deps, { pr: PR, trigger: "push", head_sha: HEAD });
+    expect(retried).toMatchObject({ action: "recheck", delivered: "injected" });
+    expect(h.injected).toHaveLength(1);
+  });
+
   it("carries the standing verdict, the last-reviewed sha and the delta in the order", async () => {
     const h = harness();
     const out = await runRecheck(h.deps, { pr: PR, trigger: "push", head_sha: HEAD });

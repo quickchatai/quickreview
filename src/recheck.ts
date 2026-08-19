@@ -278,7 +278,7 @@ export type NoopReason =
   | "empty-delta"
   | "trivial-delta"
   | "already-rechecked"
-  | "no-delta-source";
+  | "no-delta-source" | "delivery-failed";
 
 export interface RecheckPlanInput {
   trigger: RecheckTrigger;
@@ -578,12 +578,23 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
   const render = deps.renderPrompt ?? defaultRecheckPrompt;
   // S4: mid-round nudges are held and flushed at round end — the PR's one main
   // pi is never given two instructions at once.
-  const delivered = await wakeOrHold(
-    { store, inject: deps.inject, log },
-    req.pr,
-    render(order),
-    `recheck:${req.trigger}`,
-  );
+  let delivered: "injected" | "held";
+  try {
+    delivered = await wakeOrHold(
+      { store, inject: deps.inject, log },
+      req.pr,
+      render(order),
+      `recheck:${req.trigger}`,
+    );
+  } catch (err) {
+    // A claim must not outlive a nudge that never reached the session — the
+    // fingerprint would otherwise dedupe every retry and the delta is never
+    // audited (live on #5290: boot-order inject failure).
+    store.releaseRecheck(req.pr, fingerprint);
+    store.logEvent("recheck_delivery_failed", req.pr, { trigger: req.trigger, head_sha: head, error: String(err) });
+    log(`recheck: #${req.pr} delivery failed — claim released for retry`, err);
+    return done({ action: "noop", reason: "delivery-failed", class: plan.class, classification: plan.classification });
+  }
   store.logEvent("recheck_nudged", req.pr, {
     trigger: req.trigger,
     head_sha: head,
