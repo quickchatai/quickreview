@@ -273,6 +273,85 @@ describe("companion memedit requests", () => {
   });
 });
 
+describe("mouse operation (FT-0129 UX)", () => {
+  it("clicking a timeline row selects it and the detail pane shows the FULL text", async () => {
+    const { app } = makeApp();
+    const st = install(app, new FakeMemory());
+    app.hooks.digestScreen!(app, 140, 40);
+    await settle();
+    st.view = "memory";
+    app.hooks.digestScreen!(app, 140, 40); // paint captures zones
+    // Row 1 of the list = frame row 2 = terminal y 3 (header above it).
+    app.hooks.digestClick!(app, 4, 4);
+    const screen = stripAnsi(app.hooks.digestScreen!(app, 140, 40));
+    expect(st.sel).toBe(1);
+    expect(screen).toContain("ENTRY 2026-08-19 18:13:54");
+    // The FULL selected text is readable in the pane (wrapped, not clipped).
+    expect(screen).toContain("lesson about External Apps.");
+    expect(screen).toContain("[e edit]");
+    expect(screen).toContain("[x retire]");
+  });
+
+  it("verb buttons act: two clicks on [x retire] retire the selected entry", async () => {
+    const { app } = makeApp();
+    const mem = new FakeMemory();
+    const st = install(app, mem);
+    app.hooks.digestScreen!(app, 140, 40);
+    await settle();
+    st.view = "memory";
+    const screen = stripAnsi(app.hooks.digestScreen!(app, 140, 40));
+    const rowText = screen.split("\n")[2]!; // verbs row (terminal y 3)
+    const x = rowText.indexOf("[x retire]") + 2;
+    app.hooks.digestClick!(app, x, 3);
+    expect(mem.applied).toHaveLength(0); // armed only
+    const rowText2 = stripAnsi(app.hooks.digestScreen!(app, 140, 40)).split("\n")[2]!;
+    expect(rowText2).toContain("[x CONFIRM retire]");
+    const x2 = rowText2.indexOf("[x CONFIRM retire]") + 2;
+    app.hooks.digestClick!(app, x2, 3);
+    await settle();
+    expect(mem.applied[0]).toMatchObject({ op: "retire" });
+  });
+
+  it("proposal [accept] button fires accept on the clicked proposal", async () => {
+    const { app } = makeApp();
+    const accept = vi.fn().mockResolvedValue({ ok: true, message: "accepted" });
+    const st = install(app, new FakeMemory(), { accept });
+    app.hooks.digestScreen!(app, 140, 40);
+    await settle();
+    st.view = "memory";
+    const screen = stripAnsi(app.hooks.digestScreen!(app, 140, 40));
+    const lines = screen.split("\n");
+    const y = lines.findIndex((l) => l.includes("[accept]")) + 1;
+    const x = lines[y - 1]!.indexOf("[accept]") + 2;
+    app.hooks.digestClick!(app, x, y);
+    await settle();
+    expect(accept).toHaveBeenCalledWith(app, "baseline-mergebase-2026-08-20");
+  });
+
+  it("digest view: hint chunk 'v memory view' is clickable and toggles", async () => {
+    const { app } = makeApp();
+    const st = install(app, new FakeMemory());
+    app.hooks.digestScreen!(app, 140, 40);
+    await settle();
+    const screen = stripAnsi(app.hooks.digestScreen!(app, 140, 40));
+    const lines = screen.split("\n");
+    const y = lines.findIndex((l) => l.includes("v memory view")) + 1;
+    const x = lines[y - 1]!.indexOf("v memory view") + 2;
+    app.hooks.digestClick!(app, x, y);
+    expect(st.view).toBe("memory");
+  });
+
+  it("tags are not printed twice in the list line", async () => {
+    const { app } = makeApp();
+    const st = install(app, new FakeMemory());
+    app.hooks.digestScreen!(app, 140, 40);
+    await settle();
+    st.view = "memory";
+    const screen = stripAnsi(app.hooks.digestScreen!(app, 140, 40));
+    expect(screen).not.toMatch(/#bug #operations #bug #operations/);
+  });
+});
+
 describe("the [2] tab is VISIBLY Memory & learning (rename regression)", () => {
   it("digest view header and hints carry the rename and advertise v", async () => {
     const { app } = makeApp();

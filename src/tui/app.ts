@@ -27,6 +27,9 @@ export interface AppHooks {
   digestScreen?: (app: App, cols: number, rows: number) => string;
   /**: digest tab key handling; returns true when it consumed the key. */
   digestKey?: (app: App, key: ReturnType<typeof decodeKey>) => boolean;
+  /**: mouse click on the Memory & learning tab (1-based coords) —
+   * rows select, [buttons] fire verbs. */
+  digestClick?: (app: App, x: number, y: number) => void;
   /** Open a URL in the user's browser (default: xdg-open, detached). */
   openUrl?: (url: string) => void;
   /** First-launch marker (read, write). Default: state/tui-help-shown. */
@@ -495,8 +498,10 @@ export class App {
   private handleMouse(ev: MouseEvent): void {
     if (this.tab === "companion") return; // the attach (or its placeholder) owns it
     if (this.tab === "digest") {
-      // Digest tab: wheel scrolls; row-level actions stay on the keyboard.
-      if (ev.kind !== "click") this.hooks.digestKey?.(this, { kind: ev.kind === "wheel-down" ? "down" : "up" });
+      // Memory & learning tab: clicks hit the tab's own zones (rows select,
+      // buttons act); the wheel moves the selection / scrolls.
+      if (ev.kind === "click") this.hooks.digestClick?.(this, ev.x, ev.y);
+      else this.hooks.digestKey?.(this, { kind: ev.kind === "wheel-down" ? "down" : "up" });
       return;
     }
     if (this.tab === "deploy") {
