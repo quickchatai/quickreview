@@ -241,19 +241,21 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
   // it jump the FIFO on the ancient timestamp. Swept HERE, after the
   // triggered-set step, so a PR GitHub still lists as triggered has already
   // been re-queued and is never touched.
-  for (const local of store.allPrs()) {
-    if (local.state !== "tracked" && local.state !== "awaiting_author") continue;
-    if (!local.stale_recheck && local.trigger_ts === null) continue;
-    if (store.hasRunningRound(local.number)) continue;
-    correction(
-      deps,
-      local.number,
-      "stale-trigger-residue-cleared",
-      { state: local.state, stale_recheck: local.stale_recheck, trigger_ts: local.trigger_ts },
-      report,
-    );
-    store.upsertPr({ ...local, stale_recheck: 0, trigger_ts: null });
-  }
+  await step("stale-trigger-residue", async () => {
+    for (const local of store.allPrs()) {
+      if (local.state !== "tracked" && local.state !== "awaiting_author") continue;
+      if (!local.stale_recheck && local.trigger_ts === null) continue;
+      if (store.hasRunningRound(local.number)) continue;
+      correction(
+        deps,
+        local.number,
+        "stale-trigger-residue-cleared",
+        { state: local.state, stale_recheck: local.stale_recheck, trigger_ts: local.trigger_ts },
+        report,
+      );
+      store.upsertPr({ ...local, stale_recheck: 0, trigger_ts: null });
+    }
+  });
 
   // ---- 3. open-PR sync: locally-live PRs GitHub no longer lists as open ----
   await step("closed-sync", async () => {

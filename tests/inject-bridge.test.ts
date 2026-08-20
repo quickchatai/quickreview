@@ -124,17 +124,90 @@ describe("inject-bridge — consume only on delivery", () => {
     expect(sends[0]!.content).toBe("held round prompt");
   });
 
-  it("overrides a busy hold older than BUSY_MAX_HOLD_MS instead of holding wakes forever", async () => {
+  it("a wake arriving mid-turn is HELD on its own window — never measured from turn start", async () => {
+    // Regression (P1, 2026-08-20 adversarial review): the override used to
+    // count from busySince, so a wake landing >15 min into a long turn was
+    // delivered INSTANTLY into the live turn — the documented drop mechanism
+    // — archived, and lost.
     const t0 = Date.now();
     const now = vi.spyOn(Date, "now").mockReturnValue(t0);
     activate(fakePi());
     fire("session_start");
     fire("turn_start");
-    now.mockReturnValue(t0 + BUSY_MAX_HOLD_MS + 1); // the matching settle never came
+    now.mockReturnValue(t0 + BUSY_MAX_HOLD_MS + 5 * 60_000); // wake arrives 20 min into the turn
 
-    writeFileSync(join(dir, "2026-08-20T13-00-00-0000.md"), "wake");
+    writeFileSync(join(dir, "2026-08-20T13-20-00-0000.md"), "round prompt");
+    await sleep(150);
+    expect(sends).toHaveLength(0); // held, NOT delivered into the live turn
+    expect(pending()).toHaveLength(1);
+    expect(done()).toHaveLength(0);
+
+    fire("turn_end"); // delivered on settle/drain
     await vi.waitFor(() => expect(sends).toHaveLength(1));
     await vi.waitFor(() => expect(done()).toHaveLength(1));
+    expect(sends[0]!.content).toBe("round prompt");
+  });
+
+  it("overrides only after THIS delivery held a full BUSY_MAX_HOLD_MS — and re-arms busy for the next wake", async () => {
+    const t0 = Date.now();
+    const now = vi.spyOn(Date, "now").mockReturnValue(t0);
+    activate(fakePi());
+    fire("session_start");
+    fire("turn_start");
+
+    writeFileSync(join(dir, "2026-08-20T13-00-00-0000.md"), "wake A");
+    await sleep(150);
+    expect(sends).toHaveLength(0); // deferred; A's own hold window armed at t0
+
+    now.mockReturnValue(t0 + BUSY_MAX_HOLD_MS + 1); // A held its full window
+    writeFileSync(join(dir, "2026-08-20T13-00-01-0000.md"), "wake B"); // watch → drain
+    await vi.waitFor(() => expect(sends).toHaveLength(1));
+    expect(sends[0]!.content).toBe("wake A"); // oldest-first, delivered by override
+    await vi.waitFor(() => expect(done()).toHaveLength(1));
+
+    // Regression (P1): the override used to CLEAR busy permanently, so every
+    // later wake in the turn was dropped. It must re-arm instead: B defers on
+    // its own fresh window.
+    await sleep(150);
+    expect(sends).toHaveLength(1);
+    expect(pending()).toHaveLength(1);
+
+    fire("turn_end"); // a real settle still drains
+    await vi.waitFor(() => expect(sends).toHaveLength(2));
+    expect(sends[1]!.content).toBe("wake B");
+  });
+
+  it("watch events funnel through ONE serialized drain — back-to-back files deliver strictly sequentially, oldest-first", async () => {
+    const releases: Array<() => void> = [];
+    let inFlightSends = 0;
+    let maxInFlight = 0;
+    sendImpl = () => {
+      inFlightSends++;
+      maxInFlight = Math.max(maxInFlight, inFlightSends);
+      return new Promise<void>((ok) =>
+        releases.push(() => {
+          inFlightSends--;
+          ok();
+        }),
+      );
+    };
+    activate(fakePi());
+    fire("session_start");
+
+    writeFileSync(join(dir, "2026-08-20T14-00-00-0000.md"), "first");
+    writeFileSync(join(dir, "2026-08-20T14-00-01-0000.md"), "second");
+
+    await vi.waitFor(() => expect(sends).toHaveLength(1));
+    expect(sends[0]!.content).toBe("first");
+    await sleep(100);
+    expect(sends).toHaveLength(1); // "second" waits for "first" to resolve
+
+    releases[0]!();
+    await vi.waitFor(() => expect(sends).toHaveLength(2));
+    expect(sends[1]!.content).toBe("second");
+    releases[1]!();
+    await vi.waitFor(() => expect(done()).toHaveLength(2));
+    expect(maxInFlight).toBe(1); // never interleaved
   });
 
   it("consumes an empty wake without a send", async () => {

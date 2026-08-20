@@ -159,6 +159,17 @@ export interface VerdictFile {
   pr: number;
   round_no: number;
   verdict: Verdict;
+  /**
+   * Guard-5 landing (follow-up): a session refused at posting
+   * time because the PR advanced mid-round writes `outcome: "head_moved"`
+   * INSTEAD of a merits verdict — a cheap, explicit round ending the daemon
+   * maps to an immediate cancel + capped self-requeue against the fresh head
+   * (same counter; the session is healthy and is NOT killed).
+   * `verdict` is absent/ignored on such a file; `head_sha` is the stale head
+   * the round reviewed. Without this the round idled to deadline expiry and
+   * the recovery path killed a perfectly healthy session.
+   */
+  outcome?: "head_moved";
   /** Soundness marker on NEEDS_HUMAN: "the PR looks otherwise sound, I just
    * cannot decide". Recorded, never acted on. */
   ai_approved?: boolean;

@@ -240,8 +240,16 @@ export function makePostingGuard(deps: GuardDeps): MutationGuard {
       // between a round's validation and its posting step otherwise lands the
       // stale review against the new head. Fires only where the data exists —
       // an intent without a commit_id carries no expectation, and without the
-      // guard-3 read there is no live head to compare against.
-      if (deps.guards.refuse_on_head_drift && body.commit_id && ref && ref.head_sha !== body.commit_id) {
+      // guard-3 read there is no live head to compare against. Shas compare
+      // case-insensitively, matching the shell twin (guards.sh uses
+      // `${live,,}`/`${expected,,}`): git shas are hex, and an LLM-written
+      // commit_id with drifted case must never fake a "moved" head.
+      if (
+        deps.guards.refuse_on_head_drift &&
+        body.commit_id &&
+        ref &&
+        ref.head_sha.toLowerCase() !== body.commit_id.toLowerCase()
+      ) {
         return refuse(intent, pr, "head-drift", { expected_head: body.commit_id, live_head: ref.head_sha });
       }
 

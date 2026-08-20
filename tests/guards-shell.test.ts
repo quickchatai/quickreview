@@ -441,8 +441,10 @@ describe("guard 5 — QCR_EXPECTED_HEAD (posting-head drift)", () => {
     expect(res.code).toBe(1);
     expect(res.out).toContain("head moved");
     expect(res.out).toContain("guard 5");
-    // The message tells the session what to do: end the round, no verdict.
-    expect(res.out).toContain("WITHOUT posting");
+    // The message tells the session what to do: post nothing further and land
+    // the round through the head_moved verdict-file outcome (follow-up).
+    expect(res.out).toContain("Post nothing further");
+    expect(res.out).toContain("head_moved");
     expect(res.out).toContain("daemon");
     expect(dryrunRecords()).toEqual([]);
   });

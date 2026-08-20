@@ -85,6 +85,14 @@ export interface RoundRow {
    * from `lenses`, which is the daemon's PLAN. Null = unknown (round predates
    * the field, or the session ran an older prompt and reported nothing). */
   executed_passes: string | null;
+  /** hardening: when the lost-prompt net FIRST observed this round
+   * fully silent (prompt consumed, session alive, no JSONL activity). The net
+   * fires only on the SECOND consecutive silent sweep; any non-silent
+   * observation clears the mark. Same persistence idiom as the
+   * reviewed_heads/approval_withheld marks — a mark the daemon writes so a
+   * restart cannot forget it — but round-scoped, so it lives on the round
+   * row rather than in a per-PR table. Null = never seen silent. */
+  silent_since: string | null;
 }
 
 /** PR lifecycle facts for PRs the daemon never tracked (M2 backfill fills it).
@@ -489,6 +497,9 @@ export class StateStore {
       // Trigger provenance — "human" | "system", nullable, additive.
       // Null = legacy/unknown, which dispatch treats as human (full round).
       "ALTER TABLE pr_state ADD COLUMN trigger_provenance TEXT",
+      // hardening: first-seen-silent mark for the lost-prompt net —
+      // nullable, additive.
+      "ALTER TABLE rounds ADD COLUMN silent_since TEXT",
     ]) {
       try {
         this.db.exec(ddl);
@@ -723,6 +734,21 @@ export class StateStore {
     this.db
       .prepare("UPDATE rounds SET status = 'cancelled', summary = ?, finished_at = ? WHERE id = ? AND status = 'running'")
       .run(reason, this.ts(), id);
+  }
+
+  /** hardening: stamp the first sweep that saw this round fully
+   * silent. Idempotent — the first observation wins, so two sweeps' spacing
+   * is real elapsed time, never a same-tick double-write. */
+  markRoundSilent(id: number): void {
+    this.db
+      .prepare("UPDATE rounds SET silent_since = ? WHERE id = ? AND silent_since IS NULL AND status = 'running'")
+      .run(this.ts(), id);
+  }
+
+  /** Clear the first-seen-silent mark: the round showed a sign of life (or an
+   * ambiguous signal) — silence must be observed on consecutive sweeps. */
+  clearRoundSilent(id: number): void {
+    this.db.prepare("UPDATE rounds SET silent_since = NULL WHERE id = ?").run(id);
   }
 
   /** True when a newer round exists for the PR (any status) — the given round

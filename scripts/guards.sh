@@ -126,7 +126,7 @@ guard_require_expected_head() { # guard_require_expected_head <live-head-sha>
   # An unreadable live head is guard 3's case, not this one's.
   [[ -n "$live" ]] || return 0
   if [[ "${live,,}" != "${expected,,}" ]]; then
-    die "#$PR head moved: this round reviewed ${expected:0:7} but the PR is now at ${live:0:7} — refusing to post a stale review (guard 5). End the round WITHOUT posting and WITHOUT writing a verdict; re-reviewing the new head is the daemon's job, not yours."
+    die "#$PR head moved: this round reviewed ${expected:0:7} but the PR is now at ${live:0:7} — refusing to post a stale review (guard 5). Post nothing further; write the round's verdict file with \"outcome\": \"head_moved\" in place of a verdict (see the round prompt) and end the round — re-reviewing the new head is the daemon's job, not yours."
   fi
 }
 

@@ -61,9 +61,18 @@ export QCR_EXPECTED_HEAD={{head_sha}}
 ```
 
 If the script refuses with "head moved" (guard 5), the PR advanced
-while you were reviewing: post NOTHING, write NO verdict file, and end the
-round — the daemon re-runs the review against the new head. Never re-read the
-current head and post against it.
+while you were reviewing: post NOTHING further on GitHub. Then write the
+verdict file at its normal path (`verdict/pr-{{n}}-round-{{round_no}}.json`)
+with `"outcome": "head_moved"` in place of a verdict —
+
+```json
+{ "pr": {{n}}, "round_no": {{round_no}}, "outcome": "head_moved",
+  "head_sha": "{{head_sha}}", "finished_at": "<UTC ISO-8601 now>" }
+```
+
+— and end the round. The daemon cancels this round on the spot and re-queues
+the review against the new head; your session stays alive and gets the fresh
+round. Never re-read the current head and post against it.
 
 Token hygiene (measured on live rounds, 2026-08-14):
 - Tool output truncates at ~50 KB — a full-PR `git diff --unified=80` dump

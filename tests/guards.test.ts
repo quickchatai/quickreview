@@ -495,6 +495,12 @@ describe("guard 5 — the head the review is about must still be the live head",
     expect((await gate.execute(reviewIntent("REQUEST_CHANGES", HEAD))).executed).toBe(true);
   });
 
+  it("compares shas case-insensitively — matching the guards.sh twin's ${live,,} convention", async () => {
+    const { gate, adapter } = harness();
+    adapter.pr = { ...adapter.pr, head_sha: HEAD.toUpperCase() }; // same sha, drifted case
+    expect((await gate.execute(reviewIntent("REQUEST_CHANGES", HEAD))).executed).toBe(true);
+  });
+
   it("does not fire when the intent carries no commit_id — no expectation, no refusal", async () => {
     const { gate, adapter } = harness();
     adapter.pr = { ...adapter.pr, head_sha: "cafebabe" };
