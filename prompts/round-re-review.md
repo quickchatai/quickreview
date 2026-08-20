@@ -5,7 +5,9 @@
 > `{{n}} {{title}} {{worktree}} {{head_sha}} {{lenses}} {{pass_plan}}
 > {{addable_lenses}} {{base_ref}} {{base_sha}} {{merge_base}} {{migration_gate_note}}
 > {{settled_digest}} {{round_type}} {{round_no}} {{nit_scope_note}}
-> {{intent_note}}`.
+> {{intent_note}}`, plus the two memory sections `pinned_head` and
+> `context_block` (written without braces here so this doc line
+> does not render a second copy of the memory seed).
 
 ---
 
@@ -18,6 +20,8 @@ it for every check defined against the base (migration numbering and
 PR is `{{merge_base}}..{{head_sha}}`; later commits on the base are not yours to
 review.
 **Lenses this round**: {{lenses}}
+
+{{pinned_head}}
 
 The author handed this PR back. Run the full 7-step round — but step 1 comes
 first and is non-negotiable: **verify every prior open finding at the new head
@@ -33,6 +37,8 @@ when a memory result surfaces notes about another PR, that is read-side bleed �
 never cite them, never reuse them as evidence, precedent, or format, and never
 let them steer this round. Only this PR's own ledger and history inform this
 round.
+
+{{context_block}}
 
 ## GitHub routine — use the scripts
 

@@ -3,6 +3,13 @@
 // Contract: a {{placeholder}} in the text with no supplied value is a bug and
 // throws; a supplied value the template does not use is fine (templates are
 // edited independently of this renderer).
+import {
+  ensurePinnedHead,
+  MEMORY_LESS,
+  renderContextBlockSection,
+  renderPinnedHeadSection,
+  type RoundMemory,
+} from "./memory/context.js";
 import type { MigrationCollision } from "./migrations.js";
 import type { FileClass, RecheckOrder } from "./recheck.js";
 import type { PassPlanEntry, RoundOrder, RoundType } from "./types.js";
@@ -338,9 +345,17 @@ export function renderAddableLenses(addable: string[]): string {
   return addable.length > 0 ? addable.join(", ") : "(none — every known lens is already planned)";
 }
 
-/** The full variable set every round template may reference. */
-export function roundVars(order: RoundOrder): TemplateVars {
+/**
+ * The full variable set every round template may reference.
+ *
+ * `memory` defaults to MEMORY_LESS, so a caller that knows nothing
+ * about memory — the stub-wired daemon core, every legacy test — renders
+ * exactly the prompt it rendered before: both memory sections come out empty.
+ */
+export function roundVars(order: RoundOrder, memory: RoundMemory = MEMORY_LESS): TemplateVars {
   return {
+    pinned_head: renderPinnedHeadSection(memory),
+    context_block: renderContextBlockSection(memory),
     n: String(order.pr),
     title: order.title,
     worktree: order.worktree,
@@ -365,9 +380,24 @@ export function roundVars(order: RoundOrder): TemplateVars {
   };
 }
 
-/** Render a round-*.md template against a dispatched RoundOrder. */
-export function renderRoundPrompt(templateText: string, order: RoundOrder): string {
-  return render(templateText, roundVars(order));
+/**
+ * Render a round-*.md template against a dispatched RoundOrder.
+ *
+ * the round's memory seed rides in as a second argument rather than
+ * on the order, because it is not part of the daemon↔session contract — it is
+ * prompt material with a degradation story, and an order that has already been
+ * built must never be able to fail because memory was down. The PINNED HEAD is
+ * guaranteed structurally: templates place `{{pinned_head}}` where it reads
+ * best, and `ensurePinnedHead` prepends it to any rendered prompt that does not
+ * already carry it, so no template edit can silently drop the owner's standing
+ * instructions.
+ */
+export function renderRoundPrompt(
+  templateText: string,
+  order: RoundOrder,
+  memory: RoundMemory = MEMORY_LESS,
+): string {
+  return ensurePinnedHead(render(templateText, roundVars(order, memory)), memory);
 }
 
 export interface ConversationPromptVars {

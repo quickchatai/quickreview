@@ -24,6 +24,15 @@ import {
 } from "./migrations.js";
 import { VALIDATE_PASS } from "./include.js";
 import { hasNewEvidence } from "./guards.js";
+import {
+  assembleRoundMemory,
+  describeGaps,
+  MEMORY_LESS,
+  roundContextQuery,
+  ROUND_CONTEXT_DEFAULTS,
+  type RoundMemory,
+  type RoundMemorySeed,
+} from "./memory/context.js";
 import { carryWithheldMark, classifyDelta, recheckFingerprint, type DeltaClass, type DeltaFile } from "./recheck.js";
 import { isFirstPartyDirectivePath } from "./severity.js";
 import type { DispatchAnnouncer } from "./slack/announce.js";
@@ -62,8 +71,17 @@ export interface DispatchDeps {
   store: StateStore;
   adapter: DispatchAdapter;
   hooks: SessionHooks;
-  /** B4's template renderer, injected. Default: the order as JSON. */
-  renderPrompt?: (order: RoundOrder) => string;
+  /** B4's template renderer, injected. Default: the order as JSON. The second
+   * argument is the round's memory seed; a renderer that ignores it
+   * renders exactly the legacy prompt. */
+  renderPrompt?: (order: RoundOrder, memory: RoundMemory) => string;
+  /**
+   * Round-memory seeding: the assembler the ONE per-round context
+   * call goes through, plus its budget/deadline. Absent ⇒ every round renders
+   * memory-less, which is exactly the prior behaviour — memory is a seasoning
+   * on the prompt, never a precondition for a round.
+   */
+  memory?: RoundMemorySeed;
   /** SETTLED digest carried from the session ledger (B3/B4). */
   settledDigest?: (pr: number) => string;
   worktreeFor?: (pr: number) => string;
@@ -283,6 +301,99 @@ async function directiveEscalationFor(
     sha: sha || null,
   });
   return { files: directiveFiles, mention };
+}
+
+/**
+ * When this daemon last alerted the overseer about memory being down, per
+ * store (the store IS the daemon instance's identity, same as `activePumps`).
+ *
+ * The gap is EVENT-logged on every affected round — the record is never
+ * thinned. Only the overseer ALERT is cooled down: a context store that stays
+ * down would otherwise mint one anomaly inject per round forever, which buries
+ * the anomalies that need reading. A cold-start daemon alerts on its first
+ * degraded round, which is the sample that matters.
+ */
+const memoryAlertAt = new WeakMap<StateStore, number>();
+
+/**
+ * Seed one round's prompt with memory: the guaranteed pinned head
+ * plus EXACTLY ONE budgeted context block, queried from the PR's title and
+ * diff shape.
+ *
+ * This is the single context call per round — one call site, one
+ * `assembleRoundMemory`, which itself calls `contextBlock` once. It runs after
+ * the worktree is prepared and the order is built, so the context is seeded
+ * from the same point the passes read.
+ *
+ * It cannot fail a round. `assembleRoundMemory` is total (deadline + swallowed
+ * throws); the extra try/catch here is belt-and-braces for a client that
+ * breaks the contract, and the outcome is identical either way: log the gap,
+ * alert the overseer, dispatch memory-less.
+ */
+async function seedRoundMemory(
+  deps: DispatchDeps,
+  order: RoundOrder,
+  files: PrFileEntry[],
+): Promise<RoundMemory> {
+  const seed = deps.memory;
+  if (!seed) return MEMORY_LESS;
+  const log = deps.log ?? (() => {});
+  const query = roundContextQuery({ title: order.title, files });
+  const timeoutMs = seed.timeoutMs ?? ROUND_CONTEXT_DEFAULTS.timeoutMs;
+  let mem: RoundMemory;
+  try {
+    mem = await assembleRoundMemory(seed.assembler, query, {
+      ...(seed.maxTokens !== undefined ? { maxTokens: seed.maxTokens } : {}),
+      timeoutMs,
+      log,
+    });
+  } catch (err) {
+    log(`dispatch: #${order.pr} memory seeding threw — round proceeds memory-less`, err);
+    mem = {
+      ...MEMORY_LESS,
+      asked: true,
+      query,
+      max_tokens: seed.maxTokens ?? ROUND_CONTEXT_DEFAULTS.maxTokens,
+      degraded: true,
+      gaps: [{ part: "head", reason: `error: ${String(err)}` }],
+    };
+  }
+  deps.store.logEvent("round_memory_seeded", order.pr, {
+    round_id: order.round_id,
+    round_no: order.round_no,
+    query: mem.query,
+    max_tokens: mem.max_tokens,
+    head_chars: mem.head.length,
+    block_chars: mem.block.length,
+    clamped: mem.clamped,
+    degraded: mem.degraded,
+    gaps: mem.gaps,
+    ms: mem.ms,
+  });
+  if (!mem.degraded) return mem;
+
+  log(`dispatch: #${order.pr} round ${order.round_no} seeded memory-less (${describeGaps(mem)})`);
+  const nowMs = (deps.now ? deps.now() : new Date()).getTime();
+  const cooldownMs = (seed.alertCooldownMin ?? 60) * 60_000;
+  const last = memoryAlertAt.get(deps.store);
+  if (last !== undefined && nowMs - last < cooldownMs) return mem;
+  memoryAlertAt.set(deps.store, nowMs);
+  deps.store.logAnomaly(
+    "round_memory_degraded",
+    order.pr,
+    order.round_no,
+    `context store did not answer at round build (${describeGaps(mem)}); the round was dispatched memory-less`,
+    [
+      `ANOMALY (memory) — PR #${order.pr} round ${order.round_no}`,
+      `The context store did not answer when this round was built (${describeGaps(mem)}), so the round prompt carries ` +
+        "no standing-instructions head and no recalled context.",
+      "The round itself was dispatched normally and on time — memory never blocks or delays a review. But a memory " +
+        "engine that stays down means every round is running blind: check the openviking supervisor's status " +
+        "(state/status.json) and the daemon log.",
+      `Further memory alerts are suppressed for ${seed.alertCooldownMin ?? 60} minutes; the per-round record stays in the round_memory_seeded events.`,
+    ].join("\n"),
+  );
+  return mem;
 }
 
 /** The short-circuit's answer for one system-provenance re-trigger. */
@@ -565,7 +676,7 @@ export async function dispatchOnce(deps: DispatchDeps): Promise<RoundOrder[]> {
 async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
   const { store, cfg } = deps;
   const now = deps.now ?? (() => new Date());
-  const render = deps.renderPrompt ?? ((o: RoundOrder) => JSON.stringify(o, null, 2));
+  const render = deps.renderPrompt ?? ((o: RoundOrder, _m: RoundMemory) => JSON.stringify(o, null, 2));
   const worktreeFor = deps.worktreeFor ?? defaultWorktree;
   const settledDigest = deps.settledDigest ?? (() => "");
   const log = deps.log ?? (() => {});
@@ -800,10 +911,16 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         ...(prBody !== undefined ? { prBody } : {}),
       });
 
+      // The ONE memory call of this round, placed after the worktree
+      // and the order so the context is seeded from the same sha the passes
+      // read. It is bounded and total: the worst case is this round's prompt
+      // arriving memory-less a couple of seconds later.
+      const memory = await seedRoundMemory(deps, order, files);
+
       // The round is provisional until the worktree/session/prompt handoff
       // completes. Publishing reviewing/running state earlier created orphan
       // rounds whenever worktree preparation failed.
-      await deps.hooks.dispatchRound(order, render(order));
+      await deps.hooks.dispatchRound(order, render(order, memory));
 
       setPrGates(store, row.number, gate);
       applyEvent(store, row.number, { type: "dispatched" }, {}, { botLogin: cfg.github.bot_login, now });

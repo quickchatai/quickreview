@@ -11,6 +11,7 @@ import { applyEvent } from "../src/statemachine.js";
 import { PASS_TIER_ORDER } from "../src/types.js";
 import { renderRoundPrompt, roundTemplateFile } from "../src/templates.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
+import type { ContextAssembler } from "../src/memory/context.js";
 
 const baseCfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "config.toml"), "utf8"));
 
@@ -1047,5 +1048,165 @@ describe("system re-trigger short-circuit", () => {
     expect(
       store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE pr = 55 AND kind = 'recheck_merge_verify_degraded'").get(),
     ).toEqual({ c: 1 });
+  });
+});
+
+// round-memory seeding at dispatch: the pinned head and ONE budgeted
+// context block reach the prompt, the call happens exactly once per round, and
+// a memory outage can neither block nor delay a review.
+describe("round-memory seeding", () => {
+  class Assembler implements ContextAssembler {
+    heads = 0;
+    contexts = 0;
+    queries: string[] = [];
+    constructor(
+      private readonly head = "STANDING: approvals are final.",
+      private readonly block = "PRECEDENT: #4000 settled the retry budget.",
+    ) {}
+    async pinnedHead(): Promise<string> {
+      this.heads += 1;
+      return this.head;
+    }
+    async contextBlock(query: string, _opts: { maxTokens: number }): Promise<string> {
+      this.contexts += 1;
+      this.queries.push(query);
+      return this.block;
+    }
+  }
+
+  function memoryEvents(pr: number): Array<Record<string, unknown>> {
+    return (
+      store.db.prepare("SELECT payload FROM events WHERE pr = ? AND kind = 'round_memory_seeded'").all(pr) as Array<{
+        payload: string;
+      }>
+    ).map((r) => JSON.parse(r.payload) as Record<string, unknown>);
+  }
+
+  it("seeds the dispatched prompt with the head and the block, through the real template", async () => {
+    queue(70, "2026-08-20T09:00:00Z", { title: "Cap the retry budget" });
+    adapter.files.set(70, [file("api/retries.py")]);
+    const assembler = new Assembler();
+    const { hooks, orders } = recordingHooks();
+    const tpl = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile("first")), "utf8");
+
+    await dispatchOnce({
+      cfg: baseCfg,
+      store,
+      adapter,
+      hooks,
+      memory: { assembler },
+      renderPrompt: (o, mem) => renderRoundPrompt(tpl, o, mem),
+    });
+
+    expect(orders).toHaveLength(1);
+    expect(orders[0]!.prompt).toContain("STANDING: approvals are final.");
+    expect(orders[0]!.prompt).toContain("PRECEDENT: #4000 settled the retry budget.");
+    // The query is derived from the PR's title and diff shape, at the sha the
+    // worktree was prepared to.
+    expect(assembler.queries[0]).toContain("Cap the retry budget");
+    expect(assembler.queries[0]).toContain("api");
+    expect(memoryEvents(70)).toMatchObject([{ degraded: false, round_no: 1 }]);
+  });
+
+  it("makes EXACTLY one context call per round — never one per pass, never two per round", async () => {
+    queue(71, "2026-08-20T09:00:00Z");
+    queue(72, "2026-08-20T09:30:00Z");
+    adapter.files.set(71, [file("a.ts"), file("b.ts"), file("ui/c.tsx"), file("migrations/0001_x.py")]);
+    adapter.files.set(72, [file("d.ts")]);
+    const assembler = new Assembler();
+    const { hooks, orders } = recordingHooks();
+
+    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks, memory: { assembler } });
+
+    expect(orders).toHaveLength(2);
+    // Two rounds — two calls, whatever the pass plan looked like.
+    expect(orders[0]!.order.pass_plan.length).toBeGreaterThan(2);
+    expect(assembler.contexts).toBe(2);
+    expect(assembler.heads).toBe(2);
+  });
+
+  // The acceptance criterion: with the store unreachable the round still
+  // renders and dispatches, memory-less, and it is not delayed while it waits.
+  it("dispatches memory-less and on time when the store never answers", async () => {
+    queue(73, "2026-08-20T09:00:00Z");
+    adapter.files.set(73, [file("a.ts")]);
+    const hung: ContextAssembler = {
+      pinnedHead: () => new Promise(() => {}),
+      contextBlock: () => new Promise(() => {}),
+    };
+    const { hooks, orders } = recordingHooks();
+    const tpl = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile("first")), "utf8");
+
+    const started = Date.now();
+    const dispatched = await dispatchOnce({
+      cfg: baseCfg,
+      store,
+      adapter,
+      hooks,
+      memory: { assembler: hung, timeoutMs: 25 },
+      renderPrompt: (o, mem) => renderRoundPrompt(tpl, o, mem),
+    });
+    const elapsed = Date.now() - started;
+
+    // Dispatched, complete, and bounded by the memory deadline — not by the
+    // store's silence.
+    expect(dispatched).toHaveLength(1);
+    expect(elapsed).toBeLessThan(2000);
+    expect(orders[0]!.prompt).toContain("MEMORY UNAVAILABLE THIS ROUND");
+    expect(orders[0]!.prompt).toContain("Run the full 7-step round");
+    expect(store.getPr(73)!.state).toBe("reviewing");
+    // Logged AND alerted: the gap is never silent.
+    expect(memoryEvents(73)).toMatchObject([{ degraded: true }]);
+    const anomaly = store.db
+      .prepare("SELECT payload FROM events WHERE pr = 73 AND kind = 'anomaly'")
+      .get() as { payload: string };
+    expect(JSON.parse(anomaly.payload).kind).toBe("round_memory_degraded");
+  });
+
+  it("a store that breaks its contract and throws still costs nothing but memory", async () => {
+    queue(74, "2026-08-20T09:00:00Z");
+    adapter.files.set(74, [file("a.ts")]);
+    const broken: ContextAssembler = {
+      pinnedHead: () => Promise.reject(new Error("ECONNREFUSED 127.0.0.1:1933")),
+      contextBlock: () => Promise.reject(new Error("ECONNREFUSED 127.0.0.1:1933")),
+    };
+    const { hooks, orders } = recordingHooks();
+
+    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks, memory: { assembler: broken } });
+
+    expect(orders).toHaveLength(1);
+    expect(memoryEvents(74)).toMatchObject([{ degraded: true }]);
+    expect(JSON.stringify(memoryEvents(74)[0]!["gaps"])).toContain("ECONNREFUSED");
+  });
+
+  it("keeps alerting bounded while the store stays down — the per-round record does not thin", async () => {
+    const down = new Assembler("", "");
+    const { hooks } = recordingHooks();
+    for (const [pr, ts] of [[75, "2026-08-20T09:00:00Z"], [76, "2026-08-20T09:10:00Z"]] as const) {
+      queue(pr, ts);
+      adapter.files.set(pr, [file("a.ts")]);
+    }
+
+    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks, memory: { assembler: down, alertCooldownMin: 60 } });
+
+    expect(memoryEvents(75)).toHaveLength(1);
+    expect(memoryEvents(76)).toHaveLength(1);
+    expect(
+      store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'anomaly'").get(),
+    ).toEqual({ c: 1 });
+  });
+
+  it("with no memory wired at all, dispatch behaves exactly as before", async () => {
+    queue(77, "2026-08-20T09:00:00Z");
+    adapter.files.set(77, [file("a.ts")]);
+    const { hooks, orders } = recordingHooks();
+    const tpl = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile("first")), "utf8");
+
+    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks, renderPrompt: (o, mem) => renderRoundPrompt(tpl, o, mem) });
+
+    expect(orders).toHaveLength(1);
+    expect(orders[0]!.prompt).not.toContain("STANDING INSTRUCTIONS");
+    expect(orders[0]!.prompt).not.toContain("MEMORY UNAVAILABLE");
+    expect(memoryEvents(77)).toEqual([]);
   });
 });

@@ -5,7 +5,9 @@
 > `{{n}} {{title}} {{worktree}} {{head_sha}} {{base_ref}} {{base_sha}}
 > {{merge_base}} {{lenses}} {{pass_plan}} {{addable_lenses}}
 > {{migration_gate_note}} {{settled_digest}} {{round_type}} {{round_no}}
-> {{intent_note}}`.
+> {{intent_note}}`, plus the two memory sections `pinned_head` and
+> `context_block` (written without braces here so this doc line
+> does not render a second copy of the memory seed).
 
 ---
 
@@ -13,6 +15,8 @@
 **Worktree**: `{{worktree}}` @ `{{head_sha}}`
 **Base branch**: `{{base_ref}}` @ `{{base_sha}}` (merge-base `{{merge_base}}`)
 **Lenses this round**: {{lenses}}
+
+{{pinned_head}}
 
 Run the full 7-step round from your system prompt. This is the **first** review
 of this PR: there is no prior ledger to verify, so step 1 is pure fact-gathering
@@ -28,6 +32,8 @@ when a memory result surfaces notes about another PR, that is read-side bleed â€
 never cite them, never reuse them as evidence, precedent, or format, and never
 let them steer this round. Only this PR's own ledger and history inform this
 round.
+
+{{context_block}}
 
 ## GitHub routine â€” use the scripts
 
