@@ -3,13 +3,14 @@
   "files": {
     "prompts/conversation-system.md": [
       "2026-08-18 the owner: reseed removing the retired ESCALATE verdict + mark-escalation-worthy (rule 10 de-escalation)",
-      "2026-08-19 the owner: NEEDS_HUMAN retired \u2014 verdict always on the merits + 'For a human to double-check' section"
+      "2026-08-19 the owner: NEEDS_HUMAN retired — verdict always on the merits + 'For a human to double-check' section"
     ],
     "prompts/overseer-system.md": [
       "2026-08-18 the owner: reseed removing the retired ESCALATE verdict + mark-escalation-worthy (rule 10 de-escalation)"
     ],
     "prompts/eod-sweep.md": [
-      "2026-08-20 the owner: reseed \u2014 pinned/#manual/#bug memory discipline for the TUI management surface, and rubric proposals as state/rubric/<slug>/ dirs (PROPOSAL.md + changes.patch; the VM sandbox has no git, the branch instruction was unexecutable)"
+      "2026-08-20 the owner: reseed — pinned/#manual/#bug memory discipline for the TUI management surface, and rubric proposals as state/rubric/<slug>/ dirs (PROPOSAL.md + changes.patch; the VM sandbox has no git, the branch instruction was unexecutable)",
+      "2026-08-20 the owner: reseed — the EOD curator writes learnings into OpenViking (viking_write into the experiences area) instead of pi-memory; pin rule, tag spellings and retention restated in OpenViking terms; ratified with the added permission to promote objective repo facts into viking://resources/"
     ]
   }
 }

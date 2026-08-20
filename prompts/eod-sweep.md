@@ -12,7 +12,9 @@ Run today's end-of-day sweep. Four products, in order. Date: {{date}}.
 
 For each PR with activity today (rounds, ping-pong, closes — `qcr
 today` lists them), diff **what the bot claimed** against **what actually
-happened**:
+happened**. Read today's own memory material alongside it: the entries the PR
+sessions authored during their rounds, and the day's event entries
+(`day={{date}}` — `kind=feedback`, `kind=bug`):
 
 - Findings the author refuted with an argument the bot conceded to.
 - Threads resolved as wontfix — extract the pattern if one exists.
@@ -21,25 +23,37 @@ happened**:
   comments on today's PRs against the ledger's finding list) — highest signal;
   never skip this class.
 
-Write each as one pi-memory entry: `type` (missed-finding | false-positive |
-refuted | wontfix-pattern | repo-gotcha), the one-sentence lesson, the lens it
-belongs to, evidence PR link(s), date. No entry without evidence. Consolidate
-duplicates; retire entries >90 days old that never recurred.
+Write each as one entry in the **experiences** area via `viking_write` — the
+durable write tool; it batches, so write today's entries in one call: `type`
+(missed-finding | false-positive | refuted | wontfix-pattern | repo-gotcha),
+the one-sentence lesson, the lens it belongs to, evidence PR link(s), date. No
+entry without evidence. Consolidate duplicates; retire entries >90 days old
+that never recurred — nothing ages out on its own, so date-filter a search and
+retire deliberately.
+
+A learning that is really an **objective fact about the repo** — a convention,
+a migration rule, how a subsystem actually behaves — belongs in
+`viking://resources/` instead, where every identity can read it, not in your
+own experiences area. Promote it there deliberately and only when it is a
+fact rather than a judgment; a lesson about how to review stays a learning.
 
 Memory discipline (the owner manages memory from the TUI):
 
-- **`#pinned` entries are untouchable**: never consolidate, rewrite, retire,
-  or move them — the owner pinned them at the top of MEMORY.md deliberately
-  (that region survives injection truncation). Never `memory_write` with
-  `mode:"overwrite"`; append only.
-- **`#manual` entries are the owner's own words**: treat them as standing
+- **The pinned area is untouchable**: never consolidate, rewrite, retire, or
+  move an entry in it — those are the owner's standing instructions, and the
+  daemon prepends them verbatim to every round prompt. Curation only ever adds
+  new entries elsewhere; it never replaces one of his. (A watchdog compares the
+  pinned area before and after this sweep and raises an anomaly on any change.)
+- **`source=manual` entries are the owner's own words**: treat them as standing
   instructions; consolidate or retire them only when one is superseded by a
-  newer #manual entry, and say so in the digest.
-- **Operational defects of the review system itself get `#bug`** (with
-  `#operations`), one entry per distinct defect, evidence-linked. The TUI
+  newer manual entry, and say so in the digest.
+- **Operational defects of the review system itself get `kind=bug`** (with
+  `area=operations`), one entry per distinct defect, evidence-linked. The TUI
   auto-files each as an issue-tracker ticket keyed on the entry — so keep one
   defect to one entry and amend the existing entry rather than re-describing
   the same defect in a new one.
+- **If memory is unreachable, say so in the digest and carry on** — an outage
+  costs today's learnings, never the sweep's other three products.
 
 ## 2. Rubric proposals (when justified)
 
@@ -57,7 +71,7 @@ survives deploys):
 - Never apply it yourself. List it in the digest under "Pending proposals"
   until the owner accepts or rejects it in the TUI (accept applies + ratifies
   + removes the directory; reject removes it and records a
-  `#rejected-proposal` memory entry with the reason — never re-propose one
+  `rejected-proposal` memory entry with the reason — never re-propose one
   of those).
 
 ## 3. Improvement PRs / issues (within caps)
