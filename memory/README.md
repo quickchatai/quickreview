@@ -46,6 +46,16 @@ One fact per entry, evidence-linked, written by the EOD sweep:
 - `type`: `missed-finding` | `false-positive` | `refuted` | `wontfix-pattern` |
   `repo-gotcha` (plus `rejected-proposal` for a rubric proposal the owner
   rejected, with the reason — never re-propose it).
+
+**`#feedback` entries** are the one machine-written class: the
+daemon's tuning loop appends one line per captured signal — an explicit
+`[feedback]`-prefixed PR comment, or a behavioral signal (bot review
+dismissed, merge over a standing block, bot comment deleted, trigger
+withdrawn) — through `scripts/memedit.mjs note` (still the ONE external
+mutation path; the daemon holds no writer of its own). The EOD sweep
+consolidates them into durable learnings/rubric proposals like any other
+entry and retires them on the standard schedule; the same-day bite comes from
+the `feedback-day-validate` addendum, not from memory.
 - the one-sentence lesson;
 - the lens it belongs to;
 - evidence PR link(s);

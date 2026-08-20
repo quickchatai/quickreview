@@ -24,7 +24,8 @@ import { MutationGate, type MutationIntent } from "./gate.js";
 import { GitHubAdapter } from "./github.js";
 import { makePostingGuard } from "./guards.js";
 import { TokenMinter } from "./githubAuth.js";
-import { buildAgents } from "./include.js";
+import { FeedbackEngine, feedbackDayAddendum, warsawDay, type FeedbackEvent } from "./feedback.js";
+import { PASS_ADDENDA, buildAgents } from "./include.js";
 import { fileImprovementPr, fileIssue, type Run } from "./improvements.js";
 import { reconcileOrphanedRounds } from "./reconcile.js";
 import { PiSessionManager } from "./sessions.js";
@@ -370,6 +371,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   let heartbeat: HeartbeatTimer | null = null;
   let commands: CommandWatcher | null = null;
   let slack: SlackRuntime | null = null;
+  // built in onStart (it needs the store). Signals arriving in the
+  // boot gap between the webhook binding and onStart are dropped with a log —
+  // the tuning loop is best-effort, never lifecycle.
+  let feedback: FeedbackEngine | null = null;
 
   // The origin store is built HERE, before the daemon, because both halves of
   // "who caused this turn" write to it: the router (Slack turns) and every
@@ -418,6 +423,15 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     // user's home (the pihome volume).
     piSessionsDir: join(homedir(), ".pi", "agent", "sessions"),
 
+    // The [feedback] tuning loop.
+    onFeedback: async (e: FeedbackEvent) => {
+      if (!feedback) {
+        log("feedback: signal before engine ready — dropped", e.kind);
+        return;
+      }
+      await feedback.ingest(e);
+    },
+
     async onStart(d) {
       // Out-of-round wakes (recheck, ping-pong) can now respawn a sticky
       // session the last restart killed — the title comes from the registry.
@@ -426,13 +440,27 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       // build dir the register-lens-agents extension reads (state/agents) —
       // each session registers them with pi-subagents at spawn via its
       // globalThis hook (the extension's own agents dir is hardcoded).
-      const built = buildAgents(join(root, "agents"), join(root, "state", "agents"), {
-        root,
-        tiers: cfg.models.tiers,
-        riskPasses: cfg.models.risk_passes,
-        validateTier: cfg.models.validate_tier,
-      });
-      log(`built ${built.length} pass agents into state/agents`);
+      //
+      // the build composes in the SAME-DAY feedback addendum when
+      // today carries [feedback] comments — validator-scoped, demotion-only,
+      // regenerated on every ingest and expired on Warsaw-day change (the
+      // hourly tick below), so a mid-day restart picks today's feedback up
+      // and yesterday's never leaks into a new day.
+      let builtDay = warsawDay();
+      const rebuildAgents = (): void => {
+        builtDay = warsawDay();
+        const fb = feedbackDayAddendum(d.store.feedbackCommentsForDay(builtDay), builtDay);
+        const built = buildAgents(join(root, "agents"), join(root, "state", "agents"), {
+          root,
+          tiers: cfg.models.tiers,
+          riskPasses: cfg.models.risk_passes,
+          validateTier: cfg.models.validate_tier,
+          ...(fb ? { addenda: [...PASS_ADDENDA, fb] } : {}),
+        });
+        log(`built ${built.length} pass agents into state/agents${fb ? " (+ same-day feedback addendum)" : ""}`);
+      };
+      rebuildAgents();
+      feedback = new FeedbackEngine({ store: d.store, rebuildAgents, root, log });
 
       // Adopt live sessions + sweep stale worktrees (never kills a live session).
       const active = d.store.allPrs().filter((p) => p.state !== "closed").map((p) => p.number);
@@ -559,11 +587,17 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       });
       log(`heartbeat armed for ${heartbeat.nextFire().toISOString()}`);
 
-      // Weekly overseer rotation, checked hourly.
+      // Weekly overseer rotation, checked hourly — the same tick expires a
+      // stale same-day feedback addendum on Warsaw-day change.
       const rotation = setInterval(() => {
         void sessions.rotateOverseerIfDue().then((rotated) => {
           if (rotated) log("overseer rotated (weekly)");
         }).catch((err) => log("overseer rotation failed", err));
+        try {
+          if (warsawDay() !== builtDay) rebuildAgents();
+        } catch (err) {
+          log("feedback: day-change agents rebuild failed", err);
+        }
       }, 3600_000);
       rotation.unref?.();
     },

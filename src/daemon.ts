@@ -16,6 +16,7 @@ import { dispatchOnce, type DispatchAdapter } from "./dispatch.js";
 import { MutationGate, type MutationIntent } from "./gate.js";
 import { GitHubAdapter } from "./github.js";
 import { TokenMinter } from "./githubAuth.js";
+import { REVIEW_SET_ASIDE_STALE_WINDOW_MS, type FeedbackEvent } from "./feedback.js";
 import { enforceLedgerFreshness } from "./ledgercheck.js";
 import { PingPongLedger, ThreadDecisionWatcher, buildWakeMessage, type AuthorReplyEvent } from "./pingpong.js";
 import { reconcileOnce, type ReconcileAdapter } from "./reconcile.js";
@@ -86,6 +87,10 @@ export interface DaemonDeps {
    * daemon behaves exactly as it did before Slack.
    */
   announce?: () => (DispatchAnnouncer & VerdictAnnouncer) | undefined;
+  /** The [feedback] tuning-loop sink — wire.ts hands the
+   * FeedbackEngine's ingest here. Absent (tests, stub daemons) ⇒ signals are
+   * interpreted but go nowhere. */
+  onFeedback?: (e: FeedbackEvent) => Promise<void> | void;
   /** Extra periodic work (EOD timer arm, command watcher, overseer rotation)
    * started after the core loops; wired by src/wire.ts. */
   onStart?: (daemon: Daemon) => Promise<void> | void;
@@ -289,6 +294,21 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
           await guard(`recheck base ${advance.branch}`, () =>
             runBaseAdvance(recheckDeps, { branch: advance.branch, before: advance.before, after: advance.after }),
           );
+        },
+        // forward tuning-loop signals to the engine. A review set
+        // aside right after a head push is GitHub's own stale-review sweep,
+        // classified here (the store holds the push clock), not a human verdict.
+        onFeedbackSignal: async (e) => {
+          if (!deps.onFeedback) return;
+          await guard(`feedback #${e.pr}`, async () => {
+            if (e.kind === "review_set_aside") {
+              const lastPush = store.lastEventAt("head_push", e.pr);
+              const stale = lastPush !== undefined && Date.now() - Date.parse(lastPush) < REVIEW_SET_ASIDE_STALE_WINDOW_MS;
+              await deps.onFeedback!({ ...e, stale });
+            } else {
+              await deps.onFeedback!(e);
+            }
+          });
         },
       },
       i,

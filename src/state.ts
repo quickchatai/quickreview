@@ -227,6 +227,30 @@ CREATE TABLE IF NOT EXISTS events (
   pr INTEGER,
   payload TEXT
 );
+-- The [feedback] tuning loop: explicit [feedback]-prefixed PR
+-- comments plus behavioral signals (bot review dismissed, PR merged over a
+-- standing block, bot comment deleted, trigger withdrawn). Deduped per kind
+-- on its natural key so webhook redeliveries and reconcile overlaps never
+-- double-ingest. day is the Warsaw day token the same-day addendum keys on.
+CREATE TABLE IF NOT EXISTS feedback_signals (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL,
+  pr INTEGER NOT NULL,
+  comment_id INTEGER,
+  review_id INTEGER,
+  in_reply_to_id INTEGER,
+  scope TEXT,
+  author TEXT,
+  body TEXT,
+  day TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS feedback_by_comment
+  ON feedback_signals (kind, scope, comment_id) WHERE comment_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS feedback_by_review
+  ON feedback_signals (kind, review_id) WHERE review_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS feedback_by_pr
+  ON feedback_signals (kind, pr) WHERE comment_id IS NULL AND review_id IS NULL;
 -- Wakes held while their PR's round was in flight (single-shepherd invariant
 -- S4: the PR's ONE main pi is never given two instructions at once). Flushed
 -- in insertion order once the round ends.
@@ -334,6 +358,22 @@ CREATE TABLE IF NOT EXISTS slack_cooldowns (
  * the post-approval delta recheck that follows, which needs exactly
  * `head_sha` to diff the current head against.
  */
+/** One row of the [feedback] tuning-loop ledger. */
+export interface FeedbackSignalRow {
+  id: number;
+  kind: string;
+  pr: number;
+  comment_id: number | null;
+  review_id: number | null;
+  in_reply_to_id: number | null;
+  scope: string | null;
+  author: string | null;
+  body: string | null;
+  /** Warsaw day token (YYYY-MM-DD) — the same-day addendum's key. */
+  day: string;
+  created_at: string;
+}
+
 export interface ReviewedHeadRow {
   pr: number;
   head_sha: string;
@@ -1007,6 +1047,59 @@ export class StateStore {
       .prepare("INSERT OR IGNORE INTO deliveries (guid, event, action, received_at) VALUES (?, ?, ?, ?)")
       .run(guid, event, action, this.ts());
     return info.changes === 1;
+  }
+
+  // ---- feedback signals ----------------------------------------
+
+  /** Record one feedback signal; false when its natural key already exists
+   * (webhook redelivery, reconcile overlap). */
+  recordFeedbackSignal(sig: {
+    kind: string;
+    pr: number;
+    comment_id?: number | null;
+    review_id?: number | null;
+    in_reply_to_id?: number | null;
+    scope?: string | null;
+    author?: string | null;
+    body?: string | null;
+    day: string;
+  }): boolean {
+    const info = this.db
+      .prepare(
+        `INSERT OR IGNORE INTO feedback_signals
+           (kind, pr, comment_id, review_id, in_reply_to_id, scope, author, body, day, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        sig.kind,
+        sig.pr,
+        sig.comment_id ?? null,
+        sig.review_id ?? null,
+        sig.in_reply_to_id ?? null,
+        sig.scope ?? null,
+        sig.author ?? null,
+        sig.body ?? null,
+        sig.day,
+        this.ts(),
+      );
+    return info.changes > 0;
+  }
+
+  /** The day's explicit [feedback] comments — the same-day validator
+   * addendum's input, oldest first. */
+  feedbackCommentsForDay(day: string): FeedbackSignalRow[] {
+    return this.db
+      .prepare("SELECT * FROM feedback_signals WHERE day = ? AND kind = 'feedback_comment' ORDER BY id")
+      .all(day) as FeedbackSignalRow[];
+  }
+
+  /** Timestamp of the latest event of `kind` for `pr`, when any — the
+   * stale-dismissal heuristic reads head_push through this. */
+  lastEventAt(kind: string, pr: number): string | undefined {
+    const row = this.db
+      .prepare("SELECT ts FROM events WHERE kind = ? AND pr = ? ORDER BY id DESC LIMIT 1")
+      .get(kind, pr) as { ts: string } | undefined;
+    return row?.ts;
   }
 
   // ---- event log ---------------------------------------------------------

@@ -28,6 +28,10 @@
 //   edit       replace block text (stdin; blank lines collapse — a blank
 //              line would split the block)
 //   add        append a #manual entry (stdin) — no address
+//   note       append a pre-tagged entry verbatim (stdin; must open with a
+//              #tag) — no address. The daemon's [feedback] loop
+//              writes #feedback entries through this, so memedit stays the
+//              ONE external mutation path into pi-memory.
 //
 // Addressing: batches start at a header comment — pi-memory writes THREE
 // variants: `<!-- TS [id] -->`, `<!-- last updated: TS [id] -->`,
@@ -181,8 +185,8 @@ try {
   if (needsAddress && !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(args.ts)) die("--ts must be 'YYYY-MM-DD HH:MM:SS'");
   const blockIdx = needsAddress ? Number(args.block) : 0;
   if (needsAddress && !Number.isInteger(blockIdx)) die("--block must be an integer");
-  const payload = op === "edit" || op === "add" ? readStdin() : "";
-  if ((op === "edit" || op === "add") && payload.length === 0) die(`${op}: empty text on stdin`);
+  const payload = op === "edit" || op === "add" || op === "note" ? readStdin() : "";
+  if ((op === "edit" || op === "add" || op === "note") && payload.length === 0) die(`${op}: empty text on stdin`);
   if (payload.length > 4000) die(`${op}: text too long (${payload.length} > 4000 chars)`);
   const payloadLines = payload.replace(/\n{2,}/g, "\n").split("\n");
 
@@ -243,8 +247,18 @@ try {
         lines.push(`<!-- ${localStamp()} [qcr-${Date.now().toString(36)}] -->`, ...text.replace(/\n{2,}/g, "\n").split("\n"));
         break;
       }
+      case "note": {
+        // Verbatim append for machine writers that carry their own tag —
+        // never silently re-tagged (that is what distinguishes it from add,
+        // whose #manual means "the owner's own words").
+        if (!/^#[a-z]/i.test(payload)) die("note: text must open with a #tag (e.g. #feedback …)");
+        while (lines.length > 0 && blank(lines[lines.length - 1])) lines.pop();
+        if (lines.length > 0) lines.push("");
+        lines.push(`<!-- ${localStamp()} [qcrd-${Date.now().toString(36)}] -->`, ...payload.replace(/\n{2,}/g, "\n").split("\n"));
+        break;
+      }
       default:
-        die(`unknown op '${op ?? ""}' — retire|pin|unpin|edit|add`);
+        die(`unknown op '${op ?? ""}' — retire|pin|unpin|edit|add|note`);
     }
   };
 

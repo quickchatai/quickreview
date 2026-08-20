@@ -8,6 +8,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Config } from "./config.js";
+import { interpretReviewEvent, isFeedbackBody } from "./feedback.js";
 import { applyEvent as applyEventFor } from "./statemachine.js";
 import type { StateStore } from "./state.js";
 
@@ -52,6 +53,27 @@ export type Interpretation =
       scope: "review_comment";
     }
   | { kind: "bot_comment"; pr: number; comment_id: number; scope: "review_comment" | "issue_comment" }
+  /** The [feedback] tuning loop — META-signal about the review
+   * itself, deliberately diverted BEFORE author_reply so it never reaches
+   * ping-pong, never wakes the PR session, and never stamps the new-evidence
+   * mark (`noteAuthorReply`) that would unlock a re-review. */
+  | {
+      kind: "feedback_comment";
+      pr: number;
+      comment_id: number;
+      in_reply_to_id: number | null;
+      author: string;
+      body: string;
+      scope: "review_comment" | "issue_comment" | "review";
+    }
+  /** A human set the bot's review aside on GitHub — it blocked them enough
+   * to remove (behavioral signal; interpreted in feedback.ts). */
+  | { kind: "review_set_aside"; pr: number; review_id: number; by: string }
+  /** A human deleted one of the bot's comments — the bluntest noise verdict. */
+  | { kind: "bot_comment_deleted"; pr: number; comment_id: number }
+  /** A human took the bot off the PR (trigger label removed / team review
+   * request withdrawn) before the review completed. */
+  | { kind: "trigger_withdrawn"; pr: number; by: string }
   /** CI finished at a head (check_suite / workflow_run). No lifecycle meaning:
    * the only consumer is the post-approval delta recheck. A suite can
    * hang off more than one PR (shared head), so `prs` is the honest list and
@@ -103,6 +125,11 @@ export function interpretEvent(event: string, action: string | null, payload: an
       return interpretReviewComment(action, payload, deps);
     case "issue_comment":
       return interpretIssueComment(action, payload, deps);
+    case "pull_request_review":
+      // interpreted in feedback.ts — the vocabulary GitHub uses for
+      // this event is exactly what the no-review-retraction structural guard
+      // greps this module for, and feedback.ts can hold no mutation path.
+      return interpretReviewEvent(action, payload, { botLogin: deps.botLogin });
     case "check_suite":
       return interpretCiCompletion(action, payload?.check_suite);
     case "workflow_run":
@@ -140,15 +167,44 @@ function interpretPullRequest(action: string | null, payload: any, deps: Interpr
       return { kind: "synchronize", pr: meta.number, meta };
     case "closed":
       return { kind: "closed", pr: meta.number, merged: Boolean(pr.merged), meta };
+    // a HUMAN removing the trigger is "take the bot off this PR" —
+    // a behavioral feedback signal. The daemon consumes triggers itself
+    // (label removal / team-request deletion through the gate), so a bot
+    // sender is mechanics, never feedback.
+    case "unlabeled": {
+      const name = payload?.label?.name;
+      if (name !== deps.triggerLabel) return { kind: "ignored", reason: `non-trigger label removed: ${name}`, pr: meta.number };
+      if (isBotUser(payload?.sender, deps.botLogin))
+        return { kind: "ignored", reason: "trigger consumed by the bot", pr: meta.number };
+      return { kind: "trigger_withdrawn", pr: meta.number, by: payload?.sender?.login ?? "" };
+    }
+    case "review_request_removed": {
+      const team = payload?.requested_team;
+      if (!team) return { kind: "ignored", reason: "individual review request removed", pr: meta.number };
+      const slug: string = team.slug ?? "";
+      const wantSlug = deps.reviewTeam.split("/")[1] ?? deps.reviewTeam;
+      if (slug !== wantSlug) return { kind: "ignored", reason: `other team request removed: ${slug}`, pr: meta.number };
+      if (isBotUser(payload?.sender, deps.botLogin))
+        return { kind: "ignored", reason: "trigger consumed by the bot", pr: meta.number };
+      return { kind: "trigger_withdrawn", pr: meta.number, by: payload?.sender?.login ?? "" };
+    }
     default:
       return { kind: "ignored", reason: `unhandled pull_request action: ${action}`, pr: meta.number };
   }
 }
 
 function interpretReviewComment(action: string | null, payload: any, deps: InterpretDeps): Interpretation {
-  if (action !== "created") return { kind: "ignored", reason: `unhandled review-comment action: ${action}` };
   const comment = payload?.comment;
   const pr: number = payload?.pull_request?.number ?? 0;
+  // a HUMAN deleting one of the bot's comments is a behavioral
+  // feedback signal (the bot never deletes its own comments — it has no
+  // deletion path at all).
+  if (action === "deleted") {
+    if (comment?.user?.login === deps.botLogin && payload?.sender?.login !== deps.botLogin)
+      return { kind: "bot_comment_deleted", pr, comment_id: comment.id };
+    return { kind: "ignored", reason: "non-bot comment deleted", pr };
+  }
+  if (action !== "created") return { kind: "ignored", reason: `unhandled review-comment action: ${action}` };
   if (!comment) return { kind: "ignored", reason: "review comment payload without comment" };
 
   // The bot's own comments echo back as deliveries: registry backfill, never a
@@ -159,6 +215,19 @@ function interpretReviewComment(action: string | null, payload: any, deps: Inter
   if (payload?.sender?.login === deps.botLogin) return { kind: "ignored", reason: "sender is the bot", pr };
 
   const inReplyTo: number | null = typeof comment.in_reply_to_id === "number" ? comment.in_reply_to_id : null;
+  // [feedback]-prefixed comments divert HERE, before the
+  // author_reply interpretation — they are meta-signal about the review
+  // itself and must never enter ping-pong or count as new author evidence.
+  if (isFeedbackBody(comment.body))
+    return {
+      kind: "feedback_comment",
+      pr,
+      comment_id: comment.id,
+      in_reply_to_id: inReplyTo,
+      author: comment.user?.login ?? "",
+      body: comment.body ?? "",
+      scope: "review_comment",
+    };
   if (inReplyTo !== null && deps.botCommentPr(inReplyTo) === pr)
     return {
       kind: "author_reply",
@@ -220,11 +289,26 @@ function interpretIssueComment(action: string | null, payload: any, deps: Interp
   if (comment.user?.type === "Bot") return { kind: "ignored", reason: "other-bot comment", pr };
   if (payload?.sender?.login === deps.botLogin) return { kind: "ignored", reason: "sender is the bot", pr };
 
+  // the one exception to the rule below — a [feedback]-prefixed
+  // top-level comment is captured for the tuning loop (and still never
+  // routed anywhere near the round).
+  if (isFeedbackBody(comment.body))
+    return {
+      kind: "feedback_comment",
+      pr,
+      comment_id: comment.id,
+      in_reply_to_id: null,
+      author: comment.user?.login ?? "",
+      body: comment.body ?? "",
+      scope: "issue_comment",
+    };
+
   // Top-level PR conversation comments are deliberately never automatic.
   // Automatic ping-pong is bounded to a reply in one of this PR's bot-owned
   // inline review threads.
   return { kind: "ignored", reason: "top-level PR comment is outside bot review threads", pr };
 }
+
 
 // ---- server --------------------------------------------------------------
 
@@ -383,6 +467,14 @@ export async function applyInterpretation(
     onSynchronize?: (i: Extract<Interpretation, { kind: "synchronize" }>) => void | Promise<void>;
     onCiCompleted?: (i: Extract<Interpretation, { kind: "ci_completed" }>) => void | Promise<void>;
     onBaseAdvanced?: (i: Extract<Interpretation, { kind: "base_advanced" }>) => void | Promise<void>;
+    /** The [feedback] tuning loop — explicit comments and
+     * behavioral signals, incl. the merged-over-block signal derived in the
+     * `closed` case below. Never touches lifecycle. */
+    onFeedbackSignal?: (
+      e:
+        | Extract<Interpretation, { kind: "feedback_comment" | "review_set_aside" | "bot_comment_deleted" | "trigger_withdrawn" }>
+        | { kind: "merged_over_block"; pr: number },
+    ) => void | Promise<void>;
   },
   i: Interpretation,
 ): Promise<void> {
@@ -403,11 +495,16 @@ export async function applyInterpretation(
       // core trigger, which the daemon decides on separately.
       await deps.onSynchronize?.(i);
       return;
-    case "closed":
+    case "closed": {
+      // capture the pre-close state — after applyEventFor it is
+      // gone. awaiting_author means a REQUEST_CHANGES stood at close.
+      const priorState = store.getPr(i.pr)?.state;
       applyEventFor(store, i.pr, { type: "closed" }, i.meta, opts);
       store.logEvent("pr_closed", i.pr, { merged: i.merged, source: "webhook" });
+      if (i.merged && priorState === "awaiting_author") await deps.onFeedbackSignal?.({ kind: "merged_over_block", pr: i.pr });
       await deps.onClosed?.(i.pr);
       return;
+    }
     case "author_reply":
       applyEventFor(store, i.pr, { type: "author_reply" }, {}, opts);
       // New evidence at the current head (guard 2): a reply is the one
@@ -417,6 +514,15 @@ export async function applyInterpretation(
       return;
     case "bot_comment":
       store.registerBotComment(i.comment_id, i.pr, i.scope);
+      return;
+    // pure tuning-loop signals — no state-machine event, no session
+    // wake, no reviewed_heads mark. The engine (wired by the daemon) owns
+    // dedupe, the memory entry, and the same-day addendum rebuild.
+    case "feedback_comment":
+    case "review_set_aside":
+    case "bot_comment_deleted":
+    case "trigger_withdrawn":
+      await deps.onFeedbackSignal?.(i);
       return;
     case "ci_completed":
       // Recorded, never a transition: CI is evidence for the recheck, not a
