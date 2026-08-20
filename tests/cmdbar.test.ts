@@ -2,6 +2,7 @@
 // pinned here), globals keep the same x on every tab (the constant-position
 // guarantee), the active nav slot is highlighted, and an App-level click on a
 // bar button IS that keypress (quit from a non-board tab).
+import { ACCENT_BG } from "../src/tui/design.js";
 import { EventEmitter } from "node:events";
 import { describe, expect, it } from "vitest";
 import { TUI_DEFAULTS } from "../src/config.js";
@@ -99,8 +100,9 @@ describe("active-tab highlight", () => {
     for (const tab of TABS) {
       const raw = paint(tab, 140, rows).lines[rows - 3]!;
       const label = NAV.find(([, l]) => l.startsWith({ board: "1", digest: "2", deploy: "3", metrics: "4" }[tab]))![1];
-      expect(raw).toContain(`\x1b[7m\x1b[1m[${label}]`);
-      expect(raw.split("\x1b[7m").length).toBe(2); // one inverse run only
+      expect(raw).toContain(`${ACCENT_BG}\x1b[1m[${label}]`);
+      expect(raw.split(ACCENT_BG).length).toBe(2); // one selection fill only
+      expect(raw).not.toContain("\x1b[7m"); // no ad-hoc inverse (§8)
     }
   });
 });

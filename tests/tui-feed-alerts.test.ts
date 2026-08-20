@@ -1,5 +1,6 @@
 // Slice C2: ambient feed writer, alert pipeline, companion surfaces.
 // I/O is a temp dir per test; nothing spawns docker, notify-send, ssh or pi.
+import { FG } from "../src/tui/theme.js";
 import { EventEmitter } from "node:events";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -351,7 +352,7 @@ describe("alert badge in the top bar", () => {
 
   it("themes by tier", () => {
     expect(alertSegment(badge, false)).toContain("\x1b[38;2;224;108;117m"); // FG.anomaly
-    expect(alertSegment({ ...badge, latest: { ...badge.latest!, tier: "notice" } }, false)).toContain("\x1b[38;2;86;182;194m"); // FG.accent
+    expect(alertSegment({ ...badge, latest: { ...badge.latest!, tier: "notice" } }, false)).toContain(FG.accent); // FG.accent
     expect(alertSegment(badge, false)).toBe(alertSegment(badge, false));
     expect(alertSegment({ count: 0, folds: 0 }, false)).toBe("");
   });

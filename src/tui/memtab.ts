@@ -26,7 +26,8 @@ import { currentFile, renderDigestTab, SshDigestFetcher, type DigestAction, type
 import { applyMemoryFilter, memoryFilterLabel } from "./filters.js";
 import { awaitingRows, sortPrs } from "./model.js";
 import { blockHash, defectEntries, timelineOrder, SshMemoryStore, type MemoryEntry, type MemoryStore } from "./memory.js";
-import { Frame, SGR, displayWidth, rule, sanitizeText, stripAnsi, truncate, wrap } from "./paint.js";
+import { ACCENT, HEADING, MUTED, RESET, STRONG, WARN, button, modeBadge, sectionTitle, selected as selectedLine } from "./design.js";
+import { Frame, displayWidth, rule, sanitizeText, stripAnsi, truncate, wrap } from "./paint.js";
 import {
   acceptProposal,
   improvementsArgv,
@@ -70,11 +71,11 @@ export function entryKey(e: MemoryEntry): string {
 /** The visible one-line form of a timeline entry. The text already leads
  * with its #tags — never re-print them as a prefix (they doubled before). */
 export function entryLine(e: MemoryEntry, width: number, highlightDay: string | undefined): string {
-  const pin = e.pinned ? "● " : "  ";
   const text = sanitizeText(e.text).replace(/\s+/g, " ");
-  const line = truncate(`${pin}${e.ts.slice(5, 16)} ${text}`, width);
-  if (highlightDay && e.day === highlightDay) return `${SGR.bold}${line}${SGR.reset}`;
-  return line;
+  const line = truncate(`${e.pinned ? "● " : "  "}${e.ts.slice(5, 16)} ${text}`, width);
+  const pinned = e.pinned ? line.replace("● ", `${ACCENT}●${RESET} `) : line;
+  if (highlightDay && e.day === highlightDay) return `${STRONG}${pinned}${RESET}`;
+  return pinned;
 }
 
 /** Every click target on the Memory & learning tab's memory view. */
@@ -110,7 +111,7 @@ function zonedRow(chunks: RowChunk[], gap = "  "): ZonedRow {
     }
     const w = displayWidth(stripAnsi(c.text));
     if (c.action) zones.push({ x1: plainW, x2: plainW + w - 1, action: c.action });
-    text += c.dim ? `${SGR.dim}${c.text}${SGR.reset}` : c.text;
+    text += c.dim ? `${MUTED}${c.text}${RESET}` : c.text;
     plainW += w;
   }
   return { text, zones };
@@ -136,8 +137,8 @@ export function renderMemoryView(
   frame.set(
     0,
     rule(cols, "┌", "┐", [
-      "quickreview",
-      dryRun ? "DRY-RUN" : `${SGR.bgRed}${SGR.bold} LIVE ${SGR.reset}`,
+      `${HEADING}quickreview${RESET}`,
+      modeBadge(dryRun),
       `memory & learning${highlightDay ? ` · ${highlightDay}` : ""}`,
     ]),
   );
@@ -151,13 +152,13 @@ export function renderMemoryView(
   const ordered = applyMemoryFilter(timelineOrder(st.entries), st.memFilter);
   const left: string[] = [];
   const leftActions: Array<MemAction | undefined> = [];
-  if (!st.memLoaded) left.push(`${SGR.dim}loading memory…${SGR.reset}`);
-  else if (ordered.length === 0) left.push(`${SGR.dim}MEMORY.md is empty${SGR.reset}`);
+  if (!st.memLoaded) left.push(`${MUTED}loading memory…${RESET}`);
+  else if (ordered.length === 0) left.push(`${MUTED}none yet — MEMORY.md is empty${RESET}`);
   else {
     const budget = pinnedBudget(ordered);
-    const budgetNote = budget.over ? ` ${SGR.bold}⚠ pinned ${budget.chars}ch${SGR.reset}` : "";
+    const budgetNote = budget.over ? ` ${WARN}⚠ pinned ${budget.chars}ch${RESET}` : "";
     const fl = memoryFilterLabel(st.memFilter);
-    left.push(`${SGR.bold}MEMORY (${ordered.length})${SGR.reset}${budgetNote}${fl !== "" ? ` ${fl}` : ""}`);
+    left.push(`${sectionTitle(`MEMORY (${ordered.length})`)}${budgetNote}${fl !== "" ? ` ${fl}` : ""}`);
     leftActions.push(undefined);
     // The window follows the selection — verbs act on the inverse row, so it
     // must never sit off-screen.
@@ -167,7 +168,7 @@ export function renderMemoryView(
       const abs = Math.max(0, start) + i;
       const line = entryLine(e, leftW - 3, highlightDay);
       const selected = st.focus === "timeline" && abs === st.sel;
-      left.push(selected ? `${SGR.inverse}${line}${SGR.reset}` : line);
+      left.push(selected ? selectedLine(line) : line);
       leftActions.push({ t: "mem", i: abs });
     });
   }
@@ -179,14 +180,14 @@ export function renderMemoryView(
   const selected = ordered[st.sel];
   if (selected) {
     row([
-      { text: `${SGR.bold}ENTRY${SGR.reset} ${selected.ts} [${selected.id}]${selected.pinned ? " ●pinned" : ""}` },
+      { text: `${sectionTitle("ENTRY")} ${selected.ts} ${MUTED}[${selected.id}]${RESET}${selected.pinned ? ` ${ACCENT}●${RESET}pinned` : ""}` },
     ]);
     row([
-      { text: "[e edit]", action: { t: "key", key: "e" } },
-      { text: selected.pinned ? "[p unpin]" : "[p pin]", action: { t: "key", key: "p" } },
-      { text: st.confirmRetire === entryKey(selected) ? `${SGR.bold}[x CONFIRM retire]${SGR.reset}` : "[x retire]", action: { t: "key", key: "x" } },
-      { text: "[n new]", action: { t: "key", key: "n" } },
-      { text: "[r refresh]", action: { t: "key", key: "r" } },
+      { text: button("e edit"), action: { t: "key", key: "e" } },
+      { text: button(selected.pinned ? "p unpin" : "p pin"), action: { t: "key", key: "p" } },
+      { text: st.confirmRetire === entryKey(selected) ? `${WARN}${STRONG}[x CONFIRM retire]${RESET}` : button("x retire"), action: { t: "key", key: "x" } },
+      { text: button("n new"), action: { t: "key", key: "n" } },
+      { text: button("r refresh"), action: { t: "key", key: "r" } },
     ]);
     const detailCap = Math.max(5, bodyRows - 10 - st.proposals.length * 2 - Math.min(4, st.improvements.length));
     const wrapped = wrap(sanitizeText(selected.text), rightW - 3);
@@ -194,21 +195,21 @@ export function renderMemoryView(
     if (wrapped.length > detailCap) row([{ text: `… ${wrapped.length - detailCap} more lines`, dim: true }]);
   }
   row([{ text: "" }]);
-  row([{ text: `${SGR.bold}RUBRIC PROPOSALS (${st.proposals.length})${SGR.reset}` }]);
+  row([{ text: sectionTitle(`RUBRIC PROPOSALS (${st.proposals.length})`) }]);
   if (!st.propLoaded) row([{ text: "loading…", dim: true }]);
-  else if (st.proposals.length === 0) row([{ text: "none pending", dim: true }]);
+  else if (st.proposals.length === 0) row([{ text: "none yet — the EOD sweep proposes rubric changes", dim: true }]);
   st.proposals.forEach((p, i) => {
     const isSel = st.focus === "proposals" && i === st.propSel;
     row([
-      { text: isSel ? `${SGR.inverse}▸ ${truncate(p.slug, rightW - 26)}${SGR.reset}` : `▸ ${truncate(p.slug, rightW - 26)}`, action: { t: "prop", i } },
-      { text: "[accept]", action: { t: "prop-accept", i } },
-      { text: "[reject]", action: { t: "prop-reject", i } },
+      { text: isSel ? selectedLine(`▸ ${truncate(p.slug, rightW - 26)}`) : `▸ ${truncate(p.slug, rightW - 26)}`, action: { t: "prop", i } },
+      { text: button("accept"), action: { t: "prop-accept", i } },
+      { text: button("reject"), action: { t: "prop-reject", i } },
     ]);
     if (p.head[0]) row([{ text: truncate(`  ${p.head[0]}`, rightW - 2), dim: true }]);
   });
   row([{ text: "" }]);
-  row([{ text: `${SGR.bold}BOT PRs / ISSUES${SGR.reset}` }]);
-  if (st.improvements.length === 0) row([{ text: "none", dim: true }]);
+  row([{ text: sectionTitle("BOT PRs / ISSUES") }]);
+  if (st.improvements.length === 0) row([{ text: "none yet — the overseer files them", dim: true }]);
   for (const it of st.improvements.slice(0, 6)) {
     const url = repo ? `https://github.com/${repo}/${it.kind === "pr" ? "pull" : "issues"}/${it.number}` : undefined;
     row([
@@ -220,7 +221,7 @@ export function renderMemoryView(
   }
   row([{ text: "" }]);
   const defects = defectEntries(st.entries);
-  row([{ text: `${SGR.bold}DEFECT FLAGS (${defects.length})${SGR.reset}${st.filedTotal > 0 ? ` ${SGR.dim}${st.filedTotal} auto-filed${SGR.reset}` : ""}` }]);
+  row([{ text: `${sectionTitle(`DEFECT FLAGS (${defects.length})`)}${st.filedTotal > 0 ? ` ${MUTED}${st.filedTotal} auto-filed${RESET}` : ""}` }]);
   for (const d of defects.slice(0, 5)) {
     const i = ordered.findIndex((e) => entryKey(e) === entryKey(d));
     row([{ text: truncate(`⚑ ${d.ts.slice(5, 10)} ${d.links[0] ?? d.text.slice(0, 30)}`, rightW - 2), action: i >= 0 ? { t: "mem", i } : undefined }]);

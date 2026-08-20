@@ -8,7 +8,8 @@
 // injectable spawner.
 import type { App } from "./app.js";
 import { CHORD_GRACE_MS, ChordScanner, TripleCtrlC } from "./chord.js";
-import { rule, SGR, CLEAR } from "./paint.js";
+import { BAD, OK, RESET, STRONG } from "./design.js";
+import { rule, CLEAR } from "./paint.js";
 import { attachArgv } from "./remote.js";
 import { TermPane } from "./term.js";
 
@@ -76,8 +77,8 @@ export type ConnState = "live" | "lost";
 
 export function statusRow(session: string, prState: string | undefined, conn: ConnState, cols: number): string {
   const state = prState ? ` · ${prState}` : "";
-  const connSeg = conn === "live" ? `${SGR.green}▶ live${SGR.reset}` : `${SGR.red}✖ lost — ⏎ retry · Ctrl-q/Ctrl-c board${SGR.reset}`;
-  return rule(cols, "┌", "┐", [`${SGR.bold}${session}${SGR.reset}${state}`, connSeg, "Ctrl-q detach · Ctrl-c×3 kill tui"]);
+  const connSeg = conn === "live" ? `${OK}▶ live${RESET}` : `${BAD}✖ lost — ⏎ retry · Ctrl-q/Ctrl-c board${RESET}`;
+  return rule(cols, "┌", "┐", [`${STRONG}${session}${RESET}${state}`, connSeg, "Ctrl-q detach · Ctrl-c×3 kill tui"]);
 }
 
 const PAINT_INTERVAL_MS = 16;
