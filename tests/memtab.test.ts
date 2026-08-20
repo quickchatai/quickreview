@@ -13,6 +13,7 @@ import type { DigestFetcher } from "../src/tui/digesttab.js";
 import { installMemoryLearningHooks, pinnedBudget, renderMemoryView, type MemTabState } from "../src/tui/memtab.js";
 import { blockHash, parseMemory } from "../src/memory/pi-memory.js";
 import type { MemoryEntry, MemoryOp, MemoryStore } from "../src/memory/store.js";
+import type { MemoryHealth } from "../src/tui/memory.js";
 import { parseMemRequest, processMemRequests } from "../src/tui/memrequests.js";
 import { renderDigestTab } from "../src/tui/digesttab.js";
 import { displayWidth, stripAnsi } from "../src/tui/paint.js";
@@ -436,5 +437,103 @@ describe("quit vs late async repaints (ghost-frame regression)", () => {
     app.notice("late notice");
     await settle();
     expect(written().length).toBe(at);
+  });
+});
+
+// FT-0164: the tab runs on OpenViking, which can be unreachable. An empty
+// timeline and an unreachable store MUST NOT look alike — an empty tab reads
+// as a healthy tab with nothing in it, and the operator would act on it.
+class UnhealthyMemory implements MemoryStore {
+  constructor(private readonly h: MemoryHealth, private readonly entries: MemoryEntry[] = []) {}
+  read(): Promise<MemoryEntry[]> {
+    return Promise.resolve(this.entries);
+  }
+  search(): Promise<MemoryEntry[]> {
+    return Promise.resolve([]);
+  }
+  apply(): Promise<{ ok: boolean; message: string }> {
+    return Promise.resolve({ ok: false, message: "memory write failed: no answer" });
+  }
+  health(): MemoryHealth {
+    return this.h;
+  }
+}
+
+const DEAD = "cannot reach OpenViking at http://127.0.0.1:1933 (connect ECONNREFUSED) — check: systemctl --user status qcr-memory-forward";
+
+describe("memory unreachable (FT-0164)", () => {
+  it("paints an explicit failure banner with the reason, never 'none yet'", async () => {
+    const { app } = makeApp();
+    const st = install(app, new UnhealthyMemory({ ok: false, namespaces: [], error: DEAD }) as unknown as FakeMemory);
+    app.hooks.digestScreen!(app, 110, 30);
+    await settle();
+    st.view = "memory";
+    const screen = stripAnsi(app.hooks.digestScreen!(app, 110, 30));
+    expect(st.memError).toBe(DEAD);
+    expect(screen).toContain("MEMORY UNREACHABLE");
+    expect(screen).toContain("qcr-memory-forward");
+    expect(screen).not.toContain("none yet");
+  });
+
+  it("an EMPTY but healthy store says so, with no banner anywhere", async () => {
+    const { app } = makeApp();
+    const st = install(app, new UnhealthyMemory({ ok: true, namespaces: [] }) as unknown as FakeMemory);
+    app.hooks.digestScreen!(app, 110, 30);
+    await settle();
+    st.view = "memory";
+    const screen = stripAnsi(app.hooks.digestScreen!(app, 110, 30));
+    expect(st.memError).toBeUndefined();
+    expect(screen).toContain("none yet");
+    expect(screen).not.toContain("UNREACHABLE");
+  });
+
+  it("one tree down shows a warning beside the other tree's entries", async () => {
+    const { app } = makeApp();
+    const entries = parseMemory(SAMPLE);
+    const store = new UnhealthyMemory({ ok: false, namespaces: [], warning: "companion memory unreachable — no answer" }, entries);
+    const st = install(app, store as unknown as FakeMemory);
+    app.hooks.digestScreen!(app, 110, 30);
+    await settle();
+    st.view = "memory";
+    const screen = stripAnsi(app.hooks.digestScreen!(app, 110, 30));
+    expect(screen).toContain("MEMORY (3)");
+    expect(screen).toContain("companion memory unreachable");
+    expect(screen).toContain("memory degraded");
+  });
+
+  it("the error state still renders every row at exactly `cols` cells", () => {
+    const st: MemTabState = {
+      view: "memory",
+      digest: { files: [], back: 0, scroll: 0, awaitingSelected: 0, loaded: true },
+      entries: [],
+      memLoaded: true,
+      memError: DEAD,
+      focus: "timeline",
+      sel: 0,
+      propSel: 0,
+      scroll: 0,
+      proposals: [],
+      improvements: [],
+      propLoaded: true,
+      filedTotal: 0,
+    };
+    for (const cols of [100, 111]) {
+      const frame = renderMemoryView(st, false, undefined, cols, 28);
+      for (const line of frame.lines) expect(displayWidth(line)).toBe(cols);
+    }
+  });
+
+  it("never auto-files off an unreachable store — an empty read is not 'no defects'", async () => {
+    const root = mkdtempSync(join(tmpdir(), "memtab-dead-"));
+    mkdirSync(join(root, ".ids"), { recursive: true });
+    mkdirSync(join(root, "efforts/review-sandbox/tickets"), { recursive: true });
+    const { app } = makeApp();
+    install(app, new UnhealthyMemory({ ok: false, namespaces: [], error: DEAD }, parseMemory(SAMPLE)) as unknown as FakeMemory, {
+      tracker: { root, effort: "review-sandbox", parent: "FT-0026" },
+    });
+    app.hooks.digestScreen!(app, 110, 30);
+    await settle();
+    expect(readdirSync(join(root, "efforts/review-sandbox/tickets"))).toHaveLength(0);
+    rmSync(root, { recursive: true, force: true });
   });
 });

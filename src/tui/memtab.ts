@@ -14,10 +14,18 @@
 // accept/reject follow src/tui/proposals.ts (accept = merge + auto-ratify —
 // the ratified decision).
 //
-// Real-time honesty: pi-memory injects a SNAPSHOT of memory taken
-// at session checkpoints, so an edit made here reaches already-running
-// sessions' ambient context only at their next checkpoint; memory_search
-// sees it as soon as the store's re-index lands.
+// Real-time honesty (restated for OpenViking): a round carries the
+// memory it assembled when it STARTED, so an edit made here reaches an
+// in-flight round's context only at the next round; a semantic search sees it
+// once the server's index refresh lands (writes are durable immediately —
+// `wait: false` only defers searchability).
+//
+// The store behind the verbs is OpenViking on the VM, reached over the memory
+// forward's loopback listener, with BOTH user keys — so companion memory is
+// listed and editable here (`src/tui/memory.ts` carries the transport and the
+// namespacing). When it does not answer, the timeline is replaced by an
+// explicit failure banner: an empty list must never be mistaken for an empty
+// store.
 import type { App } from "./app.js";
 import { decodeKey, type BoardKey } from "./keys.js";
 import { hitTest, type Zone } from "./mouse.js";
@@ -26,7 +34,7 @@ import { paintCmdBar } from "./cmdbar.js";
 import { currentFile, renderDigestTab, SshDigestFetcher, type DigestAction, type DigestFetcher, type DigestState } from "./digesttab.js";
 import { applyMemoryFilter, memoryFilterLabel } from "./filters.js";
 import { awaitingRows, sortPrs } from "./model.js";
-import { defectEntries, refOf, timelineOrder, tuiMemoryStore, type MemoryEntry, type MemoryStore } from "./memory.js";
+import { defectEntries, refOf, storeHealth, timelineOrder, tuiMemoryStore, type MemoryEntry, type MemoryStore } from "./memory.js";
 import { ACCENT, HEADING, MUTED, RESET, STRONG, WARN, button, modeBadge, sectionTitle, selected as selectedLine } from "./design.js";
 import { Frame, displayWidth, rule, sanitizeText, stripAnsi, truncate, wrap } from "./paint.js";
 import {
@@ -59,6 +67,13 @@ export interface MemTabState {
   confirmRetire?: string;
   /** One-line status of the last verb (also mirrored to app.notice). */
   status?: string;
+  /** Set when NO memory namespace answered — the tab paints an explicit
+   * failure banner instead of an empty timeline. An empty list and
+   * an unreachable store must never look alike. */
+  memError?: string;
+  /** Set when memory answered but partially: one of the two user trees is
+   * down, or entries were listed and not readable. */
+  memWarn?: string;
   filedTotal: number;
   /**: active timeline tag filter (companion `memory_filter` verb;
    * F clears). Render AND verbs derive ordering through it — one list. */
@@ -141,6 +156,9 @@ export function renderMemoryView(
       `${HEADING}quickreview${RESET}`,
       modeBadge(dryRun),
       `memory & learning${highlightDay ? ` · ${highlightDay}` : ""}`,
+      // The banner lives in the list, but the title bar must carry it too:
+      // the tab is often read at a glance from another pane.
+      ...(st.memError ? [`${WARN}${STRONG}✖ MEMORY UNREACHABLE${RESET}`] : st.memWarn ? [`${WARN}⚠ memory degraded${RESET}`] : []),
     ]),
   );
   // List left (38%), reading pane right: the full selected entry WRAPPED —
@@ -154,16 +172,30 @@ export function renderMemoryView(
   const left: string[] = [];
   const leftActions: Array<MemAction | undefined> = [];
   if (!st.memLoaded) left.push(`${MUTED}loading memory…${RESET}`);
-  else if (ordered.length === 0) left.push(`${MUTED}none yet — MEMORY.md is empty${RESET}`);
+  else if (st.memError) {
+    // THE point of this branch: a store we cannot reach must not render as a
+    // store with nothing in it. Banner, reason, and the retry key — never a
+    // bare "none yet".
+    left.push(`${WARN}${STRONG}✖ MEMORY UNREACHABLE${RESET}`);
+    left.push("");
+    for (const l of wrap(sanitizeText(st.memError), leftW - 3)) left.push(`${WARN}${l}${RESET}`);
+    left.push("");
+    left.push(`${MUTED}nothing below is memory — the store did not answer.${RESET}`);
+    left.push(`${MUTED}r retries; verbs will refuse until it is back.${RESET}`);
+  } else if (ordered.length === 0) left.push(`${MUTED}none yet — memory holds no entries${RESET}`);
   else {
     const budget = pinnedBudget(ordered);
     const budgetNote = budget.over ? ` ${WARN}⚠ pinned ${budget.chars}ch${RESET}` : "";
     const fl = memoryFilterLabel(st.memFilter);
     left.push(`${sectionTitle(`MEMORY (${ordered.length})`)}${budgetNote}${fl !== "" ? ` ${fl}` : ""}`);
     leftActions.push(undefined);
+    if (st.memWarn) {
+      left.push(`${WARN}⚠ ${truncate(sanitizeText(st.memWarn), leftW - 5)}${RESET}`);
+      leftActions.push(undefined);
+    }
     // The window follows the selection — verbs act on the inverse row, so it
     // must never sit off-screen.
-    const visible = bodyRows - 1;
+    const visible = Math.max(1, bodyRows - left.length);
     const start = Math.max(0, Math.min(st.sel - (visible - 1), ordered.length - visible));
     ordered.slice(Math.max(0, start), Math.max(0, start) + visible).forEach((e, i) => {
       const abs = Math.max(0, start) + i;
@@ -265,7 +297,7 @@ export interface MemTabDeps {
 }
 
 export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): MemTabState {
-  const memory = deps.memory ?? tuiMemoryStore(app.cfg, app.ssh);
+  const memory = deps.memory ?? tuiMemoryStore();
   const digestFetcher = deps.digestFetcher ?? new SshDigestFetcher(app.cfg, app.ssh);
   const now = deps.now ?? (() => new Date());
   const st: MemTabState = {
@@ -298,16 +330,27 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
 
   const loadMemory = async (): Promise<void> => {
     const prevKey = orderedNow()[st.sel] ? entryKey(orderedNow()[st.sel]!) : undefined;
+    const wasError = st.memError;
     st.entries = await memory.read();
     st.memLoaded = true;
+    // Reachability is a property of the READ, not of the result: an empty
+    // array from a dead store and an empty array from an empty store are the
+    // same array. The store says which one it was.
+    const health = storeHealth(memory);
+    st.memError = health?.error;
+    st.memWarn = health?.warning;
+    if (st.memError && st.memError !== wasError) app.notice(`✖ memory unreachable: ${st.memError}`);
+    else if (!st.memError && wasError) app.notice("memory reachable again");
     // Re-bind the selection to the same ENTRY, not the same ordinal — a
     // refresh that reorders the timeline must not silently redirect the
     // next verb keystroke to a different entry.
     const ordered = orderedNow();
     const rebound = prevKey ? ordered.findIndex((e) => entryKey(e) === prevKey) : -1;
     st.sel = rebound >= 0 ? rebound : Math.min(st.sel, Math.max(0, ordered.length - 1));
-    if (deps.tracker) {
-      const filed = autofileDefects(deps.tracker, defectEntries(st.entries), now().toISOString());
+    if (deps.tracker && !st.memError) {
+      // The store is the filer's dedup surface too (it stamps `filed=` back
+      // onto each entry), so it is handed the same store the verbs use.
+      const filed = await autofileDefects(deps.tracker, defectEntries(st.entries), now().toISOString(), memory);
       if (filed.length > 0) {
         st.status = `auto-filed ${filed.map((f) => f.ticketId).join(", ")}`;
         app.notice(`memory: auto-filed ${filed.length} defect ticket(s): ${filed.map((f) => f.ticketId).join(", ")}`);

@@ -342,7 +342,15 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
       if (stdin !== undefined) child.stdin?.end(stdin);
       else child.stdin?.end();
     });
+  // ONE memory store for the whole TUI: OpenViking on the VM,
+  // reached over the memory forward's loopback listener, holding BOTH user
+  // keys. The tab's verbs, the companion memedit executor and the memory feed
+  // all share this instance — a second one would mean a second sweep and a
+  // second health opinion.
+  const { tuiMemoryStore } = await import("./memory.js");
+  const memStore = tuiMemoryStore();
   const memState = installMemoryLearningHooks(app, {
+    memory: memStore,
     gitRun,
     repoRoot: sandboxRoot(),
     tracker: full.companion.tracker_dir
@@ -502,8 +510,6 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
     // executes over its own ssh. Sweep serialized behind a simple in-flight
     // flag so a slow ssh never stacks sweeps.
     const { processMemRequests } = await import("./memrequests.js");
-    const { tuiMemoryStore } = await import("./memory.js");
-    const memStore = tuiMemoryStore(cfg, realSshRunner);
     const memReqDir = join(full.companion.alerts_dir, "memedit");
     // The companion cannot read VM memory itself; the TUI publishes the
     // entries (with the expect-hashes addressed ops need) into the feed
