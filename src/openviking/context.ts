@@ -1,0 +1,123 @@
+// `ContextAssembler` over OpenViking — the round path's half of the
+// memory engine.
+//
+// The interface itself belongs to the round-seeding slice
+// (`src/memory/context.ts`) and is IMPORTED, not restated: its contract — both
+// methods resolve with "" when memory is unavailable, neither ever rejects —
+// is the load-bearing part, and a second declaration of it would be free to
+// drift.
+//
+// This module is where that contract is honoured against a real network. Every
+// path out of here has exactly three outcomes: the text, "", or "" — there is
+// no fourth. `assembleRoundMemory` already caps both calls with a deadline and
+// swallows throws, so this file could in principle be sloppier; it is not,
+// because a store that throws would spend the round's whole memory deadline
+// getting to the same empty string, and "memory must never DELAY a round" is
+// half of the invariant.
+//
+// The two halves are asymmetric on purpose:
+//
+//   * pinnedHead() is EXACT and GUARANTEED. the owner's standing instructions
+//     are delivered verbatim, in full, every round, so it reads the stored
+//     bytes through the store's sweep — never a search, whose budget and tier
+//     degradation could silently truncate an instruction.
+//   * contextBlock() is BUDGETED and APPROXIMATE. It is the server's own
+//     assembled block: one deterministic `mode: "context"` search, rendered
+//     server-side, pasted verbatim. Determinism is pinned inside the client
+//     (`rewrite`/`query_expansion` off) rather than requested here, so this
+//     module cannot ask for an LLM in the daemon's hot path even by accident.
+import type { ContextAssembler } from "../memory/context.js";
+import type { ContextSearchOptions, ContextSearchResult, OpenVikingClient } from "./client.js";
+import type { OpenVikingStore } from "./store.js";
+
+export interface OpenVikingContextOptions {
+  client: OpenVikingClient;
+  store: OpenVikingStore;
+  /** Per-category caps for the context search. Keys must be server quota
+   * buckets; unknown ones are dropped by the client with a gap. */
+  quotas?: Record<string, number>;
+  /** Deadline for the ONE context search. Shorter than the client's default:
+   * the round's own memory deadline is ~3s and a request that outlives it is
+   * pure cost. */
+  searchTimeoutMs?: number;
+  log?: (msg: string, extra?: unknown) => void;
+}
+
+const DEFAULT_SEARCH_TIMEOUT_MS = 2_500;
+
+export class OpenVikingContextAssembler implements ContextAssembler {
+  private readonly client: OpenVikingClient;
+  private readonly store: OpenVikingStore;
+  private readonly quotas: Record<string, number> | undefined;
+  private readonly searchTimeoutMs: number;
+  private readonly log: (msg: string, extra?: unknown) => void;
+
+  /** The stats of the last context search, for the caller that wants to know
+   * what the budget actually bought. Read-only bookkeeping — nothing in the
+   * round path depends on it, so a caller that ignores it loses nothing. */
+  lastSearch: ContextSearchResult | null = null;
+
+  constructor(opts: OpenVikingContextOptions) {
+    this.client = opts.client;
+    this.store = opts.store;
+    this.quotas = opts.quotas;
+    this.searchTimeoutMs = opts.searchTimeoutMs ?? DEFAULT_SEARCH_TIMEOUT_MS;
+    this.log = opts.log ?? (() => {});
+  }
+
+  /**
+   * the owner's pinned standing instructions, oldest first, verbatim.
+   *
+   * "" means the store did not answer OR nothing is pinned — the round path
+   * treats both as a gap on purpose (`degraded` in `RoundMemory`), because a
+   * healthy store with a pinned head always has something to say and an empty
+   * head is therefore evidence, not silence.
+   */
+  async pinnedHead(): Promise<string> {
+    try {
+      const entries = await this.store.read();
+      return entries
+        .filter((e) => e.pinned)
+        .map((e) => e.text.trim())
+        .filter((t) => t !== "")
+        .join("\n\n");
+    } catch (err) {
+      this.log("openviking: pinned head unavailable — the round proceeds without standing instructions", err);
+      return "";
+    }
+  }
+
+  /**
+   * ONE deterministic, budgeted context block, rendered by the server.
+   *
+   * `rendered` is used rather than re-rendering `entries` locally: the server
+   * did the budgeting, and a second renderer here would be a second place for
+   * the token budget to be wrong.
+   */
+  async contextBlock(query: string, opts: { maxTokens: number }): Promise<string> {
+    try {
+      const search: ContextSearchOptions = {
+        maxTokens: opts.maxTokens,
+        purpose: "coding",
+        timeoutMs: this.searchTimeoutMs,
+        ...(this.quotas ? { quotas: this.quotas } : {}),
+      };
+      const res = await this.client.searchContext(query, search);
+      if (!res.ok) {
+        this.lastSearch = null;
+        return "";
+      }
+      this.lastSearch = res.result;
+      return res.result.rendered;
+    } catch (err) {
+      this.lastSearch = null;
+      this.log("openviking: context search failed — the round proceeds memory-less", err);
+      return "";
+    }
+  }
+}
+
+/** The assembler the round path is wired with. */
+export function openVikingContextAssembler(opts: OpenVikingContextOptions): OpenVikingContextAssembler {
+  return new OpenVikingContextAssembler(opts);
+}

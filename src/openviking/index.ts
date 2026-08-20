@@ -11,3 +11,58 @@ export {
   type SupervisorDeps,
 } from "./supervisor.js";
 export type { OpenVikingHealth, OpenVikingStatus, ProcSample } from "./types.js";
+
+// The memory engine proper: the HTTP client, the `MemoryStore`
+// implementation over it, and the round path's `ContextAssembler`. Writes go
+// through `content/batch-write` exclusively — there is no `content/write`
+// wrapper anywhere below this barrel, by design.
+export {
+  DISABLED_MEMORY_POLICY,
+  OpenVikingClient,
+  QUOTA_CATEGORIES,
+  batchWriteLanded,
+  buildContextSearchBody,
+  keyFromFile,
+  ovFailed,
+  type BatchWriteOperation,
+  type BatchWritePrecondition,
+  type BatchWriteRequest,
+  type BatchWriteResult,
+  type ContextSearchEntry,
+  type ContextSearchOptions,
+  type ContextSearchResult,
+  type HttpFetch,
+  type HttpResponse,
+  type KeySource,
+  type OpenVikingClientOptions,
+  type OvDirEntry,
+  type OvGap,
+  type OvFailure,
+  type OvOutcome,
+  type OvSessionResult,
+  type TimeField,
+} from "./client.js";
+export {
+  DEFAULT_CATEGORY,
+  MANUAL_TAG,
+  OpenVikingStore,
+  PINNED_TAG,
+  RETIRED_TAG,
+  entryFrom,
+  openVikingStore,
+  renderEntryBody,
+  sha256Prefixed,
+  stampOf,
+  tagsOf,
+  tsFromModTime,
+  tsFromName,
+  validEntryId,
+  withTag,
+  withoutTag,
+  type OpenVikingStoreOptions,
+} from "./store.js";
+export {
+  OpenVikingContextAssembler,
+  openVikingContextAssembler,
+  type OpenVikingContextOptions,
+} from "./context.js";
