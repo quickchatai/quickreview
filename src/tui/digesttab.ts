@@ -59,6 +59,9 @@ export class SshDigestFetcher implements DigestFetcher {
   }
 }
 
+/** Click targets on the digest view: hint-bar keys + awaiting-you rows. */
+export type DigestAction = { t: "key"; key: string } | { t: "await"; pr: number; i: number };
+
 export interface DigestState {
   files: string[];
   /** Offset back from the newest file: 0 = latest, 1 = one older, … */
@@ -102,6 +105,9 @@ export function renderDigestTab(
   awaiting.forEach((row, i) => {
     const label = `${String(row.ageDays).padStart(3)}d ⚑ #${row.pr.number} ${row.pr.title}`;
     right.push(i === st.awaitingSelected ? `${SGR.inverse}${truncate(label, rightW - 2)}${SGR.reset}` : truncate(label, rightW - 2));
+    // Clickable: first click selects, second (via the tab's click handler)
+    // attaches — same convention as the board's PR rows.
+    frame.zones.push({ x1: leftW + 4, y1: 2 + i + 1, x2: cols - 1, y2: 2 + i + 1, action: { t: "await", pr: row.pr.number, i } satisfies DigestAction });
   });
   right.push("");
   right.push(`${SGR.dim}(⏎ attach · w why · m msg)${SGR.reset}`);
@@ -112,7 +118,18 @@ export function renderDigestTab(
       { text: ` ${right[r] ?? ""}`, width: rightW },
     ]);
   }
-  frame.boxRow(rows - 2, [{ text: ` ${SGR.dim}[1]board [2]memory  v memory view  j/k scroll  [ older  ] newer  ↓/↑ pick  ⏎ attach  q quit${SGR.reset}`, width: cols - 2 }]);
+  const hint = ` [1]board [2]memory  v memory view  j/k scroll  [ older  ] newer  ↓/↑ pick  ⏎ attach  q quit`;
+  frame.boxRow(rows - 2, [{ text: `${SGR.dim}${hint}${SGR.reset}`, width: cols - 2 }]);
+  // Clickable hint chunks — the mouse path into the same key state machine.
+  for (const [chunk, key] of [
+    ["[1]board", "1"],
+    ["v memory view", "v"],
+    ["[ older", "["],
+    ["] newer", "]"],
+  ] as const) {
+    const at = hint.indexOf(chunk);
+    if (at >= 0) frame.zones.push({ x1: 2 + at, y1: rows - 1, x2: 2 + at + chunk.length - 1, y2: rows - 1, action: { t: "key", key } satisfies DigestAction });
+  }
   frame.set(rows - 1, rule(cols, "└", "┘", []));
   return frame;
 }

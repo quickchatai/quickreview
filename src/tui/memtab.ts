@@ -18,12 +18,13 @@
 // sessions' ambient context only at their next checkpoint; memory_search
 // sees it as soon as the qmd re-index lands (memedit triggers one).
 import type { App } from "./app.js";
-import type { BoardKey } from "./keys.js";
+import { decodeKey, type BoardKey } from "./keys.js";
+import { hitTest, type Zone } from "./mouse.js";
 import { autofileDefects, type TrackerPaths } from "./autofile.js";
-import { currentFile, renderDigestTab, SshDigestFetcher, type DigestFetcher, type DigestState } from "./digesttab.js";
+import { currentFile, renderDigestTab, SshDigestFetcher, type DigestAction, type DigestFetcher, type DigestState } from "./digesttab.js";
 import { awaitingRows, sortPrs } from "./model.js";
 import { blockHash, defectEntries, timelineOrder, SshMemoryStore, type MemoryEntry, type MemoryStore } from "./memory.js";
-import { Frame, SGR, rule, truncate } from "./paint.js";
+import { Frame, SGR, displayWidth, rule, sanitizeText, stripAnsi, truncate, wrap } from "./paint.js";
 import {
   acceptProposal,
   improvementsArgv,
@@ -60,18 +61,53 @@ export function entryKey(e: MemoryEntry): string {
   return `${e.ts}|${e.id}#${e.block}`;
 }
 
-/** The visible one-line form of a timeline entry. */
+/** The visible one-line form of a timeline entry. The text already leads
+ * with its #tags — never re-print them as a prefix (they doubled before). */
 export function entryLine(e: MemoryEntry, width: number, highlightDay: string | undefined): string {
   const pin = e.pinned ? "● " : "  ";
-  const tags = e.tags
-    .filter((t) => t !== "pinned")
-    .slice(0, 2)
-    .map((t) => `#${t}`)
-    .join(" ");
-  const text = e.text.replace(/\s+/g, " ");
-  const line = truncate(`${pin}${e.ts.slice(5, 16)} ${tags ? `${tags} ` : ""}${text}`, width);
+  const text = sanitizeText(e.text).replace(/\s+/g, " ");
+  const line = truncate(`${pin}${e.ts.slice(5, 16)} ${text}`, width);
   if (highlightDay && e.day === highlightDay) return `${SGR.bold}${line}${SGR.reset}`;
   return line;
+}
+
+/** Every click target on the Memory & learning tab's memory view. */
+export type MemAction =
+  | { t: "key"; key: string }
+  | { t: "mem"; i: number }
+  | { t: "prop"; i: number }
+  | { t: "prop-accept"; i: number }
+  | { t: "prop-reject"; i: number }
+  | { t: "url"; url: string };
+
+interface RowChunk {
+  text: string;
+  action?: MemAction;
+  dim?: boolean;
+}
+
+interface ZonedRow {
+  text: string;
+  zones: Array<{ x1: number; x2: number; action: MemAction }>;
+}
+
+/** Assemble one row from chunks, tracking each clickable chunk's x-range
+ * relative to the row start (styling excluded from the measure). */
+function zonedRow(chunks: RowChunk[], gap = "  "): ZonedRow {
+  let text = "";
+  let plainW = 0;
+  const zones: ZonedRow["zones"] = [];
+  for (const c of chunks) {
+    if (text.length > 0) {
+      text += gap;
+      plainW += gap.length;
+    }
+    const w = displayWidth(stripAnsi(c.text));
+    if (c.action) zones.push({ x1: plainW, x2: plainW + w - 1, action: c.action });
+    text += c.dim ? `${SGR.dim}${c.text}${SGR.reset}` : c.text;
+    plainW += w;
+  }
+  return { text, zones };
 }
 
 /** Pinned-region budget: only the first ~1,991 chars / 75 lines of
@@ -87,6 +123,7 @@ export function renderMemoryView(
   highlightDay: string | undefined,
   cols: number,
   rows: number,
+  repo?: string,
 ): Frame {
   const frame = new Frame(cols, rows);
   frame.set(
@@ -97,66 +134,118 @@ export function renderMemoryView(
       `memory & learning${highlightDay ? ` · ${highlightDay}` : ""}`,
     ]),
   );
-  const leftW = Math.floor((cols - 3) * 0.6);
+  // List left (38%), reading pane right: the full selected entry WRAPPED —
+  // the one-line list is for picking, never the only way to read a lesson.
+  const leftW = Math.floor((cols - 3) * 0.38);
   const rightW = cols - 3 - leftW;
   const bodyRows = rows - 3;
 
   const ordered = timelineOrder(st.entries);
   const left: string[] = [];
+  const leftActions: Array<MemAction | undefined> = [];
   if (!st.memLoaded) left.push(`${SGR.dim}loading memory…${SGR.reset}`);
   else if (ordered.length === 0) left.push(`${SGR.dim}MEMORY.md is empty${SGR.reset}`);
   else {
     const budget = pinnedBudget(ordered);
-    const budgetNote = budget.over ? ` ${SGR.bold}⚠ pinned ${budget.chars}ch > ~1900ch injection head${SGR.reset}` : "";
+    const budgetNote = budget.over ? ` ${SGR.bold}⚠ pinned ${budget.chars}ch${SGR.reset}` : "";
     left.push(`${SGR.bold}MEMORY (${ordered.length})${SGR.reset}${budgetNote}`);
-    // The window follows the selection — the verb keys act on the inverse
-    // row, so it must never sit off-screen.
+    leftActions.push(undefined);
+    // The window follows the selection — verbs act on the inverse row, so it
+    // must never sit off-screen.
     const visible = bodyRows - 1;
     const start = Math.max(0, Math.min(st.sel - (visible - 1), ordered.length - visible));
     ordered.slice(Math.max(0, start), Math.max(0, start) + visible).forEach((e, i) => {
+      const abs = Math.max(0, start) + i;
       const line = entryLine(e, leftW - 3, highlightDay);
-      const selected = st.focus === "timeline" && Math.max(0, start) + i === st.sel;
+      const selected = st.focus === "timeline" && abs === st.sel;
       left.push(selected ? `${SGR.inverse}${line}${SGR.reset}` : line);
+      leftActions.push({ t: "mem", i: abs });
     });
   }
 
-  const right: string[] = [];
-  right.push(`${SGR.bold}RUBRIC PROPOSALS (${st.proposals.length})${SGR.reset}`);
-  if (!st.propLoaded) right.push(`${SGR.dim}loading…${SGR.reset}`);
-  else if (st.proposals.length === 0) right.push(`${SGR.dim}none pending${SGR.reset}`);
+  const right: ZonedRow[] = [];
+  const row = (chunks: RowChunk[], gap?: string): void => {
+    right.push(zonedRow(chunks, gap));
+  };
+  const selected = ordered[st.sel];
+  if (selected) {
+    row([
+      { text: `${SGR.bold}ENTRY${SGR.reset} ${selected.ts} [${selected.id}]${selected.pinned ? " ●pinned" : ""}` },
+    ]);
+    row([
+      { text: "[e edit]", action: { t: "key", key: "e" } },
+      { text: selected.pinned ? "[p unpin]" : "[p pin]", action: { t: "key", key: "p" } },
+      { text: st.confirmRetire === entryKey(selected) ? `${SGR.bold}[x CONFIRM retire]${SGR.reset}` : "[x retire]", action: { t: "key", key: "x" } },
+      { text: "[n new]", action: { t: "key", key: "n" } },
+      { text: "[r refresh]", action: { t: "key", key: "r" } },
+    ]);
+    const detailCap = Math.max(5, bodyRows - 10 - st.proposals.length * 2 - Math.min(4, st.improvements.length));
+    const wrapped = wrap(sanitizeText(selected.text), rightW - 3);
+    for (const l of wrapped.slice(0, detailCap)) row([{ text: l }]);
+    if (wrapped.length > detailCap) row([{ text: `… ${wrapped.length - detailCap} more lines`, dim: true }]);
+  }
+  row([{ text: "" }]);
+  row([{ text: `${SGR.bold}RUBRIC PROPOSALS (${st.proposals.length})${SGR.reset}` }]);
+  if (!st.propLoaded) row([{ text: "loading…", dim: true }]);
+  else if (st.proposals.length === 0) row([{ text: "none pending", dim: true }]);
   st.proposals.forEach((p, i) => {
-    const selected = st.focus === "proposals" && i === st.propSel;
-    const line = truncate(`▸ ${p.slug}`, rightW - 2);
-    right.push(selected ? `${SGR.inverse}${line}${SGR.reset}` : line);
-    for (const h of p.head.slice(0, 2)) right.push(`${SGR.dim}${truncate(`  ${h}`, rightW - 2)}${SGR.reset}`);
+    const isSel = st.focus === "proposals" && i === st.propSel;
+    row([
+      { text: isSel ? `${SGR.inverse}▸ ${truncate(p.slug, rightW - 26)}${SGR.reset}` : `▸ ${truncate(p.slug, rightW - 26)}`, action: { t: "prop", i } },
+      { text: "[accept]", action: { t: "prop-accept", i } },
+      { text: "[reject]", action: { t: "prop-reject", i } },
+    ]);
+    if (p.head[0]) row([{ text: truncate(`  ${p.head[0]}`, rightW - 2), dim: true }]);
   });
-  right.push("");
-  right.push(`${SGR.bold}BOT PRs / ISSUES${SGR.reset}`);
-  if (st.improvements.length === 0) right.push(`${SGR.dim}none${SGR.reset}`);
-  for (const it of st.improvements.slice(0, 8)) {
-    right.push(truncate(`${it.kind === "pr" ? "PR" : "IS"} #${it.number} [${it.state}] ${it.title}`, rightW - 2));
-  }
-  right.push("");
-  const defects = defectEntries(st.entries);
-  right.push(`${SGR.bold}DEFECT FLAGS (${defects.length})${SGR.reset}${st.filedTotal > 0 ? ` ${SGR.dim}${st.filedTotal} auto-filed${SGR.reset}` : ""}`);
-  for (const d of defects.slice(0, 6)) right.push(truncate(`⚑ ${d.ts.slice(5, 10)} ${d.links[0] ?? d.text.slice(0, 30)}`, rightW - 2));
-  if (st.status) {
-    right.push("");
-    right.push(truncate(st.status, rightW - 2));
-  }
-
-  for (let r = 0; r < bodyRows; r++) {
-    frame.boxRow(1 + r, [
-      { text: ` ${left[r] ?? ""}`, width: leftW + 1 },
-      { text: ` ${right[r] ?? ""}`, width: rightW },
+  row([{ text: "" }]);
+  row([{ text: `${SGR.bold}BOT PRs / ISSUES${SGR.reset}` }]);
+  if (st.improvements.length === 0) row([{ text: "none", dim: true }]);
+  for (const it of st.improvements.slice(0, 6)) {
+    const url = repo ? `https://github.com/${repo}/${it.kind === "pr" ? "pull" : "issues"}/${it.number}` : undefined;
+    row([
+      {
+        text: truncate(`${it.kind === "pr" ? "PR" : "IS"} #${it.number} [${it.state}] ${it.title}`, rightW - 2),
+        action: url ? { t: "url", url } : undefined,
+      },
     ]);
   }
-  frame.boxRow(rows - 2, [
-    {
-      text: ` ${SGR.dim}v digest view · t focus · ↓/↑ pick · x× retire · p pin · e edit · n new · A accept R reject · [ ] day · r refresh${SGR.reset}`,
-      width: cols - 2,
-    },
-  ]);
+  row([{ text: "" }]);
+  const defects = defectEntries(st.entries);
+  row([{ text: `${SGR.bold}DEFECT FLAGS (${defects.length})${SGR.reset}${st.filedTotal > 0 ? ` ${SGR.dim}${st.filedTotal} auto-filed${SGR.reset}` : ""}` }]);
+  for (const d of defects.slice(0, 5)) {
+    const i = ordered.findIndex((e) => entryKey(e) === entryKey(d));
+    row([{ text: truncate(`⚑ ${d.ts.slice(5, 10)} ${d.links[0] ?? d.text.slice(0, 30)}`, rightW - 2), action: i >= 0 ? { t: "mem", i } : undefined }]);
+  }
+  if (st.status) {
+    row([{ text: "" }]);
+    row([{ text: truncate(st.status, rightW - 2) }]);
+  }
+
+  const rightX0 = leftW + 4; // │ + left cell (leftW+1) + │ + leading space
+  for (let r = 0; r < bodyRows; r++) {
+    const rr = right[r];
+    frame.boxRow(1 + r, [
+      { text: ` ${left[r] ?? ""}`, width: leftW + 1 },
+      { text: ` ${rr?.text ?? ""}`, width: rightW },
+    ]);
+    const la = leftActions[r];
+    if (la) frame.zones.push({ x1: 2, y1: r + 2, x2: leftW + 1, y2: r + 2, action: la });
+    if (rr) for (const z of rr.zones) frame.zones.push({ x1: rightX0 + z.x1, y1: r + 2, x2: rightX0 + z.x2, y2: r + 2, action: z.action });
+  }
+  const hint = zonedRow(
+    [
+      { text: "[v digest view]", action: { t: "key", key: "v" } },
+      { text: "[t focus]", action: { t: "key", key: "t" } },
+      { text: "↓/↑ pick", dim: true },
+      { text: "[◀ older", action: { t: "key", key: "[" } },
+      { text: "▶ newer]", action: { t: "key", key: "]" } },
+      { text: "click an entry to read it · verbs are buttons", dim: true },
+      { text: "q quit", dim: true },
+    ],
+    " · ",
+  );
+  frame.boxRow(rows - 2, [{ text: ` ${hint.text}`, width: cols - 2 }]);
+  for (const z of hint.zones) frame.zones.push({ x1: 2 + z.x1, y1: rows - 1, x2: 2 + z.x2, y2: rows - 1, action: z.action });
   frame.set(rows - 1, rule(cols, "└", "┘", []));
   return frame;
 }
@@ -309,6 +398,9 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
     });
   };
 
+  /** The last painted frame's click zones — hitTest target for digestClick. */
+  let lastZones: Array<{ x1: number; y1: number; x2: number; y2: number; action: unknown }> = [];
+
   app.hooks.digestScreen = (theApp, cols, rows) => {
     if (!st.digest.loaded) guard("digest", loadDigest);
     if (!st.memLoaded) guard("memory", loadMemory);
@@ -316,10 +408,59 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
     const today = now().toISOString().slice(0, 10);
     if (st.view === "digest") {
       const prs = theApp.view.snapshot ? sortPrs(theApp.view.snapshot.prs) : [];
-      return renderDigestTab(st.digest, prs, theApp.view.dryRun, today, cols, rows).render();
+      const frame = renderDigestTab(st.digest, prs, theApp.view.dryRun, today, cols, rows);
+      lastZones = frame.zones;
+      return frame.render();
     }
     const day = currentFile(st.digest)?.slice(0, 10);
-    return renderMemoryView(st, theApp.view.dryRun, day, cols, rows).render();
+    const frame = renderMemoryView(st, theApp.view.dryRun, day, cols, rows, theApp.view.repo);
+    lastZones = frame.zones;
+    return frame.render();
+  };
+
+  // Mouse: every row and [button] on the tab is a zone; a click either
+  // selects (rows) or synthesizes the verb's keystroke (buttons), so the
+  // keyboard and the mouse share one state machine (retire keeps its
+  // two-step confirm either way).
+  app.hooks.digestClick = (theApp, x, y): void => {
+    const action = hitTest(lastZones as Zone<MemAction | DigestAction>[], x, y);
+    if (!action) return;
+    switch (action.t) {
+      case "key":
+        theApp.hooks.digestKey?.(theApp, decodeKey(Buffer.from(action.key, "utf8")));
+        return;
+      case "mem":
+        st.view = "memory";
+        st.focus = "timeline";
+        st.sel = action.i;
+        theApp.repaint();
+        return;
+      case "prop":
+        st.focus = "proposals";
+        st.propSel = action.i;
+        theApp.repaint();
+        return;
+      case "prop-accept":
+      case "prop-reject":
+        st.focus = "proposals";
+        st.propSel = action.i;
+        theApp.hooks.digestKey?.(theApp, decodeKey(Buffer.from(action.t === "prop-accept" ? "A" : "R", "utf8")));
+        return;
+      case "url":
+        theApp.hooks.openUrl?.(action.url);
+        theApp.notice(`opened ${action.url}`);
+        return;
+      case "await": {
+        // Like the board: first click selects the row, a second attaches.
+        if (st.digest.awaitingSelected === action.i) {
+          void theApp.hooks.attach?.(`pr-${action.pr}`, theApp);
+        } else {
+          st.digest.awaitingSelected = action.i;
+          theApp.repaint();
+        }
+        return;
+      }
+    }
   };
 
   app.hooks.digestKey = (theApp, key: BoardKey): boolean => {
