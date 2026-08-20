@@ -11,6 +11,8 @@ import type { MetricsView } from "./metricstab.js";
 import { ensureSshMaster } from "./connect.js";
 import { MOUSE_OFF, MOUSE_ON } from "./mouse.js";
 import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR } from "./paint.js";
+import { visiblePrs } from "./filters.js";
+import { reselect } from "./model.js";
 import { HotReloader, parseResumeArg, readResumeState, realReexec } from "./reload.js";
 import { realSshRunner } from "./remote.js";
 
@@ -80,6 +82,20 @@ export function parseTuiArgs(args: string[]): TuiArgs {
 }
 
 /**
+ * Chain an onPoll wrapper AFTER whatever is already installed. EVERY wrapper
+ * runTui adds composes through this — an installer that reassigns
+ * `app.hooks.onPoll` bare silently drops every earlier wrapper (the FeedWriter
+ * block did exactly that and killed the strip-refresh wrapper in production).
+ */
+export function chainOnPoll(app: App, fn: (a: App) => void): void {
+  const prev = app.hooks.onPoll;
+  app.hooks.onPoll = (a) => {
+    prev?.(a);
+    fn(a);
+  };
+}
+
+/**
  * the companion action channel's executor, mapped onto the App's
  * public surface plus the per-tab states the install hooks return. Exported
  * so tests can drive a real App through `processTuiActions`; runTui wires it
@@ -89,9 +105,12 @@ export function parseTuiArgs(args: string[]): TuiArgs {
 export function buildTuiDriver(app: App, memState: MemTabState, metricsView: MetricsView, deployState: DeployState): TuiDriver {
   // One keyboard owner at a time: an action must never type into a focused
   // pi pane or companion strip (same rule the mouse/tab handlers follow).
+  // A busy App (operator input box open, attach suspended) is refused: a
+  // synthesized keystroke would land in the operator's draft or nowhere.
   const prep = (): void => {
     if (app.piFocused()) app.blurPiPane();
     app.strip?.blur();
+    if (app.isBusy()) throw new Error("operator input open / attach active — action refused");
   };
   const driver: TuiDriver = {
     switchTab: (tab) => {
@@ -119,6 +138,9 @@ export function buildTuiDriver(app: App, memState: MemTabState, metricsView: Met
       app.repaint();
       // Drive the tab's own PR-entry state machine so the timeline FETCH runs
       // (drillTo is closure-private): # opens entry, digits accumulate, ⏎ drills.
+      // A half-typed operator entry would swallow the "#" and prefix our
+      // digits — clear entry mode first so the sequence starts clean.
+      metricsView.prEntry = undefined;
       app.pressKey("#");
       for (const d of String(pr)) app.pressKey(d);
       app.pressKey("\r");
@@ -129,13 +151,12 @@ export function buildTuiDriver(app: App, memState: MemTabState, metricsView: Met
       memState.view = "digest";
       app.repaint();
       // Page to the day through the tab's own [ / ] keys so content loads
-      // (pageDigest is closure-private). files are newest-first date-named.
+      // (pageDigest is closure-private). files are date-named ASCENDING
+      // (parseDigestList sorts); back counts BACK from the newest file.
       const i = memState.digest.files.findIndex((f) => f.startsWith(date));
-      if (i < 0) {
-        app.notice(`companion ▸ no digest for ${date}`);
-        return;
-      }
-      const delta = i - memState.digest.back;
+      if (i < 0) throw new Error(`no digest for ${date}`);
+      const target = memState.digest.files.length - 1 - i;
+      const delta = target - memState.digest.back;
       for (let k = 0; k < Math.abs(delta); k++) app.pressKey(delta > 0 ? "[" : "]");
     },
     memoryView: (opts) => {
@@ -153,6 +174,8 @@ export function buildTuiDriver(app: App, memState: MemTabState, metricsView: Met
       prep();
       app.tab = "board";
       app.view.boardFilter = f;
+      // The old ordinal may point past (or at a hole in) the narrowed list.
+      app.view.selected = reselect(visiblePrs(app.view), undefined, app.view.selected);
       app.repaint();
     },
     setMemoryFilter: (tag) => {
@@ -170,6 +193,7 @@ export function buildTuiDriver(app: App, memState: MemTabState, metricsView: Met
       app.tab = "deploy";
       app.repaint();
       if (action === "abort") {
+        if (!deployState.run) throw new Error("deploy_tab abort refused — no run in flight");
         app.pressKey("x"); // kills a running run (closes a finished log otherwise)
         return;
       }
@@ -182,10 +206,7 @@ export function buildTuiDriver(app: App, memState: MemTabState, metricsView: Met
       // container state (powerKind()); refuse a mismatched request rather than
       // silently doing the opposite.
       const kind = deployState.containerStatus !== undefined && !/^Up /.test(deployState.containerStatus) ? "start" : "stop";
-      if (kind !== action) {
-        app.notice(`companion ▸ deploy_tab ${action} refused — container is ${deployState.containerStatus ?? "unknown"}`);
-        return;
-      }
+      if (kind !== action) throw new Error(`deploy_tab ${action} refused — container is ${deployState.containerStatus ?? "unknown"}`);
       app.pressKey("S");
       app.pressKey("S");
     },
@@ -432,19 +453,13 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
     available: () => companionUp,
     onUpdate: () => app.repaint(),
   });
-  {
-    const prevOnPoll = app.hooks.onPoll;
-    app.hooks.onPoll = (a) => {
-      prevOnPoll?.(a);
-      void a.strip?.refresh();
-    };
-  }
+  chainOnPoll(app, (a) => void a.strip?.refresh());
 
   let alerts: { stop(): void } | undefined;
   if (companionUp) {
     const { FeedWriter } = await import("./feed.js");
     const feed = new FeedWriter(full.companion.feed_dir);
-    app.hooks.onPoll = (a) => {
+    chainOnPoll(app, (a) => {
       const snap = a.view.snapshot;
       if (!snap) return;
       try {
@@ -452,7 +467,7 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
       } catch (err) {
         a.notice(`✖ feed write failed: ${String(err instanceof Error ? err.message : err)}`);
       }
-    };
+    });
 
     const { AlertConsumer, AlertPolicy, filePolicyStore, notifySendRunner } = await import("./alerts.js");
     const { InjectSender } = await import("./msg.js");
@@ -474,15 +489,13 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
     // file; the consumer above does badge + notify + inject + cooldown.
     const { maybeWritePiAuthAlert } = await import("./alerts.js");
     const piAuthMem = { lastWritten: "" };
-    const prevOnPoll = app.hooks.onPoll;
-    app.hooks.onPoll = (a) => {
-      prevOnPoll?.(a);
+    chainOnPoll(app, (a) => {
       try {
         maybeWritePiAuthAlert(full.companion.alerts_dir, a.view.snapshot?.pi_auth_expired, piAuthMem);
       } catch {
         // alerting is best-effort; never break the poll loop
       }
-    };
+    });
 
     // §6 (rule-8 amendment): companion memory-edit requests. The
     // companion drops JSON under /alerts/memedit; the TUI validates and
@@ -507,9 +520,7 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
     };
     let memReqBusy = false;
     let memPollN = 0;
-    const prevOnPoll2 = app.hooks.onPoll;
-    app.hooks.onPoll = (a) => {
-      prevOnPoll2?.(a);
+    chainOnPoll(app, (a) => {
       if (memReqBusy) return;
       memReqBusy = true;
       const feedDue = memPollN++ % 12 === 0;
@@ -525,7 +536,7 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
         .finally(() => {
           memReqBusy = false;
         });
-    };
+    });
 
     // the companion → TUI action channel. Same sweep discipline as
     // the memedit requests above (poll cadence, busy flag so a slow sweep
@@ -536,9 +547,7 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
     const tuiActionsDir = join(full.companion.alerts_dir, "tui-actions");
     const driver = buildTuiDriver(app, memState, metricsView, deployState);
     let tuiActBusy = false;
-    const prevOnPoll3 = app.hooks.onPoll;
-    app.hooks.onPoll = (a) => {
-      prevOnPoll3?.(a);
+    chainOnPoll(app, (a) => {
       if (tuiActBusy) return;
       tuiActBusy = true;
       void processTuiActions(tuiActionsDir, driver)
@@ -551,7 +560,7 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
         .finally(() => {
           tuiActBusy = false;
         });
-    };
+    });
   }
 
   // Restore a hot-reload snapshot before run(), so the first paint is already

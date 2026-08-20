@@ -7,7 +7,7 @@ import { EventEmitter } from "node:events";
 import { describe, expect, it } from "vitest";
 import { TUI_DEFAULTS } from "../src/config.js";
 import { App } from "../src/tui/app.js";
-import { registeredKeys } from "../src/tui/cmdbar.js";
+import { barHitKey, registeredKeys } from "../src/tui/cmdbar.js";
 import type { DockerRunner } from "../src/tui/companion.js";
 import { renderBoard, type BoardView } from "../src/tui/board.js";
 import { renderDigestTab } from "../src/tui/digesttab.js";
@@ -120,6 +120,19 @@ function fakeStreams(cols = 120, rows = 40) {
   return { out, input, written: () => buf, type: (s: string) => (input as unknown as EventEmitter).emit("data", Buffer.from(s)) };
 }
 
+function bviewFor(): BoardView {
+  return {
+    health: { kind: "ok", heartbeatAgeS: 2 },
+    dryRun: true,
+    events: [],
+    selected: 0,
+    detailFull: false,
+    eventsFocus: false,
+    eventsScroll: 0,
+    help: false,
+  };
+}
+
 function harness(available = true, rows = 40) {
   const s = fakeStreams(120, rows);
   const app = new App(TUI_DEFAULTS, async () => ({ ok: false, stdout: "", stderr: "", code: 1 }), s.out, s.input);
@@ -184,7 +197,7 @@ describe("smart keyboard routing", () => {
     h.s.type("\r");
     await new Promise((r) => setTimeout(r, 0));
     const sends = h.docker.filter((a) => a.includes("send-keys"));
-    expect(sends[0]).toEqual(["exec", "qcr-companion", "tmux", "send-keys", "-t", "companion", "-l", "zz"]);
+    expect(sends[0]).toEqual(["exec", "qcr-companion", "tmux", "send-keys", "-t", "companion", "-l", "--", "zz"]);
     expect(sends[1]).toEqual(["exec", "qcr-companion", "tmux", "send-keys", "-t", "companion", "Enter"]);
     expect(h.app.strip!.focused).toBe(false);
     expect(h.app.strip!.input).toBe("");
@@ -198,6 +211,44 @@ describe("smart keyboard routing", () => {
     expect(h.app.strip!.focused).toBe(false);
     expect(h.app.strip!.input).toBe("");
     expect(h.docker.filter((a) => a.includes("send-keys"))).toEqual([]);
+    await h.close();
+  });
+
+  it("a multi-line paste is sanitized — CR/LF/tab never reach the draft (frame stays intact)", async () => {
+    const h = harness();
+    h.s.type("a\nb"); // paste seeds the strip whole
+    expect(h.app.strip!.focused).toBe(true);
+    expect(h.app.strip!.input).toBe("ab");
+    h.s.type("c\td\re"); // focused: appended via the input decoder
+    expect(h.app.strip!.input).toBe("abcde");
+    // The painted frame keeps exactly `rows` lines — no row ever splits.
+    const frame = renderBoard(bviewFor(), 120, 40, h.app.strip!.view());
+    expect(frame.lines).toHaveLength(40);
+    for (const line of frame.lines) expect(line.includes("\n")).toBe(false);
+    await h.close();
+  });
+
+  it("backspace encodings (\\x7f, \\b) never seed the strip", async () => {
+    for (const ch of ["\x7f", "\b"]) {
+      const h = harness();
+      h.s.type(ch);
+      expect(h.app.strip!.focused).toBe(false);
+      expect(h.app.strip!.input).toBe("");
+      await h.close();
+    }
+  });
+
+  it("a bar click blurs a focused strip and IS the keypress — never typed into or submitting the draft", async () => {
+    const h = harness();
+    h.s.type("z");
+    h.s.type("z"); // focused draft "zz"
+    let x3: number | undefined; // nav slot [3 deploy] on bar row A (terminal y=rows-2)
+    for (let x = 2; x < 120 && x3 === undefined; x++) if (barHitKey("board", x, 38, 120, 40) === "3") x3 = x;
+    expect(x3).toBeDefined();
+    h.s.type(`\x1b[<0;${x3};38M`);
+    expect(h.app.tab).toBe("deploy"); // the click became a real `3`
+    expect(h.app.strip!.focused).toBe(false);
+    expect(h.docker.filter((a) => a.includes("send-keys"))).toEqual([]); // draft never submitted
     await h.close();
   });
 

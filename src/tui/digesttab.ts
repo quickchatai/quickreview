@@ -95,7 +95,7 @@ export function renderDigestTab(
   frame.set(0, rule(cols, "┌", "┐", [`${HEADING}quickreview${RESET}`, modeBadge(dryRun), `memory & learning · digest ${date ?? "—"}${tag}`]));
 
   const leftW = Math.floor((cols - 3) * 0.55);
-  const rightW = cols - 3 - leftW;
+  const rightW = cols - 4 - leftW; // │ + (leftW+1) + │ + rightW + │ = cols
   const stripRows = strip ? stripHeight(rows, strip.available) : 0;
   const bodyRows = rows - 4 - stripRows; // top bar + strip + command bar (2 rows) + bottom border
 

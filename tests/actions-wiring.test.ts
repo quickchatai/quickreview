@@ -16,7 +16,9 @@ import type { DeployFetcher } from "../src/tui/deploytab.js";
 import { installDeployHooks } from "../src/tui/deploytab.js";
 import type { DigestFetcher } from "../src/tui/digesttab.js";
 import { applyMemoryFilter } from "../src/tui/filters.js";
-import { buildTuiDriver } from "../src/tui/index.js";
+import { FeedWriter } from "../src/tui/feed.js";
+import { buildTuiDriver, chainOnPoll } from "../src/tui/index.js";
+import type { CompanionStrip } from "../src/tui/strip.js";
 import { decodeKey } from "../src/tui/keys.js";
 import { installMemoryLearningHooks, type MemTabState } from "../src/tui/memtab.js";
 import { blockHash, parseMemory, timelineOrder, type MemEditOp, type MemoryStore } from "../src/tui/memory.js";
@@ -60,7 +62,9 @@ class FakeMemory implements MemoryStore {
 }
 
 const fakeDigest: DigestFetcher = {
-  list: () => Promise.resolve(["2026-08-20.md", "2026-08-19.md"]),
+  // ASCENDING, like production: parseDigestList sorts lexicographically and
+  // DigestState.back counts back from the NEWEST (= last) file.
+  list: () => Promise.resolve(["2026-08-19.md", "2026-08-20.md"]),
   read: (f) => Promise.resolve(`# digest ${f}`),
 };
 
@@ -284,27 +288,88 @@ describe("actions wiring: the watcher on a real App", () => {
     expect(metricsView.drill?.pr).toBe(5012);
   });
 
-  it("deploy_tab stop/start refuses a request mismatching the observed container state", async () => {
-    const { app, deployState, driver } = makeRig();
+  it("deploy_tab stop/start refuses a request mismatching the observed container state — as a FAILED result", async () => {
+    const { deployState, driver } = makeRig();
     deployState.containerStatus = "Exited (0) 2 hours ago";
     const dir = actionDir();
     drop(dir, "d.json", { verb: "deploy_tab", params: { action: "stop" } });
-    await processTuiActions(dir, driver);
-    expect(app.view.noticeLine).toContain("deploy_tab stop refused");
+    const [r] = await processTuiActions(dir, driver);
+    expect(r!.ok).toBe(false);
+    expect(r!.message).toContain("deploy_tab stop refused");
     expect(deployState.run).toBeUndefined();
     expect(deployState.armedKind).toBeUndefined();
   });
 
-  it("digest_day pages the digest to the requested day; unknown day is a notice", async () => {
+  it("deploy_tab abort with no run in flight is a FAILED result, not a stray x", async () => {
+    const { deployState, driver } = makeRig();
+    const dir = actionDir();
+    drop(dir, "a.json", { verb: "deploy_tab", params: { action: "abort" } });
+    const [r] = await processTuiActions(dir, driver);
+    expect(r!.ok).toBe(false);
+    expect(r!.message).toContain("no run in flight");
+    expect(deployState.armedKind).toBeUndefined();
+  });
+
+  it("digest_day pages to the requested day in BOTH directions (ascending file order)", async () => {
     const { app, memState, driver } = makeRig();
     app.tab = "digest";
     app.hooks.digestScreen!(app, 110, 30);
-    await settle(); // files listed, back=0 (2026-08-20)
+    await settle(); // files listed ascending, back=0 = newest (2026-08-20)
     driver.digestDay("2026-08-19");
     await settle();
     expect(memState.digest.back).toBe(1);
     expect(memState.view).toBe("digest");
-    driver.digestDay("2026-07-01");
-    expect(app.view.noticeLine).toContain("no digest for 2026-07-01");
+    expect(memState.digest.content).toContain("2026-08-19"); // the day actually loaded
+    driver.digestDay("2026-08-20"); // and back newer again
+    await settle();
+    expect(memState.digest.back).toBe(0);
+    expect(memState.digest.content).toContain("2026-08-20");
+  });
+
+  it("digest_day for an unknown day is a FAILED result", async () => {
+    const { memState, driver } = makeRig();
+    memState.digest.files = ["2026-08-19.md", "2026-08-20.md"];
+    memState.digest.loaded = true;
+    const dir = actionDir();
+    drop(dir, "u.json", { verb: "digest_day", params: { date: "2026-07-01" } });
+    const [r] = await processTuiActions(dir, driver);
+    expect(r!.ok).toBe(false);
+    expect(r!.message).toContain("no digest for 2026-07-01");
+    expect(memState.digest.back).toBe(0);
+  });
+
+  it("actions are REFUSED while an operator input box is open — the draft is untouched", async () => {
+    const { app, driver } = makeRig();
+    app.openMessageBox("pr-5012");
+    app.view.inputBox!.text = "half-typed operator draft";
+    const dir = actionDir();
+    drop(dir, "b.json", { verb: "select_pr", params: { pr: 5049 } });
+    const [r] = await processTuiActions(dir, driver);
+    expect(r!.ok).toBe(false);
+    expect(r!.message).toContain("action refused");
+    expect(app.view.inputBox).toBeDefined();
+    expect(app.view.inputBox!.text).toBe("half-typed operator draft");
+    expect(app.tab).toBe("board");
+    expect(app.currentPr()).not.toBe(5049);
+  });
+
+  it("runTui's onPoll composition: installing the FeedWriter wrapper must not kill the strip-refresh wrapper", () => {
+    const { app } = makeRig();
+    let refreshes = 0;
+    app.strip = { refresh: () => ((refreshes += 1), Promise.resolve()) } as unknown as CompanionStrip;
+    // The exact chain runTui builds, in order: strip refresh first, feed next.
+    chainOnPoll(app, (a) => void a.strip?.refresh());
+    const root = mkdtempSync(join(tmpdir(), "qcr-feed-"));
+    tmps.push(root);
+    const feedDir = join(root, "feed");
+    const feed = new FeedWriter(feedDir);
+    chainOnPoll(app, (a) => {
+      const snap = a.view.snapshot;
+      if (!snap) return;
+      feed.write(snap, a.rawEvents, a.view.health.kind);
+    });
+    app.hooks.onPoll!(app);
+    expect(refreshes).toBe(1); // the strip mirror still refreshes…
+    expect(readdirSync(feedDir)).toContain("snapshot.json"); // …and the feed wrote
   });
 });
