@@ -50,7 +50,7 @@
 // metadata footer is precisely what the server reserves for its own extractor
 // and strips on read.
 import { createHash } from "node:crypto";
-import { formatEventTags, parseEventTags } from "../memory/eventtags.js";
+import { formatEventTags, parseEventTags, parseHashTags } from "../memory/eventtags.js";
 import {
   matchesQuery,
   type MemoryEntry,
@@ -161,7 +161,10 @@ export function entryFrom(id: string, text: string, modTime: string): MemoryEntr
     text: trimmed,
     tags,
     links: [...trimmed.matchAll(LINK_RE)].map((m) => m[1]!),
-    pinned: tags.some((t) => t.toLowerCase() === PINNED_TAG),
+    // Header-only, unlike `tags`: a pinned entry rides the guaranteed head of
+    // every round prompt, so untrusted text quoted inside an entry must not
+    // be able to pin itself there. See src/memory/eventtags.ts.
+    pinned: parseHashTags(trimmed).includes(PINNED_TAG),
     // The hash is over the STORED bytes, not the trimmed text — it is a
     // precondition token for the server, not a digest of what we display.
     hash: sha256Prefixed(text),

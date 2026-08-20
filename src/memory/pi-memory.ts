@@ -20,6 +20,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { TuiConfig } from "../config.js";
 import type { SshRunner } from "../tui/remote.js";
+import { parseHashTags } from "./eventtags.js";
 import { matchesQuery, type MemoryEntry, type MemoryOp, type MemorySearchOptions, type MemoryStore, type MemoryWriteResult } from "./store.js";
 
 /** MEMORY.md inside the review container (the TUI's remote path). */
@@ -54,6 +55,8 @@ export function parseMemory(md: string): MemoryEntry[] {
     const text = block.join("\n").trim();
     block = [];
     if (!header || text.length === 0) return;
+    // `tags` stays a full-text scan: it feeds search and the import
+    // classifier, where over-inclusion is merely noisy.
     const tags = [...text.matchAll(/(^|\s)#([\w-]+)/g)].map((m) => m[2]!);
     const links = [...text.matchAll(/\[\[([^\]]+)\]\]/g)].map((m) => m[1]!);
     entries.push({
@@ -64,7 +67,13 @@ export function parseMemory(md: string): MemoryEntry[] {
       text,
       tags,
       links,
-      pinned: tags.includes("pinned"),
+      // `pinned` is NOT: it is the privileged flag, and a pinned entry is
+      // injected into the guaranteed head of every round prompt — the
+      // highest-trust position in the system. Entries quote untrusted human
+      // text verbatim (the feedback sink quotes PR comments), so a `#pinned`
+      // written anywhere in a comment must not be able to promote itself
+      // there. Header-only: only the leading run of `#tag` tokens counts.
+      pinned: parseHashTags(text).includes("pinned"),
       hash: blockHash(text),
     });
     blockIdx += 1;
