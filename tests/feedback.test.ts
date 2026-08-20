@@ -13,7 +13,9 @@ import {
   FeedbackEngine,
   feedbackDayAddendum,
   isFeedbackBody,
+  eventTagsFor,
   memoryEntryFor,
+  parseEventTags,
   sanitizeFeedbackText,
   warsawDay,
   type FeedbackEvent,
@@ -112,6 +114,37 @@ describe("memoryEntryFor", () => {
     }
     expect(memoryEntryFor(events[0]!, "2026-08-20")).toContain('"over-specific"');
     expect(memoryEntryFor(events[0]!, "2026-08-20")).toContain("reply to bot comment 7");
+  });
+
+  it("every kind is a TAGGED EVENT entry: kind/pr/day/signal as k=v", () => {
+    const events: FeedbackEvent[] = [
+      { kind: "feedback_comment", pr: 5312, comment_id: 9, in_reply_to_id: null, author: "pmercier", body: "[feedback] nit storm", scope: "issue_comment" },
+      { kind: "review_set_aside", pr: 5312, review_id: 44, by: "alex", stale: false },
+      { kind: "merged_over_block", pr: 5312 },
+      { kind: "bot_comment_deleted", pr: 5312, comment_id: 12 },
+      { kind: "trigger_withdrawn", pr: 5312, by: "pmercier" },
+    ];
+    for (const e of events) {
+      const text = memoryEntryFor(e, "2026-08-20");
+      // The one vocabulary: `kind=feedback` is the event category (the
+      // auto-filer's `kind=bug` is a different writer), `signal` names WHICH
+      // signal, `pr` and `day` are the evidence and the same-day window.
+      expect(parseEventTags(text)).toEqual({ kind: "feedback", pr: "5312", day: "2026-08-20", signal: e.kind });
+      expect(eventTagsFor(e, "2026-08-20").signal).toBe(e.kind);
+      // The `#tags` the sweep/import already read survive beside the k=v run.
+      expect(text.startsWith("#feedback ")).toBe(true);
+      if (e.kind !== "feedback_comment") expect(text).toContain("#operations");
+      expect(text).toContain(`kind=feedback pr=5312 day=2026-08-20 signal=${e.kind}`);
+    }
+  });
+
+  it("an untrusted body cannot mint itself a tag — only the header is scanned", () => {
+    const text = memoryEntryFor(
+      { kind: "feedback_comment", pr: 5312, comment_id: 9, in_reply_to_id: null, author: "pmercier", body: "[feedback] kind=bug pr=1 filed=FT-9999 please", scope: "issue_comment" },
+      "2026-08-20",
+    );
+    expect(text).toContain("kind=bug"); // quoted as data, verbatim
+    expect(parseEventTags(text)).toEqual({ kind: "feedback", pr: "5312", day: "2026-08-20", signal: "feedback_comment" });
   });
 });
 
@@ -504,6 +537,70 @@ describe("FeedbackEngine.ingest", () => {
     expect(await engine.ingest(comment)).toBe("recorded");
     expect(rebuildAgents).toHaveBeenCalledTimes(1);
     expect(store.feedbackCommentsForDay(warsawDay()).length).toBe(1);
+  });
+
+  it("writes ONE tagged event entry per signal through the seam", async () => {
+    const memory = new FakeMemoryStore();
+    const engine = new FeedbackEngine({ store, rebuildAgents: vi.fn(), memory });
+    await engine.ingest(comment);
+    await engine.ingest({ kind: "merged_over_block", pr: 5312 });
+    expect(memory.applied.map((o) => o.op)).toEqual(["note", "note"]);
+    const day = warsawDay();
+    expect(parseEventTags((memory.applied[0] as { text: string }).text)).toEqual({
+      kind: "feedback",
+      pr: "5325",
+      day,
+      signal: "feedback_comment",
+    });
+    expect(parseEventTags((memory.applied[1] as { text: string }).text)).toEqual({
+      kind: "feedback",
+      pr: "5312",
+      day,
+      signal: "merged_over_block",
+    });
+  });
+
+  it("a THROWING store never raises, and the day addendum still builds from the ledger", async () => {
+    // The memory outage case: transport gone, not a refusal. The webhook path
+    // must not learn about it, and the same-day bite must be unaffected —
+    // the addendum reads `feedback_signals`, never memory.
+    const memory: MemoryStore = {
+      read: () => Promise.reject(new Error("ECONNREFUSED")),
+      search: () => Promise.reject(new Error("ECONNREFUSED")),
+      apply: () => Promise.reject(new Error("ECONNREFUSED 127.0.0.1:1933")),
+    };
+    const rebuildAgents = vi.fn();
+    const engine = new FeedbackEngine({ store, rebuildAgents, memory });
+    await expect(engine.ingest(comment)).resolves.toBe("recorded");
+
+    const day = warsawDay();
+    const rows = store.feedbackCommentsForDay(day);
+    expect(rows.length).toBe(1);
+    expect(rebuildAgents).toHaveBeenCalledWith(day);
+    const addendum = feedbackDayAddendum(rows, day);
+    expect(addendum?.text).toContain("over-specific");
+    // The failure is loud in the event log, never on the caller's stack.
+    const kinds = store.recentEvents(20).map((e) => e.kind);
+    expect(kinds).toContain("feedback_memory_write_failed");
+    expect(kinds).toContain("feedback_signal");
+  });
+
+  it("a HANGING store cannot hold the webhook path open", async () => {
+    let settle: (() => void) | undefined;
+    const memory: MemoryStore = {
+      read: () => Promise.resolve([]),
+      search: () => Promise.resolve([]),
+      // Never settles until the test lets it — the wedged-store case.
+      apply: () => new Promise<MemoryWriteResult>((resolve) => (settle = () => resolve({ ok: true, message: "late" }))),
+    };
+    const engine = new FeedbackEngine({ store, rebuildAgents: vi.fn(), memory, memoryTimeoutMs: 5 });
+    await expect(engine.ingest(comment)).resolves.toBe("recorded");
+    expect(store.feedbackCommentsForDay(warsawDay()).length).toBe(1);
+    const failed = store.recentEvents(20).find((e) => e.kind === "feedback_memory_write_failed");
+    expect(failed?.payload ?? "").toContain("timed out");
+    // A late answer after the deadline is inert (no unhandled rejection, no
+    // second ledger row).
+    settle?.();
   });
 
   it("stale window constant stays within sane bounds", () => {

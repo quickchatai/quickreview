@@ -9,10 +9,13 @@
 // never stamps `last_author_reply_at` (which would unlock a re-review at an
 // unchanged head). Its two sinks are:
 //
-//   1. reviewer memory — one `#feedback` entry per signal, appended verbatim
-//      through the ONE MemoryStore seam (src/memory/store.ts) as a `note`
-//      op — the daemon does not grow a second writer, and it does not know
-//      which engine is behind the seam;
+//   1. reviewer memory — one TAGGED EVENT ENTRY per signal:
+//      `#feedback` plus the `k=v` event tags `kind`/`pr`/`day`/`signal`,
+//      appended verbatim through the ONE MemoryStore seam
+//      (src/memory/store.ts) as a `note` op. The daemon does not grow a
+//      second writer, it does not know which engine is behind the seam, and
+//      the write is BEST EFFORT under a deadline — memory is a sink, the
+//      SQLite `feedback_signals` ledger is the record;
 //   2. the same-day validator addendum — regenerated on every explicit
 //      [feedback] comment and composed into pass-validate's BUILT body
 //      (the owner, 2026-08-20: "ingestable at least into the memory for a day,
@@ -22,9 +25,11 @@
 //      resulting downgrade `feedback-shape` — it never licenses a kill, and
 //      the blocker bar does not move.
 //
-// The EOD sweep consolidates the `#feedback` memory entries into durable
+// The EOD curator consolidates the `kind=feedback` event entries into durable
 // learnings and rubric proposals through its existing mandate; the addendum
-// expires with the Warsaw day (wire.ts rebuilds on day change).
+// expires with the Warsaw day (wire.ts rebuilds on day change) and is built
+// from the LEDGER (`feedbackCommentsForDay`), never from memory — it therefore
+// survives a memory outage and the engine cutover untouched.
 import { zoneDateString } from "./eod.js";
 import { VALIDATE_PASS, type PassAddendum } from "./include.js";
 import { localPiMemoryStore } from "./memory/pi-memory.js";
@@ -151,23 +156,99 @@ function whereLabel(scope: string | null, inReplyTo: number | null): string {
 
 // ---- the memory entry -------------------------------------------------------
 
-/** One `#feedback` line per signal — the shape the EOD sweep consolidates. */
-export function memoryEntryFor(e: FeedbackEvent, day: string): string {
+/**
+ * The EVENT-TAG vocabulary. Every signal is written as a tagged
+ * event entry: `k=v` pairs, the same strict form the engine stores as native
+ * tags and the same one the EOD curator filters on and the TUI auto-filer
+ * queries (`kind=bug` is that writer's category; the loop's own category is
+ * `kind=feedback`). One vocabulary, four keys:
+ *
+ *   kind   — the event category. Always `feedback` here.
+ *   pr     — the PR the signal came from, digits only (the evidence handle).
+ *   day    — the Warsaw day it arrived, `YYYY-MM-DD` (the same-day window).
+ *   signal — WHICH signal, i.e. the `FeedbackEvent` kind verbatim, so an
+ *            explicit human comment can be told from a behavioral inference
+ *            without parsing prose.
+ *
+ * They are rendered into the entry text (the seam carries text, not a tag
+ * map) as a single space-separated run right after the `#tags` — leading and
+ * machine-parseable at once, so a store that sets native tags derives them
+ * with `parseEventTags` instead of re-deriving meaning from the sentence.
+ */
+export const FEEDBACK_EVENT_KIND = "feedback";
+
+export type FeedbackEventTags = {
+  kind: typeof FEEDBACK_EVENT_KIND;
+  pr: string;
+  day: string;
+  signal: FeedbackEvent["kind"];
+};
+
+export function eventTagsFor(e: FeedbackEvent, day: string): FeedbackEventTags {
+  return { kind: FEEDBACK_EVENT_KIND, pr: String(e.pr), day, signal: e.kind };
+}
+
+/** `k=v k=v …`, declaration order — byte-stable for a given signal. */
+export function formatEventTags(tags: Record<string, string>): string {
+  return Object.entries(tags)
+    .map(([k, v]) => `${k}=${v}`)
+    .join(" ");
+}
+
+/** One `k=v` token: bare (no `#`), value without whitespace. */
+const EVENT_TAG_RE = /^([a-z][a-z0-9_-]*)=([^\s]+)$/;
+
+/**
+ * The tags a stored entry carries — the reader half of the vocabulary, so no
+ * consumer (store, curator, auto-filer) writes a second parser.
+ *
+ * Only the entry's HEADER is scanned: `#tag` tokens, then the `k=v` run, and
+ * the scan stops at the first word that is neither. The feedback body is
+ * untrusted human text quoted later in the same entry — a comment reading
+ * `[feedback] kind=bug` must not be able to mint itself a tag.
+ */
+export function parseEventTags(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const token of text.split(/\s+/)) {
+    if (token === "") continue;
+    if (token.startsWith("#")) continue;
+    const m = EVENT_TAG_RE.exec(token);
+    if (!m) break;
+    if (!(m[1]! in out)) out[m[1]!] = m[2]!;
+  }
+  return out;
+}
+
+/** The `#tags` an entry opens with — kept beside the `k=v` run: they are what
+ * pi-memory search, the import classifier and the EOD sweep already read. */
+function hashTagsFor(e: FeedbackEvent): string {
+  return e.kind === "feedback_comment" ? "#feedback" : "#feedback #operations";
+}
+
+/** The human half — one sentence naming the signal and its evidence. */
+function proseFor(e: FeedbackEvent, day: string): string {
   switch (e.kind) {
     case "feedback_comment":
-      return `#feedback human [feedback] by ${e.author} on PR #${e.pr} (${whereLabel(e.scope, e.in_reply_to_id)}, comment ${e.comment_id}): "${sanitizeFeedbackText(e.body)}" — a review comment judged wrong or over-specific; evidence: PR #${e.pr} — ${day}`;
+      return `human [feedback] by ${e.author} on PR #${e.pr} (${whereLabel(e.scope, e.in_reply_to_id)}, comment ${e.comment_id}): "${sanitizeFeedbackText(e.body)}" — a review comment judged wrong or over-specific; evidence: PR #${e.pr} — ${day}`;
     case "review_set_aside":
       // Honest wording: the stale-on-push filter is a heuristic on the event
       // clock, so a mechanical removal can still slip through when delivery
       // order raced — never assert human intent as fact.
-      return `#feedback #operations bot review ${e.review_id} on PR #${e.pr} was dismissed by ${e.by} — if a human did this (GitHub auto-dismisses stale reviews on push, which the daemon filters only heuristically), the posted review blocked them enough to remove; look at what made it disposable; evidence: PR #${e.pr} — ${day}`;
+      return `bot review ${e.review_id} on PR #${e.pr} was dismissed by ${e.by} — if a human did this (GitHub auto-dismisses stale reviews on push, which the daemon filters only heuristically), the posted review blocked them enough to remove; look at what made it disposable; evidence: PR #${e.pr} — ${day}`;
     case "merged_over_block":
-      return `#feedback #operations PR #${e.pr} merged while the bot's REQUEST_CHANGES stood — an advisory-review override (branch-protection state unknown to the app), low-weight signal; evidence: PR #${e.pr} — ${day}`;
+      return `PR #${e.pr} merged while the bot's REQUEST_CHANGES stood — an advisory-review override (branch-protection state unknown to the app), low-weight signal; evidence: PR #${e.pr} — ${day}`;
     case "bot_comment_deleted":
-      return `#feedback #operations bot comment ${e.comment_id} on PR #${e.pr} was deleted by a human — the bluntest noise verdict there is; evidence: PR #${e.pr} — ${day}`;
+      return `bot comment ${e.comment_id} on PR #${e.pr} was deleted by a human — the bluntest noise verdict there is; evidence: PR #${e.pr} — ${day}`;
     case "trigger_withdrawn":
-      return `#feedback #operations review trigger on PR #${e.pr} withdrawn by ${e.by} before the review completed — someone took the bot off the PR; evidence: PR #${e.pr} — ${day}`;
+      return `review trigger on PR #${e.pr} withdrawn by ${e.by} before the review completed — someone took the bot off the PR; evidence: PR #${e.pr} — ${day}`;
   }
+}
+
+/** One tagged event entry per signal — `#tags`, then the `k=v` event tags,
+ * then the sentence. The shape the EOD curator consolidates and the auto-filer
+ * queries. */
+export function memoryEntryFor(e: FeedbackEvent, day: string): string {
+  return `${hashTagsFor(e)} ${formatEventTags(eventTagsFor(e, day))} ${proseFor(e, day)}`;
 }
 
 // ---- the same-day validator addendum ---------------------------------------
@@ -218,9 +299,17 @@ export interface FeedbackEngineDeps {
   memory?: MemoryStore;
   /** Sandbox root — where the default store finds its engine. */
   root?: string;
+  /** How long the sink waits for the memory write before giving up on it and
+   * returning (the signal is already ledgered). A store that hangs must not
+   * hold the webhook path open. */
+  memoryTimeoutMs?: number;
   log?: (msg: string, extra?: unknown) => void;
   now?: () => Date;
 }
+
+/** Long enough for a loopback HTTP write plus embedding, short enough that a
+ * wedged store costs the webhook path seconds, not minutes. */
+export const FEEDBACK_MEMORY_TIMEOUT_MS = 10_000;
 
 export type IngestResult = "recorded" | "duplicate" | "skipped_stale";
 
@@ -265,17 +354,7 @@ export class FeedbackEngine {
     if (!inserted) return "duplicate";
     this.deps.store.logEvent("feedback_signal", e.pr, { kind: e.kind, day });
 
-    try {
-      // `note`, not `add`: the entry carries its own `#feedback` tag and must
-      // be stored verbatim — never dressed up as the operator's own words.
-      const res = await this.memory.apply({ op: "note", text: memoryEntryFor(e, day) });
-      if (!res.ok) throw new Error(res.message);
-    } catch (err) {
-      // Memory is a sink, not the ledger: the signal is already recorded and
-      // the EOD sweep can re-derive it from feedback_signals.
-      this.log("feedback: memory write failed", err);
-      this.deps.store.logEvent("feedback_memory_write_failed", e.pr, { kind: e.kind, error: String(err) });
-    }
+    await this.writeMemory(e, day);
 
     if (e.kind === "feedback_comment") {
       try {
@@ -286,5 +365,36 @@ export class FeedbackEngine {
       }
     }
     return "recorded";
+  }
+
+  /**
+   * The sink half: one tagged event entry, best effort. Memory is a SINK, not
+   * the ledger — the signal is already in `feedback_signals` and both the
+   * same-day addendum and the EOD curator re-derive it from there — so a
+   * refusal, a throw and a hang all end the same way: logged, ledgered as an
+   * anomaly, never raised. Nothing below can reject.
+   */
+  private async writeMemory(e: FeedbackEvent, day: string): Promise<void> {
+    const budget = this.deps.memoryTimeoutMs ?? FEEDBACK_MEMORY_TIMEOUT_MS;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      // `note`, not `add`: the entry carries its own tags and must be stored
+      // verbatim — never dressed up as the operator's own words.
+      const write = (async () => this.memory.apply({ op: "note", text: memoryEntryFor(e, day) }))();
+      // A write that never settles must not hold the webhook path open. The
+      // race already attaches a handler to `write`, so a rejection arriving
+      // after the deadline won is handled, never an unhandled rejection.
+      const deadline = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`memory write timed out after ${budget}ms`)), budget);
+        timer.unref?.();
+      });
+      const res = await Promise.race([write, deadline]);
+      if (!res.ok) throw new Error(res.message);
+    } catch (err) {
+      this.log("feedback: memory write failed", err);
+      this.deps.store.logEvent("feedback_memory_write_failed", e.pr, { kind: e.kind, error: String(err) });
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   }
 }
