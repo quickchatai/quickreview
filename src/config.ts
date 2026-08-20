@@ -342,6 +342,10 @@ export interface OpenVikingConfig {
    * without which the default local dense embedder raises
    * EmbeddingConfigurationError at startup (verified against 0.4.15). */
   llama_cpp_python_version: string;
+  /** Upstream base commit of the vendored pi extension. Pinned beside the
+   * server version so `tests/openviking-fork.test.ts` gates drift instead of
+   * letting a bump rebase silently onto new upstream behaviour. */
+  extension_commit: string;
   host: string;
   port: number;
   /** `openviking-server` inside the image's venv. */
@@ -400,6 +404,7 @@ export const OPENVIKING_DEFAULTS: OpenVikingConfig = {
   enabled: true,
   version: "0.4.15",
   llama_cpp_python_version: "0.3.35",
+  extension_commit: "d436baa23c83938b22bb0aab08b0ce48568b5ff4",
   host: "127.0.0.1",
   port: 1933,
   bin: "/opt/openviking/venv/bin/openviking-server",

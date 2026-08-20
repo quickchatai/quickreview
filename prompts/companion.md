@@ -36,11 +36,14 @@ about the daemon's view, your memory is not.
 **On demand** — for depth the feed does not carry:
 
 - `qcr status | why <pr> | today | events` — always with `--json`.
-- Read-only reads over ssh: `ssh my-vm sudo ls|cat /opt/quickreview/state/…`
-  (`dryrun/`, `digest/`, session ledgers, `status.json`), and
-  `ssh my-vm sudo docker logs --since 10m quickreview-sandbox`.
+- Reviewer memory, read and write, through the OpenViking tools.
+  You reach the store over a forward the host owns; you hold no VM
+  credential and cannot ssh anywhere.
 
-Reads only. If a command would change anything on the VM, you do not run it.
+You have no ssh access to the VM — the `~/.ssh` mount and agent socket were
+removed deliberately. Anything you cannot see through the feed or through
+memory, ask the TUI for. If a command would change anything on the VM, you do
+not run it.
 
 ## Boundary (absolute)
 

@@ -90,20 +90,25 @@ else
   skip "auth.json absent — run: docker exec -it $CONTAINER tmux attach -t $SESSION, then /login"
 fi
 
-# --- 4. ssh read from inside the container -----------------------------------
-step "VM read from inside the container"
-DOCKER_ON_VM="docker"
-[[ "$SUDO" == "1" ]] && DOCKER_ON_VM="sudo docker"
-if docker exec "$CONTAINER" ssh -o BatchMode=yes -o ConnectTimeout=10 "$SSH_HOST" true >"$WORK/ssh.log" 2>&1; then
-  pass "ssh $SSH_HOST works inside the container"
-  if docker exec "$CONTAINER" ssh -o BatchMode=yes "$SSH_HOST" "$DOCKER_ON_VM exec $VM_CONTAINER cat /opt/quickreview/state/status.json" >"$WORK/status.json" 2>/dev/null &&
-     [[ -s "$WORK/status.json" ]]; then
-    pass "daemon status.json readable ($(wc -c <"$WORK/status.json") bytes)"
-  else
-    fail "daemon status.json readable"
-  fi
+# --- 4. no ssh from inside the container; memory reachable instead -----------
+# REMOVED the companion's ~/.ssh mount and agent socket: it holds no VM
+# credential. So ssh working in here is now a FAILURE, not a pass, and the
+# container's window onto the VM is the OpenViking forward.
+step "companion holds no VM credential"
+if docker exec "$CONTAINER" ssh -o BatchMode=yes -o ConnectTimeout=5 "$SSH_HOST" true >"$WORK/ssh.log" 2>&1; then
+  fail "ssh $SSH_HOST works inside the container — the credential boundary (rule 8) has regressed"
 else
-  fail "ssh $SSH_HOST works inside the container ($(tail -1 "$WORK/ssh.log"))"
+  pass "ssh $SSH_HOST refused inside the container (expected — no VM credential)"
+fi
+
+step "memory reachable from inside the container"
+MEM_URL="${QCR_MEMORY_ENDPOINT:-http://198.51.100.1:1933}"
+if docker exec "$CONTAINER" node -e "
+  fetch('$MEM_URL/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))
+" >"$WORK/memory.log" 2>&1; then
+  pass "OpenViking /health reachable at $MEM_URL"
+else
+  skip "OpenViking unreachable at $MEM_URL — is the forward installed? (scripts/companion-memory-forward.mjs status)"
 fi
 
 # --- 5. overseer inject (dry by default) -------------------------------------
