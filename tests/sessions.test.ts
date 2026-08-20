@@ -131,6 +131,7 @@ describe("buildPiCommand", () => {
     });
     expect(argv).toEqual([
       "pi",
+      "--approve",
       "--model", "openai/conv",
       "--session-dir", "/s/state/pi-sessions/pr-1",
       "--system-prompt", "/s/state/session-prompts/pr-1.md",
@@ -145,6 +146,13 @@ describe("buildPiCommand", () => {
       piBin: "pi", model: "m", sessionDir: "d", systemPromptPath: "p", extensionPaths: [], sessionName: "s",
     });
     expect(argv.join(" ")).not.toMatch(/update/i);
+  });
+
+  it("always pre-trusts the project (--approve) — the reviewer never blocks on pi's trust modal", () => {
+    const argv = buildPiCommand({
+      piBin: "pi", model: "m", sessionDir: "d", systemPromptPath: "p", extensionPaths: [], sessionName: "s",
+    });
+    expect(argv).toContain("--approve");
   });
 });
 

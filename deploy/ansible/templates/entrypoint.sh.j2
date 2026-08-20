@@ -64,8 +64,24 @@ for (const p of wanted) {
   }
   if (!settings.extensions.includes(p)) settings.extensions.push(p);
 }
+// The reviewer never blocks on interactive input (the owner, 2026-08-20 —
+// pr-5334 stalled on pi's "Trust project folder?" modal after .pi/settings.json
+// shipped). Belt: trust every project by default. Braces: pre-seed the trust
+// store for /opt/quickreview so even a settings regression cannot re-surface the
+// prompt. Third layer: sessions.ts passes --approve on every spawn.
+settings.defaultProjectTrust = "always";
+
 fs.writeFileSync(file, JSON.stringify(settings, null, 2) + "\n");
 console.log("pi extensions registered: " + settings.extensions.join(", "));
+
+const trustFile = path.join(process.env.HOME, ".pi", "agent", "trust.json");
+let trust = {};
+if (fs.existsSync(trustFile)) trust = JSON.parse(fs.readFileSync(trustFile, "utf8"));
+if (trust["/opt/quickreview"] !== true) {
+  trust["/opt/quickreview"] = true;
+  fs.writeFileSync(trustFile, JSON.stringify(trust, null, 2) + "\n");
+}
+console.log("pi project trust: defaultProjectTrust=always, /opt/quickreview pre-trusted");
 PI_EXT_MERGE
 
 # Private-repo git auth (example-app clone + per-PR fetches): the app

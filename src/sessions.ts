@@ -81,6 +81,12 @@ export interface PiCommandSpec {
 export function buildPiCommand(spec: PiCommandSpec): string[] {
   const argv = [
     spec.piBin,
+    // --approve: pre-trust project-local .pi resources for this run (verified
+    // against the pinned 0.84.1 --help). Without it a cwd carrying .pi/ (our
+    // settings.json, shipped 2026-08-20) hits pi's interactive "Trust project
+    // folder?" modal and the session stalls forever (pr-5334 incident). The
+    // reviewer never blocks on interactive input — the owner, 2026-08-20.
+    "--approve",
     "--model",
     spec.model,
     "--session-dir",

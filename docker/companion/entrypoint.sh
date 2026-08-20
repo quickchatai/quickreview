@@ -52,18 +52,19 @@ try {
   const globalRoot = require("child_process").execSync("npm root -g").toString().trim();
   memoryMain = require.resolve("pi-memory", { paths: [globalRoot] });
 } catch {}
+let cfg = {};
+try { cfg = JSON.parse(fs.readFileSync(path, "utf8")); } catch {}
+if (!Array.isArray(cfg.extensions)) cfg.extensions = [];
 if (memoryMain) {
-  let cfg = {};
-  try { cfg = JSON.parse(fs.readFileSync(path, "utf8")); } catch {}
-  if (!Array.isArray(cfg.extensions)) cfg.extensions = [];
-  if (!cfg.extensions.includes(memoryMain)) {
-    cfg.extensions.push(memoryMain);
-    fs.writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n");
-  }
+  if (!cfg.extensions.includes(memoryMain)) cfg.extensions.push(memoryMain);
   console.log("pi extensions registered:", cfg.extensions.join(", "));
 } else {
   console.error("WARNING: pi-memory not resolvable — companion runs without memory");
 }
+// Never block on pi's interactive "Trust project folder?" modal (mirrors the
+// VM entrypoint; the owner, 2026-08-20 — pr-5334 stall).
+cfg.defaultProjectTrust = "always";
+fs.writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n");
 PI_EXT_MERGE
 
 # OpenAI auth: the OAuth route (`/login` once inside a pi session) persists in
