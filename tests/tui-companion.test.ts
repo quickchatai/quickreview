@@ -53,6 +53,12 @@ function lifecycle(answers: Parameters<typeof fakeDocker>[0], env: NodeJS.Proces
   return { lc: new CompanionLifecycle(CFG, runner, env, noDirs), calls };
 }
 
+/** ensureUp() resolves the memory wiring first (docker network …).
+ * That is its own test file (companion-memory.test.ts); the lifecycle
+ * assertions below are about the container, so the network calls are filtered
+ * out rather than repeated in every expectation. */
+const containerCalls = (calls: string[][]): string[][] => calls.filter((c) => c[0] !== "network");
+
 describe("companion config", () => {
   it("defaults the whole [companion] section when config.toml omits the keys", () => {
     const cfg = parseConfig(readFileSync(resolve(root, "config.toml"), "utf8")).companion;
@@ -91,27 +97,28 @@ describe("companion config", () => {
 describe("CompanionLifecycle argv", () => {
   const { lc } = lifecycle([]);
 
-  it("mounts pihome, repo, tracker, feed, alerts and ssh (ssh read-only)", () => {
+  it("mounts pihome, repo, tracker, feed and alerts — and no credential", () => {
     const argv = lc.runArgv();
     expect(argv.slice(0, 4)).toEqual(["run", "--detach", "--name", "qcr-companion"]);
     const mounts = argv.filter((_, i) => argv[i - 1] === "--volume");
+    // the ~/.ssh mount is gone for good — the companion's reach into
+    // the VM is OpenViking memory over a HOST-owned forward, nothing else.
     expect(mounts).toEqual([
       `companion-pihome:${CONTAINER.piHome}`,
       `/host/review-sandbox:${CONTAINER.workspace}:rw`,
       `/host/tracker:${CONTAINER.tracker}:rw`,
       `/host/feed:${CONTAINER.feed}:rw`,
       `/host/alerts:${CONTAINER.alerts}:rw`,
-      `/host/.ssh:${CONTAINER.ssh}:ro`,
     ]);
     expect(argv[argv.length - 1]).toBe("qcr-companion"); // image last
   });
 
-  it("forwards the ssh agent socket only when one exists", () => {
-    expect(lc.runArgv().join(" ")).not.toContain("SSH_AUTH_SOCK");
+  it("never forwards the ssh agent socket, even when the host has one", () => {
     const { lc: withAgent } = lifecycle([], { SSH_AUTH_SOCK: "/tmp/agent.sock" });
-    const argv = withAgent.runArgv();
-    expect(argv).toContain(`/tmp/agent.sock:${CONTAINER.agentSock}:ro`);
-    expect(argv).toContain(`SSH_AUTH_SOCK=${CONTAINER.agentSock}`);
+    const argv = withAgent.runArgv().join(" ");
+    expect(argv).not.toContain("SSH_AUTH_SOCK");
+    expect(argv).not.toContain("agent.sock");
+    expect(argv).not.toContain(".ssh");
   });
 
   it("spawns pi inside tmux with the QCR_* vars on the command line", () => {
@@ -168,15 +175,15 @@ describe("CompanionLifecycle state machine", () => {
   it("adopts a running container without touching it", async () => {
     const { lc, calls } = lifecycle([inspect(true)]);
     expect(await lc.ensureUp()).toBe("adopted");
-    expect(calls).toHaveLength(1);
-    expect(calls[0]![0]).toBe("inspect");
+    expect(containerCalls(calls)).toHaveLength(1);
+    expect(containerCalls(calls)[0]![0]).toBe("inspect");
   });
 
   it("starts an existing stopped container", async () => {
     const { lc, calls } = lifecycle([inspect(false), okFor("start")]);
     expect(await lc.ensureUp()).toBe("started");
-    expect(calls.map((c) => c[0])).toEqual(["inspect", "start"]);
-    expect(calls[1]).toEqual(["start", "qcr-companion"]);
+    expect(containerCalls(calls).map((c) => c[0])).toEqual(["inspect", "start"]);
+    expect(containerCalls(calls)[1]).toEqual(["start", "qcr-companion"]);
   });
 
   it("recreates an unstartable container (stale bind mounts after a reboot)", async () => {
@@ -194,7 +201,7 @@ describe("CompanionLifecycle state machine", () => {
     ]);
     const progress: string[] = [];
     expect(await lc.ensureUp((l) => progress.push(l))).toBe("recreated");
-    expect(calls.map((c) => c[0])).toEqual(["inspect", "start", "rm", "image", "run"]);
+    expect(containerCalls(calls).map((c) => c[0])).toEqual(["inspect", "start", "rm", "image", "run"]);
     expect(calls.find((c) => c[0] === "rm")).toEqual(["rm", "-f", "qcr-companion"]);
     expect(progress.some((l) => l.includes("recreating"))).toBe(true);
   });
@@ -202,7 +209,7 @@ describe("CompanionLifecycle state machine", () => {
   it("runs a fresh container when none exists (image already built)", async () => {
     const { lc, calls } = lifecycle([inspect("absent"), okFor("image"), okFor("run")]);
     expect(await lc.ensureUp()).toBe("created");
-    expect(calls.map((c) => c[0])).toEqual(["inspect", "image", "run"]);
+    expect(containerCalls(calls).map((c) => c[0])).toEqual(["inspect", "image", "run"]);
   });
 
   it("self-heals a missing image: builds it, then runs — never fails on first launch", async () => {
@@ -214,7 +221,7 @@ describe("CompanionLifecycle state machine", () => {
     ]);
     const progress: string[] = [];
     expect(await lc.ensureUp((l) => progress.push(l))).toBe("created");
-    expect(calls.map((c) => c[0])).toEqual(["inspect", "image", "build", "run"]);
+    expect(containerCalls(calls).map((c) => c[0])).toEqual(["inspect", "image", "build", "run"]);
     const build = calls.find((c) => c[0] === "build")!;
     expect(build).toContain("-t");
     expect(build).toContain("qcr-companion");
@@ -262,13 +269,13 @@ describe("CompanionLifecycle state machine", () => {
   it("stops gracefully with docker stop", async () => {
     const { lc, calls } = lifecycle([inspect(true), okFor("stop")]);
     await lc.gracefulStop();
-    expect(calls[1]).toEqual(["stop", "qcr-companion"]);
+    expect(containerCalls(calls)[1]).toEqual(["stop", "qcr-companion"]);
   });
 
   it("stopping an already-stopped container is a no-op (never a kill)", async () => {
     const { lc, calls } = lifecycle([inspect(false)]);
     await lc.gracefulStop();
-    expect(calls).toHaveLength(1);
+    expect(containerCalls(calls)).toHaveLength(1);
     expect(calls.some((c) => c[0] === "kill" || c[0] === "rm")).toBe(false);
   });
 

@@ -13,7 +13,9 @@
 //   ensureUp() and spawnPi() are both idempotent and there is no kill path
 //   except the explicit `qcr companion down`.
 import { spawn } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { CompanionConfig } from "../config.js";
 
 export interface DockerResult {
@@ -31,6 +33,34 @@ export interface ContainerStatus {
   running: boolean;
 }
 
+/** The filesystem facts the lifecycle needs. Injectable so argv tests stay
+ * hermetic; the real one is plain node:fs. */
+export interface CompanionFs {
+  exists(path: string): boolean;
+  /** File text, or undefined when it cannot be read. */
+  read(path: string): string | undefined;
+  /** Unix mode bits of a file, or undefined. */
+  mode(path: string): number | undefined;
+}
+
+export const realCompanionFs: CompanionFs = {
+  exists: (p) => existsSync(p),
+  read: (p) => {
+    try {
+      return readFileSync(p, "utf8");
+    } catch {
+      return undefined;
+    }
+  },
+  mode: (p) => {
+    try {
+      return statSync(p).mode & 0o777;
+    } catch {
+      return undefined;
+    }
+  },
+};
+
 /** In-container paths. Fixed by the image (docker/companion/Dockerfile), so
  * they are constants rather than knobs — the host side of each is configured. */
 export const CONTAINER = {
@@ -40,13 +70,113 @@ export const CONTAINER = {
   tracker: "/tracker",
   feed: "/feed",
   alerts: "/alerts",
-  ssh: "/home/companion/.ssh",
-  agentSock: "/ssh-agent",
 } as const;
+
+// NOTE: `/home/companion/.ssh` and `/ssh-agent` used to be mounted
+// here so the companion could read the VM itself. They are GONE, and the
+// removal is the point of this slice: the companion's reach into the VM is now
+// OpenViking memory over a forward the HOST owns (systemd --user, see
+// scripts/companion-memory-forward.mjs), so the container holds no VM ssh
+// credential of any kind and cannot ssh anywhere even if it wanted to. Do not
+// reintroduce either mount — the boundary is meant to be structural, not
+// prompted (root CLAUDE.md rule 8).
 
 export type EnsureOutcome = "adopted" | "started" | "created" | "recreated";
 
+// ---- the memory forward ------------------------------------------
+
+/**
+ * Constants of the host-owned memory path. The companion never speaks ssh:
+ * a systemd --user forward on the owner's PC listens on a docker bridge the
+ * companion is attached to and relays to OpenViking inside the VM container.
+ *
+ * The subnet is fixed so the gateway address is knowable before the network
+ * exists; `resolveMemoryWiring()` still asks docker for the real gateway and
+ * only falls back to this constant.
+ */
+export const MEMORY = {
+  /** User-defined docker bridge shared by the forward and the companion. */
+  network: "qcr-memory",
+  subnet: "198.51.100.0/24",
+  gateway: "198.51.100.1",
+  /** Same port the server listens on in the VM container ([openviking] port). */
+  port: 1933,
+  /** The OpenViking USER whose memory the companion owns — becomes the
+   * `X-OpenViking-User` header on every request it makes. */
+  user: "companion",
+  /** Peer id the patched extension reports (`X-OpenViking-Actor-Peer`);
+   * verified to override the path-derived default (spike). Same
+   * identity as `user` for the companion — one surface, one actor. */
+  peerId: "companion",
+  /** The vendored patched OpenViking pi extension, inside /workspace. */
+  extension: `${CONTAINER.workspace}/extensions/vendor/openviking-pi/index.ts`,
+} as const;
+
+/** The three env names the keys file must define. Values are NEVER read into a
+ * log line or an argv — docker reads the file itself via `--env-file`. */
+export const KEY_NAMES = ["OPENVIKING_API_KEY", "OPENVIKING_COMPANION_KEY", "OPENVIKING_REVIEWER_KEY"] as const;
+
+export interface MemoryWiring {
+  /** Docker network to attach the container to; "" = memory-less degraded. */
+  network: string;
+  /** Base URL the container reaches OpenViking on; "" = memory-less. */
+  endpoint: string;
+  /** Host path of the two-key env file, when it is readable. */
+  keysFile?: string;
+  /** Human notes worth showing on the status line (never secret values). */
+  notes: string[];
+}
+
+export function memoryEndpoint(gateway: string, port: number = MEMORY.port): string {
+  return `http://${gateway}:${port}`;
+}
+
+/** Host path of the OpenViking key file. `QCR_OPENVIKING_KEYS` overrides it;
+ * the default sits beside the app credential, in the same 0600 discipline. */
+export function keysFilePath(env: NodeJS.ProcessEnv = process.env, home: string = homedir()): string {
+  const override = env["QCR_OPENVIKING_KEYS"]?.trim();
+  return override && override !== "" ? override : join(home, ".config", "quickreview-bot", "openviking-keys.env");
+}
+
+/** Which of KEY_NAMES the file defines — names only, values never leave here. */
+export function keyNamesIn(text: string): string[] {
+  const found = new Set<string>();
+  for (const line of text.split("\n")) {
+    const m = /^\s*(?:export\s+)?([A-Z0-9_]+)\s*=/.exec(line);
+    if (m && (KEY_NAMES as readonly string[]).includes(m[1]!)) found.add(m[1]!);
+  }
+  return [...found];
+}
+
+/**
+ * Lines docker's `--env-file` parser would choke on.
+ *
+ * This matters more than it looks: `docker run --env-file` REJECTS a file with
+ * `export FOO=…`, `FOO = bar` or a bare word, and a rejected `docker run` is a
+ * companion that does not start. Memory must never be able to do that, so a
+ * file we cannot vouch for is left out of the argv (degraded, not fatal).
+ */
+export function envFileProblems(text: string): string[] {
+  const problems: string[] = [];
+  text.split("\n").forEach((line, i) => {
+    const trimmed = line.trim();
+    if (trimmed === "" || trimmed.startsWith("#")) return;
+    if (!/^[A-Za-z_][A-Za-z0-9_]*=/.test(line)) problems.push(`line ${i + 1} is not NAME=value`);
+  });
+  return problems;
+}
+
+/** Gateway address out of `docker network inspect -f …` output, or "". */
+export function parseGateway(stdout: string): string {
+  const line = stdout.trim().split("\n").pop() ?? "";
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(line.trim()) ? line.trim() : "";
+}
+
 export class CompanionLifecycle {
+  /** Resolved by ensureUp() before any `docker run`; the constants are the
+   * safe standing answer so runArgv() stays pure and callable in tests. */
+  private wiring: MemoryWiring = { network: MEMORY.network, endpoint: memoryEndpoint(MEMORY.gateway), notes: [] };
+
   constructor(
     readonly cfg: CompanionConfig,
     private readonly docker: DockerRunner,
@@ -56,11 +186,23 @@ export class CompanionLifecycle {
     private readonly ensureDirs: (paths: string[]) => void = (paths) => {
       for (const p of paths) mkdirSync(p, { recursive: true });
     },
+    /** Filesystem seam: the keys file and the vendored extension are looked up,
+     * never assumed. Injectable so argv assertions need no real files. */
+    private readonly fs: CompanionFs = realCompanionFs,
   ) {}
+
+  /** The memory path this instance will wire (or has wired). */
+  get memory(): MemoryWiring {
+    return this.wiring;
+  }
 
   // ---- pure argv ----------------------------------------------------------
 
-  /** `docker run` for a cold start: every mount the companion needs. */
+  /** `docker run` for a cold start: every mount the companion needs.
+   *
+   * There is deliberately no ssh mount and no agent socket: the one
+   * thing the companion reaches on the VM is OpenViking, through the docker
+   * network the host-owned forward listens on. */
   runArgv(): string[] {
     const argv = [
       "run",
@@ -69,6 +211,11 @@ export class CompanionLifecycle {
       this.cfg.container_name,
       "--hostname",
       this.cfg.container_name,
+    ];
+    // Memory-less is a legitimate mode: no network, no endpoint env, container
+    // still starts. It must never be able to wedge the companion.
+    if (this.wiring.network !== "") argv.push("--network", this.wiring.network);
+    argv.push(
       "--volume",
       `${this.cfg.pihome_volume}:${CONTAINER.piHome}`,
       "--volume",
@@ -79,16 +226,43 @@ export class CompanionLifecycle {
       `${this.cfg.feed_dir}:${CONTAINER.feed}:rw`,
       "--volume",
       `${this.cfg.alerts_dir}:${CONTAINER.alerts}:rw`,
-      "--volume",
-      `${this.cfg.ssh_dir}:${CONTAINER.ssh}:ro`,
-    ];
-    // The agent socket is optional: without it the companion simply cannot read
-    // the VM, which is a degraded mode, not a failure to start.
-    const sock = this.env["SSH_AUTH_SOCK"];
-    if (sock) {
-      argv.push("--volume", `${sock}:${CONTAINER.agentSock}:ro`, "--env", `SSH_AUTH_SOCK=${CONTAINER.agentSock}`);
-    }
+    );
+    argv.push(...this.memoryEnvArgv());
     argv.push(this.cfg.image);
+    return argv;
+  }
+
+  /**
+   * Non-secret memory env + the key file.
+   *
+   * The two USER keys ride `--env-file`, so the values never appear in this
+   * process's argv (and therefore never in `ps`). docker reads the file
+   * itself. NEVER switch these to `--env NAME=<value>`.
+   */
+  memoryEnvArgv(): string[] {
+    const argv: string[] = [];
+    if (this.wiring.endpoint !== "") {
+      argv.push(
+        // Read straight out of the vendored extension's credential resolver
+        // (shared/credentials.mjs): OPENVIKING_URL wins, OPENVIKING_BASE_URL is
+        // its documented alias, and the user/peer headers are what select the
+        // namespace a request addresses.
+        "--env",
+        `OPENVIKING_URL=${this.wiring.endpoint}`,
+        "--env",
+        `OPENVIKING_BASE_URL=${this.wiring.endpoint}`,
+        "--env",
+        `OPENVIKING_USER=${MEMORY.user}`,
+        "--env",
+        `OPENVIKING_PEER_ID=${MEMORY.peerId}`,
+        // Ours: the in-container health watcher (docker/companion/memory-health.mjs).
+        "--env",
+        `QCR_MEMORY_ENDPOINT=${this.wiring.endpoint}`,
+        "--env",
+        `QCR_MEMORY_ALERTS_DIR=${CONTAINER.alerts}`,
+      );
+    }
+    if (this.wiring.keysFile) argv.push("--env-file", this.wiring.keysFile);
     return argv;
   }
 
@@ -107,8 +281,14 @@ export class CompanionLifecycle {
    * fresh start), and so daily rollover can archive "the newest .jsonl".
    */
   piArgv(): string[] {
+    // the vendored patched OpenViking extension — the companion's
+    // memory hands. Loaded only when the vendor dir is actually present: a
+    // missing extension must degrade to memory-less, never to a pi that
+    // refuses to start (the companion never wedges).
+    const openviking = this.fs.exists(this.hostVendorExtension()) ? ["--extension", MEMORY.extension] : [];
     return [
       "pi",
+      ...openviking,
       "--extension",
       // wake channel: fs.watch on /feed/wake → sendUserMessage. The
       // repo is mounted at /workspace, so the extension ships with the repo, no
@@ -181,6 +361,11 @@ export class CompanionLifecycle {
     return `${this.cfg.repo_dir}/inject/${this.cfg.session}`;
   }
 
+  /** Host side of the vendored extension (the repo is bind-mounted). */
+  hostVendorExtension(): string {
+    return `${this.cfg.repo_dir}/extensions/vendor/openviking-pi/index.ts`;
+  }
+
   // ---- state --------------------------------------------------------------
 
   async status(): Promise<ContainerStatus> {
@@ -217,9 +402,86 @@ export class CompanionLifecycle {
     onProgress?.(`${this.cfg.image} image built`);
   }
 
+  // ---- memory wiring --------------------------------------------
+
+  /**
+   * Work out how this container will reach memory, WITHOUT ever failing.
+   *
+   * The forward (scripts/companion-memory-forward.mjs, run by systemd on the
+   * host) owns the network; the lifecycle only joins it. When the network is
+   * absent it is created here anyway — idempotent, same fixed subnet — so the
+   * container's wiring is stable and memory starts working the moment the
+   * forward comes up, rather than needing a container recreate. If even that
+   * fails (a subnet clash, docker unhappy) the wiring degrades to memory-less
+   * and the companion starts regardless.
+   */
+  async resolveMemoryWiring(onProgress?: (line: string) => void): Promise<MemoryWiring> {
+    const notes: string[] = [];
+    let gateway = await this.networkGateway();
+    if (gateway === "") {
+      await this.docker(["network", "create", "--subnet", MEMORY.subnet, MEMORY.network]);
+      gateway = await this.networkGateway();
+      if (gateway !== "") notes.push(`created docker network ${MEMORY.network}`);
+    }
+    if (gateway === "") {
+      notes.push(`docker network ${MEMORY.network} unavailable — companion starts without memory`);
+      this.wiring = { network: "", endpoint: "", notes };
+      for (const n of notes) onProgress?.(n);
+      return this.wiring;
+    }
+    const keysFile = keysFilePath(this.env);
+    const keysText = this.fs.read(keysFile);
+    let usableKeys: string | undefined;
+    if (keysText === undefined) {
+      notes.push(`no OpenViking keys at ${keysFile} — memory reads/writes will be refused (see docs/companion-memory-access.md)`);
+    } else {
+      const names = keyNamesIn(keysText);
+      const missing = KEY_NAMES.filter((n) => !names.includes(n));
+      if (missing.length > 0) notes.push(`${keysFile} is missing ${missing.join(", ")}`);
+      const mode = this.fs.mode(keysFile);
+      if (mode !== undefined && (mode & 0o077) !== 0) notes.push(`${keysFile} is group/world readable — chmod 600 it`);
+      const bad = envFileProblems(keysText);
+      if (bad.length > 0) {
+        // Passing it anyway would make `docker run` refuse and the companion
+        // never start — memory is never allowed to cost that.
+        notes.push(`${keysFile} is not a docker env-file (${bad[0]}) — starting without memory keys`);
+      } else {
+        usableKeys = keysFile;
+      }
+    }
+    this.wiring = { network: MEMORY.network, endpoint: memoryEndpoint(gateway), keysFile: usableKeys, notes };
+    for (const n of notes) onProgress?.(n);
+    return this.wiring;
+  }
+
+  private async networkGateway(): Promise<string> {
+    const res = await this.docker([
+      "network",
+      "inspect",
+      "--format",
+      "{{range .IPAM.Config}}{{.Gateway}}{{end}}",
+      MEMORY.network,
+    ]);
+    return res.ok ? parseGateway(res.stdout) : "";
+  }
+
+  /** Attach an already-running container to the memory network. Idempotent —
+   * "already exists" is the normal answer and never an error here. */
+  async attachToMemoryNetwork(): Promise<boolean> {
+    if (this.wiring.network === "") return false;
+    const res = await this.docker(["network", "connect", this.wiring.network, this.cfg.container_name]);
+    return res.ok;
+  }
+
   async ensureUp(onProgress?: (line: string) => void): Promise<EnsureOutcome> {
+    await this.resolveMemoryWiring(onProgress);
     const st = await this.status();
-    if (st.running) return "adopted";
+    if (st.running) {
+      // A container created before the memory forward existed is still on the
+      // old network; connecting is live and needs no recreate.
+      await this.attachToMemoryNetwork();
+      return "adopted";
+    }
     if (st.exists) {
       const started = await this.docker(["start", this.cfg.container_name]);
       if (started.ok) return "started";

@@ -72,6 +72,17 @@ PI_EXT_MERGE
 # var. OPENAI_API_KEY is honored when the caller passes one.
 # Provider prefix under OAuth is `openai-codex/`, not `openai/`.
 
+# memory health watcher: probes OpenViking through the host-owned
+# forward and drops an alert file into /alerts when it stops answering (and a
+# notice when it comes back). Backgrounded and non-fatal by construction — an
+# unwired or unreachable memory path degrades the companion, it never wedges
+# it. With no QCR_MEMORY_ENDPOINT in the env the watcher exits immediately.
+if [ -n "${QCR_MEMORY_ENDPOINT:-}${OPENVIKING_URL:-}" ] && [ -f /usr/local/lib/qcr/memory-health.mjs ]; then
+  node /usr/local/lib/qcr/memory-health.mjs &
+else
+  echo "memory watcher idle: no OpenViking endpoint configured for this container"
+fi
+
 # The tmux server is the jump-in surface: `docker exec -it <c> tmux attach -t
 # companion`. Panes inherit the SERVER's env, not the client's — per-session
 # QCR_* vars ride the pi command line (see spawnPi in src/tui/companion.ts).

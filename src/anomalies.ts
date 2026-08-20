@@ -53,6 +53,12 @@ const WAKE_KINDS: ReadonlySet<string> = new Set([
   // is human-attention grade. Detected passively (src/authwatch.ts), never by
   // a smoke call.
   "pi_auth_expired",
+  // the EOD curator may have edited the owner's pinned standing
+  // instructions — the one thing curation must never touch. Human-attention
+  // grade by the same logic as pi_auth_expired. The watchdog's own degraded
+  // kind (`eod_pinned_watchdog_degraded`) is deliberately left unlisted: "could
+  // not check" is heartbeat-tier, "may have been rewritten" is not.
+  "eod_pinned_area_modified",
 ]);
 
 export function anomalySeverity(kind: string): AnomalySeverity {

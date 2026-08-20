@@ -89,7 +89,10 @@ RUN useradd --create-home --non-unique --uid ${COMPANION_UID} companion \
     && chown -R companion:companion /home/companion /feed /alerts
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod 0755 /usr/local/bin/entrypoint.sh
+# the memory health watcher. Baked into the image rather than read off
+# /workspace so it starts with the container, before any repo build exists.
+COPY memory-health.mjs /usr/local/lib/qcr/memory-health.mjs
+RUN chmod 0755 /usr/local/bin/entrypoint.sh && chmod 0644 /usr/local/lib/qcr/memory-health.mjs
 
 # Mount points — the lifecycle code (src/tui/companion.ts) wires the host side:
 #   /home/companion/.pi  named volume companion-pihome (OAuth, sessions, memory)
@@ -97,7 +100,12 @@ RUN chmod 0755 /usr/local/bin/entrypoint.sh
 #   /tracker             the issue tracker, rw (actor `companion`)
 #   /feed                TUI → companion ambient snapshots
 #   /alerts             companion → TUI alert files
-#   /home/companion/.ssh + /ssh-agent  read-only, for VM reads/inject
+#
+# There is NO ssh mount and NO agent socket (root rule 8): the
+# container holds no VM credential. Its one reach into the VM is OpenViking
+# memory, over a forward owned by the host (scripts/companion-memory-forward.mjs),
+# reached at OPENVIKING_ENDPOINT on the qcr-memory docker bridge with the two
+# USER keys docker passes in via --env-file.
 VOLUME ["/home/companion/.pi"]
 
 USER companion
