@@ -346,6 +346,23 @@ export interface OpenVikingConfig {
    * server version so `tests/openviking-fork.test.ts` gates drift instead of
    * letting a bump rebase silently onto new upstream behaviour. */
   extension_commit: string;
+  /** OpenViking user the daemon and review sessions act as. Their key is
+   * confined to this user server-side — that confinement is what keeps
+   * companion memory out of a posted review. */
+  user: string;
+  /** Tenant account; empty ⇒ derived from the key. */
+  account: string;
+  /** Secret FILE NAME under [github].secrets_dir holding the reviewer USER
+   * key. Never an ADMIN or ROOT key: ADMIN grants no cross-user data access
+   * and can list every user key in plaintext. */
+  reviewer_key_file: string;
+  request_timeout_ms: number;
+  /** Tighter than `request_timeout_ms`: a search sits on the round-build
+   * path, where the deadline in [memory] is the real guard. */
+  search_timeout_ms: number;
+  /** Where an entry lands when the writer names no category. */
+  default_category: string;
+  read_cache_ttl_ms: number;
   host: string;
   port: number;
   /** `openviking-server` inside the image's venv. */
@@ -405,6 +422,13 @@ export const OPENVIKING_DEFAULTS: OpenVikingConfig = {
   version: "0.4.15",
   llama_cpp_python_version: "0.3.35",
   extension_commit: "d436baa23c83938b22bb0aab08b0ce48568b5ff4",
+  user: "reviewer",
+  account: "",
+  reviewer_key_file: "openviking_reviewer_key",
+  request_timeout_ms: 10000,
+  search_timeout_ms: 2500,
+  default_category: "experiences",
+  read_cache_ttl_ms: 15000,
   host: "127.0.0.1",
   port: 1933,
   bin: "/opt/openviking/venv/bin/openviking-server",

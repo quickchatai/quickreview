@@ -50,7 +50,7 @@
 // metadata footer is precisely what the server reserves for its own extractor
 // and strips on read.
 import { createHash } from "node:crypto";
-import { formatEventTags, parseEventTags } from "../feedback.js";
+import { formatEventTags, parseEventTags } from "../memory/eventtags.js";
 import {
   matchesQuery,
   type MemoryEntry,

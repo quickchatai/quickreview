@@ -32,6 +32,7 @@
 // survives a memory outage and the engine cutover untouched.
 import { zoneDateString } from "./eod.js";
 import { VALIDATE_PASS, type PassAddendum } from "./include.js";
+import { formatEventTags, parseEventTags } from "./memory/eventtags.js";
 import { localPiMemoryStore } from "./memory/pi-memory.js";
 import type { MemoryStore } from "./memory/store.js";
 import type { FeedbackSignalRow, StateStore } from "./state.js";
@@ -188,36 +189,11 @@ export function eventTagsFor(e: FeedbackEvent, day: string): FeedbackEventTags {
   return { kind: FEEDBACK_EVENT_KIND, pr: String(e.pr), day, signal: e.kind };
 }
 
-/** `k=v k=v …`, declaration order — byte-stable for a given signal. */
-export function formatEventTags(tags: Record<string, string>): string {
-  return Object.entries(tags)
-    .map(([k, v]) => `${k}=${v}`)
-    .join(" ");
-}
-
-/** One `k=v` token: bare (no `#`), value without whitespace. */
-const EVENT_TAG_RE = /^([a-z][a-z0-9_-]*)=([^\s]+)$/;
-
-/**
- * The tags a stored entry carries — the reader half of the vocabulary, so no
- * consumer (store, curator, auto-filer) writes a second parser.
- *
- * Only the entry's HEADER is scanned: `#tag` tokens, then the `k=v` run, and
- * the scan stops at the first word that is neither. The feedback body is
- * untrusted human text quoted later in the same entry — a comment reading
- * `[feedback] kind=bug` must not be able to mint itself a tag.
- */
-export function parseEventTags(text: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const token of text.split(/\s+/)) {
-    if (token === "") continue;
-    if (token.startsWith("#")) continue;
-    const m = EVENT_TAG_RE.exec(token);
-    if (!m) break;
-    if (!(m[1]! in out)) out[m[1]!] = m[2]!;
-  }
-  return out;
-}
+// The tag vocabulary itself lives in `src/memory/eventtags.ts` — the store
+// imports it, and reaching it through this module would drag the addendum
+// registry into every memory consumer. Re-exported so existing callers and
+// tests keep their import site.
+export { formatEventTags, parseEventTags };
 
 /** The `#tags` an entry opens with — kept beside the `k=v` run: they are what
  * pi-memory search, the import classifier and the EOD sweep already read. */
