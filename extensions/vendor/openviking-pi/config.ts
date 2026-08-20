@@ -19,17 +19,28 @@ import { resolveEffectivePeerId } from "./shared/workspace-peer.mjs";
  * So: if the resolved key IS the server's root key, drop it. An unauthenticated
  * client degrades to 401 and the extension reports "not reachable" — loud, and
  * memory-less by design. A wrong-identity client would have been silent.
+ *
+ * [QCR PATCH 5] Generic over the credential shape, and `env` is a parameter:
+ * the fork now resolves a SECOND key (`OPENVIKING_REVIEWER_KEY`, see
+ * qcr-namespaces.ts) and every key must pass through this same guard. A second
+ * key that skipped it would reopen exactly the hole this function closed.
  */
-type ResolvedCredentials = ReturnType<typeof resolveOpenVikingCredentials>;
+interface KeyBearingCredentials {
+  apiKey: string;
+  hasApiKey: boolean;
+}
 
-export function withoutRootKey(creds: ResolvedCredentials): ResolvedCredentials {
-  const rootKey = readServerRootKey();
+export function withoutRootKey<T extends KeyBearingCredentials>(
+  creds: T,
+  env: Record<string, string | undefined> = process.env,
+): T {
+  const rootKey = readServerRootKey(env);
   if (!rootKey || creds.apiKey !== rootKey) return creds;
   return { ...creds, apiKey: "", hasApiKey: false };
 }
 
-function readServerRootKey(): string {
-  const raw = (process.env.OPENVIKING_CONFIG_FILE ?? "").trim();
+function readServerRootKey(env: Record<string, string | undefined> = process.env): string {
+  const raw = (env.OPENVIKING_CONFIG_FILE ?? "").trim();
   const path = raw ? resolvePath(raw.startsWith("~/") ? join(homedir(), raw.slice(2)) : raw)
                    : join(homedir(), ".openviking", "ov.conf");
   try {

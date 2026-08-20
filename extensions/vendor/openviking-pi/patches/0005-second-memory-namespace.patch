@@ -1,0 +1,786 @@
+diff --git a/extensions/vendor/openviking-pi/NOTICE b/extensions/vendor/openviking-pi/NOTICE
+--- a/extensions/vendor/openviking-pi/NOTICE
++++ b/extensions/vendor/openviking-pi/NOTICE
+@@ -36,6 +36,8 @@ Changed by the quickreviewd maintainers, 2026-08-20:
+   4. A `viking_write` tool was added (durable `content/batch-write`); the
+      `viking_remember`, `viking_forget` and `viking_add_resource` tools were
+      removed.
++  5. The memory tools can address a second OpenViking user namespace, built
++     from a second USER key when one is present in the environment.
+ 
+ Plus vendoring scaffolding: build-conformance fixes for this repo's stricter
+ tsconfig, ambient type declarations for uninstalled packages, three unused
+diff --git a/extensions/vendor/openviking-pi/README.md b/extensions/vendor/openviking-pi/README.md
+--- a/extensions/vendor/openviking-pi/README.md
++++ b/extensions/vendor/openviking-pi/README.md
+@@ -1,7 +1,7 @@
+ # openviking-pi — vendored, patched fork
+ 
+ The OpenViking pi extension our sessions load. Vendored, not depended on:
+-upstream ships it as an `examples/` directory, not a package, and we need four
++upstream ships it as an `examples/` directory, not a package, and we need five
+ behaviour changes that upstream has no reason to make.
+ 
+ | | |
+@@ -20,7 +20,7 @@ fails on drift between the two.
+ 
+ ## Why a fork rather than configuration
+ 
+-Every one of the four patches was tried as configuration first and does not
++Every one of the five patches was tried as configuration first and does not
+ exist there. The evidence is a spike against a **running v0.4.15 server plus
+ the pinned pi 0.84.1** — `assets/findings.md` in the issue tracker,
+ with transcripts. Read it before changing anything here; several of its
+@@ -28,11 +28,12 @@ findings contradict the OpenViking docs, which lead the tag.
+ 
+ ## The patch series
+ 
+-Four numbered behaviour patches, applied in order over the vendored upstream
++Five numbered behaviour patches, applied in order over the vendored upstream
+ files, plus one unnumbered scaffolding patch. They live in `patches/` as
+-`git apply`-able diffs — verified by applying all five, in order, to a
++`git apply`-able diffs — verified by applying all six, in order, to a
+ pristine `v0.4.15` extraction and diffing the result against this directory:
+-byte-identical. Every hunk they add carries a greppable marker:
++byte-identical. (`patches/` and `upstream.json` are meta and are not themselves
++part of the reproduced tree.) Every hunk they add carries a greppable marker:
+ 
+ ```sh
+ grep -rn "QCR PATCH" extensions/vendor/openviking-pi
+@@ -181,6 +182,48 @@ imported from a test because it pulls `typebox` and `@earendil-works/pi-ai`.
+ Touches: `qcr-write.ts` (new), `client.ts` (`batchWrite`, `setTags`),
+ `tools.ts`, `index.ts` (the advertised tool list).
+ 
++### 0005 — a second memory namespace (the companion's reviewer key)
++
++Upstream builds ONE `OVClient` from ONE key, so a pi reaches exactly the user
++tree that key owns. The ratified design is asymmetric: **the companion
++and the TUI can do everything with memory — full read and write over every piece
++of it** — while automated review sessions hold the reviewer key alone and stay
++confined server-side. The companion container already receives the second USER
++key as `OPENVIKING_REVIEWER_KEY` (`docs/companion-memory-access.md`); this patch
++is what consumes it.
++
++`qcr-namespaces.ts` resolves the extra namespaces and routes each tool call to
++one; `index.ts` builds one `OVClient` per namespace (same endpoint, same
++account, same actor peer — only the bearer key and `X-OpenViking-User` differ,
++which is the pairing the server confines) and `tools.ts` addresses whichever one
++the call names. The shape is the TUI's, not a second invention:
++`src/tui/memory.ts` already runs one client per namespace with the namespace
++prefixed onto every address.
++
++Four properties are the patch:
++
++* **Absence is normal.** No `OPENVIKING_REVIEWER_KEY` ⇒ no second namespace, no
++  error, no `namespace` parameter in any tool schema, unprefixed answers — i.e.
++  every review session keeps today's behaviour exactly, down to the tool
++  descriptions the model sees.
++* **The call says which tree it touches.** `namespace: "reviewer"` or a
++  `viking://user/reviewer/…` URI; if both are given and disagree the call is
++  REFUSED rather than resolved by a precedence rule, and every answer is
++  prefixed `[<namespace>]`. Silently writing the wrong memory tree is the one
++  failure here that is both invisible and durable.
++* **`withoutRootKey` covers BOTH keys.** It is generic and `env`-parameterised
++  now; the reviewer key goes through it before a client is built. A new key must
++  not reopen the hole 0000 closed.
++* **A leaf gains nothing.** `resolveExtraNamespaces` returns `[]` for a leaf,
++  `index.ts` does not construct the clients in the leaf path, and
++  `registerTools` discards namespaces handed to a leaf. Ambient work (recall,
++  sync, commit) stays on the primary client in all cases — a second namespace is
++  a TOOL surface only, never a second session.
++
++Touches: `qcr-namespaces.ts` (new), `config.ts` (`withoutRootKey` generic +
++`env`), `index.ts` (client construction, health probe, the advertised
++namespaces), `tools.ts` (routing, the `namespace` parameter, prefixed answers).
++
+ ## Rebasing onto a newer upstream
+ 
+ ```sh
+@@ -193,16 +236,16 @@ git -C /tmp/ov checkout <new-tag>
+ for p in extensions/vendor/openviking-pi/patches/0*.patch; do
+   git apply --3way "$p" || echo "RESOLVE: $p"
+ done
+-# 3. Re-verify all four patches, then:
++# 3. Re-verify all five patches, then:
+ timeout 900 npm test && npm run build
+ ```
+ 
+ Then update `extension_commit` and `version` in `config.toml [openviking]`,
+ the base commit in `NOTICE` and in the table above, and re-run the live
+-verification below. A bump re-verifies **all four** patches — a patch that no
++verification below. A bump re-verifies **all five** patches — a patch that no
+ longer applies is a patch whose reason may have changed, not a patch to drop.
+ 
+-`tests/openviking-fork.test.ts` is the guard rail: it asserts the four patches
++`tests/openviking-fork.test.ts` is the guard rail: it asserts the five patches
+ are still present (markers, and the *absence* of what each one removed) and
+ that the pinned commit here matches `config.toml`. It cannot tell you whether
+ upstream grew a *new* compaction handler or a *new* write tool — read the
+@@ -217,6 +260,12 @@ durable write; `batch-write` preconditions 409 correctly and the
+ `MEMORY_FIELDS` footgun is real; pi-subagents children carry `--no-extensions`;
+ `OPENVIKING_PEER_ID` overrides the path-derived peer id.
+ 
++Also verified, for 0005: the reviewer USER key reaches `user/reviewer/` and is
++refused on `user/companion/` when paired with the other user's header — that is
++the four-cell matrix `node scripts/companion-memory-forward.mjs verify` runs,
++and it is what makes two USER keys safe. What it proves is the SERVER's
++confinement, not this extension's plumbing.
++
+ **Not yet verified end to end** (needs a session smoke on the VM, where a real
+ model provider exists): that a `viking_write` entry is readable through the
+ daemon's client against a live server, and that the ledger block survives a
+@@ -224,3 +273,8 @@ real compaction with this fork loaded. The second half of that is the open
+ item — "does a no-op second handler drop ledger-pin's pinned block?" —
+ which this patch series makes moot by construction rather than by measurement.
+ Fold both into `npm run smoke:session`.
++
++Also unverified live: a `viking_read`/`viking_write` through the SECOND
++(reviewer) client from the companion's pi. The key and the server-side
++confinement are proven; the extension-side routing is covered by unit tests
++only. Fold it into the companion smoke (`npm run smoke:companion`).
+diff --git a/extensions/vendor/openviking-pi/config.ts b/extensions/vendor/openviking-pi/config.ts
+--- a/extensions/vendor/openviking-pi/config.ts
++++ b/extensions/vendor/openviking-pi/config.ts
+@@ -19,17 +19,28 @@ import { resolveEffectivePeerId } from "./shared/workspace-peer.mjs";
+  * So: if the resolved key IS the server's root key, drop it. An unauthenticated
+  * client degrades to 401 and the extension reports "not reachable" — loud, and
+  * memory-less by design. A wrong-identity client would have been silent.
++ *
++ * [QCR PATCH 5] Generic over the credential shape, and `env` is a parameter:
++ * the fork now resolves a SECOND key (`OPENVIKING_REVIEWER_KEY`, see
++ * qcr-namespaces.ts) and every key must pass through this same guard. A second
++ * key that skipped it would reopen exactly the hole this function closed.
+  */
+-type ResolvedCredentials = ReturnType<typeof resolveOpenVikingCredentials>;
++interface KeyBearingCredentials {
++  apiKey: string;
++  hasApiKey: boolean;
++}
+ 
+-export function withoutRootKey(creds: ResolvedCredentials): ResolvedCredentials {
+-  const rootKey = readServerRootKey();
++export function withoutRootKey<T extends KeyBearingCredentials>(
++  creds: T,
++  env: Record<string, string | undefined> = process.env,
++): T {
++  const rootKey = readServerRootKey(env);
+   if (!rootKey || creds.apiKey !== rootKey) return creds;
+   return { ...creds, apiKey: "", hasApiKey: false };
+ }
+ 
+-function readServerRootKey(): string {
+-  const raw = (process.env.OPENVIKING_CONFIG_FILE ?? "").trim();
++function readServerRootKey(env: Record<string, string | undefined> = process.env): string {
++  const raw = (env.OPENVIKING_CONFIG_FILE ?? "").trim();
+   const path = raw ? resolvePath(raw.startsWith("~/") ? join(homedir(), raw.slice(2)) : raw)
+                    : join(homedir(), ".openviking", "ov.conf");
+   try {
+diff --git a/extensions/vendor/openviking-pi/index.ts b/extensions/vendor/openviking-pi/index.ts
+--- a/extensions/vendor/openviking-pi/index.ts
++++ b/extensions/vendor/openviking-pi/index.ts
+@@ -11,13 +11,15 @@
+  *
+  * ── QCR FORK ────────────────────────────────────────────────────────────────
+  * Vendored from volcengine/OpenViking @ v0.4.15, examples/pi-coding-agent-
+- * extension. Four numbered patches; every hunk carries a `[QCR PATCH n]`
++ * extension. Five numbered patches; every hunk carries a `[QCR PATCH n]`
+  * marker so a rebase is a search, not an audit. See README.md here.
+  *   PATCH 1 — no session_before_compact handler (extensions/ledger-pin.ts is
+  *             the sole owner of compaction) and takeover forced off.
+  *   PATCH 2 — no ambient recall/sync/commit in a pi-subagents leaf.
+  *   PATCH 3 — never auto-create an OV session; the daemon owns lifecycle.
+  *   PATCH 4 — viking_write (durable content/batch-write), the ONLY write tool.
++ *   PATCH 5 — a second memory namespace (the companion's reviewer key), tools
++ *             only; a leaf and a single-keyed review session are unchanged.
+  * ────────────────────────────────────────────────────────────────────────────
+  */
+ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+@@ -33,6 +35,8 @@ import { registerTools } from "./tools.js";
+ import { createTakeoverManager } from "./takeover.js";
+ // [QCR PATCH 2]
+ import { isLeafProcess } from "./qcr-leaf.js";
++// [QCR PATCH 5]
++import { ownNamespaceName, resolveExtraNamespaces } from "./qcr-namespaces.js";
+ 
+ export default async function (pi: ExtensionAPI) {
+   // [QCR PATCH 2] Decided once, from argv, before anything else: a
+@@ -47,6 +51,24 @@ export default async function (pi: ExtensionAPI) {
+ 
+   // --- Initialize modules ---
+   const client = new OVClient(config);
++  // [QCR PATCH 5] A SECOND client, and only when a second USER key is in the
++  // environment: the companion's `OPENVIKING_REVIEWER_KEY`, which lets the
++  // local pi read AND write reviewer memory as well as its own. Same base URL,
++  // same account, same actor peer (this pi is still the actor) — only the
++  // bearer key and `X-OpenViking-User` differ, which is exactly the pairing the
++  // server confines. The key goes through config.ts's root-key guard on the way
++  // (qcr-namespaces.ts), so a second key cannot become a ROOT client either.
++  //
++  // `leaf ? []` is belt to qcr-namespaces' own braces: a pi-subagents leaf must
++  // not gain a namespace PATCH 2 and PATCH 4 deliberately withheld, so the
++  // clients are not even constructed there. No key is a NORMAL state — this pi
++  // then reaches its own namespace only, exactly as before this patch, which is
++  // every review session's shape.
++  const extraNamespaces = (leaf ? [] : resolveExtraNamespaces(config)).map((ns) => ({
++    name: ns.name,
++    client: new OVClient({ ...config, apiKey: ns.apiKey, user: ns.user }),
++  }));
++  const namespaces = [{ name: ownNamespaceName(config.user), client }, ...extraNamespaces];
+   const sync = new SyncManager(client, config);
+   const recall = new RecallManager(client, config, () => sync.sessionId);
+   const debugLog = (message: string) => {
+@@ -137,9 +159,21 @@ export default async function (pi: ExtensionAPI) {
+         archiveOverview = await fetchArchiveOverview(client, sync.sessionId, config);
+       }
+ 
++      // [QCR PATCH 5] Each extra namespace's client carries its own `connected`
++      // flag (the tools read it), so each is probed once here — after the leaf
++      // early-return above, so a leaf never even opens the socket. A namespace
++      // that does not answer is degraded, never fatal: its tools say "not
++      // reachable" and the primary namespace is untouched.
++      for (const ns of extraNamespaces) {
++        const reachable = await ns.client.health();
++        if (!reachable && config.logLevel === "info") {
++          ctx.ui.notify(`OpenViking: ${ns.name} memory not reachable`, "warning");
++        }
++      }
++
+       // Register tools (also needed for pi -c continuations).
+       if (!toolsRegistered) {
+-        registerTools(pi, client, sync, { leaf: false });
++        registerTools(pi, client, sync, { leaf: false, namespaces });
+         toolsRegistered = true;
+       }
+       updateStatus(ctx, connected, 0, sync.sessionId, config, takeover.state);
+@@ -183,6 +217,17 @@ export default async function (pi: ExtensionAPI) {
+     // [QCR PATCH 4] viking_remember / viking_forget / viking_add_resource are
+     // gone; viking_write is the one write tool.
+     parts.push("OpenViking tools: viking_search, viking_read, viking_browse, viking_write, viking_archive_expand.");
++    // [QCR PATCH 5] Say it in the system prompt too, not only in the tool
++    // schemas: with two namespaces reachable, "which memory am I touching" is a
++    // question the model must never have to guess at.
++    if (extraNamespaces.length > 0) {
++      parts.push(
++        `Two OpenViking memory namespaces are reachable: ${namespaces.map((n) => n.name).join(" and ")}. ` +
++          `${namespaces[0]!.name} is your own memory and the default; ` +
++          `${extraNamespaces.map((n) => n.name).join(" and ")} is the review system's, readable and writable from here. ` +
++          "Choose with the `namespace` parameter or by addressing a viking://user/<namespace>/… URI, and check the prefix on every answer.",
++      );
++    }
+ 
+     const additions = parts.join("\n\n");
+     if (!additions) return;
+diff --git a/extensions/vendor/openviking-pi/tools.ts b/extensions/vendor/openviking-pi/tools.ts
+--- a/extensions/vendor/openviking-pi/tools.ts
++++ b/extensions/vendor/openviking-pi/tools.ts
+@@ -4,12 +4,26 @@ import type { OVClient } from "./client.js";
+ import type { SyncManager } from "./sync.js";
+ // [QCR PATCH 4]
+ import { buildWriteRequest } from "./qcr-write.js";
++// [QCR PATCH 5]
++import { namespaceNote, ownNamespaceName, routeNamespace } from "./qcr-namespaces.js";
++
++/** [QCR PATCH 5] One memory namespace the tools can address: a name the model
++ * uses and the client holding that namespace's USER key. */
++export interface ToolNamespace {
++  name: string;
++  client: OVClient;
++}
+ 
+ export interface RegisterToolsOptions {
+   /** [QCR PATCH 2] A pi-subagents leaf gets the READ tools only. A lens pass
+    * evaluates a diff; authoring memory is the shepherd session's job, and a
+    * leaf has no session identity to author under. */
+   leaf?: boolean;
++  /** [QCR PATCH 5] Every namespace this pi can reach, INDEX 0 = its own
++   * identity (the default, and the client `_sync`/recall use). Omitted — the
++   * single-key case, i.e. every review session — is the pre-patch behaviour:
++   * one namespace, no `namespace` parameter in any schema, unprefixed answers. */
++  namespaces?: ToolNamespace[];
+ }
+ 
+ export function registerTools(
+@@ -20,36 +34,72 @@ export function registerTools(
+ ): void {
+   const leaf = opts.leaf === true;
+ 
++  // [QCR PATCH 5] A LEAF IS SINGLE-NAMESPACE, STRUCTURALLY. PATCH 2 stops all
++  // ambient work in a leaf and PATCH 4 withholds the write tool there; a second
++  // client must not become a way around either, so namespaces handed to a leaf
++  // are discarded here rather than trusted. (index.ts does not build them for a
++  // leaf in the first place — this is the second layer, same discipline as
++  // qcr-leaf.ts.)
++  const own: ToolNamespace = { name: ownNamespaceName(client.cfg.user), client };
++  const spaces: ToolNamespace[] =
++    leaf || !opts.namespaces || opts.namespaces.length === 0 ? [own] : opts.namespaces;
++  const names = spaces.map((s) => s.name);
++  const multi = spaces.length > 1;
++  /** Appended to every namespace-aware description; empty when single. */
++  const nsNote = namespaceNote(names);
++  /** The `namespace` parameter exists ONLY when there is a choice to make. */
++  const nsParam: Record<string, unknown> = multi
++    ? { namespace: Type.Optional(StringEnum(names)) }
++    : {};
++  const nsGuidelines: string[] = multi
++    ? [`Memory lives in ${names.length} separate trees (${names.join(", ")}); say which one you mean and read the prefix on the answer.`]
++    : [];
++  /** Every answer names the tree it came from — the model must never have to
++   * infer which memory it just touched. */
++  const scoped = (ns: ToolNamespace, text: string) => (multi ? `[${ns.name}] ${text}` : text);
++  /** Route one call, or explain why it cannot be routed. */
++  const pick = (params: any): { ok: true; ns: ToolNamespace } | { ok: false; error: string } => {
++    const routed = routeNamespace(params ?? {}, names);
++    if (!routed.ok) return { ok: false, error: routed.error };
++    return { ok: true, ns: spaces.find((s) => s.name.toLowerCase() === routed.namespace) ?? own };
++  };
++
+   // --- viking_search ---
+   pi.registerTool({
+     name: "viking_search",
+     label: "Viking Search",
+-    description: "Semantic search over the OpenViking knowledge base. Returns ranked results with viking:// URIs and abstracts. Use to recall past decisions, user preferences, or project-specific knowledge not in current context.",
++    description: "Semantic search over the OpenViking knowledge base. Returns ranked results with viking:// URIs and abstracts. Use to recall past decisions, user preferences, or project-specific knowledge not in current context." + nsNote,
+     promptSnippet: "Search OpenViking for past decisions, preferences, and project knowledge",
+     promptGuidelines: [
+       "Use viking_search when you need information from previous sessions not in MEMORY.md.",
+       "Use viking_search before making decisions that might conflict with past decisions.",
++      ...nsGuidelines,
+     ],
+     parameters: Type.Object({
+       query: Type.String({ description: "Search query" }),
+       scope: Type.Optional(Type.String({ description: "Viking URI prefix to scope search (e.g., 'viking://user/memories/')" })),
+       limit: Type.Optional(Type.Number({ description: "Max results (default: 10)" })),
++      ...nsParam,
+     }),
+     async execute(
+       _id: string, params: any, _signal: AbortSignal,
+       _onUpdate: any, _ctx: any,
+     ) {
+-      if (!client.connected) {
+-        return { content: [{ type: "text", text: "OpenViking server is not reachable." }] };
++      // [QCR PATCH 5] `scope` carries the URI here, so it routes too.
++      const routed = pick(params);
++      if (!routed.ok) return { content: [{ type: "text", text: routed.error }] };
++      const ns = routed.ns;
++      if (!ns.client.connected) {
++        return { content: [{ type: "text", text: scoped(ns, "OpenViking server is not reachable.") }] };
+       }
+-      const results = await client.find(params.query, {
++      const results = await ns.client.find(params.query, {
+         targetUri: params.scope,
+         topK: params.limit ?? 10,
+       });
+       if (results.length === 0) {
+-        return { content: [{ type: "text", text: "No results found." }] };
++        return { content: [{ type: "text", text: scoped(ns, "No results found.") }] };
+       }
+-      const maxChars = client.cfg.recallMaxContentChars;
++      const maxChars = ns.client.cfg.recallMaxContentChars;
+       const lines = results.map(r => {
+         const abs = r.abstract.length > maxChars
+           ? r.abstract.slice(0, maxChars) + "..."
+@@ -57,8 +107,8 @@ export function registerTools(
+         return `[${r.score.toFixed(2)}] ${r.uri}\n  ${abs}`; }
+       );
+       return {
+-        content: [{ type: "text", text: lines.join("\n\n") }],
+-        details: { results },
++        content: [{ type: "text", text: scoped(ns, lines.join("\n\n")) }],
++        details: multi ? { namespace: ns.name, results } : { results },
+       };
+     },
+   });
+@@ -67,29 +117,37 @@ export function registerTools(
+   pi.registerTool({
+     name: "viking_read",
+     label: "Viking Read",
+-    description: "Read content at a viking:// URI. Three detail levels: 'abstract' (~100 tokens), 'overview' (~2k tokens), 'full' (complete). Start with abstract, escalate when needed.",
++    description: "Read content at a viking:// URI. Three detail levels: 'abstract' (~100 tokens), 'overview' (~2k tokens), 'full' (complete). Start with abstract, escalate when needed." + nsNote,
+     promptSnippet: "Read OpenViking content at a viking:// URI with tiered detail levels",
++    ...(multi ? { promptGuidelines: nsGuidelines } : {}),
+     parameters: Type.Object({
+       uri: Type.String({ description: "viking:// URI to read" }),
+       level: StringEnum(["abstract", "overview", "full"] as const),
++      ...nsParam,
+     }),
+     async execute(
+       _id: string, params: any, _signal: AbortSignal,
+       _onUpdate: any, _ctx: any,
+     ) {
+-      if (!client.connected) {
+-        return { content: [{ type: "text", text: "OpenViking server is not reachable." }] };
++      const routed = pick(params);
++      if (!routed.ok) return { content: [{ type: "text", text: routed.error }] };
++      const ns = routed.ns;
++      if (!ns.client.connected) {
++        return { content: [{ type: "text", text: scoped(ns, "OpenViking server is not reachable.") }] };
+       }
+       let content: string | null = null;
+       switch (params.level) {
+-        case "abstract": content = await client.abstract(params.uri); break;
+-        case "overview": content = await client.overview(params.uri); break;
+-        case "full":     content = await client.readContent(params.uri); break;
++        case "abstract": content = await ns.client.abstract(params.uri); break;
++        case "overview": content = await ns.client.overview(params.uri); break;
++        case "full":     content = await ns.client.readContent(params.uri); break;
+       }
+       if (!content) {
+-        return { content: [{ type: "text", text: `No content at ${params.uri}` }] };
++        return { content: [{ type: "text", text: scoped(ns, `No content at ${params.uri}`) }] };
+       }
+-      return { content: [{ type: "text", text: content }] };
++      return {
++        content: [{ type: "text", text: scoped(ns, content) }],
++        ...(multi ? { details: { namespace: ns.name } } : {}),
++      };
+     },
+   });
+ 
+@@ -97,32 +155,37 @@ export function registerTools(
+   pi.registerTool({
+     name: "viking_browse",
+     label: "Viking Browse",
+-    description: "Browse the OpenViking knowledge store like a filesystem. List directory contents or get metadata.",
++    description: "Browse the OpenViking knowledge store like a filesystem. List directory contents or get metadata." + nsNote,
+     promptSnippet: "Browse the viking:// directory tree in OpenViking",
++    ...(multi ? { promptGuidelines: nsGuidelines } : {}),
+     parameters: Type.Object({
+       action: StringEnum(["list", "stat"] as const),
+       uri: Type.Optional(Type.String({ description: "viking:// URI (default: 'viking://')" })),
++      ...nsParam,
+     }),
+     async execute(
+       _id: string, params: any, _signal: AbortSignal,
+       _onUpdate: any, _ctx: any,
+     ) {
+-      if (!client.connected) {
+-        return { content: [{ type: "text", text: "OpenViking server is not reachable." }] };
++      const routed = pick(params);
++      if (!routed.ok) return { content: [{ type: "text", text: routed.error }] };
++      const ns = routed.ns;
++      if (!ns.client.connected) {
++        return { content: [{ type: "text", text: scoped(ns, "OpenViking server is not reachable.") }] };
+       }
+       const uri = params.uri ?? "viking://";
+       if (params.action === "stat") {
+-        const info = await client.stat(uri);
+-        if (!info) return { content: [{ type: "text", text: `Not found: ${uri}` }] };
+-        return { content: [{ type: "text", text: JSON.stringify(info, null, 2) }] };
++        const info = await ns.client.stat(uri);
++        if (!info) return { content: [{ type: "text", text: scoped(ns, `Not found: ${uri}`) }] };
++        return { content: [{ type: "text", text: scoped(ns, JSON.stringify(info, null, 2)) }] };
+       }
+       // list
+-      const entries = await client.ls(uri);
++      const entries = await ns.client.ls(uri);
+       if (entries.length === 0) {
+-        return { content: [{ type: "text", text: `Empty directory: ${uri}` }] };
++        return { content: [{ type: "text", text: scoped(ns, `Empty directory: ${uri}`) }] };
+       }
+       const lines = entries.map(e => `${e.isDir ? "📁" : "📄"} ${e.name}`);
+-      return { content: [{ type: "text", text: lines.join("\n") }] };
++      return { content: [{ type: "text", text: scoped(ns, lines.join("\n")) }] };
+     },
+   });
+ 
+@@ -147,12 +210,13 @@ export function registerTools(
+       name: "viking_write",
+       label: "Viking Write",
+       description:
+-        "Durably write a memory file to OpenViking (content/batch-write). Use this — not a session message — for anything that must survive the session: review lessons, project gotchas, decisions. mode 'create' fails if the file exists; mode 'replace' requires expect_hash and fails if the file changed since you read it. Returns the hash of what it wrote.",
++        "Durably write a memory file to OpenViking (content/batch-write). Use this — not a session message — for anything that must survive the session: review lessons, project gotchas, decisions. mode 'create' fails if the file exists; mode 'replace' requires expect_hash and fails if the file changed since you read it. Returns the hash of what it wrote." + nsNote,
+       promptSnippet: "Durably write a memory file to OpenViking",
+       promptGuidelines: [
+         "Write one self-contained fact or lesson per file; a memory read months later has no conversation around it.",
+         "Prefer mode 'create' with a fresh filename. Only 'replace' an entry you just read, passing its hash as expect_hash.",
+         "A 409 means someone else edited the file — re-read it and decide, never retry blindly.",
++        ...nsGuidelines,
+       ],
+       parameters: Type.Object({
+         uri: Type.String({ description: "Target viking:// URI, ending in .md (e.g. 'viking://user/reviewer/memories/experiences/pr-5312-migration.md')" }),
+@@ -161,31 +225,41 @@ export function registerTools(
+         mode: Type.Optional(StringEnum(["create", "replace"] as const)),
+         expect_hash: Type.Optional(Type.String({ description: "Required for mode 'replace': sha256 of the CURRENT stored bytes" })),
+         wait: Type.Optional(Type.Boolean({ description: "Block until the search index is refreshed (slow — costs ~1.6 core-seconds). Default false; the bytes are durable either way." })),
++        ...nsParam,
+       }),
+       async execute(
+         _id: string, params: any, _signal: AbortSignal,
+         _onUpdate: any, _ctx: any,
+       ) {
+-        if (!client.connected) {
+-          return { content: [{ type: "text", text: "OpenViking server is not reachable — nothing was written." }] };
++        // [QCR PATCH 5] Route BEFORE building the request: a write under the
++        // wrong key is the one mistake here that is both silent and durable.
++        const routed = pick(params);
++        if (!routed.ok) {
++          return { content: [{ type: "text", text: `${routed.error} Nothing was written.` }], details: { written: false } };
++        }
++        const ns = routed.ns;
++        if (!ns.client.connected) {
++          return { content: [{ type: "text", text: scoped(ns, "OpenViking server is not reachable — nothing was written.") }] };
+         }
+         const built = buildWriteRequest(params ?? {});
+         if (!built.ok) {
+           return { content: [{ type: "text", text: built.error }], details: { written: false } };
+         }
+ 
+-        const res = await client.batchWrite(built.request);
++        const res = await ns.client.batchWrite(built.request);
+         if (!res.ok) {
+           const message = res.error?.message || `HTTP ${res.status ?? 0}`;
+           const conflict = res.status === 409;
+           return {
+             content: [{
+               type: "text",
+-              text: conflict
++              text: scoped(ns, conflict
+                 ? `Write REFUSED (409): ${message} Nothing was written. Re-read ${built.request.operations[0]?.uri} and decide on the current content.`
+-                : `Write failed: ${message} Nothing was written.`,
++                : `Write failed: ${message} Nothing was written.`),
+             }],
+-            details: { written: false, status: res.status, conflict },
++            details: multi
++              ? { namespace: ns.name, written: false, status: res.status, conflict }
++              : { written: false, status: res.status, conflict },
+           };
+         }
+ 
+@@ -200,24 +274,30 @@ export function registerTools(
+               : "written";
+         // Best effort, deliberately after the durable write and never fatal:
+         // the tags are already in the body text.
+-        const tagged = built.tags.length > 0 ? await client.setTags(uri, built.tags) : true;
++        const tagged = built.tags.length > 0 ? await ns.client.setTags(uri, built.tags) : true;
++        const details = { written: true, uri, outcome, hash: built.hash, tags: built.tags, tagged, result };
+         return {
+           content: [{
+             type: "text",
+-            text:
++            text: scoped(ns,
+               `${uri} ${outcome}. hash=${built.hash}` +
+               (built.tags.length > 0
+                 ? ` tags=${built.tags.map((t) => `#${t}`).join(" ")}${tagged ? "" : " (body only — the retrieval tag list was not updated)"}`
+                 : "") +
+-              " Pass that hash as expect_hash to replace this entry later.",
++              " Pass that hash as expect_hash to replace this entry later."),
+           }],
+-          details: { written: true, uri, outcome, hash: built.hash, tags: built.tags, tagged, result },
++          details: multi ? { namespace: ns.name, ...details } : details,
+         };
+       },
+     });
+   }
+ 
+   // --- viking_archive_expand ---
++  // [QCR PATCH 5] Deliberately NOT namespace-aware: it expands a SESSION
++  // archive (`viking://session/<id>`), and sessions belong to the identity this
++  // pi authenticates as. Another user's sessions are not memory this fork
++  // offers to browse, and PATCH 3 already says the daemon owns session
++  // lifecycle. It keeps the primary client, unchanged.
+   pi.registerTool({
+     name: "viking_archive_expand",
+     label: "Viking Archive Expand",
+diff --git a/extensions/vendor/openviking-pi/qcr-namespaces.ts b/extensions/vendor/openviking-pi/qcr-namespaces.ts
+new file mode 100644
+--- /dev/null
++++ b/extensions/vendor/openviking-pi/qcr-namespaces.ts
+@@ -0,0 +1,198 @@
++// QCR FORK — file added by PATCH 5 (a second memory namespace). Not upstream.
++//
++// WHAT THIS SOLVES. Upstream builds ONE `OVClient` from ONE key, so a pi can
++// only ever reach the user tree that key owns. The companion on the owner's PC
++// holds TWO OpenViking USER keys — its own (`user/companion/`) and the
++// reviewer's (`user/reviewer/`, the key the daemon and every review session
++// hold) — because the ratified design is that the companion and the TUI can do
++// EVERYTHING with memory, read and write, over every piece of it, while
++// automated review sessions hold the reviewer key alone and stay confined
++// server-side (docs/companion-memory-access.md).
++//
++// The second key was already delivered to the companion container as
++// `OPENVIKING_REVIEWER_KEY` and proven usable; nothing consumed it. This file
++// is the pure half of consuming it: which extra namespaces exist, and which
++// namespace a given tool call is addressing. The clients themselves are built
++// in `index.ts` and handed to `tools.ts` — pure logic lives here so
++// `tests/openviking-fork.test.ts` can exercise it (`tools.ts` and `index.ts`
++// cannot be imported from a test; they pull typebox and the pi packages).
++//
++// SHAPE BORROWED, NOT INVENTED. The TUI solved the same problem first
++// (`src/tui/memory.ts`): one client per namespace, keys read by env
++// name from the shared keys file, and every addressed operation prefixed with
++// the namespace that owns it so a verb routes back to the right key. A
++// namespace-prefixed address is the established convention; here the address
++// the model already types is a `viking://user/<namespace>/…` URI, so the URI
++// carries the prefix and an explicit `namespace` parameter settles the rest.
++//
++// THREE PROPERTIES THIS FILE IS RESPONSIBLE FOR:
++//
++//   1. A LEAF NEVER GETS A SECOND NAMESPACE. PATCH 2 stops all ambient work in
++//      a pi-subagents leaf and PATCH 4 withholds the write tool there; a second
++//      client must not become a way around either. `resolveExtraNamespaces`
++//      returns [] for a leaf, `index.ts` does not even call it in the leaf
++//      path, and `tools.ts` discards any namespaces handed to a leaf.
++//   2. THE ROOT-KEY GUARD COVERS BOTH KEYS. Upstream's resolver ends its
++//      fallback chain at the server's `root_api_key`, which our state-volume
++//      symlink puts within reach. The second key goes through the SAME
++//      `withoutRootKey` guard as the first — a new key must not reopen the hole
++//      PATCH 0000 closed.
++//   3. A REVIEW SESSION IS UNCHANGED. A PR session's own identity already IS
++//      `reviewer` (`OPENVIKING_USER=reviewer`, key in a 0600 ovcli.conf, and
++//      the daemon never puts `OPENVIKING_REVIEWER_KEY` in a session env), so a
++//      namespace whose user equals our own is dropped rather than duplicated:
++//      even if that variable ever appeared in a session, it would add nothing.
++//      And with a single namespace, routing is a constant and the tools keep
++//      the exact parameters and text they have today.
++import { withoutRootKey } from "./config.js";
++
++/** The extra namespace this fork knows how to build. */
++export const REVIEWER_NAMESPACE = "reviewer";
++
++/** Env name carrying the reviewer USER key. Spelled the same in
++ * `src/tui/companion.ts` (`KEY_NAMES`), `src/tui/memory.ts` (`USER_KEY_ENV`)
++ * and the keys file — do not invent a second spelling. */
++export const REVIEWER_KEY_ENV = "OPENVIKING_REVIEWER_KEY";
++
++/** Which OpenViking USER the reviewer key owns. Overridable only because the
++ * user name is a deployment fact; the default is what the daemon uses. */
++export const REVIEWER_USER_ENV = "OPENVIKING_REVIEWER_USER";
++
++/** One extra namespace's credentials — never logged, never put on an argv. */
++export interface NamespaceCredentials {
++  /** How the model names it: `reviewer`. */
++  name: string;
++  /** `X-OpenViking-User` for that client. */
++  user: string;
++  apiKey: string;
++}
++
++export interface ResolveNamespaceOptions {
++  /** True in a pi-subagents leaf — the answer is then always []. */
++  leaf?: boolean;
++  /** The root-key guard. Injectable for tests; production passes nothing and
++   * gets `config.ts`'s, which reads the server's own ov.conf. */
++  guardRootKey?: typeof withoutRootKey;
++}
++
++function trimmed(value: unknown): string {
++  return typeof value === "string" ? value.trim() : "";
++}
++
++/** What the model calls the namespace this pi authenticates as. `own` only
++ * when no `OPENVIKING_USER` was configured at all. */
++export function ownNamespaceName(user: unknown): string {
++  return trimmed(user).toLowerCase() || "own";
++}
++
++/**
++ * The namespaces this process can reach BESIDES its own identity.
++ *
++ * Today that is at most one — `reviewer`, when `OPENVIKING_REVIEWER_KEY` is in
++ * the environment. Its ABSENCE is a normal state, not an error: the process
++ * then reaches its own tree only, exactly as before this patch.
++ */
++export function resolveExtraNamespaces(
++  config: { user?: string },
++  env: Record<string, string | undefined> = process.env,
++  opts: ResolveNamespaceOptions = {},
++): NamespaceCredentials[] {
++  // (1) A leaf gets nothing ambient and no second key. See PATCH 2.
++  if (opts.leaf === true) return [];
++
++  const rawKey = trimmed(env[REVIEWER_KEY_ENV]);
++  if (!rawKey) return [];
++
++  // (2) The same guard the primary key goes through. If this IS the server's
++  // root key it is dropped and the namespace simply does not exist — the fork
++  // never authenticates as ROOT, by any route, including a new one.
++  const guard = opts.guardRootKey ?? withoutRootKey;
++  const guarded = guard({ apiKey: rawKey, hasApiKey: true }, env);
++  if (!guarded.hasApiKey || !guarded.apiKey) return [];
++
++  const user = trimmed(env[REVIEWER_USER_ENV]).toLowerCase() || REVIEWER_NAMESPACE;
++
++  // (3) Never a second client for the tree we already are. This is what keeps
++  // a review session (whose own user IS `reviewer`) structurally single-keyed.
++  if (ownNamespaceName(config.user) === user) return [];
++
++  return [{ name: REVIEWER_NAMESPACE, user, apiKey: guarded.apiKey }];
++}
++
++// ---- routing a tool call to a namespace -------------------------------------
++
++export type NamespaceRoute =
++  | { ok: true; namespace: string }
++  | { ok: false; error: string };
++
++/** The user tree a `viking://user/<space>/…` URI names, lowercased. `null`
++ * for anything else — including the reserved-word form (`viking://user/
++ * memories/…`) the client expands server-side, which names no namespace. */
++export function namespaceOfUri(uri: unknown): string | null {
++  const match = /^\s*viking:\/\/user\/([A-Za-z0-9._-]+)/i.exec(String(uri ?? ""));
++  return match ? match[1]!.toLowerCase() : null;
++}
++
++/**
++ * Which namespace a tool call is touching.
++ *
++ * `names[0]` is this pi's own identity and the default. Two ways to name
++ * another one, and they must agree:
++ *
++ *   * `namespace: "reviewer"` — explicit, and what the tool schema advertises;
++ *   * a `viking://user/reviewer/…` URI — implicit, because the address the
++ *     model already types carries the namespace prefix.
++ *
++ * Disagreement is REFUSED rather than resolved by precedence: writing to the
++ * wrong memory tree is silent, and a rule the model has to remember is exactly
++ * the kind of thing it will get wrong at 3am.
++ *
++ * With ONE namespace this is a constant function that never fails — the
++ * single-key case (every review session) keeps today's behaviour exactly.
++ */
++export function routeNamespace(
++  params: { namespace?: unknown; uri?: unknown; scope?: unknown },
++  names: readonly string[],
++): NamespaceRoute {
++  const known = names.map((n) => n.toLowerCase());
++  const fallback = known[0] ?? "";
++  if (known.length <= 1) return { ok: true, namespace: fallback };
++
++  const explicit = trimmed(params.namespace).toLowerCase();
++  if (explicit && !known.includes(explicit)) {
++    return {
++      ok: false,
++      error:
++        `Unknown memory namespace "${explicit}". This pi reaches: ${known.join(", ")}.` +
++        (explicit === REVIEWER_NAMESPACE ? ` Reviewer memory needs ${REVIEWER_KEY_ENV} in this process's environment.` : ""),
++    };
++  }
++
++  const implied = namespaceOfUri(params.uri) ?? namespaceOfUri(params.scope);
++  if (implied && known.includes(implied)) {
++    if (explicit && explicit !== implied) {
++      return {
++        ok: false,
++        error:
++          `That URI is in the ${implied} memory tree but namespace says "${explicit}". ` +
++          "Pass one or the other, not two different answers.",
++      };
++    }
++    return { ok: true, namespace: implied };
++  }
++
++  return { ok: true, namespace: explicit || fallback };
++}
++
++/** The sentence appended to every namespace-aware tool description. Written
++ * once so the four tools cannot drift apart on what they tell the model. */
++export function namespaceNote(names: readonly string[]): string {
++  if (names.length <= 1) return "";
++  const own = names[0]!;
++  const others = names.slice(1);
++  return (
++    ` MEMORY NAMESPACES: this pi reaches ${names.join(" and ")} — ${own} is your own memory and the default, ` +
++    `${others.join(" and ")} is the review system's. Pick one with \`namespace\`, or address a ` +
++    "viking://user/<namespace>/… URI (the two must agree); every answer is prefixed with the tree it came from."
++  );
++}

@@ -1,8 +1,9 @@
-// The vendored OpenViking pi extension — provenance + the four
+// The vendored OpenViking pi extension — provenance + the five
 // patches. Two kinds of assertion live here on purpose:
 //
 //   * BEHAVIOUR, wherever the fork's own code can be imported. `qcr-leaf.ts`,
-//     `qcr-write.ts`, `sync.ts` and `client.ts` are all reachable from vitest
+//     `qcr-write.ts`, `qcr-namespaces.ts`, `config.ts`, `sync.ts` and
+//     `client.ts` are all reachable from vitest
 //     (they import only node builtins and plain .mjs siblings), so those
 //     patches are tested, not just grepped. `tools.ts` and `index.ts` are NOT
 //     importable — they pull `typebox`, `@earendil-works/pi-ai` and
@@ -15,11 +16,22 @@
 //
 // A failure here means the fork drifted, not that the test is stale. Read
 // extensions/vendor/openviking-pi/README.md before "fixing" anything.
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse as parseToml } from "smol-toml";
 import { isLeafProcess, LEAF_ARGV_FLAGS } from "../extensions/vendor/openviking-pi/qcr-leaf.js";
+import { withoutRootKey } from "../extensions/vendor/openviking-pi/config.js";
+import {
+  namespaceNote,
+  namespaceOfUri,
+  ownNamespaceName,
+  resolveExtraNamespaces,
+  routeNamespace,
+  REVIEWER_KEY_ENV,
+  REVIEWER_USER_ENV,
+} from "../extensions/vendor/openviking-pi/qcr-namespaces.js";
 import {
   buildWriteRequest,
   normalizeHash,
@@ -77,7 +89,7 @@ describe("provenance and licence", () => {
   });
 
   it("ships the patch series it claims to", () => {
-    expect(upstream.patches.length).toBe(5); // 0000 scaffolding + four numbered
+    expect(upstream.patches.length).toBe(6); // 0000 scaffolding + five numbered
     for (const name of upstream.patches) {
       const patch = read(join("patches", name));
       expect(patch.length).toBeGreaterThan(0);
@@ -157,7 +169,7 @@ describe("PATCH 2 — no ambient work in a subagent leaf", () => {
     // start() path that would open a session.
     expect(src.match(/if \(leaf\)/g)?.length ?? 0).toBeGreaterThanOrEqual(5);
     expect(src).toContain("registerTools(pi, client, sync, { leaf: true })");
-    expect(src).toContain("registerTools(pi, client, sync, { leaf: false })");
+    expect(src).toContain("registerTools(pi, client, sync, { leaf: false, namespaces })");
   });
 
   it("registers no write tool in a leaf", () => {
@@ -300,6 +312,13 @@ describe("PATCH 4 — viking_write is the one durable write", () => {
     expect(buildWriteRequest({ uri: URI, content: "   \n" }).ok).toBe(false);
   });
 
+  it("keeps the write tool's leaf gate — a second namespace is not a way in", () => {
+    // PATCH 5 must not have moved viking_write out of `if (!leaf) {`.
+    const tools = read("tools.ts");
+    const writeAt = tools.indexOf('name: "viking_write"');
+    expect(tools.lastIndexOf("if (!leaf) {", writeAt)).toBeGreaterThan(-1);
+  });
+
   it("surfaces a 409 as a distinct, non-destructive outcome", async () => {
     const seen: { url: string; body: any }[] = [];
     const original = globalThis.fetch;
@@ -328,5 +347,164 @@ describe("PATCH 4 — viking_write is the one durable write", () => {
     } finally {
       globalThis.fetch = original;
     }
+  });
+});
+
+describe("PATCH 5 — a second memory namespace, and only where it belongs", () => {
+  const COMPANION = { user: "companion" };
+  const ovConfWith = (rootKey: string): string => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-ov-"));
+    const path = join(dir, "ov.conf");
+    writeFileSync(path, JSON.stringify({ server: { root_api_key: rootKey } }));
+    return path;
+  };
+
+  describe("resolution", () => {
+    it("is a no-op without the second key — the normal single-namespace state", () => {
+      expect(resolveExtraNamespaces(COMPANION, {})).toEqual([]);
+      expect(resolveExtraNamespaces(COMPANION, { [REVIEWER_KEY_ENV]: "   " })).toEqual([]);
+    });
+
+    it("builds the reviewer namespace when the companion's second key is present", () => {
+      expect(resolveExtraNamespaces(COMPANION, { [REVIEWER_KEY_ENV]: "rk" })).toEqual([
+        { name: "reviewer", user: "reviewer", apiKey: "rk" },
+      ]);
+      // The user name is a deployment fact, so it is overridable.
+      expect(
+        resolveExtraNamespaces(COMPANION, { [REVIEWER_KEY_ENV]: "rk", [REVIEWER_USER_ENV]: "Reviewer2" })[0]!.user,
+      ).toBe("reviewer2");
+    });
+
+    it("gives a LEAF nothing — PATCH 2/4 are not routed around", () => {
+      expect(resolveExtraNamespaces(COMPANION, { [REVIEWER_KEY_ENV]: "rk" }, { leaf: true })).toEqual([]);
+    });
+
+    it("gives a REVIEW SESSION nothing — its own identity already is reviewer", () => {
+      // src/sessions.ts launches every pi with OPENVIKING_USER=reviewer and
+      // never puts OPENVIKING_REVIEWER_KEY in the env; even if it did, a
+      // namespace equal to our own is not a second namespace.
+      expect(resolveExtraNamespaces({ user: "reviewer" }, { [REVIEWER_KEY_ENV]: "rk" })).toEqual([]);
+    });
+
+    it("puts the SECOND key through the same root-key guard as the first", () => {
+      const path = ovConfWith("ROOT-KEY");
+      const env = { OPENVIKING_CONFIG_FILE: path, [REVIEWER_KEY_ENV]: "ROOT-KEY" };
+      // The whole reason withoutRootKey exists: the container's ~/.openviking
+      // is a symlink onto the state volume holding the SERVER's ov.conf.
+      expect(resolveExtraNamespaces(COMPANION, env)).toEqual([]);
+      expect(resolveExtraNamespaces(COMPANION, { ...env, [REVIEWER_KEY_ENV]: "user-key" })).toHaveLength(1);
+      // …and directly, since a caller could hold a credential of any shape.
+      expect(withoutRootKey({ apiKey: "ROOT-KEY", hasApiKey: true }, { OPENVIKING_CONFIG_FILE: path }))
+        .toEqual({ apiKey: "", hasApiKey: false });
+      expect(withoutRootKey({ apiKey: "user-key", hasApiKey: true }, { OPENVIKING_CONFIG_FILE: path }).apiKey)
+        .toBe("user-key");
+    });
+
+    it("resolves the guard through config.ts rather than re-implementing it", () => {
+      expect(read("qcr-namespaces.ts")).toContain('import { withoutRootKey } from "./config.js"');
+    });
+  });
+
+  describe("routing", () => {
+    const TWO = ["companion", "reviewer"];
+
+    it("is a constant with one namespace — every review session is unchanged", () => {
+      for (const params of [
+        {},
+        { uri: "viking://user/memories/notes.md" },       // reserved-word form
+        { uri: "viking://user/companion/memories/x.md" }, // a tree we cannot reach
+        { namespace: "nonsense" },
+      ]) {
+        expect(routeNamespace(params, ["reviewer"])).toEqual({ ok: true, namespace: "reviewer" });
+      }
+      expect(namespaceNote(["reviewer"])).toBe("");
+    });
+
+    it("defaults to our own namespace, which is names[0]", () => {
+      expect(routeNamespace({}, TWO)).toEqual({ ok: true, namespace: "companion" });
+      expect(routeNamespace({ uri: "viking://user/memories/x.md" }, TWO)).toEqual({ ok: true, namespace: "companion" });
+    });
+
+    it("takes the namespace from the parameter or from the URI", () => {
+      expect(routeNamespace({ namespace: "reviewer" }, TWO)).toEqual({ ok: true, namespace: "reviewer" });
+      expect(routeNamespace({ uri: "viking://user/reviewer/memories/x.md" }, TWO)).toEqual({ ok: true, namespace: "reviewer" });
+      // viking_search carries its URI in `scope`.
+      expect(routeNamespace({ scope: "viking://user/reviewer/memories/" }, TWO)).toEqual({ ok: true, namespace: "reviewer" });
+      expect(namespaceOfUri("viking://user/Reviewer/memories/x.md")).toBe("reviewer");
+      expect(namespaceOfUri("viking://session/pr-42")).toBeNull();
+    });
+
+    it("REFUSES a call that names two different trees", () => {
+      const routed = routeNamespace(
+        { namespace: "companion", uri: "viking://user/reviewer/memories/x.md" },
+        TWO,
+      );
+      expect(routed.ok).toBe(false);
+      if (routed.ok) return;
+      expect(routed.error).toContain("reviewer");
+      expect(routed.error).toContain("companion");
+    });
+
+    it("names the missing env var when an unreachable namespace is asked for", () => {
+      const routed = routeNamespace({ namespace: "reviewer" }, ["companion", "other"]);
+      expect(routed.ok).toBe(false);
+      if (routed.ok) return;
+      expect(routed.error).toContain(REVIEWER_KEY_ENV);
+    });
+
+    it("names the tree in every multi-namespace answer, and offers the parameter only then", () => {
+      expect(namespaceNote(TWO)).toContain("companion and reviewer");
+      const tools = read("tools.ts");
+      // The prefix and the parameter are both keyed off `multi`, so a
+      // single-namespace pi (every review session) sees neither.
+      expect(tools).toContain("multi ? `[${ns.name}] ${text}` : text");
+      expect(tools).toContain("multi\n    ? { namespace: Type.Optional(StringEnum(names)) }\n    : {}");
+      // Every namespace-aware tool takes it, and every one appends the note.
+      expect(tools.match(/\.\.\.nsParam,/g)?.length ?? 0).toBe(4);
+      expect(tools.match(/\+ nsNote,/g)?.length ?? 0).toBe(4);
+    });
+
+    it("gives the own-namespace name a sane default", () => {
+      expect(ownNamespaceName("Companion")).toBe("companion");
+      expect(ownNamespaceName(undefined)).toBe("own");
+    });
+  });
+
+  describe("structure — the parts no test can call", () => {
+    it("builds the extra clients only outside a leaf, from the same config", () => {
+      const src = read("index.ts");
+      expect(src).toContain("leaf ? [] : resolveExtraNamespaces(config)");
+      expect(src).toContain("new OVClient({ ...config, apiKey: ns.apiKey, user: ns.user })");
+      // The leaf path registers tools with no namespaces at all.
+      expect(src).toContain("registerTools(pi, client, sync, { leaf: true })");
+    });
+
+    it("discards namespaces handed to a leaf, in tools.ts too", () => {
+      expect(code("tools.ts")).toContain(
+        "leaf || !opts.namespaces || opts.namespaces.length === 0 ? [own] : opts.namespaces",
+      );
+    });
+
+    it("keeps ambient work single-namespace: sync and recall hold the primary client", () => {
+      const src = code("index.ts");
+      expect(src).toContain("new SyncManager(client, config)");
+      expect(src).toContain("new RecallManager(client, config,");
+      // No extra client is ever handed to the session/recall machinery.
+      expect(src).not.toMatch(/new (SyncManager|RecallManager)\(\s*ns\./);
+    });
+
+    it("advertises the namespaces in the system prompt only when there are two", () => {
+      const src = read("index.ts");
+      expect(src).toContain("if (extraNamespaces.length > 0) {");
+      const advertised = src.match(/OpenViking tools: ([^"]+)\./)?.[1] ?? "";
+      expect(advertised).toContain("viking_write");
+    });
+
+    it("leaves viking_archive_expand on the primary client", () => {
+      const tools = read("tools.ts");
+      const at = tools.indexOf('name: "viking_archive_expand"');
+      expect(at).toBeGreaterThan(-1);
+      expect(tools.slice(at)).toContain("await client.overview(uri)");
+    });
   });
 });

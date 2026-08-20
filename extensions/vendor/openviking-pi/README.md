@@ -1,7 +1,7 @@
 # openviking-pi — vendored, patched fork
 
 The OpenViking pi extension our sessions load. Vendored, not depended on:
-upstream ships it as an `examples/` directory, not a package, and we need four
+upstream ships it as an `examples/` directory, not a package, and we need five
 behaviour changes that upstream has no reason to make.
 
 | | |
@@ -20,7 +20,7 @@ fails on drift between the two.
 
 ## Why a fork rather than configuration
 
-Every one of the four patches was tried as configuration first and does not
+Every one of the five patches was tried as configuration first and does not
 exist there. The evidence is a spike against a **running v0.4.15 server plus
 the pinned pi 0.84.1** — `assets/findings.md` in the issue tracker,
 with transcripts. Read it before changing anything here; several of its
@@ -28,11 +28,12 @@ findings contradict the OpenViking docs, which lead the tag.
 
 ## The patch series
 
-Four numbered behaviour patches, applied in order over the vendored upstream
+Five numbered behaviour patches, applied in order over the vendored upstream
 files, plus one unnumbered scaffolding patch. They live in `patches/` as
-`git apply`-able diffs — verified by applying all five, in order, to a
+`git apply`-able diffs — verified by applying all six, in order, to a
 pristine `v0.4.15` extraction and diffing the result against this directory:
-byte-identical. Every hunk they add carries a greppable marker:
+byte-identical. (`patches/` and `upstream.json` are meta and are not themselves
+part of the reproduced tree.) Every hunk they add carries a greppable marker:
 
 ```sh
 grep -rn "QCR PATCH" extensions/vendor/openviking-pi
@@ -181,6 +182,48 @@ imported from a test because it pulls `typebox` and `@earendil-works/pi-ai`.
 Touches: `qcr-write.ts` (new), `client.ts` (`batchWrite`, `setTags`),
 `tools.ts`, `index.ts` (the advertised tool list).
 
+### 0005 — a second memory namespace (the companion's reviewer key)
+
+Upstream builds ONE `OVClient` from ONE key, so a pi reaches exactly the user
+tree that key owns. The ratified design is asymmetric: **the companion
+and the TUI can do everything with memory — full read and write over every piece
+of it** — while automated review sessions hold the reviewer key alone and stay
+confined server-side. The companion container already receives the second USER
+key as `OPENVIKING_REVIEWER_KEY` (`docs/companion-memory-access.md`); this patch
+is what consumes it.
+
+`qcr-namespaces.ts` resolves the extra namespaces and routes each tool call to
+one; `index.ts` builds one `OVClient` per namespace (same endpoint, same
+account, same actor peer — only the bearer key and `X-OpenViking-User` differ,
+which is the pairing the server confines) and `tools.ts` addresses whichever one
+the call names. The shape is the TUI's, not a second invention:
+`src/tui/memory.ts` already runs one client per namespace with the namespace
+prefixed onto every address.
+
+Four properties are the patch:
+
+* **Absence is normal.** No `OPENVIKING_REVIEWER_KEY` ⇒ no second namespace, no
+  error, no `namespace` parameter in any tool schema, unprefixed answers — i.e.
+  every review session keeps today's behaviour exactly, down to the tool
+  descriptions the model sees.
+* **The call says which tree it touches.** `namespace: "reviewer"` or a
+  `viking://user/reviewer/…` URI; if both are given and disagree the call is
+  REFUSED rather than resolved by a precedence rule, and every answer is
+  prefixed `[<namespace>]`. Silently writing the wrong memory tree is the one
+  failure here that is both invisible and durable.
+* **`withoutRootKey` covers BOTH keys.** It is generic and `env`-parameterised
+  now; the reviewer key goes through it before a client is built. A new key must
+  not reopen the hole 0000 closed.
+* **A leaf gains nothing.** `resolveExtraNamespaces` returns `[]` for a leaf,
+  `index.ts` does not construct the clients in the leaf path, and
+  `registerTools` discards namespaces handed to a leaf. Ambient work (recall,
+  sync, commit) stays on the primary client in all cases — a second namespace is
+  a TOOL surface only, never a second session.
+
+Touches: `qcr-namespaces.ts` (new), `config.ts` (`withoutRootKey` generic +
+`env`), `index.ts` (client construction, health probe, the advertised
+namespaces), `tools.ts` (routing, the `namespace` parameter, prefixed answers).
+
 ## Rebasing onto a newer upstream
 
 ```sh
@@ -193,16 +236,16 @@ git -C /tmp/ov checkout <new-tag>
 for p in extensions/vendor/openviking-pi/patches/0*.patch; do
   git apply --3way "$p" || echo "RESOLVE: $p"
 done
-# 3. Re-verify all four patches, then:
+# 3. Re-verify all five patches, then:
 timeout 900 npm test && npm run build
 ```
 
 Then update `extension_commit` and `version` in `config.toml [openviking]`,
 the base commit in `NOTICE` and in the table above, and re-run the live
-verification below. A bump re-verifies **all four** patches — a patch that no
+verification below. A bump re-verifies **all five** patches — a patch that no
 longer applies is a patch whose reason may have changed, not a patch to drop.
 
-`tests/openviking-fork.test.ts` is the guard rail: it asserts the four patches
+`tests/openviking-fork.test.ts` is the guard rail: it asserts the five patches
 are still present (markers, and the *absence* of what each one removed) and
 that the pinned commit here matches `config.toml`. It cannot tell you whether
 upstream grew a *new* compaction handler or a *new* write tool — read the
@@ -217,6 +260,12 @@ durable write; `batch-write` preconditions 409 correctly and the
 `MEMORY_FIELDS` footgun is real; pi-subagents children carry `--no-extensions`;
 `OPENVIKING_PEER_ID` overrides the path-derived peer id.
 
+Also verified, for 0005: the reviewer USER key reaches `user/reviewer/` and is
+refused on `user/companion/` when paired with the other user's header — that is
+the four-cell matrix `node scripts/companion-memory-forward.mjs verify` runs,
+and it is what makes two USER keys safe. What it proves is the SERVER's
+confinement, not this extension's plumbing.
+
 **Not yet verified end to end** (needs a session smoke on the VM, where a real
 model provider exists): that a `viking_write` entry is readable through the
 daemon's client against a live server, and that the ledger block survives a
@@ -224,3 +273,8 @@ real compaction with this fork loaded. The second half of that is the open
 item — "does a no-op second handler drop ledger-pin's pinned block?" —
 which this patch series makes moot by construction rather than by measurement.
 Fold both into `npm run smoke:session`.
+
+Also unverified live: a `viking_read`/`viking_write` through the SECOND
+(reviewer) client from the companion's pi. The key and the server-side
+confinement are proven; the extension-side routing is covered by unit tests
+only. Fold it into the companion smoke (`npm run smoke:companion`).

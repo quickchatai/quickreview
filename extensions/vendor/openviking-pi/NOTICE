@@ -36,6 +36,8 @@ Changed by the quickreviewd maintainers, 2026-08-20:
   4. A `viking_write` tool was added (durable `content/batch-write`); the
      `viking_remember`, `viking_forget` and `viking_add_resource` tools were
      removed.
+  5. The memory tools can address a second OpenViking user namespace, built
+     from a second USER key when one is present in the environment.
 
 Plus vendoring scaffolding: build-conformance fixes for this repo's stricter
 tsconfig, ambient type declarations for uninstalled packages, three unused

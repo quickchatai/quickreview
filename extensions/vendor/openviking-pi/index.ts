@@ -11,13 +11,15 @@
  *
  * ── QCR FORK ────────────────────────────────────────────────────────────────
  * Vendored from volcengine/OpenViking @ v0.4.15, examples/pi-coding-agent-
- * extension. Four numbered patches; every hunk carries a `[QCR PATCH n]`
+ * extension. Five numbered patches; every hunk carries a `[QCR PATCH n]`
  * marker so a rebase is a search, not an audit. See README.md here.
  *   PATCH 1 — no session_before_compact handler (extensions/ledger-pin.ts is
  *             the sole owner of compaction) and takeover forced off.
  *   PATCH 2 — no ambient recall/sync/commit in a pi-subagents leaf.
  *   PATCH 3 — never auto-create an OV session; the daemon owns lifecycle.
  *   PATCH 4 — viking_write (durable content/batch-write), the ONLY write tool.
+ *   PATCH 5 — a second memory namespace (the companion's reviewer key), tools
+ *             only; a leaf and a single-keyed review session are unchanged.
  * ────────────────────────────────────────────────────────────────────────────
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -33,6 +35,8 @@ import { registerTools } from "./tools.js";
 import { createTakeoverManager } from "./takeover.js";
 // [QCR PATCH 2]
 import { isLeafProcess } from "./qcr-leaf.js";
+// [QCR PATCH 5]
+import { ownNamespaceName, resolveExtraNamespaces } from "./qcr-namespaces.js";
 
 export default async function (pi: ExtensionAPI) {
   // [QCR PATCH 2] Decided once, from argv, before anything else: a
@@ -47,6 +51,24 @@ export default async function (pi: ExtensionAPI) {
 
   // --- Initialize modules ---
   const client = new OVClient(config);
+  // [QCR PATCH 5] A SECOND client, and only when a second USER key is in the
+  // environment: the companion's `OPENVIKING_REVIEWER_KEY`, which lets the
+  // local pi read AND write reviewer memory as well as its own. Same base URL,
+  // same account, same actor peer (this pi is still the actor) — only the
+  // bearer key and `X-OpenViking-User` differ, which is exactly the pairing the
+  // server confines. The key goes through config.ts's root-key guard on the way
+  // (qcr-namespaces.ts), so a second key cannot become a ROOT client either.
+  //
+  // `leaf ? []` is belt to qcr-namespaces' own braces: a pi-subagents leaf must
+  // not gain a namespace PATCH 2 and PATCH 4 deliberately withheld, so the
+  // clients are not even constructed there. No key is a NORMAL state — this pi
+  // then reaches its own namespace only, exactly as before this patch, which is
+  // every review session's shape.
+  const extraNamespaces = (leaf ? [] : resolveExtraNamespaces(config)).map((ns) => ({
+    name: ns.name,
+    client: new OVClient({ ...config, apiKey: ns.apiKey, user: ns.user }),
+  }));
+  const namespaces = [{ name: ownNamespaceName(config.user), client }, ...extraNamespaces];
   const sync = new SyncManager(client, config);
   const recall = new RecallManager(client, config, () => sync.sessionId);
   const debugLog = (message: string) => {
@@ -137,9 +159,21 @@ export default async function (pi: ExtensionAPI) {
         archiveOverview = await fetchArchiveOverview(client, sync.sessionId, config);
       }
 
+      // [QCR PATCH 5] Each extra namespace's client carries its own `connected`
+      // flag (the tools read it), so each is probed once here — after the leaf
+      // early-return above, so a leaf never even opens the socket. A namespace
+      // that does not answer is degraded, never fatal: its tools say "not
+      // reachable" and the primary namespace is untouched.
+      for (const ns of extraNamespaces) {
+        const reachable = await ns.client.health();
+        if (!reachable && config.logLevel === "info") {
+          ctx.ui.notify(`OpenViking: ${ns.name} memory not reachable`, "warning");
+        }
+      }
+
       // Register tools (also needed for pi -c continuations).
       if (!toolsRegistered) {
-        registerTools(pi, client, sync, { leaf: false });
+        registerTools(pi, client, sync, { leaf: false, namespaces });
         toolsRegistered = true;
       }
       updateStatus(ctx, connected, 0, sync.sessionId, config, takeover.state);
@@ -183,6 +217,17 @@ export default async function (pi: ExtensionAPI) {
     // [QCR PATCH 4] viking_remember / viking_forget / viking_add_resource are
     // gone; viking_write is the one write tool.
     parts.push("OpenViking tools: viking_search, viking_read, viking_browse, viking_write, viking_archive_expand.");
+    // [QCR PATCH 5] Say it in the system prompt too, not only in the tool
+    // schemas: with two namespaces reachable, "which memory am I touching" is a
+    // question the model must never have to guess at.
+    if (extraNamespaces.length > 0) {
+      parts.push(
+        `Two OpenViking memory namespaces are reachable: ${namespaces.map((n) => n.name).join(" and ")}. ` +
+          `${namespaces[0]!.name} is your own memory and the default; ` +
+          `${extraNamespaces.map((n) => n.name).join(" and ")} is the review system's, readable and writable from here. ` +
+          "Choose with the `namespace` parameter or by addressing a viking://user/<namespace>/… URI, and check the prefix on every answer.",
+      );
+    }
 
     const additions = parts.join("\n\n");
     if (!additions) return;

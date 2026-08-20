@@ -34,6 +34,7 @@
     "0001-remove-session-before-compact-handler.patch",
     "0002-no-ambient-work-in-subagent-leaves.patch",
     "0003-never-auto-create-openviking-sessions.patch",
-    "0004-viking-write-durable-batch-write.patch"
+    "0004-viking-write-durable-batch-write.patch",
+    "0005-second-memory-namespace.patch"
   ]
 }
