@@ -2,8 +2,9 @@
 // every command it can produce is read-only against the box except the
 // user-initiated writes (attach keystrokes ride a pty in attach.ts; inject
 // files in msg.ts; `sendKeysArgv` types into the board's focused pi pane;
-// adds memory edits via scripts/memedit.mjs in memory.ts and
-// rubric-proposal dir removal in proposals.ts — both operator keystrokes).
+// adds memory edits — carried by the MemoryStore seam, whose
+// pi-memory implementation runs over this same runner (src/memory/) — and
+// rubric-proposal dir removal in proposals.ts, both operator keystrokes).
 // None of them touch GitHub mutations, so none go near the gate (the
 // proposals pane's gh reads are reads — direct per the gate rules).
 // Command construction is pure so tests can assert the exact argv; execution

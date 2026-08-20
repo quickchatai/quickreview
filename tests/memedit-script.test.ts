@@ -6,7 +6,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { blockHash, parseMemory } from "../src/tui/memory.js";
+import { blockHash, parseMemory } from "../src/memory/pi-memory.js";
 
 const SCRIPT = join(process.cwd(), "scripts", "memedit.mjs");
 

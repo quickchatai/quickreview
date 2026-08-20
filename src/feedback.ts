@@ -9,9 +9,10 @@
 // never stamps `last_author_reply_at` (which would unlock a re-review at an
 // unchanged head). Its two sinks are:
 //
-//   1. reviewer memory — one `#feedback` entry per signal, written through
-//      `scripts/memedit.mjs note` (the ONE external mutation path into
-//      pi-memory, — the daemon does not grow a second one);
+//   1. reviewer memory — one `#feedback` entry per signal, appended verbatim
+//      through the ONE MemoryStore seam (src/memory/store.ts) as a `note`
+//      op — the daemon does not grow a second writer, and it does not know
+//      which engine is behind the seam;
 //   2. the same-day validator addendum — regenerated on every explicit
 //      [feedback] comment and composed into pass-validate's BUILT body
 //      (the owner, 2026-08-20: "ingestable at least into the memory for a day,
@@ -24,11 +25,10 @@
 // The EOD sweep consolidates the `#feedback` memory entries into durable
 // learnings and rubric proposals through its existing mandate; the addendum
 // expires with the Warsaw day (wire.ts rebuilds on day change).
-import { spawn } from "node:child_process";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { zoneDateString } from "./eod.js";
 import { VALIDATE_PASS, type PassAddendum } from "./include.js";
+import { localPiMemoryStore } from "./memory/pi-memory.js";
+import type { MemoryStore } from "./memory/store.js";
 import type { FeedbackSignalRow, StateStore } from "./state.js";
 
 /** A comment opts into the loop by STARTING with the tag (case-insensitive). */
@@ -204,47 +204,6 @@ export function feedbackDayAddendum(items: FeedbackSignalRow[], day: string): Pa
   };
 }
 
-// ---- memory write through memedit ------------------------------------------
-
-export function memoryPathDefault(): string {
-  return process.env["QCR_MEMORY_PATH"] ?? join(homedir(), ".pi", "agent", "memory", "MEMORY.md");
-}
-
-/**
- * Append one tagged entry via `scripts/memedit.mjs note` — the ONE external
- * mutation path into pi-memory; the daemon deliberately does not
- * grow a second writer. Resolves with memedit's stdout line; rejects on a
- * refusal or spawn failure (callers log, never crash).
- */
-export function writeMemoryViaMemedit(
-  entry: string,
-  opts: { scriptPath: string; memoryPath?: string; timeoutMs?: number } = { scriptPath: "scripts/memedit.mjs" },
-): Promise<string> {
-  return new Promise((resolvePromise, reject) => {
-    const child = spawn(process.execPath, [opts.scriptPath, "note"], {
-      env: { ...process.env, QCR_MEMORY_PATH: opts.memoryPath ?? memoryPathDefault() },
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    const t = setTimeout(() => child.kill("SIGKILL"), opts.timeoutMs ?? 10_000);
-    t.unref?.();
-    let out = "";
-    let err = "";
-    child.stdout.on("data", (d) => (out += String(d)));
-    child.stderr.on("data", (d) => (err += String(d)));
-    child.on("error", (e) => {
-      clearTimeout(t);
-      reject(e);
-    });
-    child.on("close", (code) => {
-      clearTimeout(t);
-      if (code === 0) resolvePromise(out.trim());
-      else reject(new Error(`memedit note exited ${code}: ${out.trim()} ${err.trim()}`.trim()));
-    });
-    child.stdin.write(entry);
-    child.stdin.end();
-  });
-}
-
 // ---- the engine -------------------------------------------------------------
 
 export interface FeedbackEngineDeps {
@@ -254,9 +213,10 @@ export interface FeedbackEngineDeps {
    * passes the day it just stamped, so a rebuild triggered at 23:59:59
    * cannot recompute a newer day and drop the very comment that caused it. */
   rebuildAgents: (day?: string) => void;
-  /** Test seam; defaults to memedit `note`. */
-  writeMemory?: (entry: string) => Promise<unknown>;
-  /** Sandbox root, for the memedit script path. */
+  /** Reviewer memory. Defaults to the daemon's own store (rooted at `root`),
+   * so wire.ts needs no memory wiring; tests pass a fake. */
+  memory?: MemoryStore;
+  /** Sandbox root — where the default store finds its engine. */
   root?: string;
   log?: (msg: string, extra?: unknown) => void;
   now?: () => Date;
@@ -266,15 +226,13 @@ export type IngestResult = "recorded" | "duplicate" | "skipped_stale";
 
 export class FeedbackEngine {
   private readonly deps: FeedbackEngineDeps;
-  private readonly writeMemory: (entry: string) => Promise<unknown>;
+  private readonly memory: MemoryStore;
   private readonly log: (msg: string, extra?: unknown) => void;
 
   constructor(deps: FeedbackEngineDeps) {
     this.deps = deps;
     this.log = deps.log ?? (() => {});
-    this.writeMemory =
-      deps.writeMemory ??
-      ((entry) => writeMemoryViaMemedit(entry, { scriptPath: join(deps.root ?? process.cwd(), "scripts", "memedit.mjs") }));
+    this.memory = deps.memory ?? localPiMemoryStore({ root: deps.root ?? process.cwd() });
   }
 
   /** Deterministic ingest: dedupe → ledger → memory entry → (explicit
@@ -308,7 +266,10 @@ export class FeedbackEngine {
     this.deps.store.logEvent("feedback_signal", e.pr, { kind: e.kind, day });
 
     try {
-      await this.writeMemory(memoryEntryFor(e, day));
+      // `note`, not `add`: the entry carries its own `#feedback` tag and must
+      // be stored verbatim — never dressed up as the operator's own words.
+      const res = await this.memory.apply({ op: "note", text: memoryEntryFor(e, day) });
+      if (!res.ok) throw new Error(res.message);
     } catch (err) {
       // Memory is a sink, not the ledger: the signal is already recorded and
       // the EOD sweep can re-derive it from feedback_signals.

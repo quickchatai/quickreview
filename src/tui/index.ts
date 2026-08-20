@@ -502,8 +502,8 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
     // executes over its own ssh. Sweep serialized behind a simple in-flight
     // flag so a slow ssh never stacks sweeps.
     const { processMemRequests } = await import("./memrequests.js");
-    const { SshMemoryStore, blockHash } = await import("./memory.js");
-    const memStore = new SshMemoryStore(cfg, realSshRunner);
+    const { tuiMemoryStore } = await import("./memory.js");
+    const memStore = tuiMemoryStore(cfg, realSshRunner);
     const memReqDir = join(full.companion.alerts_dir, "memedit");
     // The companion cannot read VM memory itself; the TUI publishes the
     // entries (with the expect-hashes addressed ops need) into the feed
@@ -514,7 +514,9 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
       // tmp+rename like feed.ts — the companion polls this file and must
       // never see a torn write.
       mkdirSync(full.companion.feed_dir, { recursive: true });
-      const payload = JSON.stringify({ written_at: new Date().toISOString(), entries: entries.map((e) => ({ ...e, expect: blockHash(e.text) })) }, null, 2) + "\n";
+      // `expect` is the wire name the companion's request schema uses for the
+      // store's content hash — the feed keeps publishing it under that name.
+      const payload = JSON.stringify({ written_at: new Date().toISOString(), entries: entries.map(({ hash, ...e }) => ({ ...e, expect: hash })) }, null, 2) + "\n";
       writeFileSync(`${memFeedPath}.tmp`, payload);
       renameSync(`${memFeedPath}.tmp`, memFeedPath);
     };

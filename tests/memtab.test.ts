@@ -11,7 +11,8 @@ import { App } from "../src/tui/app.js";
 import { barHitKey } from "../src/tui/cmdbar.js";
 import type { DigestFetcher } from "../src/tui/digesttab.js";
 import { installMemoryLearningHooks, pinnedBudget, renderMemoryView, type MemTabState } from "../src/tui/memtab.js";
-import { blockHash, parseMemory, type MemEditOp, type MemoryStore } from "../src/tui/memory.js";
+import { blockHash, parseMemory } from "../src/memory/pi-memory.js";
+import type { MemoryEntry, MemoryOp, MemoryStore } from "../src/memory/store.js";
 import { parseMemRequest, processMemRequests } from "../src/tui/memrequests.js";
 import { renderDigestTab } from "../src/tui/digesttab.js";
 import { displayWidth, stripAnsi } from "../src/tui/paint.js";
@@ -40,12 +41,15 @@ function fakeStreams() {
 }
 
 class FakeMemory implements MemoryStore {
-  applied: MemEditOp[] = [];
+  applied: MemoryOp[] = [];
   constructor(private md: string = SAMPLE) {}
   read(): Promise<ReturnType<typeof parseMemory>> {
     return Promise.resolve(parseMemory(this.md));
   }
-  apply(op: MemEditOp): Promise<{ ok: boolean; message: string }> {
+  search(): Promise<MemoryEntry[]> {
+    return Promise.resolve([]);
+  }
+  apply(op: MemoryOp): Promise<{ ok: boolean; message: string }> {
     this.applied.push(op);
     return Promise.resolve({ ok: true, message: `ok: ${op.op}` });
   }
@@ -407,6 +411,7 @@ describe("quit vs late async repaints (ghost-frame regression)", () => {
         await gate;
         return parseMemory(SAMPLE);
       },
+      search: () => Promise.resolve([]),
       apply: () => Promise.resolve({ ok: true, message: "ok" }),
     };
     install(app, slowMemory as FakeMemory);

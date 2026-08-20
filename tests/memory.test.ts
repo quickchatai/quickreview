@@ -1,7 +1,11 @@
-// Memory model — parser, timeline ordering, remote argv builders.
+// Memory model — parser, timeline ordering, and the pi-memory
+// implementation's remote argv (memedit knowledge lives in
+// src/memory/pi-memory.ts and nowhere else; the seam itself is exercised
+// against fakes in memory-store.test.ts).
 import { describe, expect, it } from "vitest";
 import type { TuiConfig } from "../src/config.js";
-import { blockHash, defectEntries, memEditArgv, memoryCatArgv, parseMemory, timelineOrder } from "../src/tui/memory.js";
+import { blockHash, memEditArgv, memoryCatArgv, parseMemory } from "../src/memory/pi-memory.js";
+import { defectEntries, timelineOrder } from "../src/tui/memory.js";
 
 const SAMPLE = `<!-- 2026-08-18 23:03:08 [01a0165a] -->
 #bug #operations [[pass-registry]] On 2026-08-18, built pass definitions
@@ -34,6 +38,7 @@ describe("parseMemory", () => {
     const entries = parseMemory(SAMPLE);
     expect(entries).toHaveLength(4);
     expect(entries[0]).toMatchObject({ id: "01a0165a", day: "2026-08-18", block: 0 });
+    expect(entries[0]!.hash).toBe(blockHash(entries[0]!.text)); // the token every addressed op carries back
     expect(entries[1]).toMatchObject({ id: "01a01ab3", block: 0 });
     expect(entries[2]).toMatchObject({ id: "01a01ab3", block: 1 });
     expect(entries[3]).toMatchObject({ id: "01a01b03", block: 0, pinned: true });

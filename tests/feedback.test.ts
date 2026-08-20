@@ -19,8 +19,26 @@ import {
   type FeedbackEvent,
 } from "../src/feedback.js";
 import { VALIDATE_PASS, buildAgents } from "../src/include.js";
+import type { MemoryEntry, MemoryOp, MemoryStore, MemoryWriteResult } from "../src/memory/store.js";
 import { StateStore, type FeedbackSignalRow } from "../src/state.js";
 import { applyInterpretation, interpretEvent, type Interpretation } from "../src/webhook.js";
+
+/** The [feedback] sink talks to the ONE MemoryStore seam — no
+ * subprocess, no engine knowledge. */
+class FakeMemoryStore implements MemoryStore {
+  applied: MemoryOp[] = [];
+  constructor(private readonly result: MemoryWriteResult = { ok: true, message: "ok: note" }) {}
+  read(): Promise<MemoryEntry[]> {
+    return Promise.resolve([]);
+  }
+  search(): Promise<MemoryEntry[]> {
+    return Promise.resolve([]);
+  }
+  apply(op: MemoryOp): Promise<MemoryWriteResult> {
+    this.applied.push(op);
+    return Promise.resolve(this.result);
+  }
+}
 
 const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "config.toml"), "utf8"));
 const BOT = cfg.github.bot_login;
@@ -439,35 +457,37 @@ describe("FeedbackEngine.ingest", () => {
   };
 
   it("records, writes one memory entry, and rebuilds agents for an explicit comment", async () => {
-    const writeMemory = vi.fn().mockResolvedValue("ok");
+    const memory = new FakeMemoryStore();
     const rebuildAgents = vi.fn();
-    const engine = new FeedbackEngine({ store, rebuildAgents, writeMemory });
+    const engine = new FeedbackEngine({ store, rebuildAgents, memory });
     expect(await engine.ingest(comment)).toBe("recorded");
-    expect(writeMemory).toHaveBeenCalledTimes(1);
-    expect(String(writeMemory.mock.calls[0]![0]).startsWith("#feedback")).toBe(true);
+    expect(memory.applied).toHaveLength(1);
+    // `note`, never `add`: the entry carries its own tag and is stored verbatim.
+    expect(memory.applied[0]!.op).toBe("note");
+    expect((memory.applied[0]! as { text: string }).text.startsWith("#feedback")).toBe(true);
     expect(rebuildAgents).toHaveBeenCalledTimes(1);
     expect(await engine.ingest(comment)).toBe("duplicate");
-    expect(writeMemory).toHaveBeenCalledTimes(1);
+    expect(memory.applied).toHaveLength(1);
     expect(rebuildAgents).toHaveBeenCalledTimes(1);
   });
 
   it("behavioral signals write memory but never rebuild agents", async () => {
-    const writeMemory = vi.fn().mockResolvedValue("ok");
+    const memory = new FakeMemoryStore();
     const rebuildAgents = vi.fn();
-    const engine = new FeedbackEngine({ store, rebuildAgents, writeMemory });
+    const engine = new FeedbackEngine({ store, rebuildAgents, memory });
     expect(await engine.ingest({ kind: "bot_comment_deleted", pr: 1, comment_id: 3 })).toBe("recorded");
     expect(await engine.ingest({ kind: "trigger_withdrawn", pr: 1, by: "pmercier" })).toBe("recorded");
     expect(rebuildAgents).not.toHaveBeenCalled();
-    expect(writeMemory).toHaveBeenCalledTimes(2);
+    expect(memory.applied).toHaveLength(2);
   });
 
   it("skips a stale dismissal entirely (GitHub's stale-on-push auto-dismiss)", async () => {
-    const writeMemory = vi.fn();
-    const engine = new FeedbackEngine({ store, rebuildAgents: vi.fn(), writeMemory });
+    const memory = new FakeMemoryStore();
+    const engine = new FeedbackEngine({ store, rebuildAgents: vi.fn(), memory });
     expect(await engine.ingest({ kind: "review_set_aside", pr: 1, review_id: 4, by: "x", stale: true })).toBe(
       "skipped_stale",
     );
-    expect(writeMemory).not.toHaveBeenCalled();
+    expect(memory.applied).toHaveLength(0);
     expect(store.feedbackCommentsForDay(warsawDay())).toEqual([]);
     // A real dismissal ingests.
     expect(await engine.ingest({ kind: "review_set_aside", pr: 1, review_id: 4, by: "x", stale: false })).toBe(
@@ -476,9 +496,11 @@ describe("FeedbackEngine.ingest", () => {
   });
 
   it("a failed memory write never loses the ledgered signal", async () => {
-    const writeMemory = vi.fn().mockRejectedValue(new Error("locked"));
+    // A store refusal (`ok: false`) and a broken store are the same to the
+    // engine: the signal stays ledgered and the day addendum still rebuilds.
+    const memory = new FakeMemoryStore({ ok: false, message: "refused: stale view" });
     const rebuildAgents = vi.fn();
-    const engine = new FeedbackEngine({ store, rebuildAgents, writeMemory });
+    const engine = new FeedbackEngine({ store, rebuildAgents, memory });
     expect(await engine.ingest(comment)).toBe("recorded");
     expect(rebuildAgents).toHaveBeenCalledTimes(1);
     expect(store.feedbackCommentsForDay(warsawDay()).length).toBe(1);

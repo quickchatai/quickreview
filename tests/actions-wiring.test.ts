@@ -21,7 +21,9 @@ import { buildTuiDriver, chainOnPoll } from "../src/tui/index.js";
 import type { CompanionStrip } from "../src/tui/strip.js";
 import { decodeKey } from "../src/tui/keys.js";
 import { installMemoryLearningHooks, type MemTabState } from "../src/tui/memtab.js";
-import { blockHash, parseMemory, timelineOrder, type MemEditOp, type MemoryStore } from "../src/tui/memory.js";
+import { timelineOrder } from "../src/tui/memory.js";
+import { blockHash, parseMemory } from "../src/memory/pi-memory.js";
+import type { MemoryEntry, MemoryOp, MemoryStore } from "../src/memory/store.js";
 import { installMetricsHooks, type MetricsFetcher } from "../src/tui/metricstab.js";
 import { stripAnsi } from "../src/tui/paint.js";
 import type { RemoteResult } from "../src/tui/remote.js";
@@ -51,11 +53,15 @@ const SAMPLE = `<!-- 2026-08-19 18:13:54 [01a01ab3] -->
 `;
 
 class FakeMemory implements MemoryStore {
-  applied: MemEditOp[] = [];
-  read(): Promise<ReturnType<typeof parseMemory>> {
+  applied: MemoryOp[] = [];
+  read(): Promise<MemoryEntry[]> {
     return Promise.resolve(parseMemory(SAMPLE));
   }
-  apply(op: MemEditOp): Promise<{ ok: boolean; message: string }> {
+  search(query: string): Promise<MemoryEntry[]> {
+    const q = query.toLowerCase();
+    return Promise.resolve(parseMemory(SAMPLE).filter((e) => e.text.toLowerCase().includes(q)));
+  }
+  apply(op: MemoryOp): Promise<{ ok: boolean; message: string }> {
     this.applied.push(op);
     return Promise.resolve({ ok: true, message: `ok: ${op.op}` });
   }
@@ -233,7 +239,7 @@ describe("actions wiring: the watcher on a real App", () => {
     app.hooks.digestKey!(app, decodeKey(Buffer.from("p")));
     await settle();
     expect(mem.applied).toHaveLength(1);
-    const op = mem.applied[0]! as Extract<MemEditOp, { op: "pin" }>;
+    const op = mem.applied[0]! as Extract<MemoryOp, { op: "pin" }>;
     expect(op.op).toBe("pin");
     expect(op.expect).toBe(blockHash(want.text));
     expect(memState.sel).toBe(0);
@@ -249,7 +255,7 @@ describe("actions wiring: the watcher on a real App", () => {
     app.hooks.digestKey!(app, decodeKey(Buffer.from("x")));
     app.hooks.digestKey!(app, decodeKey(Buffer.from("x")));
     await settle();
-    const op = mem.applied[0]! as Extract<MemEditOp, { op: "retire" }>;
+    const op = mem.applied[0]! as Extract<MemoryOp, { op: "retire" }>;
     expect(op.op).toBe("retire");
     expect(op.expect).toBe(blockHash(want.text));
   });

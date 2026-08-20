@@ -4,12 +4,12 @@
 // `<alerts_dir>/memedit/<name>.json` (its /alerts mount, a subdirectory the
 // alert consumer ignores). The TUI — the process that already owns ssh —
 // validates the request against a strict schema and applies it through the
-// SAME memedit path the keyboard verbs use, then writes
+// SAME MemoryStore the keyboard verbs use, then writes
 // `<name>.result.json` and moves the request to `.done/`. The TUI is the
 // executor; the companion never reaches the VM itself.
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { MemEditOp, MemoryStore } from "./memory.js";
+import type { MemoryOp, MemoryStore } from "../memory/store.js";
 
 export interface ProcessedRequest {
   file: string;
@@ -23,7 +23,7 @@ const HASH_RE = /^[0-9a-f]{12}$/;
 
 /** Strict parse: unknown ops, malformed addresses, oversized text → refusal
  * (recorded in the result file), never a pass-through. */
-export function parseMemRequest(text: string): { ok: true; op: MemEditOp } | { ok: false; error: string } {
+export function parseMemRequest(text: string): { ok: true; op: MemoryOp } | { ok: false; error: string } {
   let raw: unknown;
   try {
     raw = JSON.parse(text);

@@ -8,15 +8,16 @@
 //
 // Management verbs (memory view): x retire (press twice), p pin/unpin,
 // e edit, n new #manual entry, t switch pane focus, A accept / R reject a
-// rubric proposal. Every memory mutation goes through scripts/memedit.mjs
-// (see src/tui/memory.ts for the addressing/optimistic-concurrency
-// contract); accept/reject follow src/tui/proposals.ts (accept = merge +
-// auto-ratify — the ratified decision).
+// rubric proposal. Every memory mutation goes through the ONE MemoryStore
+// seam (src/memory/store.ts — addressing and optimistic concurrency are its
+// contract, and the engine behind it is none of this tab's business);
+// accept/reject follow src/tui/proposals.ts (accept = merge + auto-ratify —
+// the ratified decision).
 //
 // Real-time honesty: pi-memory injects a SNAPSHOT of memory taken
 // at session checkpoints, so an edit made here reaches already-running
 // sessions' ambient context only at their next checkpoint; memory_search
-// sees it as soon as the qmd re-index lands (memedit triggers one).
+// sees it as soon as the store's re-index lands.
 import type { App } from "./app.js";
 import { decodeKey, type BoardKey } from "./keys.js";
 import { hitTest, type Zone } from "./mouse.js";
@@ -25,7 +26,7 @@ import { paintCmdBar } from "./cmdbar.js";
 import { currentFile, renderDigestTab, SshDigestFetcher, type DigestAction, type DigestFetcher, type DigestState } from "./digesttab.js";
 import { applyMemoryFilter, memoryFilterLabel } from "./filters.js";
 import { awaitingRows, sortPrs } from "./model.js";
-import { blockHash, defectEntries, timelineOrder, SshMemoryStore, type MemoryEntry, type MemoryStore } from "./memory.js";
+import { defectEntries, refOf, timelineOrder, tuiMemoryStore, type MemoryEntry, type MemoryStore } from "./memory.js";
 import { ACCENT, HEADING, MUTED, RESET, STRONG, WARN, button, modeBadge, sectionTitle, selected as selectedLine } from "./design.js";
 import { Frame, displayWidth, rule, sanitizeText, stripAnsi, truncate, wrap } from "./paint.js";
 import {
@@ -264,7 +265,7 @@ export interface MemTabDeps {
 }
 
 export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): MemTabState {
-  const memory = deps.memory ?? new SshMemoryStore(app.cfg, app.ssh);
+  const memory = deps.memory ?? tuiMemoryStore(app.cfg, app.ssh);
   const digestFetcher = deps.digestFetcher ?? new SshDigestFetcher(app.cfg, app.ssh);
   const now = deps.now ?? (() => new Date());
   const st: MemTabState = {
@@ -390,7 +391,7 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
   };
 
   // Per-part lazy reload with in-flight guards: an invalidation of one part
-  // (e.g. a companion memedit flips memLoaded) re-fetches exactly that part
+  // (e.g. a companion memory request flips memLoaded) re-fetches exactly that part
   // on the next paint, and a paint during a load never stacks a second one.
   const busy = { digest: false, memory: false, proposals: false };
   const guard = (key: keyof typeof busy, run: () => Promise<void>): void => {
@@ -580,7 +581,7 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
         // `e` = edit (the board's events overlay has no meaning on this tab).
         if (st.focus !== "timeline" || !selected) return true;
         theApp.promptInput(`edit memory ${selected.id}@${selected.ts.slice(11)}`, selected.text, (text) => {
-          verb(memory.apply({ op: "edit", id: selected.id, ts: selected.ts, block: selected.block, expect: blockHash(selected.text), text }));
+          verb(memory.apply({ op: "edit", ...refOf(selected), text }));
         });
         return true;
       }
@@ -595,7 +596,7 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
             const k = entryKey(selected);
             if (st.confirmRetire === k) {
               st.confirmRetire = undefined;
-              verb(memory.apply({ op: "retire", id: selected.id, ts: selected.ts, block: selected.block, expect: blockHash(selected.text) }));
+              verb(memory.apply({ op: "retire", ...refOf(selected) }));
             } else {
               st.confirmRetire = k;
               st.status = `x again to retire: ${selected.text.slice(0, 40)}…`;
@@ -605,15 +606,7 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
           }
           case "p": {
             if (st.focus !== "timeline" || !selected) return true;
-            verb(
-              memory.apply({
-                op: selected.pinned ? "unpin" : "pin",
-                id: selected.id,
-                ts: selected.ts,
-                block: selected.block,
-                expect: blockHash(selected.text),
-              }),
-            );
+            verb(memory.apply({ op: selected.pinned ? "unpin" : "pin", ...refOf(selected) }));
             return true;
           }
           case "n":
