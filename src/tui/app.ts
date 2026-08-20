@@ -408,11 +408,22 @@ export class App {
   /** The session the open input box targets; draft survives Esc. */
   private msgSession: string | undefined;
   private msgDraft = "";
+  /** When set, the input box belongs to a tab prompt (memory edits,
+   * proposal-reject reasons) — submit goes here, not to sendMessage. */
+  private inputSubmit: ((text: string) => void) | undefined;
 
   openMessageBox(session: string): void {
     this.msgSession = session;
+    this.inputSubmit = undefined;
     const pr = /^pr-(\d+)$/.exec(session)?.[1];
     this.view.inputBox = { target: pr ? `#${pr} (pi session ${session})` : session, text: this.msgDraft };
+    this.repaint();
+  }
+
+  /** Generic one-line input over the same box UI. Esc cancels (no draft). */
+  promptInput(target: string, initial: string, onSubmit: (text: string) => void): void {
+    this.inputSubmit = onSubmit;
+    this.view.inputBox = { target, text: initial };
     this.repaint();
   }
 
@@ -430,13 +441,20 @@ export class App {
         box.text += "\n";
         break;
       case "escape":
-        this.msgDraft = box.text; // preserved until board navigation
+        if (this.inputSubmit) this.inputSubmit = undefined; // tab prompts keep no draft
+        else this.msgDraft = box.text; // preserved until board navigation
         this.view.inputBox = undefined;
         break;
       case "enter": {
         const text = box.text.trim();
+        const submit = this.inputSubmit;
         const session = this.msgSession;
         this.view.inputBox = undefined;
+        this.inputSubmit = undefined;
+        if (submit) {
+          if (text.length > 0) submit(text);
+          break;
+        }
         this.msgDraft = "";
         if (text.length > 0 && session) {
           if (this.hooks.sendMessage) this.hooks.sendMessage(session, text, this);

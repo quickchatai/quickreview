@@ -29,7 +29,9 @@ usage: qcr tui [<pr> | overseer | main] [--no-companion] [--no-reload]
                     feed, alert pipeline and the companion tab)
   --no-reload       do not re-exec when a new dist/ build lands
 
-keys: 1/2/3/4/5 tabs (3 = companion, also c; 4 = deploy — click ▶/■ buttons (D D deploy, S S stop/start);
+keys: 1/2/3/4/5 tabs (2 = memory & learning — v toggles digest/memory view,
+      x×2 retire · p pin · e edit · n new · A/R accept/reject a rubric proposal;
+      3 = companion, also c; 4 = deploy — click ▶/■ buttons (D D deploy, S S stop/start);
       5 = metrics — 7/0/a window, # <pr> ⏎ for a PR timeline) ·
       j/k select · ⏎ attach ·
       Ctrl-q detach (twice = literal) · Ctrl-c ×3 hard-kill the TUI ·
@@ -184,8 +186,26 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
   await installAttachHooks(app);
   const { installMessageHooks } = await import("./msg.js");
   installMessageHooks(app);
-  const { installDigestHooks } = await import("./digesttab.js");
-  installDigestHooks(app);
+  // the [2] tab is Memory & learning — digest view + memory
+  // management. Accept-verdict git actions run against THIS working copy
+  // (the canonical repo); the tracker path feeds the defect auto-filer.
+  const { installMemoryLearningHooks } = await import("./memtab.js");
+  const { execFile } = await import("node:child_process");
+  const gitRun = (cmd: string, args: string[], stdin?: string): Promise<string> =>
+    new Promise((res, rej) => {
+      const child = execFile(cmd, args, { cwd: sandboxRoot() }, (err, stdout, stderr) => {
+        if (err) rej(new Error(stderr.trim() || err.message));
+        else res(stdout);
+      });
+      if (stdin !== undefined) child.stdin?.end(stdin);
+      else child.stdin?.end();
+    });
+  const memState = installMemoryLearningHooks(app, {
+    gitRun,
+    tracker: full.companion.tracker_dir
+      ? { root: full.companion.tracker_dir, effort: "review-sandbox", parent: "" }
+      : undefined,
+  });
   const { RealDeployFetcher, installDeployHooks, powerCommand, realLocalRunner } = await import("./deploytab.js");
   const localRunner = realLocalRunner(sandboxRoot());
   app.hooks.powerRun = (_theApp, action, onData, onExit) => {
@@ -324,6 +344,47 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
       } catch {
         // alerting is best-effort; never break the poll loop
       }
+    };
+
+    // §6 (rule-8 amendment): companion memory-edit requests. The
+    // companion drops JSON under /alerts/memedit; the TUI validates and
+    // executes over its own ssh. Sweep serialized behind a simple in-flight
+    // flag so a slow ssh never stacks sweeps.
+    const { processMemRequests } = await import("./memrequests.js");
+    const { SshMemoryStore, blockHash } = await import("./memory.js");
+    const memStore = new SshMemoryStore(cfg, realSshRunner);
+    const memReqDir = join(full.companion.alerts_dir, "memedit");
+    // The companion cannot read VM memory itself; the TUI publishes the
+    // entries (with the expect-hashes addressed ops need) into the feed
+    // every ~12 polls and right after a request batch lands.
+    const memFeedPath = join(full.companion.feed_dir, "memory.json");
+    const writeMemFeed = async (): Promise<void> => {
+      const entries = await memStore.read();
+      writeFileSync(
+        memFeedPath,
+        JSON.stringify({ written_at: new Date().toISOString(), entries: entries.map((e) => ({ ...e, expect: blockHash(e.text) })) }, null, 2) + "\n",
+      );
+    };
+    let memReqBusy = false;
+    let memPollN = 0;
+    const prevOnPoll2 = app.hooks.onPoll;
+    app.hooks.onPoll = (a) => {
+      prevOnPoll2?.(a);
+      if (memReqBusy) return;
+      memReqBusy = true;
+      const feedDue = memPollN++ % 12 === 0;
+      void processMemRequests(memReqDir, memStore)
+        .then(async (done) => {
+          for (const r of done) a.notice(`companion memedit ${r.file}: ${r.ok ? "✓" : "✖"} ${r.message}`);
+          if (done.length > 0) memState.memLoaded = false; // timeline refresh on next open
+          if (done.length > 0 || feedDue) await writeMemFeed();
+        })
+        .catch(() => {
+          /* best-effort — never break the poll loop */
+        })
+        .finally(() => {
+          memReqBusy = false;
+        });
     };
   }
 

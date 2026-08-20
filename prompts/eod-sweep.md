@@ -26,17 +26,39 @@ refuted | wontfix-pattern | repo-gotcha), the one-sentence lesson, the lens it
 belongs to, evidence PR link(s), date. No entry without evidence. Consolidate
 duplicates; retire entries >90 days old that never recurred.
 
+Memory discipline (the owner manages memory from the TUI):
+
+- **`#pinned` entries are untouchable**: never consolidate, rewrite, retire,
+  or move them — the owner pinned them at the top of MEMORY.md deliberately
+  (that region survives injection truncation). Never `memory_write` with
+  `mode:"overwrite"`; append only.
+- **`#manual` entries are the owner's own words**: treat them as standing
+  instructions; consolidate or retire them only when one is superseded by a
+  newer #manual entry, and say so in the digest.
+- **Operational defects of the review system itself get `#bug`** (with
+  `#operations`), one entry per distinct defect, evidence-linked. The TUI
+  auto-files each as an issue-tracker ticket keyed on the entry — so keep one
+  defect to one entry and amend the existing entry rather than re-describing
+  the same defect in a new one.
+
 ## 2. Rubric proposals (when justified)
 
 If ≥3 related learnings have accumulated for one lens — or one severe miss
-justifies it alone — draft a rubric change in the sandbox's local git:
+justifies it alone — draft a rubric change as a proposal directory (the
+sandbox here is an rsync target with no git; `state/` is the surface that
+survives deploys):
 
-- Branch `rubric/<lens>-<topic>-{{date}}`; edit the pass agent file;
-  add `PROPOSAL.md` (rationale, evidence PRs, expected effect on
-  false-positive/miss rates).
-- Never merge it yourself. List it in the digest under "Pending proposals"
-  until the owner merges or deletes the branch. Record rejections as
-  `rejected-proposal` memory entries with the reason — never re-propose.
+- Create `state/rubric/<lens>-<topic>-{{date}}/` containing `PROPOSAL.md`
+  (rationale, evidence PRs, expected effect on false-positive/miss rates)
+  and `changes.patch` — a unified diff against the shipped `agents/` /
+  `prompts/` files (`diff -u` old vs proposed; paths relative to the
+  sandbox root, `a/` `b/` prefixes). Touch nothing outside `agents/` and
+  `prompts/` — the TUI refuses such patches.
+- Never apply it yourself. List it in the digest under "Pending proposals"
+  until the owner accepts or rejects it in the TUI (accept applies + ratifies
+  + removes the directory; reject removes it and records a
+  `#rejected-proposal` memory entry with the reason — never re-propose one
+  of those).
 
 ## 3. Improvement PRs / issues (within caps)
 

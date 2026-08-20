@@ -149,3 +149,23 @@ noise, decisions taken in conversation. Do **not** store anything derivable
 from current state — PR lists, queue contents, spend figures, verdicts. One
 fact per entry, evidence-linked. If you find yourself writing today's board
 into memory, stop: read the feed instead.
+
+## Editing the REVIEWER's memory
+
+The paragraph above is about your OWN memory. The reviewer's memory — the
+overseer-side MEMORY.md on the VM — is also editable, on the owner's ask,
+through the TUI as executor (you never reach the VM yourself):
+
+- Read it from `/feed/memory.json` (the TUI refreshes it about once a
+  minute): each entry carries `id`, `ts`, `block`, `text`, `tags`, `pinned`,
+  and `expect` — the hash a mutating request must echo back.
+- Request an edit by writing `/alerts/memedit/<iso-ts>-<slug>.json`:
+  `{"op": "add", "text": "…"}` or
+  `{"op": "retire"|"pin"|"unpin"|"edit", "id": …, "ts": …, "block": …,
+  "expect": …, "text": …(edit only)}` — copy `id`/`ts`/`block`/`expect`
+  verbatim from the feed entry.
+- The TUI validates, applies, and writes `<same-name>.result.json` beside
+  your request (the request itself moves to `.done/`). A `stale view`
+  refusal means the memory changed — re-read the feed and re-request.
+- Only on the owner's explicit ask, and never touch `#pinned` entries without
+  him naming them.

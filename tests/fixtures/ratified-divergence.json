@@ -1,0 +1,15 @@
+{
+  "_comment": "Seeds with RATIFIED divergence from the assets (hard rule 6). Every entry was re-seeded on the owner's explicit order; the file stays pinned by seed-manifest.json (further drift still fails) but is exempt from byte-identity vs the original asset. Two writers: a human recording a ratified reseed in the same commit, and the TUI's rubric-accept path (the owner's accept click IS the ratification; the TUI appends the entry, re-pins the manifest hash, and commits).",
+  "files": {
+    "prompts/conversation-system.md": [
+      "2026-08-18 the owner: reseed removing the retired ESCALATE verdict + mark-escalation-worthy (rule 10 de-escalation)",
+      "2026-08-19 the owner: NEEDS_HUMAN retired \u2014 verdict always on the merits + 'For a human to double-check' section"
+    ],
+    "prompts/overseer-system.md": [
+      "2026-08-18 the owner: reseed removing the retired ESCALATE verdict + mark-escalation-worthy (rule 10 de-escalation)"
+    ],
+    "prompts/eod-sweep.md": [
+      "2026-08-20 the owner: reseed \u2014 pinned/#manual/#bug memory discipline for the TUI management surface, and rubric proposals as state/rubric/<slug>/ dirs (PROPOSAL.md + changes.patch; the VM sandbox has no git, the branch instruction was unexecutable)"
+    ]
+  }
+}
