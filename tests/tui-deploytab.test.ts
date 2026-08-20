@@ -150,7 +150,7 @@ describe("deployLines", () => {
 });
 
 describe("deploy tab keys", () => {
-  it("opens on 4, scrolls with j/k, refreshes on r, and 1 returns to the board", async () => {
+  it("opens on 3, scrolls with j/k, refreshes on r, and 1 returns to the board", async () => {
     const streams = fakeStreams();
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
     let loads = 0;
@@ -158,7 +158,7 @@ describe("deploy tab keys", () => {
       load: async () => (loads++, { dirty: [], plan: ["plan — deploy.sh sync"], deployed: undefined, head: "abc1234" }),
     });
     const run = app.run();
-    streams.type("4");
+    streams.type("3");
     expect(app.tab).toBe("deploy");
     await new Promise((r) => setTimeout(r, 0)); // lazy load settles
     expect(loads).toBe(1);
@@ -188,7 +188,7 @@ describe("deploy tab keys", () => {
     let clock = 1000;
     const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [] }) }, () => clock);
     const run = app.run();
-    streams.type("4");
+    streams.type("3");
     await new Promise((r) => setTimeout(r, 0));
 
     streams.type("D");
@@ -224,7 +224,7 @@ describe("deploy tab keys", () => {
     let clock = 1000;
     const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [] }) }, () => clock);
     const run = app.run();
-    streams.type("4");
+    streams.type("3");
     await new Promise((r) => setTimeout(r, 0)); // render → buttonZone measured
     expect(st.buttonZone).toBeDefined();
     const { x1, y1 } = st.buttonZone!;
@@ -258,7 +258,7 @@ describe("deploy tab keys", () => {
     let clock = 1000;
     const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [] }) }, () => clock);
     const run = app.run();
-    streams.type("4");
+    streams.type("3");
     await new Promise((r) => setTimeout(r, 0));
 
     streams.type("D");
@@ -296,7 +296,7 @@ describe("deploy tab keys", () => {
     };
     const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [] }) }, () => 1000);
     const run = app.run();
-    streams.type("4");
+    streams.type("3");
     await new Promise((r) => setTimeout(r, 0));
     streams.type("D");
     streams.type("D");
@@ -335,7 +335,7 @@ describe("power button (stop/start the VM app)", () => {
     };
     const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], containerStatus: status }) }, () => 1000);
     const run = app.run();
-    streams.type("4");
+    streams.type("3");
     await new Promise((r) => setTimeout(r, 0));
     expect(stripAnsi(streams.written())).toContain("■ STOP VM APP");
     expect(stripAnsi(streams.written())).toContain("VM: Up 2 hours");
@@ -365,7 +365,7 @@ describe("power button (stop/start the VM app)", () => {
     app.hooks.deployRun = (_a, _d, onExit) => (onExit(0), { kill: () => {} });
     const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], containerStatus: "Up 5 minutes" }) }, () => 1000);
     const run = app.run();
-    streams.type("4");
+    streams.type("3");
     await new Promise((r) => setTimeout(r, 0));
     const click = (x: number, y: number) => streams.type(`\x1b[<0;${x};${y}M`);
 

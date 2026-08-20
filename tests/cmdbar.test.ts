@@ -9,13 +9,12 @@ import { App, type Tab } from "../src/tui/app.js";
 import { barHitKey, paintCmdBar, TAB_COMMANDS } from "../src/tui/cmdbar.js";
 import { Frame, stripAnsi } from "../src/tui/paint.js";
 
-const TABS: Tab[] = ["board", "digest", "companion", "deploy", "metrics"];
+const TABS: Tab[] = ["board", "digest", "deploy", "metrics"];
 const NAV: Array<[string, string]> = [
   ["1", "1 board"],
   ["2", "2 memory"],
-  ["3", "3 companion"],
-  ["4", "4 deploy"],
-  ["5", "5 metrics"],
+  ["3", "3 deploy"],
+  ["4", "4 metrics"],
 ];
 const GLOBALS: Array<[string, string]> = [
   ["r", "r refresh"],
@@ -69,7 +68,7 @@ describe("layout/hit round-trip", () => {
 });
 
 describe("constant positions", () => {
-  it("globals sit at identical x-ranges on all five tabs (fixed cols)", () => {
+  it("globals sit at identical x-ranges on all four tabs (fixed cols)", () => {
     const cols = 132;
     const rows = 36;
     const positions = TABS.map((tab) =>
@@ -99,7 +98,7 @@ describe("active-tab highlight", () => {
     const rows = 30;
     for (const tab of TABS) {
       const raw = paint(tab, 140, rows).lines[rows - 3]!;
-      const label = NAV.find(([, l]) => l.startsWith({ board: "1", digest: "2", companion: "3", deploy: "4", metrics: "5" }[tab]))![1];
+      const label = NAV.find(([, l]) => l.startsWith({ board: "1", digest: "2", deploy: "3", metrics: "4" }[tab]))![1];
       expect(raw).toContain(`\x1b[7m\x1b[1m[${label}]`);
       expect(raw.split("\x1b[7m").length).toBe(2); // one inverse run only
     }
@@ -157,12 +156,12 @@ describe("App-level bar clicks", () => {
     await running;
   });
 
-  it("a click on a nav slot switches tabs on the companion placeholder too", async () => {
+  it("a click on a nav slot switches tabs from every tab", async () => {
     const { out, input } = fakeStreams(120, 30);
     const app = new App(TUI_DEFAULTS, async () => ({ ok: true, stdout: "", stderr: "", code: 0 }), out, input);
-    app.tab = "companion";
+    app.tab = "metrics";
     let x1: number | undefined;
-    for (let x = 2; x < 120 && x1 === undefined; x++) if (barHitKey("companion", x, 28, 120, 30) === "1") x1 = x;
+    for (let x = 2; x < 120 && x1 === undefined; x++) if (barHitKey("metrics", x, 28, 120, 30) === "1") x1 = x;
     const running = app.run();
     (input as unknown as EventEmitter).emit("data", Buffer.from(`\x1b[<0;${x1};28M`));
     expect(app.tab).toBe("board");

@@ -17,9 +17,8 @@ export interface BarButton {
 const NAV: Array<BarButton & { tab: Tab }> = [
   { key: "1", label: "1 board", tab: "board" },
   { key: "2", label: "2 memory", tab: "digest" },
-  { key: "3", label: "3 companion", tab: "companion" },
-  { key: "4", label: "4 deploy", tab: "deploy" },
-  { key: "5", label: "5 metrics", tab: "metrics" },
+  { key: "3", label: "3 deploy", tab: "deploy" },
+  { key: "4", label: "4 metrics", tab: "metrics" },
 ];
 
 /** Row A right: always the same four, always in the same place. */
@@ -53,7 +52,6 @@ export const TAB_COMMANDS: Record<Tab, BarButton[]> = {
     { key: "A", label: "A accept" },
     { key: "R", label: "R reject" },
   ],
-  companion: [{ key: "\r", label: "⏎ attach" }],
   deploy: [
     { key: "D", label: "D deploy" },
     { key: "S", label: "S power" },
@@ -66,6 +64,27 @@ export const TAB_COMMANDS: Record<Tab, BarButton[]> = {
     { key: "#", label: "# pr" },
   ],
 };
+
+/** Row A globals + the navigation keys every tab answers to. */
+const GLOBAL_KEYS = ["q", "r", "s", "?", "1", "2", "3", "4", "j", "k"];
+
+/** Printable keys a tab's own handler consumes BEYOND its row-B buttons. */
+const TAB_EXTRA_KEYS: Record<Tab, string[]> = {
+  board: ["a"], // ⏎'s full-screen-attach twin
+  digest: ["a", "m", "w", "g", "o", "M"], // memory & learning row verbs
+  deploy: [],
+  metrics: [],
+};
+
+/**
+ * smart routing's single source of truth: every printable the active
+ * tab answers to. Anything OUTSIDE this set starts companion-strip input
+ * instead of dying on the tab. Derived from the same TAB_COMMANDS the bar
+ * paints, so a new button is automatically a registered key.
+ */
+export function registeredKeys(tab: Tab): Set<string> {
+  return new Set([...GLOBAL_KEYS, ...TAB_EXTRA_KEYS[tab], ...TAB_COMMANDS[tab].map((b) => b.key)]);
+}
 
 interface Slot extends BarButton {
   x1: number; // 1-based terminal columns, inclusive

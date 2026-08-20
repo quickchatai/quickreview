@@ -10,6 +10,7 @@ import { paintCmdBar } from "./cmdbar.js";
 import { formatEvent, glyphFor, sortPrs, type EventLine, type SnapshotPr } from "./model.js";
 import { Frame, SGR, displayWidth, fit, rule, sanitizeText, stripAnsi, truncate, wrap } from "./paint.js";
 import type { PiPaneView } from "./pipane.js";
+import { paintStrip, stripHeight, type StripView } from "./strip.js";
 import type { Health } from "./poll.js";
 import { FG, RESET, fmtAge, legendLine, osc8, prUrl, stateColor, verdictChip } from "./theme.js";
 
@@ -19,7 +20,8 @@ export type BoardAction =
   | { t: "open-github"; pr: number }
   | { t: "event-jump"; pr: number }
   | { t: "pi-focus" } // the live pi pane: clicking it types into the session in place
-  | { t: "tab"; tab: "board" | "digest" | "companion" | "deploy" | "metrics" }
+  | { t: "tab"; tab: "board" | "digest" | "deploy" | "metrics" }
+  | { t: "companion" } // the alert badge: open the companion attach
   | { t: "key"; key: string }; // hint-bar button → synthesized keypress
 
 export interface BoardView {
@@ -86,8 +88,8 @@ export function listWidth(prs: SnapshotPr[], cols: number, now: Date = new Date(
  * strip). Two rows are chrome (divider + header), the rest is session tail.
  * Floors at 6 rows and never squeezes the list/detail body below 3.
  */
-export function piRows(rows: number): number {
-  const usable = rows - 4; // top bar + two-row command bar + bottom border
+export function piRows(rows: number, stripRows = 0): number {
+  const usable = rows - 4 - stripRows; // top bar + strip + command bar (2 rows) + bottom border
   return Math.max(0, Math.min(Math.max(6, Math.floor(usable * 0.5)), usable - 3));
 }
 
@@ -109,7 +111,7 @@ export function alertSegment(badge: AlertBadge, focused: boolean): string {
   const glyph = latest.tier === "alert" ? "▲" : "•";
   const where = latest.pr !== null ? ` #${latest.pr}` : "";
   const folds = badge.folds > 0 ? ` +${badge.folds}` : "";
-  const label = `${glyph} ${badge.count}${where} ${truncate(latest.title, 40)}${folds}${focused ? " ⏎ companion" : " (c)"}`;
+  const label = `${glyph} ${badge.count}${where} ${truncate(latest.title, 40)}${folds}${focused ? " ⏎ companion" : ""}`;
   return focused ? `${SGR.inverse}${color}${label}${RESET}${SGR.reset}` : `${color}${label}${RESET}`;
 }
 
@@ -244,12 +246,15 @@ export function detailLines(detail: WhyPayload | undefined, pr: SnapshotPr | und
 }
 
 export const HELP_LINES = [
-  "1/2/3/4/5     board / memory & learning / companion / deploy / metrics tab (c = companion too)",
+  "1/2/3/4       board / memory & learning / deploy / metrics tab",
   "               metrics tab: 7 / 0 / a switch the 7d / 30d / all window; # <pr> ⏎ opens a PR timeline (Esc back)",
   "               deploy tab: click ▶ DEPLOY TO VM (or D D) to deploy · ■ STOP/▶ START VM APP (or S S) to power the container",
   "s              reconnect VM ssh (the one ssh key-passphrase prompt, shared 4h)",
   "Ctrl-c ×3      kill the TUI from anywhere (terminal restored) — the un-stuck hatch",
   "               an alert in the top bar: click it or ⏎ to open the companion",
+  "the companion strip above the command bar is on every tab:",
+  "               type any key no tab claims (or /) — it starts a message; ⏎ sends · Esc clears",
+  "               click its input row to type, click the mirror rows to open the companion full-screen",
   "j/k ↓/↑        select PR (mouse: click a row; click again to attach)",
   "⏎ / a          attach selected PR full-screen (the takeover; Ctrl-q back)",
   "click the PI pane below the list — it is a live terminal, not a picture:",
@@ -326,14 +331,15 @@ function renderEventsOverlay(frame: Frame, view: BoardView, cols: number, rows: 
 
 // ---- render ----------------------------------------------------------------
 
-export function renderBoard(view: BoardView, cols: number, rows: number): Frame {
+export function renderBoard(view: BoardView, cols: number, rows: number, strip?: StripView): Frame {
   const frame = new Frame(cols, rows);
   const now = view.now ?? new Date();
   frame.set(0, topBar(view, cols));
   const az = alertZone(view, cols);
-  if (az) frame.zones.push({ x1: az.x1, y1: 1, x2: az.x2, y2: 1, action: { t: "tab", tab: "companion" } satisfies BoardAction });
-  const pRows = piRows(rows);
-  const bodyRows = rows - 4 - pRows; // top bar + command bar (2 rows) + bottom border
+  if (az) frame.zones.push({ x1: az.x1, y1: 1, x2: az.x2, y2: 1, action: { t: "companion" } satisfies BoardAction });
+  const stripRows = strip ? stripHeight(rows, strip.available) : 0;
+  const pRows = piRows(rows, stripRows);
+  const bodyRows = rows - 4 - stripRows - pRows; // top bar + strip + command bar (2 rows) + bottom border
   const sorted = view.snapshot ? sortPrs(view.snapshot.prs) : [];
   const listW = listWidth(sorted, cols, now);
   const detailW = cols - 2 - listW - 1;
@@ -346,15 +352,17 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
       if (2 + i < rows - 1) frame.boxRow(2 + i, [{ text: `   ${l}`, width: cols - 2 }]);
     });
     for (let r = 2 + HELP_LINES.length; r < rows - 1; r++) frame.boxRow(r, [{ text: "", width: cols - 2 }]);
+    if (strip) paintStrip(frame, strip, cols, rows);
     frame.set(rows - 1, rule(cols, "└", "┘", []));
     return frame;
   }
 
   if (view.detailFull) {
     const lines = detailLines(view.detail, selectedPr, cols - 4, now);
-    for (let r = 0; r < rows - 4; r++) {
+    for (let r = 0; r < rows - 4 - stripRows; r++) {
       frame.boxRow(1 + r, [{ text: ` ${lines[r] ?? ""}`, width: cols - 2 }]);
     }
+    if (strip) paintStrip(frame, strip, cols, rows);
     paintCmdBar(frame, "board", cols, rows);
     frame.set(rows - 1, rule(cols, "└", "┘", ["w back"]));
     return frame;
@@ -415,6 +423,7 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
   if (view.eventsFocus) renderEventsOverlay(frame, view, cols, rows);
 
   // The shared two-row command bar replaces the board's own hint row.
+  if (strip) paintStrip(frame, strip, cols, rows);
   paintCmdBar(frame, "board", cols, rows);
   frame.set(rows - 1, rule(cols, "└", "┘", []));
   return frame;

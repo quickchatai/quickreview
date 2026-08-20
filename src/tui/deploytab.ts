@@ -13,6 +13,7 @@ import { paintCmdBar } from "./cmdbar.js";
 import { Frame, SGR, displayWidth, rule, stripAnsi, truncate } from "./paint.js";
 import type { RemoteResult, SshRunner } from "./remote.js";
 import { FG, RESET } from "./theme.js";
+import { paintStrip, stripHeight, type StripView } from "./strip.js";
 
 function dockerSh(cfg: TuiConfig, script: string): string[] {
   return [...(cfg.sudo_docker ? ["sudo"] : []), "docker", "exec", cfg.container, "sh", "-c", script];
@@ -219,7 +220,7 @@ export function deployLines(st: DeployState, width: number): string[] {
   return lines;
 }
 
-export function renderDeployTab(st: DeployState, dryRun: boolean, cols: number, rows: number): Frame {
+export function renderDeployTab(st: DeployState, dryRun: boolean, cols: number, rows: number, strip?: StripView): Frame {
   const frame = new Frame(cols, rows);
   frame.set(0, rule(cols, "┌", "┐", ["quickreview", dryRun ? "DRY-RUN" : `${SGR.bgRed}${SGR.bold} LIVE ${SGR.reset}`, "deploy"]));
 
@@ -274,7 +275,8 @@ export function renderDeployTab(st: DeployState, dryRun: boolean, cols: number, 
     st.powerZone = { x1: pX, y1: 2, x2: pX + displayWidth(stripAnsi(pLabel)) - 1, y2: 2 };
   }
 
-  const bodyRows = rows - 5; // top bar + button row + command bar (2 rows) + bottom border
+  const stripRows = strip ? stripHeight(rows, strip.available) : 0;
+  const bodyRows = rows - 5 - stripRows; // top bar + button row + strip + command bar (2 rows) + bottom border
   if (run) {
     // Live log view: tail-follow; st.scroll counts lines BACK from the tail.
     const all = run.partial ? [...run.lines, run.partial] : run.lines;
@@ -291,6 +293,7 @@ export function renderDeployTab(st: DeployState, dryRun: boolean, cols: number, 
       frame.boxRow(2 + r, [{ text: ` ${lines[st.scroll + r] ?? ""}`, width: cols - 2 }]);
     }
   }
+  if (strip) paintStrip(frame, strip, cols, rows);
   paintCmdBar(frame, "deploy", cols, rows);
   frame.set(rows - 1, rule(cols, "└", "┘", []));
   return frame;
@@ -316,7 +319,7 @@ export function installDeployHooks(app: App, fetcher?: DeployFetcher, now: () =>
 
   app.hooks.deployScreen = (theApp, cols, rows) => {
     if (!st.loaded && !st.loading) void load();
-    return renderDeployTab(st, theApp.view.dryRun, cols, rows).render();
+    return renderDeployTab(st, theApp.view.dryRun, cols, rows, theApp.strip?.view()).render();
   };
 
   // The kill handle of the run in flight (undefined once it exits).
