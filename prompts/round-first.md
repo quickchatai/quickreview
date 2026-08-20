@@ -304,6 +304,17 @@ other" — and only then the mechanism, the evidence and the file refs. The
 mechanism is the second sentence, never the first. Nits and questions may open
 however reads best.
 
+**Blocker bodies are self-sufficient.** The comment is what gets
+fixed from — by the author or, increasingly, by an AI agent working from the
+comment alone — so a `[blocker]`'s body must carry, in complete sentences,
+the mechanism (how the code produces the problem), the concrete failing
+scenario, the evidence refs, and the invariant a fix must restore (never the
+prescribed rewrite — remedy size is a signal). The pass's `detail:` field is
+your material here: carry it into the comment rather than compressing it
+away. One or two short paragraphs is the ceiling, not the target — a single
+sentence is CORRECT when it genuinely carries all of that. Sufficiency is the
+test, padding is noise. Questions and nits stay as short as they read best.
+
 **The lenses line reports what actually ran — never the plan.** The body's
 `Lenses applied:` line lists ONLY passes you actually launched via the
 `subagent` tool AND got a return from, at the tier each actually ran (raises

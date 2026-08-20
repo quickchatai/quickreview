@@ -456,6 +456,20 @@ describe("shipped round templates", () => {
       expect(text).toMatch(/one thing must change before merge/);
     });
 
+    // self-sufficient blocker bodies (team feedback 2026-08-20:
+    // one-sentence blockers were too thin to act on; one sentence stays
+    // correct when it is genuinely enough).
+    it(`${roundTemplateFile(rt)} requires self-sufficient blocker bodies`, () => {
+      expect(text).toContain("**Blocker bodies are self-sufficient.**");
+      expect(text).toMatch(/the invariant a fix must restore/);
+      expect(text).toMatch(/a single\s*\n?sentence is CORRECT when it genuinely carries all of that/);
+      expect(text).toMatch(/Sufficiency is the\s*\n?test, padding is noise/);
+      // It extends, never replaces, the consequence-first rule.
+      expect(text.indexOf("**Blocker comments lead with the consequence.**")).toBeLessThan(
+        text.indexOf("**Blocker bodies are self-sufficient.**"),
+      );
+    });
+
     // the posted-body format is specified by the template itself
     // (first-night audit F7: an under-specified format sent four sessions
     // reading sibling PRs' posted reviews for examples).

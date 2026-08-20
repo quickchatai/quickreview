@@ -8,6 +8,9 @@ export interface PrFile {
   filename: string;
   additions: number;
   deletions: number;
+  /** GitHub file status ("added", "modified", …) when available — the
+   * placement lens keys on new files (github.ts PrFileEntry.status). */
+  status?: string;
   /** Unified diff for the file when available (github.ts PrFileEntry.patch). */
   patch?: string;
 }
@@ -105,6 +108,27 @@ export function meetsIntentBar(body: string | null | undefined): boolean {
   return intentSubstanceWords(body) >= INTENT_MIN_SUBSTANCE_WORDS;
 }
 
+// ---- placement / simplicity / backcompat ---------------
+//
+// Three judgment lenses added from the 2026-08-20 team-feedback charting.
+// Selection is deterministic like everything above; the caps (placement and
+// simplicity post at P2 max) are enforced at the validator via PASS_ADDENDA,
+// not here.
+
+export const PLACEMENT_PASS = "pass-placement";
+export const SIMPLICITY_PASS = "pass-simplicity";
+export const BACKCOMPAT_PASS = "pass-backcompat";
+
+/** Placement fires on cross-cutting diffs: at least this many prod files. */
+export const PLACEMENT_MIN_PROD_FILES = 4;
+
+/** Simplicity fires on diffs big enough to hide complexity… */
+export const SIMPLICITY_MIN_PROD_LINES = 100;
+/** …or on a file gaining this many branches (`+ if/elif/else if/case`). */
+export const SIMPLICITY_MIN_ADDED_BRANCHES = 5;
+/** …or on added lines nested this deep (spaces of indent). */
+const SIMPLICITY_DEEP_INDENT_RE = /^\+ {20,}\S/m;
+
 // Dependency-manifest / lockfile shapes — a security surface (supply chain).
 const DEPS_MANIFEST_RE =
   /(^|\/)(package(-lock)?\.json|yarn\.lock|pnpm-lock\.yaml|requirements[^/]*\.txt|poetry\.lock|pyproject\.toml|Pipfile(\.lock)?|go\.(mod|sum)|Gemfile(\.lock)?|Cargo\.(toml|lock))$/;
@@ -172,6 +196,39 @@ export function selectLenses(files: PrFile[], intent?: { body?: string | null })
     added(/^\+.*@background_decorator/m)
   )
     lenses.add("pass-delivery");
+
+  // Placement: new prod code needs a home judgment, and a
+  // cross-cutting diff is where wrong-layer changes hide. Test-only PRs and
+  // small edits-in-place skip it.
+  const prod = files.filter((f) => !isTestFile(f.filename));
+  if (prod.some((f) => f.status === "added") || prod.length >= PLACEMENT_MIN_PROD_FILES)
+    lenses.add(PLACEMENT_PASS);
+
+  // Simplicity: complexity signals — a large prod diff, deep
+  // nesting in added lines, or a file gaining a pile of branches.
+  const prodLines = prod.reduce((n, f) => n + f.additions + f.deletions, 0);
+  if (
+    prodLines >= SIMPLICITY_MIN_PROD_LINES ||
+    prod.some((f) => f.patch !== undefined && SIMPLICITY_DEEP_INDENT_RE.test(f.patch)) ||
+    prod.some(
+      (f) =>
+        (f.patch?.match(/^\+\s*(if|elif|else if|case)\b/gm)?.length ?? 0) >= SIMPLICITY_MIN_ADDED_BRANCHES,
+    )
+  )
+    lenses.add(SIMPLICITY_PASS);
+
+  // Backcompat: deploy-window skew surfaces — wire formats, API
+  // modules, queue/task payloads, migrations, settings, feature flags.
+  if (
+    any(/(^|\/)(serializers?|schemas?|api|views?|endpoints?)\//) ||
+    any(/(^|\/)(serializers?|views?|urls?|api)[^/]*\.py$/) ||
+    any(/\.(proto|graphql)$/) ||
+    any(/(^|\/)migrations\//) ||
+    any(/(^|\/)(tasks|jobs|workers?|consumers?|queues?)\//) ||
+    any(/(^|\/)settings[^/]*\.py$/) ||
+    added(/^\+.*(feature.?flag|waffle|launch.?darkly|unleash)/im)
+  )
+    lenses.add(BACKCOMPAT_PASS);
 
   // Intent: keyed on the BODY, not the file shape — the artifact it
   // judges against is the author's own description, so a body below the

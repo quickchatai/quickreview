@@ -64,6 +64,11 @@ const NON_SEEDED = [
   // agents/pass-intent.md is OURS: created after the seeding,
   // never part of the frozen set — it must not be pinned by the manifest.
   "agents/pass-intent.md",
+  // The judgment lenses (2026-08-20 review-tuning): same
+  // post-seed provenance as pass-intent, ours to edit, never in the manifest.
+  "agents/pass-placement.md",
+  "agents/pass-simplicity.md",
+  "agents/pass-backcompat.md",
   "prompts/round-first.md",
   "prompts/round-re-review.md",
   "prompts/round-staleness.md",

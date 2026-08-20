@@ -178,6 +178,83 @@ describe("selectLenses", () => {
   });
 });
 
+// ---- placement / simplicity / backcompat ---------------
+
+describe("selectLenses: pass-placement", () => {
+  it("fires on a new prod file", () => {
+    expect(selectLenses([{ ...f("src/service/limiter.py"), status: "added" }])).toContain("pass-placement");
+  });
+
+  it("fires on a cross-cutting diff (>= 4 prod files), modified-only", () => {
+    const files = ["a", "b", "c", "d"].map((n) => ({ ...f(`src/${n}.py`), status: "modified" }));
+    expect(selectLenses(files)).toContain("pass-placement");
+  });
+
+  it("stays quiet on small edits-in-place and on new TEST files", () => {
+    expect(selectLenses([{ ...f("src/a.py"), status: "modified" }])).not.toContain("pass-placement");
+    expect(selectLenses([{ ...f("tests/test_new.py"), status: "added" }])).not.toContain("pass-placement");
+    // Four files, but three are tests: prod count is 1.
+    const files = [
+      { ...f("src/a.py"), status: "modified" },
+      { ...f("tests/t1.py"), status: "modified" },
+      { ...f("tests/t2.py"), status: "modified" },
+      { ...f("tests/t3.py"), status: "modified" },
+    ];
+    expect(selectLenses(files)).not.toContain("pass-placement");
+  });
+});
+
+describe("selectLenses: pass-simplicity", () => {
+  it("fires on a large prod diff", () => {
+    expect(selectLenses([{ ...f("src/big.py"), additions: 90, deletions: 15 }])).toContain("pass-simplicity");
+  });
+
+  it("does not count test lines toward the size trigger", () => {
+    expect(selectLenses([{ ...f("tests/test_big.py"), additions: 300, deletions: 0 }])).not.toContain(
+      "pass-simplicity",
+    );
+  });
+
+  it("fires on deep nesting in added lines", () => {
+    const nested = { ...f("src/deep.py"), patch: `@@ -1 +1,2 @@\n+${" ".repeat(20)}return x\n pass` };
+    expect(selectLenses([nested])).toContain("pass-simplicity");
+  });
+
+  it("fires on a pile of added branches in one file", () => {
+    const branches = Array.from({ length: 5 }, (_, i) => `+    if x == ${i}:`).join("\n+        pass\n");
+    expect(selectLenses([{ ...f("src/branchy.py"), patch: `@@ -1 +1,10 @@\n${branches}` }])).toContain(
+      "pass-simplicity",
+    );
+  });
+
+  it("stays quiet on a small flat diff", () => {
+    const flat = { ...f("src/small.py"), patch: "@@ -1 +1,2 @@\n+x = 1\n pass" };
+    expect(selectLenses([flat])).not.toContain("pass-simplicity");
+  });
+});
+
+describe("selectLenses: pass-backcompat", () => {
+  it("fires on wire-format, API, queue, migration, and settings surfaces", () => {
+    expect(selectLenses([f("app/serializers/user.py")])).toContain("pass-backcompat");
+    expect(selectLenses([f("src/api/routes.py")])).toContain("pass-backcompat");
+    expect(selectLenses([f("app/views.py")])).toContain("pass-backcompat");
+    expect(selectLenses([f("app/urls.py")])).toContain("pass-backcompat");
+    expect(selectLenses([f("proto/events.proto")])).toContain("pass-backcompat");
+    expect(selectLenses([f("app/migrations/0042_add_col.py")])).toContain("pass-backcompat");
+    expect(selectLenses([f("app/tasks/retrain.py")])).toContain("pass-backcompat");
+    expect(selectLenses([f("project/settings_prod.py")])).toContain("pass-backcompat");
+  });
+
+  it("fires on a feature-flag content signal", () => {
+    const flag = { ...f("src/rollout.py"), patch: "@@ -1 +1,2 @@\n+if feature_flag('new_billing'):\n pass" };
+    expect(selectLenses([flag])).toContain("pass-backcompat");
+  });
+
+  it("stays quiet on internal-only code", () => {
+    expect(selectLenses([f("src/utils/text.py"), f("docs/notes.md")])).not.toContain("pass-backcompat");
+  });
+});
+
 // ---- pass-intent --------------------------------------------------
 
 const SUBSTANTIVE_BODY =

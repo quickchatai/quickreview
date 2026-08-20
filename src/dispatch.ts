@@ -418,6 +418,9 @@ export const ALL_PASSES: readonly string[] = [
   "pass-prod-risk",
   "pass-delivery",
   "pass-intent",
+  "pass-placement",
+  "pass-simplicity",
+  "pass-backcompat",
   "pass-validate",
 ];
 

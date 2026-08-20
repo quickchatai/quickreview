@@ -318,10 +318,10 @@ describe("the real seeded content", () => {
     const out = mkdtempSync(join(tmpdir(), "qcr-agents-build-"));
     try {
       const built = buildAgents(join(sandbox, "agents"), out, { root: sandbox });
-      // 6 raisable passes × 3 tiers (pass-intent included) + 3 risk
-      // passes × 1 + validate × 1 (its shipped floor is the top tier,
-      //) = 22.
-      expect(built).toHaveLength(22);
+      // 9 raisable passes × 3 tiers (pass-intent; pass-placement /
+      // pass-simplicity / pass-backcompat) + 3 risk passes × 1 +
+      // validate × 1 (its shipped floor is the top tier) = 31.
+      expect(built).toHaveLength(31);
       for (const b of built) {
         const text = readFileSync(b.output, "utf8");
         expect(text).not.toContain("{{include:");
@@ -572,6 +572,36 @@ describe("the built pass contract (rules)", () => {
       expect(text).toContain("must name the axis moved — **severity**, **confidence**, or **reachability**");
       expect(text).toContain("**Hunt counterevidence before SURVIVE.**");
     }
+  });
+
+  // the P2 cap on the placement and simplicity lenses binds at
+  // the validator, like intent's cap (the lens text is advice; the veto is
+  // where a cap is real).
+  it("caps placement/simplicity at P2 in every validator variant and no lens", () => {
+    const header = "## Placement and simplicity findings are capped at P2 (sandbox rule)";
+    for (const [name, text] of bodies) {
+      expect(text.includes(header), name).toBe(name.startsWith(`${VALIDATE_PASS}--`));
+    }
+    const [, validator] = [...bodies].find(([name]) => name.startsWith(`${VALIDATE_PASS}--`))!;
+    expect(validator).toContain("`pass-placement` or `pass-simplicity`");
+    expect(validator).toContain("down to `P2` with the one-word reason `design-over-cap`");
+    // The downgrade word joins the CLOSED vocabulary, so the EOD critic's
+    // diet stays labeled.
+    expect(validator).toContain("`design-over-cap`, `inflated`");
+  });
+
+  // blocker-class findings mint a `detail:` paragraph at the source
+  // (the frozen schema caps `claim` at one sentence; the posted comment can
+  // only be as rich as what the pass returned).
+  it("requires the detail field on blocker-class findings in every lens and never the validator", () => {
+    const header = "## Blocker-class findings carry a detail paragraph (sandbox rule)";
+    for (const [name, text] of bodies) {
+      expect(text.includes(header), name).toBe(!name.startsWith(`${VALIDATE_PASS}--`));
+    }
+    const lens = bodies.get("pass-baseline--sol-med") as string;
+    expect(lens).toContain("detail: <one short paragraph");
+    expect(lens).toContain("the invariant a fix must restore");
+    expect(lens).toContain("`P3` and `nit` candidates are exempt");
   });
 
   it("remedy size and the in-flight-PR rule reach every built pass", () => {
