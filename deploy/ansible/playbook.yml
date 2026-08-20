@@ -188,23 +188,29 @@
         # --delete keeps the VM tree a true mirror (renamed/removed files
         # actually disappear); every runtime dir the daemon/pi writes under the
         # sandbox root is excluded, which also protects it from the delete.
+        # The runtime excludes are ANCHORED with a leading slash so they match
+        # ONLY at the sandbox root. An unanchored rsync pattern matches any
+        # path COMPONENT of that name, and `memory` collided with the daemon's
+        # own `src/memory/` — the VM got no src/memory or dist/src/memory, and
+        # the daemon crash-looped on a missing ovsession.js (2026-08-20).
+        # .git/.claude/node_modules stay unanchored: those may nest.
         rsync_opts:
           - "--delete"
           - "--exclude=.git"
           - "--exclude=.claude"
           - "--exclude=node_modules"
-          - "--exclude=state"
-          - "--exclude=wt"
-          - "--exclude=archive"
-          - "--exclude=commands"
-          - "--exclude=digest"
-          - "--exclude=inject"
-          - "--exclude=verdict"
-          - "--exclude=memory"
-          - "--exclude=notes"
-          - "--exclude=ledger.md"
-          - "--exclude=example-app"
-          - "--exclude=pihome"
+          - "--exclude=/state"
+          - "--exclude=/wt"
+          - "--exclude=/archive"
+          - "--exclude=/commands"
+          - "--exclude=/digest"
+          - "--exclude=/inject"
+          - "--exclude=/verdict"
+          - "--exclude=/memory"
+          - "--exclude=/notes"
+          - "--exclude=/ledger.md"
+          - "--exclude=/example-app"
+          - "--exclude=/pihome"
       when: sandbox_src is defined
 
     # rsync lands files with controller-side ownership; the container user
