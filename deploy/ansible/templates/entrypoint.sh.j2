@@ -157,6 +157,18 @@ for (const p of wanted) {
   }
   if (!settings.extensions.includes(p)) settings.extensions.push(p);
 }
+// settings.json lives on the PERSISTENT pihome volume, so entries written by
+// an older image survive a rebuild. Adding the wanted list is not enough —
+// after retired pi-memory the volume still registered
+// /usr/lib/node_modules/pi-memory/index.ts, which the image no longer has. pi
+// tolerates a missing extension, so it never surfaced as a failure; it just
+// sat there misreporting what the reviewer loads. Prune anything that is not
+// on disk.
+const stale = settings.extensions.filter((p) => !fs.existsSync(p));
+if (stale.length) {
+  settings.extensions = settings.extensions.filter((p) => fs.existsSync(p));
+  console.log("pi extensions pruned (not on disk): " + stale.join(", "));
+}
 // The reviewer never blocks on interactive input (the owner, 2026-08-20 —
 // pr-5334 stalled on pi's "Trust project folder?" modal after .pi/settings.json
 // shipped). Belt: trust every project by default. Braces: pre-seed the trust

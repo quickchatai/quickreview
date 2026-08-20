@@ -482,6 +482,18 @@ export class OpenVikingClient {
    * which is what `content/read` returns and what the store parses, so a
    * failure here narrows retrieval — it never loses the memory or its tags.
    */
+  /**
+   * Create a directory (and its parents). A fresh server has ONLY
+   * `viking://user/default`, so the first write into `user/<us>/memories/<cat>`
+   * 404s on the missing root — nothing else provisions the tree, and making
+   * boot order responsible for it would put a network call in front of the
+   * daemon. The store calls this lazily, on exactly that failure.
+   */
+  async mkdir(uri: string, parents = true): Promise<boolean> {
+    const res = await this.request<unknown>("mkdir", "/api/v1/fs/mkdir", { method: "POST", body: { uri, parents } });
+    return res.ok;
+  }
+
   async setTags(uri: string, tags: string[], mode: "append" | "replace" = "replace"): Promise<boolean> {
     if (tags.length === 0) return true;
     const res = await this.request<unknown>("set_tags", "/api/v1/fs/attrs/set_tags", { method: "POST", body: { uri, tags, mode } });

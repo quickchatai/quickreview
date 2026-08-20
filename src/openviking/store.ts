@@ -197,6 +197,8 @@ export class OpenVikingStore implements MemoryStore {
   private readonly category: string;
   private readonly now: () => Date;
   private readonly log: (msg: string, extra?: unknown) => void;
+  /** One lazy mkdir per store instance — a second NOT_FOUND is a real error. */
+  private rootEnsured = false;
   private readonly concurrency: number;
   private readonly cacheTtlMs: number;
 
@@ -388,6 +390,18 @@ export class OpenVikingStore implements MemoryStore {
         return { ok: true, message: `wrote ${id}` };
       }
       if (res.ok) return { ok: false, message: `memory write failed: the server accepted the batch without writing ${id}` };
+      // A fresh server holds only `viking://user/default`: our category root
+      // does not exist until something makes it, and batch-write 404s rather
+      // than creating it. Make it once, here, and let the loop retry — the
+      // alternative is a bootstrap step that a restart or a new category
+      // silently outlives.
+      if (res.code === "NOT_FOUND" && !this.rootEnsured) {
+        this.rootEnsured = true;
+        if (await this.client.mkdir(`${this.root}/${this.category}`)) {
+          this.log(`openviking: created the memory root ${this.root}/${this.category}`);
+          continue;
+        }
+      }
       if (!res.conflict) return { ok: false, message: `memory write failed: ${res.message}` };
       this.log(`openviking: memory name ${id} taken — retrying under a fresh name`);
     }
