@@ -10,6 +10,7 @@ import type { App } from "./app.js";
 import { CHORD_GRACE_MS, ChordScanner, TripleCtrlC } from "./chord.js";
 import { BAD, OK, RESET, STRONG } from "./design.js";
 import { rule, CLEAR } from "./paint.js";
+import { ClipboardSink, osc52Text } from "./clipboard.js";
 import { attachArgv } from "./remote.js";
 import { TermPane } from "./term.js";
 
@@ -78,7 +79,7 @@ export type ConnState = "live" | "lost";
 export function statusRow(session: string, prState: string | undefined, conn: ConnState, cols: number): string {
   const state = prState ? ` · ${prState}` : "";
   const connSeg = conn === "live" ? `${OK}▶ live${RESET}` : `${BAD}✖ lost — ⏎ retry · Ctrl-q/Ctrl-c board${RESET}`;
-  return rule(cols, "┌", "┐", [`${STRONG}${session}${RESET}${state}`, connSeg, "Ctrl-q detach · Ctrl-c×3 kill tui"]);
+  return rule(cols, "┌", "┐", [`${STRONG}${session}${RESET}${state}`, connSeg, "drag copies · Ctrl-q detach · Ctrl-c×3 kill tui"]);
 }
 
 const PAINT_INTERVAL_MS = 16;
@@ -109,6 +110,10 @@ export class AttachScreen {
      * … tmux attach`), so it supplies its own argv; the ssh path stays the
      * default. The spawner owns the binary either way. */
     private readonly argvOverride?: string[],
+    /** OSC 52 payloads land here as well as on the real terminal: Konsole/VTE
+     * ignore the escape, so forwarding alone lost every tmux mouse-drag copy
+     * and pi /copy. Injectable so tests never touch the real clipboard. */
+    private readonly clipboard: ClipboardSink = new ClipboardSink(),
   ) {}
 
   /** Resolves when the user is back on the board. */
@@ -142,7 +147,11 @@ export class AttachScreen {
     this.pty.onData((data) => {
       this.sawData = true;
       stderrTail = (stderrTail + data).slice(-200);
-      for (const seq of this.clip.feed(data)) this.out.write(seq); // /copy → real clipboard
+      for (const seq of this.clip.feed(data)) {
+        this.out.write(seq); // terminals with native OSC 52 support
+        const text = osc52Text(seq);
+        if (text !== undefined) void this.clipboard.write(text); // Konsole & co
+      }
       this.pane?.write(muteCompanionToolFlash(data), () => this.schedulePaint());
     });
     this.pty.onExit(({ exitCode }) => {

@@ -244,6 +244,27 @@ describe("AttachScreen", () => {
     await done;
   });
 
+  it("mirrors OSC 52 copies into the host clipboard sink AND forwards the escape", async () => {
+    const streams = fakeStreams();
+    const app = makeApp(streams);
+    const ptys: FakePty[] = [];
+    const spawner: PtySpawner = (argv, cols, rows) => {
+      const p = new FakePty();
+      p.cols = cols;
+      p.rows = rows;
+      ptys.push(p);
+      return p;
+    };
+    const copied: string[] = [];
+    const sink = { write: async (t: string) => (copied.push(t), true) };
+    const screen = new AttachScreen("pr-5012", app, spawner, streams.out, streams.input, undefined, sink as any);
+    void screen.run();
+    ptys[0]!.emitData("out\x1b]52;c;aGVsbG8=\x07more");
+    expect(copied).toEqual(["hello"]); // Konsole ignores OSC 52 — the sink is the real copy
+    expect(streams.written()).toContain("\x1b]52;c;aGVsbG8=\x07"); // still forwarded for terminals that do
+    screen.detach();
+  });
+
   it("propagates terminal resize to both the model and the pty", () => {
     const { streams, ptys, screen } = attachSetup();
     void screen.run();
