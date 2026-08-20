@@ -272,3 +272,40 @@ describe("companion memedit requests", () => {
     expect(await processMemRequests("/nonexistent/memedit", new FakeMemory())).toEqual([]);
   });
 });
+
+describe("quit vs late async repaints (ghost-frame regression)", () => {
+  it("a load resolving after quit paints nothing onto the restored screen", async () => {
+    const { app, written } = makeApp();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const slowMemory: MemoryStore = {
+      read: async () => {
+        await gate;
+        return parseMemory(SAMPLE);
+      },
+      apply: () => Promise.resolve({ ok: true, message: "ok" }),
+    };
+    install(app, slowMemory as FakeMemory);
+    const running = app.run(); // installs streams, starts poller
+    app.hooks.digestScreen!(app, 110, 30); // kicks the slow load
+    app.quit();
+    await running; // teardown done — terminal restored
+    const at = written().length;
+    release(); // the load resolves late and calls app.repaint()
+    await settle();
+    expect(written().length).toBe(at); // not one more byte on the normal screen
+  });
+
+  it("a late attach resume after quit also paints nothing", async () => {
+    const { app, written } = makeApp();
+    install(app, new FakeMemory());
+    const running = app.run();
+    app.quit();
+    await running;
+    const at = written().length;
+    app.resume();
+    app.notice("late notice");
+    await settle();
+    expect(written().length).toBe(at);
+  });
+});

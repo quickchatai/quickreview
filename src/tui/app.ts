@@ -246,7 +246,15 @@ export class App {
     this.teardown();
   }
 
+  /** Set once teardown has restored the terminal. From then on nothing may
+   * write to the output stream: an async load that resolves after quit
+   * (memory/proposals fetches take seconds over ssh) would otherwise paint
+   * a full TUI frame onto the user's restored NORMAL screen — a ghost board
+   * that looks like the TUI is still running. */
+  private stopped = false;
+
   private teardown(): void {
+    this.stopped = true;
     this.poller.stop();
     this.pi.stop();
     if (this.piTimer) clearInterval(this.piTimer);
@@ -287,6 +295,7 @@ export class App {
   }
 
   resume(): void {
+    if (this.stopped) return; // an attach resolving after quit must not repaint
     this.suspended = false;
     this.input.on("data", this.onData);
     this.out.write(CLEAR + MOUSE_ON);
@@ -759,7 +768,7 @@ export class App {
   private lastFrame: Frame | undefined;
 
   repaint(): void {
-    if (this.suspended) return;
+    if (this.suspended || this.stopped) return;
     const cols = this.out.columns ?? 80;
     const rows = this.out.rows ?? 24;
     if (this.tab === "digest") {
