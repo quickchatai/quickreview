@@ -456,6 +456,31 @@ export class PiSessionManager implements SessionHooks {
     return newest?.path;
   }
 
+  /** SessionHooks: newest session-JSONL mtime for the PR's sticky session —
+   * the lost-prompt net's activity signal. Null when no JSONL exists
+   * (a session that never wrote anything has no activity to date). */
+  async sessionActivityAt(pr: number): Promise<number | null> {
+    const file = this.newestSessionFile(prSessionName(pr));
+    if (!file) return null;
+    try {
+      return statSync(file).mtimeMs;
+    } catch {
+      return null;
+    }
+  }
+
+  /** SessionHooks: unconsumed wake files in the PR session's inject dir —
+   * still pending means the inject-bridge is retrying, not that it lost
+   * anything. */
+  async injectPending(pr: number): Promise<boolean> {
+    const dir = this.injectDir(prSessionName(pr));
+    try {
+      return readdirSync(dir).some((f) => f.endsWith(".md"));
+    } catch {
+      return false;
+    }
+  }
+
   /** Copy JSONL + ledger (+ verdicts) into an archive dir. Returns what landed. */
   archiveSession(session: string, dest: string): string[] {
     mkdirSync(dest, { recursive: true });

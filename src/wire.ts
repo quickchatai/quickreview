@@ -352,6 +352,8 @@ export function daemonOriginWakes(opts: {
       // unknown ⇒ every stuck round parked). Found 2026-08-19.
       ...(hooks.sessionAlive ? { sessionAlive: (pr: number) => hooks.sessionAlive!(pr) } : {}),
       ...(hooks.killSession ? { killSession: (pr: number) => hooks.killSession!(pr) } : {}),
+      ...(hooks.sessionActivityAt ? { sessionActivityAt: (pr: number) => hooks.sessionActivityAt!(pr) } : {}),
+      ...(hooks.injectPending ? { injectPending: (pr: number) => hooks.injectPending!(pr) } : {}),
       injectOverseer: (message) => wake("overseer-wake", message),
     },
   };

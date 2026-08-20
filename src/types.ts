@@ -211,4 +211,14 @@ export interface SessionHooks {
    * session is alive but wedged is killed + requeued instead of parked.
    * Optional: absent ⇒ live-but-stuck rounds park exactly as before. */
   killSession?(pr: number): Promise<void>;
+  /** Milliseconds-epoch mtime of the newest pi session JSONL for this PR, or
+   * null when unknown. Read by the lost-prompt net: a round whose
+   * inject was consumed while the session shows no activity since the round
+   * started never received its prompt. Optional: absent ⇒ no net, exactly the
+   * legacy behaviour. */
+  sessionActivityAt?(pr: number): Promise<number | null>;
+  /** Is any wake file still pending (unconsumed) in the PR session's inject
+   * dir? Read by the same net — a pending file means the bridge is still
+   * retrying delivery, which is patience, not loss. Optional as above. */
+  injectPending?(pr: number): Promise<boolean>;
 }

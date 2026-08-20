@@ -219,6 +219,10 @@ export interface GuardsConfig {
    * not started — no execution evidence. Off by default so a repo with no CI
    * at all is never wedged (the original `none` exemption). */
   no_checks_is_red: boolean;
+  /** The head the review is ABOUT must still be the PR's live head at posting
+   * time: a push landing between the round's validation and
+   * its posting step otherwise lands a stale review against the new head. */
+  refuse_on_head_drift: boolean;
 }
 
 export const GUARDS_DEFAULTS: GuardsConfig = {
@@ -227,6 +231,7 @@ export const GUARDS_DEFAULTS: GuardsConfig = {
   recheck_pr_state_before_post: true,
   block_approve_on_red_ci: true,
   no_checks_is_red: false,
+  refuse_on_head_drift: true,
 };
 
 /**
@@ -327,6 +332,11 @@ export interface Config {
      * so hand-rolled test configs keep compiling; readers default to
      * DEFAULT_MAX_SELF_REQUEUES. */
     max_self_requeues?: number;
+    /**: minutes after dispatch before a running round whose prompt
+     * was consumed but whose session shows no activity counts as
+     * lost-prompt and is re-queued (once per head, inside the cap).
+     * Optional; readers default to DEFAULT_ROUND_STALL_GRACE_MIN. */
+    round_stall_grace_min?: number;
     /** Zombie-round expiry horizon: a round stuck `overdue` for
      * longer than this — and whose PR has since verdicted or closed, so a
      * rerun would never touch it — moves to terminal `expired`.
@@ -403,6 +413,11 @@ export const COMPANION_DEFAULTS: CompanionConfig = {
   awaiting_age_h: 24,
   cooldown_min: 20,
 };
+
+/** Default lost-prompt grace when [daemon] carries no
+ * `round_stall_grace_min`: long enough that a slow first tool call is never
+ * mistaken for a dropped prompt, far shorter than the round deadline. */
+export const DEFAULT_ROUND_STALL_GRACE_MIN = 10;
 
 /** Default self-requeue budget per PR head when [daemon] carries no
  * `max_self_requeues` — the brief's recommended N=2. */

@@ -3,7 +3,9 @@ import { resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
 import type { PrRef, StalePr } from "../src/github.js";
+import { roundTypeFor } from "../src/dispatch.js";
 import { reconcileOnce, reconcileOrphanedRounds, type ReconcileAdapter, type ReconcileSearchItem } from "../src/reconcile.js";
+import { applyEvent } from "../src/statemachine.js";
 import { StateStore, type PrLifecycleState } from "../src/state.js";
 import type { SessionHooks } from "../src/types.js";
 
@@ -510,5 +512,73 @@ describe("reconcileOrphanedRounds", () => {
     expect(res.requeued).toEqual([]); // the phantom was superseded — no new round
     expect((store.db.prepare("SELECT status FROM rounds WHERE id = ?").get(oldId) as any).status).toBe("cancelled");
     store.close();
+  });
+});
+
+// ----: stale-trigger residue ----------------------------------------
+
+describe("stale-trigger residue sweep", () => {
+  it("clears stale_recheck + trigger_ts on a settled PR with no round running, and logs it", async () => {
+    // #5180's live shape: tracked, stale_recheck=1, a days-old trigger_ts,
+    // zero rounds running, and GitHub no longer lists it as triggered.
+    gh.open = [ref(5180)];
+    seed(5180, "tracked", { stale: 1, trigger: "2026-08-14T14:01:56.715Z" });
+    const { hooks } = recordingHooks();
+
+    await reconcileOnce({ cfg, store, adapter: gh, hooks });
+
+    const row = store.getPr(5180)!;
+    expect(row.state).toBe("tracked");
+    expect(row.stale_recheck).toBe(0);
+    expect(row.trigger_ts).toBeNull();
+    const what = corrections(store).filter((c) => c.what === "stale-trigger-residue-cleared");
+    expect(what).toHaveLength(1);
+    expect(what[0]).toMatchObject({ pr: 5180, stale_recheck: 1, trigger_ts: "2026-08-14T14:01:56.715Z" });
+  });
+
+  it("a subsequent explicit re-review is NOT classified as a staleness round", async () => {
+    gh.open = [ref(5180)];
+    seed(5180, "tracked", { stale: 1, trigger: "2026-08-14T14:01:56.715Z" });
+    const { hooks } = recordingHooks();
+    await reconcileOnce({ cfg, store, adapter: gh, hooks });
+
+    // the owner re-labels the PR: an explicit human trigger, days later.
+    applyEvent(store, 5180, { type: "trigger", source: "label" }, { author: "alice" }, { now: () => new Date("2026-08-20T09:00:00Z") });
+    const row = store.getPr(5180)!;
+    expect(row.state).toBe("queued");
+    expect(row.stale_recheck).toBe(0);
+    expect(row.trigger_ts).toBe("2026-08-20T09:00:00.000Z"); // fresh FIFO position, not the residue
+    expect(roundTypeFor(row, 3)).toBe("re-review"); // never "staleness"
+  });
+
+  it("never touches a queued PR, a reviewing PR, or one with a round running", async () => {
+    gh.open = [ref(21), ref(22), ref(23)];
+    gh.labelTriggered = [item(21)];
+    seed(21, "queued", { stale: 1, trigger: "2026-08-14T10:00:00Z" });
+    seed(22, "reviewing", { stale: 1 });
+    seed(23, "awaiting_author", { stale: 1 });
+    store.startRound(23, "re-review", ["pass-baseline"], 75); // round in flight
+    const { hooks } = recordingHooks();
+
+    await reconcileOnce({ cfg, store, adapter: gh, hooks });
+
+    expect(store.getPr(21)!.stale_recheck).toBe(1); // queued: the trigger is live
+    expect(store.getPr(22)!.stale_recheck).toBe(1); // reviewing: dispatch clears it
+    expect(store.getPr(23)!.stale_recheck).toBe(1); // running round owns the state
+    expect(corrections(store).filter((c) => c.what === "stale-trigger-residue-cleared")).toHaveLength(0);
+  });
+
+  it("runs after the triggered-set step: a still-triggered PR re-queues instead of being wiped", async () => {
+    gh.open = [ref(31)];
+    gh.labelTriggered = [item(31)];
+    seed(31, "tracked", { stale: 0, trigger: "2026-08-14T10:00:00Z" });
+    const { hooks } = recordingHooks();
+
+    await reconcileOnce({ cfg, store, adapter: gh, hooks });
+
+    const row = store.getPr(31)!;
+    expect(row.state).toBe("queued"); // the trigger was real — honored, not swept
+    expect(row.trigger_ts).toBe("2026-08-14T10:00:00Z");
+    expect(corrections(store).filter((c) => c.what === "stale-trigger-residue-cleared")).toHaveLength(0);
   });
 });

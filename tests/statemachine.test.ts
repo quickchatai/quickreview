@@ -151,6 +151,28 @@ describe("applyEvent", () => {
     store.close();
   });
 
+  it("clears stale_recheck and trigger_ts when a round settles — no residue", () => {
+    const store = open();
+    // A staleness trigger that never dispatched (the round it queued for was
+    // settled by another path) must not survive as residue on tracked.
+    applyEvent(store, 11, { type: "trigger", source: "label" }, { author: "alice" }, {});
+    applyEvent(store, 11, { type: "stale_detected" }, {}, {});
+    expect(store.getPr(11)!.stale_recheck).toBe(1);
+    applyEvent(store, 11, { type: "verdict", verdict: "APPROVE" }, {}, {});
+    let row = store.getPr(11)!;
+    expect(row.state).toBe("tracked");
+    expect(row.stale_recheck).toBe(0);
+    expect(row.trigger_ts).toBeNull();
+
+    applyEvent(store, 11, { type: "stale_detected" }, {}, {});
+    applyEvent(store, 11, { type: "round_overdue", standing: "REQUEST_CHANGES" }, {}, {});
+    row = store.getPr(11)!;
+    expect(row.state).toBe("awaiting_author");
+    expect(row.stale_recheck).toBe(0);
+    expect(row.trigger_ts).toBeNull();
+    store.close();
+  });
+
   it("logs every state change as pr_transition", () => {
     const store = open();
     applyEvent(store, 10, { type: "trigger", source: "label" }, { author: "alice" }, {});

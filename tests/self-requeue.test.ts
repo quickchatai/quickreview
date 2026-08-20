@@ -503,3 +503,117 @@ describe("NEEDS_HUMAN requires a finished review", () => {
     expect(events("self_requeue_cap_exhausted")).toHaveLength(1);
   });
 });
+
+// ----: the lost-prompt net (pre-deadline) ----------------------------
+
+describe("lost-prompt net — consumed prompt, silent session", () => {
+  const GRACE_MIN = baseCfg.daemon.round_stall_grace_min ?? 10;
+
+  /** hooksWith + the two observation hooks. */
+  function netHooks(opts: { pending: boolean; activity: number | null }): ReturnType<typeof hooksWith> {
+    const h = hooksWith(true);
+    h.hooks.injectPending = async () => opts.pending;
+    h.hooks.sessionActivityAt = async () => opts.activity;
+    return h;
+  }
+
+  function pastGrace(): void {
+    clock = new Date(clock.getTime() + (GRACE_MIN + 5) * 60_000); // grace blown, deadline not
+  }
+
+  it("requeues a running round whose prompt was consumed but never became a turn", async () => {
+    const startedMs = clock.getTime();
+    const roundId = reviewingRound(310);
+    pastGrace();
+    const { hooks, overseer } = netHooks({ pending: false, activity: startedMs - 60_000 });
+
+    expect(await watcher(hooks).checkDeadlines()).toEqual([]); // no anomaly
+
+    expect(roundStatus(roundId)).toBe("cancelled");
+    expect(store.getPr(310)!.state).toBe("queued");
+    expect(events("round_prompt_lost")).toHaveLength(1);
+    const requeued = events("round_self_requeued");
+    expect(requeued).toHaveLength(1);
+    expect(requeued[0]!.payload).toMatchObject({ mode: "lost_prompt" });
+    expect(String(requeued[0]!.payload.reason)).toContain("prompt was consumed");
+    expect(overseer.some((m) => m.startsWith("SELF-REQUEUE (recovery) — PR #310"))).toBe(true);
+  });
+
+  it("does nothing while the inject file is still pending — the bridge is retrying, not losing", async () => {
+    const startedMs = clock.getTime();
+    const roundId = reviewingRound(311);
+    pastGrace();
+    const { hooks } = netHooks({ pending: true, activity: startedMs - 60_000 });
+
+    await watcher(hooks).checkDeadlines();
+    expect(roundStatus(roundId)).toBe("running");
+    expect(events("round_self_requeued")).toHaveLength(0);
+  });
+
+  it("does nothing when the session has been active since the round started (mid-recheck overlap)", async () => {
+    const startedMs = clock.getTime();
+    const roundId = reviewingRound(312);
+    pastGrace();
+    const { hooks } = netHooks({ pending: false, activity: startedMs + 30_000 });
+
+    await watcher(hooks).checkDeadlines();
+    expect(roundStatus(roundId)).toBe("running");
+    expect(events("round_self_requeued")).toHaveLength(0);
+  });
+
+  it("does nothing when activity is unknown, or when the hooks are absent (stubs)", async () => {
+    const roundIdA = reviewingRound(313);
+    pastGrace();
+    const unknown = netHooks({ pending: false, activity: null });
+    await watcher(unknown.hooks).checkDeadlines();
+    expect(roundStatus(roundIdA)).toBe("running");
+
+    const roundIdB = reviewingRound(314);
+    const { hooks } = hooksWith(true); // no sessionActivityAt / injectPending
+    await watcher(hooks).checkDeadlines();
+    expect(roundStatus(roundIdB)).toBe("running");
+    expect(events("round_self_requeued")).toHaveLength(0);
+  });
+
+  it("waits out the grace window before judging", async () => {
+    const startedMs = clock.getTime();
+    const roundId = reviewingRound(315);
+    clock = new Date(clock.getTime() + 2 * 60_000); // inside the grace window
+    const { hooks } = netHooks({ pending: false, activity: startedMs - 60_000 });
+
+    await watcher(hooks).checkDeadlines();
+    expect(roundStatus(roundId)).toBe("running");
+    expect(events("round_self_requeued")).toHaveLength(0);
+  });
+
+  it("a pending verdict file always wins over the net", async () => {
+    const startedMs = clock.getTime();
+    const roundId = reviewingRound(316);
+    pastGrace();
+    writeFileSync(join(dir, "pr-316-round-1.json"), "{}");
+    const { hooks } = netHooks({ pending: false, activity: startedMs - 60_000 });
+
+    await watcher(hooks).checkDeadlines();
+    expect(roundStatus(roundId)).toBe("running");
+    expect(events("round_self_requeued")).toHaveLength(0);
+  });
+
+  it("fires at most once per head — the deadline path owns further recovery", async () => {
+    const startedMs = clock.getTime();
+    reviewingRound(317);
+    pastGrace();
+    const { hooks } = netHooks({ pending: false, activity: startedMs - 60_000 });
+    await watcher(hooks).checkDeadlines();
+    expect(events("round_self_requeued")).toHaveLength(1);
+
+    // The redispatched round loses its prompt AGAIN at the same head.
+    const secondStart = clock.getTime();
+    const secondId = reviewingRound(317);
+    clock = new Date(clock.getTime() + (GRACE_MIN + 5) * 60_000);
+    const again = netHooks({ pending: false, activity: secondStart - 60_000 });
+    await watcher(again.hooks).checkDeadlines();
+
+    expect(roundStatus(secondId)).toBe("running"); // the net stays its hand
+    expect(events("round_self_requeued")).toHaveLength(1);
+  });
+});

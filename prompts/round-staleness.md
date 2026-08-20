@@ -53,6 +53,19 @@ hand-rolled multi-part `gh`/GraphQL spells:
 - `scripts/reply-thread.sh {{n}} <comment-id> <body-file>` — author ping-pong
   replies.
 
+**Before ANY posting script** (post-review.sh, approve-pr.sh): export the head
+this round actually reviewed, so the guard can refuse a stale post if the PR
+moved under you —
+
+```sh
+export QCR_EXPECTED_HEAD={{head_sha}}
+```
+
+If the script refuses with "head moved" (guard 5), the PR advanced
+while you were reviewing: post NOTHING, write NO verdict file, and end the
+round — the daemon re-runs the review against the new head. Never re-read the
+current head and post against it.
+
 Token hygiene (measured on live rounds, 2026-08-14):
 - Tool output truncates at ~50 KB — a full-PR `git diff --unified=80` dump
   burns the budget and still arrives cut off. Diff per file with default
