@@ -504,8 +504,10 @@ export class App {
 
   private handleMouse(ev: MouseEvent): void {
     // The command bar answers first, on every tab: a click on one of its
-    // buttons IS that keypress, wherever it lands.
-    if (ev.kind === "click") {
+    // buttons IS that keypress, wherever it lands. EXCEPT while an input box
+    // is open — a synthesized key would be typed into the box, and [⏎]
+    // would SUBMIT the draft (a live memory edit or quick-message).
+    if (ev.kind === "click" && !this.view.inputBox) {
       const cols = this.out.columns ?? 80;
       const rows = this.out.rows ?? 24;
       const k = barHitKey(this.tab, ev.x, ev.y, cols, rows);
@@ -664,6 +666,10 @@ export class App {
         case "tab-metrics":
         case "quit":
         case "help":
+        // The bar promises identical globals on every tab — refresh and
+        // ssh-reconnect must work here too.
+        case "refresh":
+        case "reconnect":
           break;
         default:
           return;

@@ -94,7 +94,7 @@ export function piRows(rows: number): number {
 /** Geometry of the floating EVENTS overlay: a centered band over the board,
  * bordered top and bottom, ~60% of the height. */
 export function eventsOverlayBand(rows: number): { top: number; height: number } {
-  const height = Math.max(5, Math.min(Math.floor(rows * 0.6), rows - 4));
+  const height = Math.max(5, Math.min(Math.floor(rows * 0.6), rows - 5)); // never under the 2-row bar
   return { top: Math.max(1, Math.floor((rows - height) / 2)), height };
 }
 
@@ -365,6 +365,11 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
   sorted.forEach((pr, i) => {
     listLines.push(styledRow(pr, i === view.selected, listW - 1, now, view.repo));
     const y = 1 + listLines.length - 1 + 1; // frame row of this PR line (below top bar)
+    // Only PAINTED rows get zones: with a long list, off-screen rows would
+    // otherwise leave phantom click targets over the pi region and the
+    // bar-row gaps — a click there could select (or double-click attach)
+    // an invisible PR.
+    if (i >= bodyRows - 1) return;
     frame.zones.push({ x1: 2, y1: y, x2: listW, y2: y, action: { t: "select-pr", pr: pr.number } satisfies BoardAction });
     frame.zones.push({ x1: 4, y1: y, x2: 4 + String(pr.number).length + 1, y2: y, action: { t: "open-github", pr: pr.number } satisfies BoardAction });
   });

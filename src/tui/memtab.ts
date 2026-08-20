@@ -467,6 +467,10 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
   const digestViewKey = (theApp: App, key: BoardKey): boolean => {
     const awaiting = theApp.view.snapshot ? awaitingRows(sortPrs(theApp.view.snapshot.prs), now()) : [];
     switch (key.kind) {
+      case "events":
+        // `e` is the MEMORY view's edit; here it would fall through to the
+        // board's events overlay and silently toggle it — swallow instead.
+        return true;
       case "down":
       case "up": {
         if (key.arrow) {
@@ -623,10 +627,11 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
       case "github":
       case "overseer":
       case "main-session":
-      case "reconnect":
         return true;
       default:
-        return false; // tabs/quit/help stay with the app
+        // tabs/quit/help — and reconnect: the bar promises [s ssh]
+        // everywhere, so it must reach the app from this view too.
+        return false;
     }
   };
 

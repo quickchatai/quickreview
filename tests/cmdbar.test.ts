@@ -132,6 +132,31 @@ describe("App-level bar clicks", () => {
     await running; // resolves only because the click became a real `q`
   });
 
+  it("bar clicks are INERT while an input box is open (review P1: [enter] must not submit a draft)", async () => {
+    const { out, input } = fakeStreams(120, 30);
+    const app = new App(TUI_DEFAULTS, async () => ({ ok: true, stdout: "", stderr: "", code: 0 }), out, input);
+    app.tab = "board";
+    const sent: string[] = [];
+    app.hooks.sendMessage = (_s, text) => void sent.push(text);
+    let ex: number | undefined; // the board row-B enter button
+    for (let x = 2; x < 120 && ex === undefined; x++) if (barHitKey("board", x, 29, 120, 30) === "\r") ex = x;
+    expect(ex).toBeDefined();
+    let qx: number | undefined;
+    for (let x = 2; x < 120 && qx === undefined; x++) if (barHitKey("board", x, 28, 120, 30) === "q") qx = x;
+    const running = app.run();
+    app.openMessageBox("pr-5012");
+    (input as unknown as EventEmitter).emit("data", Buffer.from("draft"));
+    (input as unknown as EventEmitter).emit("data", Buffer.from(`\x1b[<0;${ex};29M`)); // click [⏎] — must NOT submit
+    expect(sent).toEqual([]);
+    expect(app.view.inputBox).toBeDefined();
+    expect(app.view.inputBox!.text).toBe("draft"); // and no key was typed into the box
+    (input as unknown as EventEmitter).emit("data", Buffer.from(`\x1b[<0;${qx};28M`)); // click [q] — must NOT quit or type
+    expect(app.view.inputBox!.text).toBe("draft");
+    (input as unknown as EventEmitter).emit("data", Buffer.from("\x1b")); // esc closes the box
+    app.quit();
+    await running;
+  });
+
   it("a click on a nav slot switches tabs on the companion placeholder too", async () => {
     const { out, input } = fakeStreams(120, 30);
     const app = new App(TUI_DEFAULTS, async () => ({ ok: true, stdout: "", stderr: "", code: 0 }), out, input);
