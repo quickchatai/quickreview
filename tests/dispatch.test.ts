@@ -373,6 +373,42 @@ describe("buildPassPlan", () => {
       }
     });
   });
+
+  // the judgment lenses ride the default tier ladder and stay
+  // raisable, exactly like any non-risk lens; pin the plan entries so a
+  // future tier change cannot ship silently.
+  describe("judgment lenses", () => {
+    it("plans simplicity + backcompat at the round's default tier, raisable", () => {
+      // 200 changed serializer lines ⇒ default sol-med; selects contracts,
+      // backcompat (wire surface) and simplicity (size).
+      const { pass_plan } = buildPassPlan(planCfg, [file("app/serializers/user.py", 200, 0)]);
+      expect(pass_plan.find((p) => p.lens === "pass-backcompat")).toEqual({
+        lens: "pass-backcompat",
+        agent: "pass-backcompat--sol-med",
+        tier: "sol-med",
+        raisable_to: ["pass-backcompat--sol-high"],
+      });
+      expect(pass_plan.find((p) => p.lens === "pass-simplicity")).toEqual({
+        lens: "pass-simplicity",
+        agent: "pass-simplicity--sol-med",
+        tier: "sol-med",
+        raisable_to: ["pass-simplicity--sol-high"],
+      });
+    });
+
+    it("plans placement at terra-med on a small new-file diff", () => {
+      const added = { ...file("src/tools/new_helper.py", 20, 0), status: "added" };
+      const { pass_plan } = buildPassPlan(planCfg, [added]);
+      expect(pass_plan.find((p) => p.lens === "pass-placement")).toEqual({
+        lens: "pass-placement",
+        agent: "pass-placement--terra-med",
+        tier: "terra-med",
+        raisable_to: ["pass-placement--sol-med", "pass-placement--sol-high"],
+      });
+      // A tiny added helper does not buy the size-keyed lenses.
+      expect(pass_plan.map((p) => p.lens)).not.toContain("pass-simplicity");
+    });
+  });
 });
 
 describe("dispatchOnce", () => {

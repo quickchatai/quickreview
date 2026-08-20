@@ -52,6 +52,10 @@ export interface ReconcileDeps {
    * route") while that route never fires. Same idiom as the sweep:
    * the daemon wires runRecheck here, never a copy. */
   onHeadPush?: (pr: number, head_sha: string) => Promise<void>;
+  /** backstop: the merged-over-block feedback signal for closes the
+   * webhook missed (GitHub never redelivers). The daemon wires the same
+   * engine sink the webhook path uses; dedupe is the store's. */
+  onMergedOverBlock?: (pr: number) => Promise<void> | void;
 }
 
 export interface ReconcileReport {
@@ -242,8 +246,20 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
       }
       if (ref.state !== "closed") continue; // listing lag — leave it alone
       correction(deps, local.number, "pr-closed", { merged: ref.merged, local: local.state }, report);
+      // same signal the webhook's closed case derives — a merge
+      // landing over a standing REQUEST_CHANGES. Read the state BEFORE
+      // applyEvent erases it; per-(pr, day) dedupe absorbs the overlap with
+      // a webhook delivery that already fired.
+      const mergedOverBlock = ref.merged && local.state === "awaiting_author";
       applyEvent(store, local.number, { type: "closed" }, { title: ref.title, head_sha: ref.head_sha, author: ref.author }, { botLogin, now });
       store.logEvent("pr_closed", local.number, { merged: ref.merged, source: "reconcile" });
+      if (mergedOverBlock && deps.onMergedOverBlock) {
+        try {
+          await deps.onMergedOverBlock(local.number);
+        } catch (err) {
+          report.errors.push(`onMergedOverBlock #${local.number}: ${String(err)}`);
+        }
+      }
       report.closed.push(local.number);
       try {
         await deps.hooks.archiveAndClose(local.number);

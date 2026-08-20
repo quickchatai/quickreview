@@ -70,9 +70,13 @@ do not re-derive them, do not report them. Look only at the lines marked
 Post the review through `scripts/post-review.sh {{n}} REQUEST_CHANGES <body-file>
 [comments-json]`, exactly as in a round: one review, anchored inline comments
 inside changed-line runs, blockers leading with the consequence in plain words,
-opening paragraph in plain language. The script enforces the posting-time
-guards and its answer is final. Never post an APPROVE from this mode; never
-touch anyone's existing review.
+opening paragraph in plain language. Blocker bodies are self-sufficient
+: the comment is what gets fixed from — by the author or by an AI
+agent working from it alone — so carry the mechanism, the concrete failing
+scenario, the evidence refs, and the invariant a fix must restore, in complete
+sentences; a single sentence is correct only when it genuinely carries all of
+that. The script enforces the posting-time guards and its answer is final.
+Never post an APPROVE from this mode; never touch anyone's existing review.
 
 ## Return — always, in both cases
 

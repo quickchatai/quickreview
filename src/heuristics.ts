@@ -119,15 +119,30 @@ export const PLACEMENT_PASS = "pass-placement";
 export const SIMPLICITY_PASS = "pass-simplicity";
 export const BACKCOMPAT_PASS = "pass-backcompat";
 
-/** Placement fires on cross-cutting diffs: at least this many prod files. */
+/** CODE files — the unit placement/simplicity judge. A new README, lockfile
+ * or asset is "prod" by the test filter but has no placement or complexity
+ * to judge: dispatching on it is the pure-spend case the intent bar above
+ * exists to avoid. */
+export const CODE_FILE_RE =
+  /\.(py|pyi|ts|tsx|js|jsx|mjs|cjs|go|rb|java|kt|kts|rs|c|cc|cpp|h|hpp|cs|php|swift|scala|ex|exs|vue|svelte)$/i;
+
+/** New-code statuses that pose the "does this live in the right place"
+ * question — a move IS the purest placement change. */
+const PLACEMENT_STATUSES = new Set(["added", "renamed", "copied"]);
+
+/** Placement also fires on cross-cutting diffs: at least this many code files. */
 export const PLACEMENT_MIN_PROD_FILES = 4;
 
-/** Simplicity fires on diffs big enough to hide complexity… */
-export const SIMPLICITY_MIN_PROD_LINES = 100;
+/** Simplicity fires on diffs big enough to hide complexity — aligned with
+ * `small_diff_lines` (150) so a "small quiet diff" round stays lean… */
+export const SIMPLICITY_MIN_PROD_LINES = 150;
 /** …or on a file gaining this many branches (`+ if/elif/else if/case`). */
 export const SIMPLICITY_MIN_ADDED_BRANCHES = 5;
-/** …or on added lines nested this deep (spaces of indent). */
-const SIMPLICITY_DEEP_INDENT_RE = /^\+ {20,}\S/m;
+/** …or on added lines nested this deep (5 levels at 4-space, or tabs). */
+const SIMPLICITY_DEEP_INDENT_RE = /^\+(?: {20,}|\t{5,})\S/m;
+/** Added-branch counter: indent must not cross lines (`\s` matches
+ * newlines), and brace languages open rungs with `} else if`. */
+const SIMPLICITY_BRANCH_RE = /^\+[ \t]*[)\]}]*[ \t]*(if|elif|else[ \t]+if|case|when)\b/gm;
 
 // Dependency-manifest / lockfile shapes — a security surface (supply chain).
 const DEPS_MANIFEST_RE =
@@ -197,34 +212,34 @@ export function selectLenses(files: PrFile[], intent?: { body?: string | null })
   )
     lenses.add("pass-delivery");
 
-  // Placement: new prod code needs a home judgment, and a
-  // cross-cutting diff is where wrong-layer changes hide. Test-only PRs and
-  // small edits-in-place skip it.
-  const prod = files.filter((f) => !isTestFile(f.filename));
-  if (prod.some((f) => f.status === "added") || prod.length >= PLACEMENT_MIN_PROD_FILES)
+  // Placement: new (or moved — the purest placement change) CODE
+  // needs a home judgment, and a cross-cutting code diff is where
+  // wrong-layer changes hide. Docs/config/asset adds, test-only PRs and
+  // small edits-in-place skip it — pure spend otherwise.
+  const code = files.filter((f) => !isTestFile(f.filename) && CODE_FILE_RE.test(f.filename));
+  if (code.some((f) => PLACEMENT_STATUSES.has(f.status ?? "")) || code.length >= PLACEMENT_MIN_PROD_FILES)
     lenses.add(PLACEMENT_PASS);
 
-  // Simplicity: complexity signals — a large prod diff, deep
+  // Simplicity: complexity signals — a large code diff, deep
   // nesting in added lines, or a file gaining a pile of branches.
-  const prodLines = prod.reduce((n, f) => n + f.additions + f.deletions, 0);
+  const codeLines = code.reduce((n, f) => n + f.additions + f.deletions, 0);
   if (
-    prodLines >= SIMPLICITY_MIN_PROD_LINES ||
-    prod.some((f) => f.patch !== undefined && SIMPLICITY_DEEP_INDENT_RE.test(f.patch)) ||
-    prod.some(
-      (f) =>
-        (f.patch?.match(/^\+\s*(if|elif|else if|case)\b/gm)?.length ?? 0) >= SIMPLICITY_MIN_ADDED_BRANCHES,
-    )
+    codeLines >= SIMPLICITY_MIN_PROD_LINES ||
+    code.some((f) => f.patch !== undefined && SIMPLICITY_DEEP_INDENT_RE.test(f.patch)) ||
+    code.some((f) => (f.patch?.match(SIMPLICITY_BRANCH_RE)?.length ?? 0) >= SIMPLICITY_MIN_ADDED_BRANCHES)
   )
     lenses.add(SIMPLICITY_PASS);
 
   // Backcompat: deploy-window skew surfaces — wire formats, API
-  // modules, queue/task payloads, migrations, settings, feature flags.
+  // modules, queue/task payloads, migrations, settings, feature flags. The
+  // dir arm requires a CODE file so a docs/api/ page never buys the lens.
+  const codeIn = (re: RegExp) => code.some((f) => re.test(f.filename));
   if (
-    any(/(^|\/)(serializers?|schemas?|api|views?|endpoints?)\//) ||
-    any(/(^|\/)(serializers?|views?|urls?|api)[^/]*\.py$/) ||
+    codeIn(/(^|\/)(serializers?|schemas?|apis?|views?|endpoints?|routes?|controllers?|handlers?)\//) ||
+    any(/(^|\/)(serializers?|views?|urls?|apis?)[^/]*\.py$/) ||
     any(/\.(proto|graphql)$/) ||
     any(/(^|\/)migrations\//) ||
-    any(/(^|\/)(tasks|jobs|workers?|consumers?|queues?)\//) ||
+    codeIn(/(^|\/)(tasks|jobs|workers?|consumers?|queues?)\//) ||
     any(/(^|\/)settings[^/]*\.py$/) ||
     added(/^\+.*(feature.?flag|waffle|launch.?darkly|unleash)/im)
   )

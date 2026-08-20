@@ -200,9 +200,11 @@ function interpretReviewComment(action: string | null, payload: any, deps: Inter
   // feedback signal (the bot never deletes its own comments — it has no
   // deletion path at all).
   if (action === "deleted") {
-    if (comment?.user?.login === deps.botLogin && payload?.sender?.login !== deps.botLogin)
+    // Only a HUMAN deleting our comment is a signal — another bot (merge
+    // queue, housekeeping app) tidying up is mechanics.
+    if (comment?.user?.login === deps.botLogin && !isBotUser(payload?.sender, deps.botLogin))
       return { kind: "bot_comment_deleted", pr, comment_id: comment.id };
-    return { kind: "ignored", reason: "non-bot comment deleted", pr };
+    return { kind: "ignored", reason: "non-signal comment deletion", pr };
   }
   if (action !== "created") return { kind: "ignored", reason: `unhandled review-comment action: ${action}` };
   if (!comment) return { kind: "ignored", reason: "review comment payload without comment" };
@@ -276,13 +278,20 @@ function interpretPush(payload: any): Interpretation {
 }
 
 function interpretIssueComment(action: string | null, payload: any, deps: InterpretDeps): Interpretation {
-  if (action !== "created") return { kind: "ignored", reason: `unhandled issue-comment action: ${action}` };
   const issue = payload?.issue;
   // The discriminator: an "issue" is a PR iff it carries `pull_request`.
   if (!issue?.pull_request) return { kind: "ignored", reason: "issue comment on a non-PR issue" };
   const comment = payload?.comment;
   const pr: number = issue.number ?? 0;
   if (!comment) return { kind: "ignored", reason: "issue comment payload without comment", pr };
+  // symmetric with the inline route — a human deleting the bot's
+  // top-level comment is the same bluntest-possible noise verdict.
+  if (action === "deleted") {
+    if (comment.user?.login === deps.botLogin && !isBotUser(payload?.sender, deps.botLogin))
+      return { kind: "bot_comment_deleted", pr, comment_id: comment.id };
+    return { kind: "ignored", reason: "non-signal comment deletion", pr };
+  }
+  if (action !== "created") return { kind: "ignored", reason: `unhandled issue-comment action: ${action}`, pr };
 
   if (comment.user?.login === deps.botLogin)
     return { kind: "bot_comment", pr, comment_id: comment.id, scope: "issue_comment" };
@@ -521,9 +530,18 @@ export async function applyInterpretation(
     case "feedback_comment":
     case "review_set_aside":
     case "bot_comment_deleted":
-    case "trigger_withdrawn":
       await deps.onFeedbackSignal?.(i);
       return;
+    case "trigger_withdrawn": {
+      // Only a withdrawal with a review actually pending is "someone took
+      // the bot off the PR" — a human tidying a stale label after the review
+      // completed (e.g. a dry-run trigger the gate never really consumed) is
+      // not a negative signal.
+      const state = store.getPr(i.pr)?.state;
+      if (state === "queued" || state === "reviewing") await deps.onFeedbackSignal?.(i);
+      else store.logEvent("trigger_withdrawn_ignored", i.pr, { state: state ?? null, by: i.by });
+      return;
+    }
     case "ci_completed":
       // Recorded, never a transition: CI is evidence for the recheck, not a
       // trigger for a round.

@@ -588,6 +588,10 @@ describe("the built pass contract (rules)", () => {
     // The downgrade word joins the CLOSED vocabulary, so the EOD critic's
     // diet stays labeled.
     expect(validator).toContain("`design-over-cap`, `inflated`");
+    // The ratified beyond-the-diff licence must survive the validator's
+    // out-of-scope kill definition.
+    expect(validator).toContain("**Beyond-the-diff simplicity findings are in scope by ratification.**");
+    expect(validator).toContain("Never kill such a candidate as `out-of-scope`");
   });
 
   // blocker-class findings mint a `detail:` paragraph at the source
@@ -602,6 +606,19 @@ describe("the built pass contract (rules)", () => {
     expect(lens).toContain("detail: <one short paragraph");
     expect(lens).toContain("the invariant a fix must restore");
     expect(lens).toContain("`P3` and `nit` candidates are exempt");
+  });
+
+  // (validator half): without this the validator re-emits survivors
+  // in the frozen standard format and silently strips detail — the field
+  // would never reach a posted comment.
+  it("tells the validator to preserve detail on survivors, in every validator variant and no lens", () => {
+    const header = "## The detail field rides through validation (sandbox rule)";
+    for (const [name, text] of bodies) {
+      expect(text.includes(header), name).toBe(name.startsWith(`${VALIDATE_PASS}--`));
+    }
+    const [, validator] = [...bodies].find(([name]) => name.startsWith(`${VALIDATE_PASS}--`))!;
+    expect(validator).toContain("**preserve it verbatim on every survivor**");
+    expect(validator).toContain("is not killable for that");
   });
 
   it("remedy size and the in-flight-PR rule reach every built pass", () => {

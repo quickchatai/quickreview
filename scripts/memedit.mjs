@@ -148,7 +148,13 @@ function withLock(fn) {
           continue;
         }
       } catch {
-        continue; // it vanished — retry the mkdir at once
+        // The lock vanished — or was never creatable (memory dir missing,
+        // EACCES). Without a deadline check + sleep here this branch was a
+        // hot 100%-CPU spin whenever the PARENT dir was absent, which the
+        // daemon's note op can now hit at webhook cadence (review).
+        if (Date.now() > deadline) die(`lock timeout — cannot take ${lockDir} (memory dir missing or unwritable?)`);
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+        continue;
       }
       if (Date.now() > deadline) die("lock timeout — another memedit holds .memedit.lock");
       // Sleep 100ms synchronously (no spin): Atomics.wait on a throwaway buffer.
@@ -254,7 +260,11 @@ try {
         if (!/^#[a-z]/i.test(payload)) die("note: text must open with a #tag (e.g. #feedback …)");
         while (lines.length > 0 && blank(lines[lines.length - 1])) lines.pop();
         if (lines.length > 0) lines.push("");
-        lines.push(`<!-- ${localStamp()} [qcrd-${Date.now().toString(36)}] -->`, ...payload.replace(/\n{2,}/g, "\n").split("\n"));
+        // Random suffix: the daemon can append two notes inside one second,
+        // and a duplicated (ts, id) pair would make later TUI addressing of
+        // either batch ambiguous.
+        const noteId = `qcrd-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+        lines.push(`<!-- ${localStamp()} [${noteId}] -->`, ...payload.replace(/\n{2,}/g, "\n").split("\n"));
         break;
       }
       default:
@@ -278,7 +288,8 @@ try {
       try {
         md = readFileSync(MEMORY_PATH, "utf8");
       } catch {
-        if (op !== "add") die(`cannot read ${MEMORY_PATH}`);
+        // Appending ops create the file; addressed ops need it to exist.
+        if (op !== "add" && op !== "note") die(`cannot read ${MEMORY_PATH}`);
       }
       const hadFinalNewline = md.endsWith("\n") || md === "";
       const lines = md.split("\n");

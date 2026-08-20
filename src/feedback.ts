@@ -128,14 +128,25 @@ export function interpretReviewEvent(
 // ---- text hygiene ----------------------------------------------------------
 
 /** Feedback text is untrusted human input headed for prompts and memory:
- * strip the tag, flatten whitespace, drop backticks (fence-safety), cap. */
+ * strip the tag, flatten whitespace, drop backticks (fence-safety) and
+ * double quotes (the delimiter the addendum and memory lines quote with —
+ * a body must not be able to close its own quote and continue as prose),
+ * cap. */
 export function sanitizeFeedbackText(body: string, max = 280): string {
   const flat = body
     .replace(FEEDBACK_PREFIX_RE, "")
-    .replace(/`+/g, "'")
+    .replace(/[`"]+/g, "'")
     .replace(/\s+/g, " ")
     .trim();
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+}
+
+/** One phrasing for "where the feedback sat", shared by the memory entry and
+ * the day addendum. */
+function whereLabel(scope: string | null, inReplyTo: number | null): string {
+  if (scope === "issue_comment") return "top-level";
+  if (scope === "review") return "review body";
+  return inReplyTo !== null ? `reply to bot comment ${inReplyTo}` : "inline thread";
 }
 
 // ---- the memory entry -------------------------------------------------------
@@ -143,19 +154,13 @@ export function sanitizeFeedbackText(body: string, max = 280): string {
 /** One `#feedback` line per signal — the shape the EOD sweep consolidates. */
 export function memoryEntryFor(e: FeedbackEvent, day: string): string {
   switch (e.kind) {
-    case "feedback_comment": {
-      const where =
-        e.scope === "issue_comment"
-          ? "top-level"
-          : e.scope === "review"
-            ? "review body"
-            : e.in_reply_to_id !== null
-              ? `reply to bot comment ${e.in_reply_to_id}`
-              : "inline thread";
-      return `#feedback human [feedback] by ${e.author} on PR #${e.pr} (${where}, comment ${e.comment_id}): "${sanitizeFeedbackText(e.body)}" — a review comment judged wrong or over-specific; evidence: PR #${e.pr} — ${day}`;
-    }
+    case "feedback_comment":
+      return `#feedback human [feedback] by ${e.author} on PR #${e.pr} (${whereLabel(e.scope, e.in_reply_to_id)}, comment ${e.comment_id}): "${sanitizeFeedbackText(e.body)}" — a review comment judged wrong or over-specific; evidence: PR #${e.pr} — ${day}`;
     case "review_set_aside":
-      return `#feedback #operations bot review ${e.review_id} on PR #${e.pr} was dismissed by ${e.by} — the posted review blocked a human enough to remove; look at what made it disposable; evidence: PR #${e.pr} — ${day}`;
+      // Honest wording: the stale-on-push filter is a heuristic on the event
+      // clock, so a mechanical removal can still slip through when delivery
+      // order raced — never assert human intent as fact.
+      return `#feedback #operations bot review ${e.review_id} on PR #${e.pr} was dismissed by ${e.by} — if a human did this (GitHub auto-dismisses stale reviews on push, which the daemon filters only heuristically), the posted review blocked them enough to remove; look at what made it disposable; evidence: PR #${e.pr} — ${day}`;
     case "merged_over_block":
       return `#feedback #operations PR #${e.pr} merged while the bot's REQUEST_CHANGES stood — an advisory-review override (branch-protection state unknown to the app), low-weight signal; evidence: PR #${e.pr} — ${day}`;
     case "bot_comment_deleted":
@@ -174,16 +179,20 @@ export function memoryEntryFor(e: FeedbackEvent, day: string): string {
  * kills on feedback alone — the closed kill vocabulary is amended for the
  * day in its own words, so the EOD critic's diet stays labeled.
  */
+export const FEEDBACK_ADDENDUM_MAX_ITEMS = 12;
+
 export function feedbackDayAddendum(items: FeedbackSignalRow[], day: string): PassAddendum | null {
   const comments = items.filter((i) => i.kind === "feedback_comment");
   if (comments.length === 0) return null;
-  const lines = comments
-    .map((i) => {
-      const where =
-        i.scope === "issue_comment" ? "top-level" : i.in_reply_to_id !== null ? `reply to bot comment ${i.in_reply_to_id}` : i.scope === "review" ? "review body" : "inline thread";
-      return `- PR #${i.pr} (${where}): "${sanitizeFeedbackText(i.body ?? "")}"`;
-    })
-    .join("\n");
+  // Bounded: a comment storm must never balloon every validator build (each
+  // item is already capped at 280 chars by sanitizeFeedbackText). Newest win;
+  // the omission is stated, never silent.
+  const kept = comments.slice(-FEEDBACK_ADDENDUM_MAX_ITEMS);
+  const omitted = comments.length - kept.length;
+  const lines =
+    kept
+      .map((i) => `- PR #${i.pr} (${whereLabel(i.scope, i.in_reply_to_id)}): "${sanitizeFeedbackText(i.body ?? "")}"`)
+      .join("\n") + (omitted > 0 ? `\n- (${omitted} earlier item${omitted === 1 ? "" : "s"} today omitted for size)` : "");
   return {
     id: "feedback-day-validate",
     scope: [VALIDATE_PASS],
@@ -240,9 +249,11 @@ export function writeMemoryViaMemedit(
 
 export interface FeedbackEngineDeps {
   store: StateStore;
-  /** Rebuild state/agents with the current day's feedback addendum composed
-   * in (wire.ts owns the closure — it knows the build inputs). */
-  rebuildAgents: () => void;
+  /** Rebuild state/agents with the day's feedback addendum composed in
+   * (wire.ts owns the closure — it knows the build inputs). The engine
+   * passes the day it just stamped, so a rebuild triggered at 23:59:59
+   * cannot recompute a newer day and drop the very comment that caused it. */
+  rebuildAgents: (day?: string) => void;
   /** Test seam; defaults to memedit `note`. */
   writeMemory?: (entry: string) => Promise<unknown>;
   /** Sandbox root, for the memedit script path. */
@@ -307,7 +318,7 @@ export class FeedbackEngine {
 
     if (e.kind === "feedback_comment") {
       try {
-        this.deps.rebuildAgents();
+        this.deps.rebuildAgents(day);
       } catch (err) {
         this.log("feedback: agents rebuild failed", err);
         this.deps.store.logEvent("feedback_rebuild_failed", e.pr, { error: String(err) });

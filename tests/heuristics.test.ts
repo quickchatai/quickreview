@@ -181,8 +181,18 @@ describe("selectLenses", () => {
 // ---- placement / simplicity / backcompat ---------------
 
 describe("selectLenses: pass-placement", () => {
-  it("fires on a new prod file", () => {
+  it("fires on a new code file", () => {
     expect(selectLenses([{ ...f("src/service/limiter.py"), status: "added" }])).toContain("pass-placement");
+  });
+
+  it("fires on a moved code file — a move is the purest placement change", () => {
+    expect(selectLenses([{ ...f("src/service/limiter.py"), status: "renamed" }])).toContain("pass-placement");
+  });
+
+  it("never fires on added docs, config, or assets — nothing to place", () => {
+    for (const name of ["README.md", "docs/guide.md", ".pi/settings.json", "assets/logo.png", "package-lock.json"]) {
+      expect(selectLenses([{ ...f(name), status: "added" }]), name).not.toContain("pass-placement");
+    }
   });
 
   it("fires on a cross-cutting diff (>= 4 prod files), modified-only", () => {
@@ -205,12 +215,30 @@ describe("selectLenses: pass-placement", () => {
 });
 
 describe("selectLenses: pass-simplicity", () => {
-  it("fires on a large prod diff", () => {
-    expect(selectLenses([{ ...f("src/big.py"), additions: 90, deletions: 15 }])).toContain("pass-simplicity");
+  it("fires on a large code diff", () => {
+    expect(selectLenses([{ ...f("src/big.py"), additions: 140, deletions: 15 }])).toContain("pass-simplicity");
   });
 
-  it("does not count test lines toward the size trigger", () => {
+  it("counts neither test lines nor docs lines toward the size trigger", () => {
     expect(selectLenses([{ ...f("tests/test_big.py"), additions: 300, deletions: 0 }])).not.toContain(
+      "pass-simplicity",
+    );
+    expect(selectLenses([{ ...f("docs/spec.md"), additions: 300, deletions: 0 }])).not.toContain("pass-simplicity");
+  });
+
+  it("stays lean under the small-diff line (aligned with small_diff_lines)", () => {
+    expect(selectLenses([{ ...f("src/mid.py"), additions: 120, deletions: 0 }])).not.toContain("pass-simplicity");
+  });
+
+  it("counts `} else if` rungs and is not fooled by added blank lines before context branches", () => {
+    const rungs = Array.from({ length: 5 }, () => "+  } else if (x) {").join("\n");
+    expect(selectLenses([{ ...f("src/branchy.ts"), patch: `@@ -1 +1,10 @@\n${rungs}` }])).toContain(
+      "pass-simplicity",
+    );
+    // Added blank lines followed by UNCHANGED context `if` lines: `\s` must
+    // not swallow the newline and count context as added branches.
+    const blanks = Array.from({ length: 6 }, () => "+\n if a:").join("\n");
+    expect(selectLenses([{ ...f("src/quiet.py"), patch: `@@ -1 +1,12 @@\n${blanks}` }])).not.toContain(
       "pass-simplicity",
     );
   });
@@ -250,8 +278,17 @@ describe("selectLenses: pass-backcompat", () => {
     expect(selectLenses([flag])).toContain("pass-backcompat");
   });
 
-  it("stays quiet on internal-only code", () => {
+  it("stays quiet on internal-only code and on docs under api-shaped dirs", () => {
     expect(selectLenses([f("src/utils/text.py"), f("docs/notes.md")])).not.toContain("pass-backcompat");
+    // The dir arm requires a CODE file — a docs page under api/ is not a
+    // wire surface.
+    expect(selectLenses([f("docs/api/readme.md")])).not.toContain("pass-backcompat");
+  });
+
+  it("covers plural and non-Django route shapes", () => {
+    expect(selectLenses([f("src/apis/v1/x.py")])).toContain("pass-backcompat");
+    expect(selectLenses([f("src/routes/user.ts")])).toContain("pass-backcompat");
+    expect(selectLenses([f("src/controllers/billing.ts")])).toContain("pass-backcompat");
   });
 });
 

@@ -239,7 +239,10 @@ CREATE TABLE IF NOT EXISTS feedback_signals (
   comment_id INTEGER,
   review_id INTEGER,
   in_reply_to_id INTEGER,
-  scope TEXT,
+  -- NOT NULL with an empty-string sentinel: SQL UNIQUE treats NULLs as
+  -- distinct, which would void the comment-key dedupe for kinds without a
+  -- scope (a re-delivered deleted-comment event would triple-write memory).
+  scope TEXT NOT NULL DEFAULT '',
   author TEXT,
   body TEXT,
   day TEXT NOT NULL,
@@ -249,8 +252,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS feedback_by_comment
   ON feedback_signals (kind, scope, comment_id) WHERE comment_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS feedback_by_review
   ON feedback_signals (kind, review_id) WHERE review_id IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS feedback_by_pr
-  ON feedback_signals (kind, pr) WHERE comment_id IS NULL AND review_id IS NULL;
+-- Keyless kinds (merged_over_block, trigger_withdrawn) dedupe per PR per
+-- Warsaw day — a re-blocked, re-merged PR months later is a fresh signal.
+CREATE UNIQUE INDEX IF NOT EXISTS feedback_by_pr_day
+  ON feedback_signals (kind, pr, day) WHERE comment_id IS NULL AND review_id IS NULL;
+CREATE INDEX IF NOT EXISTS events_kind_pr ON events(kind, pr, id);
 -- Wakes held while their PR's round was in flight (single-shepherd invariant
 -- S4: the PR's ONE main pi is never given two instructions at once). Flushed
 -- in insertion order once the round ends.
@@ -366,7 +372,8 @@ export interface FeedbackSignalRow {
   comment_id: number | null;
   review_id: number | null;
   in_reply_to_id: number | null;
-  scope: string | null;
+  /** '' for kinds without a comment surface (NOT NULL sentinel — see DDL). */
+  scope: string;
   author: string | null;
   body: string | null;
   /** Warsaw day token (YYYY-MM-DD) — the same-day addendum's key. */
@@ -1076,7 +1083,7 @@ export class StateStore {
         sig.comment_id ?? null,
         sig.review_id ?? null,
         sig.in_reply_to_id ?? null,
-        sig.scope ?? null,
+        sig.scope ?? "",
         sig.author ?? null,
         sig.body ?? null,
         sig.day,

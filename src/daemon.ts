@@ -338,6 +338,10 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         onHeadPush: async (pr, head_sha) => {
           await guard(`recheck #${pr}`, () => runRecheck(recheckDeps, { pr, trigger: "push", head_sha }));
         },
+        // backstop: merged-over-block for closes the webhook missed.
+        onMergedOverBlock: async (pr) => {
+          await guard(`feedback #${pr}`, async () => deps.onFeedback?.({ kind: "merged_over_block", pr }));
+        },
       });
       log(
         `reconcile: open=${report.open_prs} triggered=${report.triggered.length} ` +

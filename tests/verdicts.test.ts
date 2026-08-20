@@ -543,6 +543,18 @@ describe("structural invariant: no review-retraction path", () => {
       expect(forbidden.test(readFileSync(resolve(process.cwd(), "src", f), "utf8"))).toBe(false);
     }
   });
+
+  // carved one deliberate hole: feedback.ts names GitHub's own
+  // review-removal action (it interprets the event as a tuning signal). The
+  // hole stays safe only while that module can not reach GitHub at all —
+  // pin that structurally, so the vocabulary never rides back into a module
+  // with a client or the gate in hand.
+  it("feedback.ts (which may name the event) can never touch GitHub", () => {
+    const src = readFileSync(resolve(process.cwd(), "src", "feedback.ts"), "utf8");
+    expect(src).not.toMatch(/from "\.\/github\.js"/);
+    expect(src).not.toMatch(/from "\.\/gate\.js"/);
+    expect(src).not.toMatch(/executeMutation|MutationGate|GitHubAdapter/);
+  });
 });
 
 describe("digit-string coercion (live-round regression)", () => {

@@ -447,8 +447,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       // hourly tick below), so a mid-day restart picks today's feedback up
       // and yesterday's never leaks into a new day.
       let builtDay = warsawDay();
-      const rebuildAgents = (): void => {
-        builtDay = warsawDay();
+      const rebuildAgents = (day?: string): void => {
+        builtDay = day ?? warsawDay();
         const fb = feedbackDayAddendum(d.store.feedbackCommentsForDay(builtDay), builtDay);
         const built = buildAgents(join(root, "agents"), join(root, "state", "agents"), {
           root,
@@ -587,19 +587,25 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       });
       log(`heartbeat armed for ${heartbeat.nextFire().toISOString()}`);
 
-      // Weekly overseer rotation, checked hourly — the same tick expires a
-      // stale same-day feedback addendum on Warsaw-day change.
+      // Weekly overseer rotation, checked hourly.
       const rotation = setInterval(() => {
         void sessions.rotateOverseerIfDue().then((rotated) => {
           if (rotated) log("overseer rotated (weekly)");
         }).catch((err) => log("overseer rotation failed", err));
+      }, 3600_000);
+      rotation.unref?.();
+
+      // expire a stale same-day feedback addendum promptly on the
+      // Warsaw-day change — a 5-minute string compare, so yesterday's items
+      // bite at most minutes into a new day, not an hour.
+      const dayCheck = setInterval(() => {
         try {
           if (warsawDay() !== builtDay) rebuildAgents();
         } catch (err) {
           log("feedback: day-change agents rebuild failed", err);
         }
-      }, 3600_000);
-      rotation.unref?.();
+      }, 300_000);
+      dayCheck.unref?.();
     },
 
     async onStop(reason = "shutdown") {

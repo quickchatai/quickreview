@@ -22,7 +22,7 @@
 // pi-subagents `model` and `thinking` frontmatter fields. The addendum
 // registry (`PASS_ADDENDA`, lens-keyed) is composed onto every BUILT body in
 // registry order — seeds untouched.
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, resolve, join } from "node:path";
 import { MODELS_TIER_DEFAULTS } from "./config.js";
 import { PASS_TIER_ORDER, tiersAtOrAbove } from "./types.js";
@@ -297,7 +297,15 @@ const INTENT_CAP_VALIDATE_ADDENDUM =
 // egregious case can still block under the ordinary P2 rule (confidence
 // ≥ 0.8) but the classes can never claim P0/P1.
 const DESIGN_CAP_VALIDATE_ADDENDUM =
-  "\n## Placement and simplicity findings are capped at P2 (sandbox rule)\nA candidate from the `pass-placement` or `pass-simplicity` lens is a judgment about structure — where the code lives, or whether it is more complex than its job requires. Such a candidate is capped at `P2`: cap anything arriving as `P0` or `P1` down to `P2` with the one-word reason `design-over-cap`. A capped candidate then follows the ordinary posting map unchanged (a `P2` posts as a blocker only at confidence ≥ 0.8, and reachability still applies). A genuine correctness, security, or data defect surfaced by either lens belongs to whichever lens owns it — judge it at that lens's severity only when another pass also raised it; from placement or simplicity alone it stays capped.\n";
+  "\n## Placement and simplicity findings are capped at P2 (sandbox rule)\nA candidate from the `pass-placement` or `pass-simplicity` lens is a judgment about structure — where the code lives, or whether it is more complex than its job requires. Such a candidate is capped at `P2`: cap anything arriving as `P0` or `P1` down to `P2` with the one-word reason `design-over-cap`. A capped candidate then follows the ordinary posting map unchanged (a `P2` posts as a blocker only at confidence ≥ 0.8, and reachability still applies). A genuine correctness, security, or data defect surfaced by either lens belongs to whichever lens owns it — judge it at that lens's severity only when another pass also raised it; from placement or simplicity alone it stays capped.\n\n**Beyond-the-diff simplicity findings are in scope by ratification.** `pass-simplicity` is explicitly licensed (the owner 2026-08-20) to point past the diff at the surrounding structure when the diff's complexity signals a wrong abstraction — the structure the changed code sits in IS this PR's blast radius for that judgment. Never kill such a candidate as `out-of-scope` merely for naming code outside the changed lines; audit its evidence like any other candidate, and your other kill rules apply unchanged.\n";
+
+// (validator half): the lenses mint a `detail:` paragraph on
+// blocker-class candidates; without this entry the validator would re-emit
+// survivors in the frozen standard format and silently strip the field —
+// the same lens-field-needs-a-validator-counterpart lesson reachability
+// already taught (REACHABILITY_VALIDATE_ADDENDUM).
+const FINDING_SELF_SUFFICIENCY_VALIDATE_ADDENDUM =
+  "\n## The detail field rides through validation (sandbox rule)\nCandidates at `P0`–`P2` arrive with a `detail:` paragraph beside `claim` (the mechanism, the concrete failing scenario, and the invariant a fix must restore — the posted comment is fixed from directly, so the finding must be actionable without opening anything else). The field is part of the finding, not schema noise: **preserve it verbatim on every survivor**, and audit it like you audit severity — a `detail` asserting something the code contradicts is corrected or the finding killed under your ordinary rules. A blocker-class survivor that arrived WITHOUT `detail` is not killable for that; note the gap beside your verdict so the session writes the missing material itself.\n";
 
 // first-night audit finding F6. The validator's kill reasons feed
 // the EOD critic, and with the vocabulary undefined it stretched words: a
@@ -360,6 +368,7 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
   { id: "validate-kill-vocabulary", scope: [VALIDATE_PASS], text: VALIDATE_KILL_VOCABULARY_ADDENDUM },
   { id: "merge-dispositions-validate", scope: [VALIDATE_PASS], text: MERGE_DISPOSITIONS_VALIDATE_ADDENDUM },
   { id: "finding-self-sufficiency", scope: "lenses", text: FINDING_SELF_SUFFICIENCY_ADDENDUM },
+  { id: "finding-self-sufficiency-validate", scope: [VALIDATE_PASS], text: FINDING_SELF_SUFFICIENCY_VALIDATE_ADDENDUM },
 ];
 
 /** The addenda binding `pass`, in composition order. */
@@ -451,16 +460,22 @@ export function buildAgents(srcDir: string, outDir: string, opts: BuildAgentsOpt
       frontmatter = applyModelOverride(frontmatter, model);
       if (thinking !== null) frontmatter = applyThinkingOverride(frontmatter, thinking);
       const out = join(outDir, `${name}.md`);
-      writeFileSync(out, joinFrontmatter({ ...doc, frontmatter, body }));
+      // Atomic per-file: rebuilds now happen at webhook time while
+      // sessions may be registering agents — a truncate-then-write window
+      // would let register-lens-agents cache a half-written pass for a whole
+      // round. tmp+rename in the same dir is atomic on POSIX.
+      const tmp = `${out}.tmp`;
+      writeFileSync(tmp, joinFrontmatter({ ...doc, frontmatter, body }));
+      renameSync(tmp, out);
       built.push({ name, pass, tier, source: src, output: out, model, thinking });
     }
   }
   // Sweep stale definitions (e.g. the pre-tier un-suffixed builds): anything
   // pi-subagents could list that this build did not produce would bypass the
-  // tier scheme entirely.
+  // tier scheme entirely. `.md.tmp` leftovers from a crashed rebuild go too.
   const produced = new Set(built.map((b) => `${b.name}.md`));
   for (const f of readdirSync(outDir)) {
-    if (f.endsWith(".md") && !produced.has(f)) rmSync(join(outDir, f));
+    if ((f.endsWith(".md") && !produced.has(f)) || f.endsWith(".md.tmp")) rmSync(join(outDir, f), { force: true });
   }
   return built;
 }
