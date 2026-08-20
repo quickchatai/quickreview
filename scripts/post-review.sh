@@ -82,6 +82,7 @@ REPO="$(cfg github repo)"
 
 guard_require_open                                        # guard 3
 HEAD_SHA="$GUARD_HEAD_SHA"
+guard_require_expected_head "$HEAD_SHA"                   # guard 5
 guard_require_new_evidence "$HEAD_SHA"                    # guard 2
 
 DOWNGRADE_NOTE=""

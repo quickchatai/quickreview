@@ -14,6 +14,15 @@
 //      nothing. The same mark is what the post-approval delta recheck reads.
 //   3. Re-check merged/closed state immediately before posting. Four sampled
 //      reviews landed at or after the merge — one approved 13 seconds after it.
+//   5. The live head must be the head the round actually reviewed
+//     . #5270 round 7 validated one head, the PR advanced
+//      immediately before posting, and the shell route re-read the CURRENT
+//      head and posted the stale review against it (recurred on #4844). On
+//      the gate route the intent's commit_id IS the reviewed head, so a
+//      mismatch with the guard-3 live read refuses; on the shell route the
+//      session exports QCR_EXPECTED_HEAD (cited by its round prompt) and
+//      guards.sh refuses the same way — a missing expectation only warns,
+//      so sessions on older prompts are never wedged.
 //   4. No green CI at this head ⇒ APPROVE is unavailable. The old
 //      bot improvised this rule eleven times, each approval arguing in prose
 //      that the red run did not count. The review still posts — as a COMMENT
@@ -165,7 +174,7 @@ export function hasNewEvidence(mark: ReviewedHeadRow | undefined, headSha: strin
 
 /** Why a posting mutation was refused. Short tags — they land in the event log
  * and in `GateResult.blocked`. */
-export type BlockReason = "pr-merged" | "pr-closed" | "pr-unreadable" | "no-new-evidence";
+export type BlockReason = "pr-merged" | "pr-closed" | "pr-unreadable" | "no-new-evidence" | "head-drift";
 
 /**
  * Read the checks at a head for guard 4. Null means "cannot see CI" — no
@@ -225,6 +234,24 @@ export function makePostingGuard(deps: GuardDeps): MutationGuard {
       // The head the review is ABOUT: the payload's commit_id when it has one,
       // otherwise whatever the PR points at now.
       const head = body.commit_id || ref?.head_sha || "";
+
+      // --- guard 5: the head the review is about must still BE the head ---
+      // (#5270 round 7, recurred on #4844): a push landing
+      // between a round's validation and its posting step otherwise lands the
+      // stale review against the new head. Fires only where the data exists —
+      // an intent without a commit_id carries no expectation, and without the
+      // guard-3 read there is no live head to compare against. Shas compare
+      // case-insensitively, matching the shell twin (guards.sh uses
+      // `${live,,}`/`${expected,,}`): git shas are hex, and an LLM-written
+      // commit_id with drifted case must never fake a "moved" head.
+      if (
+        deps.guards.refuse_on_head_drift &&
+        body.commit_id &&
+        ref &&
+        ref.head_sha.toLowerCase() !== body.commit_id.toLowerCase()
+      ) {
+        return refuse(intent, pr, "head-drift", { expected_head: body.commit_id, live_head: ref.head_sha });
+      }
 
       // --- guard 2: has anything happened since the last review? ---
       if (deps.guards.skip_unchanged_head && !hasNewEvidence(deps.store.reviewedHead(pr), head)) {

@@ -456,6 +456,42 @@ export class PiSessionManager implements SessionHooks {
     return newest?.path;
   }
 
+  /** SessionHooks: newest session-JSONL mtime for the PR's sticky session —
+   * the lost-prompt net's activity signal. Null when no JSONL exists
+   * (a session that never wrote anything has no activity to date).
+   * VERIFY-ON-PIN: the net's entire evidence base is that pi APPENDS to the
+   * session JSONL promptly (bumping mtime) whenever a prompt is ACCEPTED into
+   * the session — a stale mtime after a consumed inject must mean the prompt
+   * never became a turn, not merely lazy/buffered writes. Confirm on the live
+   * 0.84.1 container (smoke:session): send a prompt, watch the JSONL mtime
+   * move within seconds. */
+  async sessionActivityAt(pr: number): Promise<number | null> {
+    const file = this.newestSessionFile(prSessionName(pr));
+    if (!file) return null;
+    try {
+      return statSync(file).mtimeMs;
+    } catch {
+      return null;
+    }
+  }
+
+  /** SessionHooks: unconsumed wake files in the PR session's inject dir —
+   * still pending means the inject-bridge is retrying, not that it lost
+   * anything.
+   * VERIFY-ON-PIN: the complementary assumption — a wake CONSUMED
+   * (moved to .done/) with no JSONL activity implies a mid-turn drop, i.e.
+   * pi writes NOTHING to the session JSONL for a sendUserMessage() dropped
+   * mid-turn on 0.84.1. If a dropped prompt does leave a JSONL record, the
+   * lost-prompt net can never fire and needs a different silence signal. */
+  async injectPending(pr: number): Promise<boolean> {
+    const dir = this.injectDir(prSessionName(pr));
+    try {
+      return readdirSync(dir).some((f) => f.endsWith(".md"));
+    } catch {
+      return false;
+    }
+  }
+
   /** Copy JSONL + ledger (+ verdicts) into an archive dir. Returns what landed. */
   archiveSession(session: string, dest: string): string[] {
     mkdirSync(dest, { recursive: true });

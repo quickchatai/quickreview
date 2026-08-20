@@ -228,8 +228,9 @@ describe("guard 2 — the same head is never reviewed twice", () => {
   });
 
   it("lets the review through on a new head", async () => {
-    const { gate } = harness();
+    const { gate, adapter } = harness();
     await gate.execute(reviewIntent("REQUEST_CHANGES"));
+    adapter.pr = { ...adapter.pr, head_sha: "cafebabe" }; // the PR really moved
     expect((await gate.execute(reviewIntent("REQUEST_CHANGES", "cafebabe"))).executed).toBe(true);
   });
 
@@ -337,6 +338,7 @@ describe("guard 3 — merged or closed state is re-checked immediately before po
   it("re-reads the PR for every posting mutation (no cached liveness)", async () => {
     const { gate, adapter } = harness();
     await gate.execute(reviewIntent("REQUEST_CHANGES", HEAD));
+    adapter.pr = { ...adapter.pr, head_sha: "cafebabe" };
     await gate.execute(reviewIntent("REQUEST_CHANGES", "cafebabe"));
     expect(adapter.getPrCalls).toBe(2);
   });
@@ -458,5 +460,58 @@ describe("dispatch — a tick with no new evidence starts no round", () => {
     const h = hooks();
 
     expect(await dispatchOnce({ cfg, store, adapter: new DispatchFake(), hooks: h.hooks })).toHaveLength(1);
+  });
+});
+
+// ---- guard 5: head drift ---------------------------------
+
+describe("guard 5 — the head the review is about must still be the live head", () => {
+  it("refuses a review whose commit_id is no longer the PR's head", async () => {
+    const { gate, adapter, executor } = harness();
+    adapter.pr = { ...adapter.pr, head_sha: "cafebabe" }; // pushed after validation
+
+    const result = await gate.execute(reviewIntent("REQUEST_CHANGES", HEAD));
+
+    expect(result.executed).toBe(false);
+    expect(result.blocked).toBe("head-drift");
+    expect(executor).not.toHaveBeenCalled();
+    // Nothing was posted, so nothing was stamped as reviewed.
+    expect(store.reviewedHead(5180)).toBeUndefined();
+  });
+
+  it("logs the refusal with both shas", async () => {
+    const { gate, adapter } = harness();
+    adapter.pr = { ...adapter.pr, head_sha: "cafebabe" };
+    await gate.execute(reviewIntent("APPROVE", HEAD));
+    const rows = store.db
+      .prepare("SELECT payload FROM events WHERE kind = 'posting_guard_blocked'")
+      .all() as Array<{ payload: string }>;
+    expect(rows).toHaveLength(1);
+    expect(JSON.parse(rows[0]!.payload)).toMatchObject({ reason: "head-drift", expected_head: HEAD, live_head: "cafebabe" });
+  });
+
+  it("posts when the heads match", async () => {
+    const { gate } = harness();
+    expect((await gate.execute(reviewIntent("REQUEST_CHANGES", HEAD))).executed).toBe(true);
+  });
+
+  it("compares shas case-insensitively — matching the guards.sh twin's ${live,,} convention", async () => {
+    const { gate, adapter } = harness();
+    adapter.pr = { ...adapter.pr, head_sha: HEAD.toUpperCase() }; // same sha, drifted case
+    expect((await gate.execute(reviewIntent("REQUEST_CHANGES", HEAD))).executed).toBe(true);
+  });
+
+  it("does not fire when the intent carries no commit_id — no expectation, no refusal", async () => {
+    const { gate, adapter } = harness();
+    adapter.pr = { ...adapter.pr, head_sha: "cafebabe" };
+    const intent = reviewIntent("COMMENT");
+    (intent.body as { commit_id?: string }).commit_id = undefined;
+    expect((await gate.execute(intent)).executed).toBe(true);
+  });
+
+  it("is off when [guards] refuse_on_head_drift = false", async () => {
+    const { gate, adapter } = harness({ refuse_on_head_drift: false });
+    adapter.pr = { ...adapter.pr, head_sha: "cafebabe" };
+    expect((await gate.execute(reviewIntent("REQUEST_CHANGES", HEAD))).executed).toBe(true);
   });
 });

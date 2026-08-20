@@ -4,7 +4,7 @@
 // terminalizes through the existing overdue-anomaly park. Failed/self-requeued
 // rounds never age the PR (verdicted-only priorRoundCount discipline), and the
 // restart orphan-requeue path and this one can never double-dispatch a round.
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { readFileSync } from "node:fs";
@@ -119,6 +119,10 @@ function events(kind: string): Array<{ pr: number | null; payload: any }> {
 
 function roundStatus(id: number): string {
   return (store.db.prepare("SELECT status FROM rounds WHERE id = ?").get(id) as { status: string }).status;
+}
+
+function silentSince(id: number): string | null {
+  return (store.db.prepare("SELECT silent_since FROM rounds WHERE id = ?").get(id) as { silent_since: string | null }).silent_since;
 }
 
 describe("stuck-round detection + self-requeue", () => {
@@ -501,5 +505,277 @@ describe("NEEDS_HUMAN requires a finished review", () => {
     await w.sweep();
     expect(store.getPr(322)!.state).toBe("tracked");
     expect(events("self_requeue_cap_exhausted")).toHaveLength(1);
+  });
+});
+
+// ----: the lost-prompt net (pre-deadline) ----------------------------
+
+describe("lost-prompt net — consumed prompt, silent session", () => {
+  const GRACE_MIN = baseCfg.daemon.round_stall_grace_min ?? 10;
+
+  /** hooksWith + the two observation hooks. */
+  function netHooks(opts: { pending: boolean; activity: number | null }): ReturnType<typeof hooksWith> {
+    const h = hooksWith(true);
+    h.hooks.injectPending = async () => opts.pending;
+    h.hooks.sessionActivityAt = async () => opts.activity;
+    return h;
+  }
+
+  function pastGrace(): void {
+    clock = new Date(clock.getTime() + (GRACE_MIN + 5) * 60_000); // grace blown, deadline not
+  }
+
+  it("requeues a round whose prompt was consumed but never became a turn — on the SECOND consecutive silent sweep", async () => {
+    const startedMs = clock.getTime();
+    const roundId = reviewingRound(310);
+    pastGrace();
+    const { hooks, overseer } = netHooks({ pending: false, activity: startedMs - 60_000 });
+    const w = watcher(hooks);
+
+    // Sweep 1: silence observed — the mark is stamped, nothing fires yet.
+    expect(await w.checkDeadlines()).toEqual([]); // no anomaly
+    expect(roundStatus(roundId)).toBe("running");
+    expect(silentSince(roundId)).not.toBeNull();
+    expect(events("round_self_requeued")).toHaveLength(0);
+
+    // Sweep 2: still silent — now it fires.
+    clock = new Date(clock.getTime() + 60_000);
+    expect(await w.checkDeadlines()).toEqual([]);
+    expect(roundStatus(roundId)).toBe("cancelled");
+    expect(store.getPr(310)!.state).toBe("queued");
+    expect(events("round_prompt_lost")).toHaveLength(1);
+    const requeued = events("round_self_requeued");
+    expect(requeued).toHaveLength(1);
+    expect(requeued[0]!.payload).toMatchObject({ mode: "lost_prompt" });
+    expect(String(requeued[0]!.payload.reason)).toContain("prompt was consumed");
+    expect(overseer.some((m) => m.startsWith("SELF-REQUEUE (recovery) — PR #310"))).toBe(true);
+  });
+
+  it("never fires when the session is dead — the deadline path owns dead sessions", async () => {
+    const startedMs = clock.getTime();
+    const roundId = reviewingRound(318);
+    pastGrace();
+    const h = netHooks({ pending: false, activity: startedMs - 60_000 });
+    h.hooks.sessionAlive = async () => false;
+    const w = watcher(h.hooks);
+
+    await w.checkDeadlines();
+    clock = new Date(clock.getTime() + 60_000);
+    await w.checkDeadlines();
+    expect(roundStatus(roundId)).toBe("running");
+    expect(silentSince(roundId)).toBeNull();
+    expect(events("round_self_requeued")).toHaveLength(0);
+  });
+
+  it("never fires when sessionAlive is absent (stub hooks) even with both net signals present", async () => {
+    const startedMs = clock.getTime();
+    const roundId = reviewingRound(319);
+    pastGrace();
+    const h = hooksWith(undefined); // no sessionAlive at all
+    h.hooks.injectPending = async () => false;
+    h.hooks.sessionActivityAt = async () => startedMs - 60_000;
+    const w = watcher(h.hooks);
+
+    await w.checkDeadlines();
+    clock = new Date(clock.getTime() + 60_000);
+    await w.checkDeadlines();
+    expect(roundStatus(roundId)).toBe("running");
+    expect(events("round_self_requeued")).toHaveLength(0);
+  });
+
+  it("a sign of life between two silent sweeps clears the mark — silence must be consecutive", async () => {
+    const startedMs = clock.getTime();
+    const roundId = reviewingRound(323);
+    pastGrace();
+    let activity = startedMs - 60_000;
+    const h = hooksWith(true);
+    h.hooks.injectPending = async () => false;
+    h.hooks.sessionActivityAt = async () => activity;
+    const w = watcher(h.hooks);
+
+    await w.checkDeadlines(); // sweep 1: silent — marked
+    expect(silentSince(roundId)).not.toBeNull();
+
+    activity = startedMs + 30_000; // the session moved (e.g. a late turn start)
+    clock = new Date(clock.getTime() + 60_000);
+    await w.checkDeadlines(); // sweep 2: alive — mark cleared, nothing fires
+    expect(silentSince(roundId)).toBeNull();
+    expect(events("round_self_requeued")).toHaveLength(0);
+
+    activity = startedMs - 60_000; // silent again: the count restarts at one
+    clock = new Date(clock.getTime() + 60_000);
+    await w.checkDeadlines(); // sweep 3: silent — re-marked only
+    expect(roundStatus(roundId)).toBe("running");
+    expect(silentSince(roundId)).not.toBeNull();
+    expect(events("round_self_requeued")).toHaveLength(0);
+
+    clock = new Date(clock.getTime() + 60_000);
+    await w.checkDeadlines(); // sweep 4: second consecutive silence — fires
+    expect(roundStatus(roundId)).toBe("cancelled");
+    expect(events("round_self_requeued")).toHaveLength(1);
+  });
+
+  it("does nothing while the inject file is still pending — the bridge is retrying, not losing", async () => {
+    const startedMs = clock.getTime();
+    const roundId = reviewingRound(311);
+    pastGrace();
+    const { hooks } = netHooks({ pending: true, activity: startedMs - 60_000 });
+
+    await watcher(hooks).checkDeadlines();
+    expect(roundStatus(roundId)).toBe("running");
+    expect(events("round_self_requeued")).toHaveLength(0);
+  });
+
+  it("does nothing when the session has been active since the round started (mid-recheck overlap)", async () => {
+    const startedMs = clock.getTime();
+    const roundId = reviewingRound(312);
+    pastGrace();
+    const { hooks } = netHooks({ pending: false, activity: startedMs + 30_000 });
+
+    await watcher(hooks).checkDeadlines();
+    expect(roundStatus(roundId)).toBe("running");
+    expect(events("round_self_requeued")).toHaveLength(0);
+  });
+
+  it("does nothing when activity is unknown, or when the hooks are absent (stubs)", async () => {
+    const roundIdA = reviewingRound(313);
+    pastGrace();
+    const unknown = netHooks({ pending: false, activity: null });
+    await watcher(unknown.hooks).checkDeadlines();
+    expect(roundStatus(roundIdA)).toBe("running");
+
+    const roundIdB = reviewingRound(314);
+    const { hooks } = hooksWith(true); // no sessionActivityAt / injectPending
+    await watcher(hooks).checkDeadlines();
+    expect(roundStatus(roundIdB)).toBe("running");
+    expect(events("round_self_requeued")).toHaveLength(0);
+  });
+
+  it("waits out the grace window before judging", async () => {
+    const startedMs = clock.getTime();
+    const roundId = reviewingRound(315);
+    clock = new Date(clock.getTime() + 2 * 60_000); // inside the grace window
+    const { hooks } = netHooks({ pending: false, activity: startedMs - 60_000 });
+
+    await watcher(hooks).checkDeadlines();
+    expect(roundStatus(roundId)).toBe("running");
+    expect(events("round_self_requeued")).toHaveLength(0);
+  });
+
+  it("a pending verdict file always wins over the net", async () => {
+    const startedMs = clock.getTime();
+    const roundId = reviewingRound(316);
+    pastGrace();
+    writeFileSync(join(dir, "pr-316-round-1.json"), "{}");
+    const { hooks } = netHooks({ pending: false, activity: startedMs - 60_000 });
+
+    await watcher(hooks).checkDeadlines();
+    expect(roundStatus(roundId)).toBe("running");
+    expect(events("round_self_requeued")).toHaveLength(0);
+  });
+
+  it("fires at most once per head — the deadline path owns further recovery", async () => {
+    const startedMs = clock.getTime();
+    reviewingRound(317);
+    pastGrace();
+    const { hooks } = netHooks({ pending: false, activity: startedMs - 60_000 });
+    const w = watcher(hooks);
+    await w.checkDeadlines(); // sweep 1: marks
+    clock = new Date(clock.getTime() + 60_000);
+    await w.checkDeadlines(); // sweep 2: fires
+    expect(events("round_self_requeued")).toHaveLength(1);
+
+    // The redispatched round loses its prompt AGAIN at the same head.
+    const secondStart = clock.getTime();
+    const secondId = reviewingRound(317);
+    clock = new Date(clock.getTime() + (GRACE_MIN + 5) * 60_000);
+    const again = netHooks({ pending: false, activity: secondStart - 60_000 });
+    const w2 = watcher(again.hooks);
+    await w2.checkDeadlines();
+    clock = new Date(clock.getTime() + 60_000);
+    await w2.checkDeadlines();
+
+    expect(roundStatus(secondId)).toBe("running"); // the net stays its hand
+    expect(events("round_self_requeued")).toHaveLength(1);
+  });
+});
+
+// ---- guard-5 landing: outcome "head_moved" (follow-up) -----
+
+describe("head_moved outcome — a guard-5 refusal lands cheaply, session survives", () => {
+  function headMovedFile(pr: number, roundNo: number, extra: Record<string, unknown> = {}): void {
+    writeFileSync(
+      join(dir, `pr-${pr}-round-${roundNo}.json`),
+      JSON.stringify({
+        pr,
+        round_no: roundNo,
+        outcome: "head_moved",
+        head_sha: "stale-head",
+        finished_at: clock.toISOString(),
+        ...extra,
+      }),
+    );
+  }
+
+  it("cancels the round and self-requeues at the fresh head — session NOT killed, nothing stamped or labelled", async () => {
+    const roundId = reviewingRound(340, "fresh-head");
+    const { hooks, overseer } = hooksWith(true);
+    const killed: number[] = [];
+    hooks.killSession = async (pr) => {
+      killed.push(pr);
+    };
+    headMovedFile(340, 1);
+
+    await watcher(hooks).sweep();
+
+    expect(roundStatus(roundId)).toBe("cancelled");
+    expect(store.getPr(340)!.state).toBe("queued");
+    expect(killed).toEqual([]); // the session is healthy — it did the right thing
+    expect(events("head_moved_reported")).toHaveLength(1);
+    const requeued = events("round_self_requeued");
+    expect(requeued).toHaveLength(1);
+    expect(requeued[0]!.payload).toMatchObject({ mode: "head_moved", head_sha: "fresh-head" }); // SAME counter, fresh head
+    expect(store.selfRequeueCount(340, "fresh-head")).toBe(1);
+    expect(overseer.some((m) => m.startsWith("SELF-REQUEUE (recovery) — PR #340"))).toBe(true);
+    // No verdict applied: no reviewed-head mark, in-progress label off,
+    // reviewed label NOT added.
+    expect(store.reviewedHead(340)).toBeUndefined();
+    expect(adapter.calls.some((c) => c.startsWith("removeLabel:340"))).toBe(true);
+    expect(adapter.calls.some((c) => c.startsWith("addLabel:340"))).toBe(false);
+    // Consumed: the file is archived, not reprocessed.
+    expect(existsSync(join(dir, "pr-340-round-1.json"))).toBe(false);
+  });
+
+  it("respects the cap: past it the round terminalizes through the anomaly path, never loops", async () => {
+    const { hooks } = hooksWith(true);
+    const w = watcher(hooks);
+    const latestRoundNo = () =>
+      (store.db.prepare("SELECT round_no FROM rounds WHERE pr = 341 ORDER BY id DESC LIMIT 1").get() as { round_no: number }).round_no;
+    for (let i = 0; i < DEFAULT_MAX_SELF_REQUEUES; i++) {
+      reviewingRound(341);
+      headMovedFile(341, latestRoundNo());
+      await w.sweep();
+      expect(store.getPr(341)!.state).toBe("queued");
+    }
+    reviewingRound(341);
+    headMovedFile(341, latestRoundNo());
+    await w.sweep();
+    expect(store.getPr(341)!.state).toBe("tracked"); // standing-verdict state, never an approve
+    expect(events("self_requeue_cap_exhausted")).toHaveLength(1);
+    expect(events("round_self_requeued")).toHaveLength(DEFAULT_MAX_SELF_REQUEUES);
+    expect(events("round_overdue")).toHaveLength(1); // the anomaly landing
+  });
+
+  it("belt-and-braces: verdict spelled HEAD_MOVED maps the same way", async () => {
+    const roundId = reviewingRound(342);
+    const { hooks } = hooksWith(true);
+    writeFileSync(
+      join(dir, "pr-342-round-1.json"),
+      JSON.stringify({ pr: 342, round_no: 1, verdict: "HEAD_MOVED", head_sha: "stale", finished_at: clock.toISOString() }),
+    );
+    await watcher(hooks).sweep();
+    expect(roundStatus(roundId)).toBe("cancelled");
+    expect(store.getPr(342)!.state).toBe("queued");
+    expect(events("round_self_requeued")).toHaveLength(1);
   });
 });

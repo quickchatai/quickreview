@@ -20,6 +20,10 @@
 //   closed          merged or closed; session archived, worktree dropped
 // `stale_recheck` remains as legacy state for old rows/rounds; ordinary pushes
 // never set it or queue work. Only an explicit review re-request starts a round.
+// `stale_recheck` + `trigger_ts` are cleared on dispatch AND on verdict/
+// round_overdue: a settled PR carries no trigger residue, and the
+// reconcile poll sweeps any legacy residue (a tracked/awaiting_author PR with
+// no round running never legitimately holds either).
 //
 // ┌─────────────────┬──────────────────────────────────────────────────────────┐
 // │ event \ state   │ tracked   queued   reviewing  awaiting_  (legacy)  closed │
@@ -177,12 +181,17 @@ export function applyEvent(
   let staleRecheck = existing?.stale_recheck ?? 0;
   if (event.type === "stale_detected") staleRecheck = 1;
   if (event.type === "dispatched") staleRecheck = 0;
+  // A settled round leaves no trigger residue: a verdict or blown
+  // round lands the PR in tracked/awaiting_author, and a stale_recheck flag or
+  // trigger_ts surviving there would misclassify the NEXT explicit re-review
+  // as a staleness round (dispatch roundTypeFor) and let it jump the FIFO.
+  if (event.type === "verdict" || event.type === "round_overdue") staleRecheck = 0;
 
   let triggerTs = meta.trigger_ts !== undefined ? meta.trigger_ts : (existing?.trigger_ts ?? null);
   if (event.type === "trigger" || event.type === "stale_detected" || event.type === "synchronize") {
     if (to === "queued" && !triggerTs) triggerTs = now().toISOString();
   }
-  if (event.type === "dispatched") triggerTs = null;
+  if (event.type === "dispatched" || event.type === "verdict" || event.type === "round_overdue") triggerTs = null;
 
   // Trigger provenance: who asked for the queued round. A fresh
   // label / team re-review request / manual trigger is a HUMAN ask; a

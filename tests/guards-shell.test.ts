@@ -109,23 +109,32 @@ afterEach(async () => {
 // be written until the child exits.
 const exec = promisify(execFile);
 
-async function run(script: string, args: string[]): Promise<{ ok: boolean; out: string }> {
+async function run(
+  script: string,
+  args: string[],
+  extraEnv: Record<string, string> = {},
+): Promise<{ ok: boolean; out: string; code: number }> {
+  const env = {
+    ...process.env,
+    GITHUB_API: apiBase,
+    QCR_CONFIG: join(dir, "config.toml"),
+    QCR_DRYRUN_DIR: join(dir, "dryrun"),
+    // Never the repo's own state.db: the guards read and stamp this file.
+    QCR_STATE_DB: dbPath,
+    ...extraEnv,
+  };
+  // The guard reads QCR_EXPECTED_HEAD from the caller's environment: unless a
+  // case sets it, it must be genuinely absent, not inherited from the runner.
+  if (!("QCR_EXPECTED_HEAD" in extraEnv)) delete (env as Record<string, unknown>).QCR_EXPECTED_HEAD;
   try {
     const { stdout, stderr } = await exec("bash", [join(root, "scripts", script), ...args], {
       encoding: "utf8",
-      env: {
-        ...process.env,
-        GITHUB_API: apiBase,
-        QCR_CONFIG: join(dir, "config.toml"),
-        QCR_DRYRUN_DIR: join(dir, "dryrun"),
-        // Never the repo's own state.db: the guards read and stamp this file.
-        QCR_STATE_DB: dbPath,
-      },
+      env,
     });
-    return { ok: true, out: `${stdout}${stderr}` };
+    return { ok: true, out: `${stdout}${stderr}`, code: 0 };
   } catch (err) {
-    const e = err as { stdout?: string; stderr?: string };
-    return { ok: false, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+    const e = err as { stdout?: string; stderr?: string; code?: number };
+    return { ok: false, out: `${e.stdout ?? ""}${e.stderr ?? ""}`, code: typeof e.code === "number" ? e.code : -1 };
   }
 }
 
@@ -413,5 +422,72 @@ describe("scripts/reply-thread.sh — guard 3", () => {
     const res = await run("reply-thread.sh", ["5180", "12345", bodyFile()]);
     expect(res.ok).toBe(true);
     expect(dryrunRecords()).toHaveLength(1);
+  });
+});
+
+describe("guard 5 — QCR_EXPECTED_HEAD (posting-head drift)", () => {
+  const MOVED = "5b71a80ffee0987654321fedcba09876543210ab";
+
+  it("post-review.sh posts when the expectation matches the live head", async () => {
+    const res = await run("post-review.sh", ["5180", "COMMENT", bodyFile()], { QCR_EXPECTED_HEAD: HEAD });
+    expect(res.ok).toBe(true);
+    expect(record().body.commit_id).toBe(HEAD);
+  });
+
+  it("post-review.sh refuses when the PR advanced past the reviewed head, exit 1, nothing recorded", async () => {
+    pr = { state: "open", merged: false, head: { sha: MOVED }, user: { login: "pr-author" } };
+    const res = await run("post-review.sh", ["5180", "REQUEST_CHANGES", bodyFile()], { QCR_EXPECTED_HEAD: HEAD });
+    expect(res.ok).toBe(false);
+    expect(res.code).toBe(1);
+    expect(res.out).toContain("head moved");
+    expect(res.out).toContain("guard 5");
+    // The message tells the session what to do: post nothing further and land
+    // the round through the head_moved verdict-file outcome (follow-up).
+    expect(res.out).toContain("Post nothing further");
+    expect(res.out).toContain("head_moved");
+    expect(res.out).toContain("daemon");
+    expect(dryrunRecords()).toEqual([]);
+  });
+
+  it("post-review.sh warns loudly but proceeds when no expectation is set (older prompts)", async () => {
+    const res = await run("post-review.sh", ["5180", "COMMENT", bodyFile()]);
+    expect(res.ok).toBe(true);
+    expect(res.out).toContain("WARNING");
+    expect(res.out).toContain("QCR_EXPECTED_HEAD");
+    expect(dryrunRecords()).toHaveLength(1);
+  });
+
+  it("approve-pr.sh refuses on a moved head before anything is recorded", async () => {
+    pr = { state: "open", merged: false, head: { sha: MOVED }, user: { login: "pr-author" } };
+    const res = await run("approve-pr.sh", ["5180", bodyFile()], { QCR_EXPECTED_HEAD: HEAD });
+    expect(res.ok).toBe(false);
+    expect(res.code).toBe(1);
+    expect(res.out).toContain("head moved");
+    expect(dryrunRecords()).toEqual([]);
+  });
+
+  it("approve-pr.sh approves when the expectation matches", async () => {
+    const res = await run("approve-pr.sh", ["5180", bodyFile()], { QCR_EXPECTED_HEAD: HEAD });
+    expect(res.ok).toBe(true);
+    expect(dryrunRecords()).toHaveLength(3);
+  });
+
+  it("approve-pr.sh warns but proceeds when no expectation is set", async () => {
+    const res = await run("approve-pr.sh", ["5180", bodyFile()]);
+    expect(res.ok).toBe(true);
+    expect(res.out).toContain("WARNING");
+  });
+
+  it("a case-only sha difference is not drift", async () => {
+    const res = await run("post-review.sh", ["5180", "COMMENT", bodyFile()], { QCR_EXPECTED_HEAD: HEAD.toUpperCase() });
+    expect(res.ok).toBe(true);
+  });
+
+  it("is off when [guards] refuse_on_head_drift = false", async () => {
+    pr = { state: "open", merged: false, head: { sha: MOVED }, user: { login: "pr-author" } };
+    const base = readFileSync(join(dir, "config.toml"), "utf8");
+    writeFileSync(join(dir, "config.toml"), `${base}\n[guards]\nrefuse_on_head_drift = false\n`);
+    const res = await run("post-review.sh", ["5180", "COMMENT", bodyFile()], { QCR_EXPECTED_HEAD: HEAD });
+    expect(res.ok).toBe(true);
   });
 });

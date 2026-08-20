@@ -17,6 +17,11 @@
 #   4. No green CI at this head ⇒ APPROVE is unavailable (approve-pr.sh
 #      only — post-review.sh cannot approve). Refuses; the review is posted as a
 #      COMMENT with approval withheld instead.
+#   5. The live head must be the head the round actually reviewed
+#     . The session exports QCR_EXPECTED_HEAD — the sha its
+#      round prompt cites — before posting; a mismatch refuses the post. A
+#      missing expectation (session on an older prompt) warns loudly and
+#      proceeds — belt-and-braces, never a wedge.
 #
 # Nothing here dismisses, retracts or edits any existing review. A guard can
 # only refuse a post or soften REQUEST_CHANGES to COMMENT.
@@ -98,6 +103,31 @@ guard_require_open() { # refuses on merged/closed; fails closed in live mode
       echo "guard: #$PR state unreadable; dry-run posts nothing, continuing" >&2
       ;;
   esac
+}
+
+# ---- guard 5: the head the round reviewed must still be the head -----------
+#
+# (#5270 round 7, recurred on #4844): the PR advanced between
+# the round's validation and its posting step; this script re-read the CURRENT
+# head and posted the stale review against the new head. The expected sha is
+# the one the round prompt cites; the session exports it as QCR_EXPECTED_HEAD.
+# On a mismatch the ONLY correct move is to post nothing: a fresh-head rerun
+# is the daemon's job, never the session's.
+
+guard_require_expected_head() { # guard_require_expected_head <live-head-sha>
+  guard_enabled refuse_on_head_drift || return 0
+  local live="${1:-}" expected="${QCR_EXPECTED_HEAD:-}"
+  if [[ -z "$expected" ]]; then
+    # Older round prompts do not export the expectation. Warn — loudly — but
+    # never refuse: wedging every legacy session is worse than the drift race.
+    echo "guard: WARNING — QCR_EXPECTED_HEAD is not set; cannot verify that #$PR's live head (${live:0:7}) is the sha this round reviewed (guard 5). Export QCR_EXPECTED_HEAD=<reviewed head sha> before posting." >&2
+    return 0
+  fi
+  # An unreadable live head is guard 3's case, not this one's.
+  [[ -n "$live" ]] || return 0
+  if [[ "${live,,}" != "${expected,,}" ]]; then
+    die "#$PR head moved: this round reviewed ${expected:0:7} but the PR is now at ${live:0:7} — refusing to post a stale review (guard 5). Post nothing further; write the round's verdict file with \"outcome\": \"head_moved\" in place of a verdict (see the round prompt) and end the round — re-reviewing the new head is the daemon's job, not yours."
+  fi
 }
 
 # ---- guard 2: no new evidence ----------------------------------------------

@@ -232,6 +232,31 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
   // Commits never dispatch a review. Open-PR truth above refreshes the stored
   // head, but only the explicit label/team triggered-set may queue a round.
 
+  // ---- 2b. stale-trigger residue sweep --------------------------
+  // A settled PR (tracked/awaiting_author, no round running) never
+  // legitimately carries `stale_recheck` or a `trigger_ts`: both are consumed
+  // by dispatch and cleared when a round settles. Residue (#5180: tracked,
+  // stale_recheck=1, trigger_ts from four days earlier, zero rounds running)
+  // misclassifies the NEXT explicit re-review as a staleness round and lets
+  // it jump the FIFO on the ancient timestamp. Swept HERE, after the
+  // triggered-set step, so a PR GitHub still lists as triggered has already
+  // been re-queued and is never touched.
+  await step("stale-trigger-residue", async () => {
+    for (const local of store.allPrs()) {
+      if (local.state !== "tracked" && local.state !== "awaiting_author") continue;
+      if (!local.stale_recheck && local.trigger_ts === null) continue;
+      if (store.hasRunningRound(local.number)) continue;
+      correction(
+        deps,
+        local.number,
+        "stale-trigger-residue-cleared",
+        { state: local.state, stale_recheck: local.stale_recheck, trigger_ts: local.trigger_ts },
+        report,
+      );
+      store.upsertPr({ ...local, stale_recheck: 0, trigger_ts: null });
+    }
+  });
+
   // ---- 3. open-PR sync: locally-live PRs GitHub no longer lists as open ----
   await step("closed-sync", async () => {
     for (const local of store.allPrs()) {

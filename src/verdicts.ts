@@ -13,7 +13,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, watch, ty
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { classifyCi, type CheckSummary } from "./cigate.js";
-import { DEFAULT_MAX_SELF_REQUEUES, sandboxRoot, type Config } from "./config.js";
+import { DEFAULT_MAX_SELF_REQUEUES, DEFAULT_ROUND_STALL_GRACE_MIN, sandboxRoot, type Config } from "./config.js";
 import { auditExecViolations, collectWindowLines, estimateUsd, measureRoundUsage, type ModelPricing, type UsageFs } from "./usage.js";
 import type { GateResult } from "./gate.js";
 import { applyEvent } from "./statemachine.js";
@@ -135,6 +135,22 @@ export function validateVerdict(raw: unknown): ParsedVerdict {
   }
   if (typeof v.pr !== "number" || !Number.isInteger(v.pr)) return bad("pr must be an integer");
   if (typeof v.round_no !== "number" || !Number.isInteger(v.round_no)) return bad("round_no must be an integer");
+  // Guard-5 landing (follow-up): `outcome: "head_moved"` (or,
+  // belt-and-braces, verdict spelled HEAD_MOVED) is a verdict-less round
+  // ending — the PR advanced mid-round and the guard refused the stale post.
+  // Only pr/round_no/head_sha/finished_at are required; the daemon cancels
+  // the round and self-requeues instead of applying a verdict.
+  const outcome = typeof v.outcome === "string" ? v.outcome.trim().toLowerCase() : "";
+  const verdictSpelled = typeof v.verdict === "string" ? v.verdict.trim().toUpperCase() : "";
+  if (outcome === "head_moved" || verdictSpelled === "HEAD_MOVED") {
+    v.outcome = "head_moved";
+    delete v.verdict;
+    if (typeof v.head_sha !== "string" || v.head_sha.length === 0) return bad("head_sha must be a non-empty string");
+    if (typeof v.finished_at !== "string" || v.finished_at.length === 0) return bad("finished_at must be a non-empty string");
+    delete v.spend_usd;
+    return { ok: true, verdict: raw as unknown as VerdictFile };
+  }
+  if (outcome) return bad(`bad outcome: ${String(v.outcome)}`);
   // normalizeVerdict also folds the retired "ESCALATE" spelling into
   // NEEDS_HUMAN — the frozen conversation-system.md seed still emits it.
   const verdict = normalizeVerdict(v.verdict);
@@ -289,6 +305,37 @@ export class VerdictWatcher {
   private async apply(v: VerdictFile, name: string): Promise<void> {
     const { cfg, store, adapter } = this.deps;
     const round = this.runningRound(v.pr, v.round_no);
+
+    // Guard-5 landing (follow-up): the session was refused at
+    // posting time because the PR advanced mid-round, and said so explicitly
+    // instead of idling to deadline expiry. Mapped exactly like the
+    // needs_human_incomplete redo: immediate cancel + capped self-requeue
+    // (SAME per-head counter, keyed on the FRESH head the PR row now
+    // carries) — and the session is NOT killed: it is healthy, it did the
+    // right thing. No verdict applies, no label lands, no reviewed-head mark
+    // is stamped (nothing was reviewed-and-decided at the live head). Past
+    // the cap (or with no running round) the anomaly path terminalizes —
+    // never an approve.
+    if (v.outcome === "head_moved") {
+      store.logEvent("head_moved_reported", v.pr, {
+        round_id: round?.id ?? null,
+        round_no: v.round_no,
+        reviewed_head: v.head_sha,
+        file: name,
+      });
+      if (round && round.status === "running" && (await this.selfRequeue(round, "head_moved"))) {
+        await this.safe(() => adapter.removeLabel(v.pr, cfg.github.in_progress_label), `remove ${cfg.github.in_progress_label} on #${v.pr}`);
+        this.log(`verdicts: #${v.pr} round ${v.round_no} ended head_moved — cancelled and requeued at the fresh head`);
+        return;
+      }
+      await this.handleAnomaly(
+        v.pr,
+        v.round_no,
+        `round ${v.round_no} reported head_moved (reviewed ${v.head_sha.slice(0, 7)}, the PR advanced mid-round) but could not be self-requeued — cap exhausted or no running round`,
+        "overdue",
+      );
+      return;
+    }
 
     // NEEDS_HUMAN discipline (2026-08-19, the owner): a park hands a FINISHED
     // review to a person for the final call — it is never an escape hatch for
@@ -676,7 +723,7 @@ export class VerdictWatcher {
    * not age the PR). Held wakes stay held: the requeued round is about to
    * dispatch, and its own round-end paths flush them (S4).
    */
-  private async selfRequeue(round: RoundRow, mode: "dead" | "alive_stuck" | "needs_human_incomplete" = "dead"): Promise<boolean> {
+  private async selfRequeue(round: RoundRow, mode: "dead" | "alive_stuck" | "needs_human_incomplete" | "lost_prompt" | "head_moved" = "dead"): Promise<boolean> {
     const { store, cfg } = this.deps;
     const row = store.getPr(round.pr);
     const head = row?.head_sha ?? "";
@@ -698,7 +745,11 @@ export class VerdictWatcher {
         ? `round ${round.round_no} passed its deadline (${round.deadline_at}) with no verdict and its session is dead`
         : mode === "alive_stuck"
           ? `round ${round.round_no} passed its deadline (${round.deadline_at}) with no verdict; its session was alive but wedged and has been killed for a fresh rebirth`
-          : `round ${round.round_no} verdicted NEEDS_HUMAN without executing any passes — the review was not done, so it is redone rather than handed to a person`;
+          : mode === "lost_prompt"
+            ? `round ${round.round_no}'s prompt was consumed from the inject dir but the session shows no activity since the round started (${round.started_at}) — the prompt was dropped in delivery; redispatching`
+            : mode === "head_moved"
+              ? `round ${round.round_no} ended head_moved (guard 5): the PR advanced mid-round and the session correctly posted nothing — redispatching against the fresh head; the session is healthy and was not killed`
+              : `round ${round.round_no} verdicted NEEDS_HUMAN without executing any passes — the review was not done, so it is redone rather than handed to a person`;
     if (mode === "alive_stuck" && this.deps.hooks.killSession) {
       await this.safe(() => this.deps.hooks.killSession!.call(this.deps.hooks, round.pr), `kill wedged session pr-${round.pr}`);
     }
@@ -734,6 +785,70 @@ export class VerdictWatcher {
     return true;
   }
 
+  /**: requeue a round whose prompt was consumed but never produced a
+   * turn. Every signal is optional and every ambiguity is a no-op — this net
+   * only ever fires on the unambiguous case: consumed + session ALIVE +
+   * silent since before the round started + past the grace window, observed
+   * on TWO consecutive sweeps (the first stamps `rounds.silent_since`; any
+   * sign of life or ambiguity clears it).
+   * VERIFY-ON-PIN (rule 7): the whole inference rests on two unconfirmed pi
+   * facts — pi appends to the session JSONL promptly when a prompt is
+   * ACCEPTED, and writes NOTHING for a prompt dropped mid-turn; the full
+   * statements live on sessions.ts sessionActivityAt/injectPending. Until
+   * both hold with live evidence on the pinned 0.84.1, this net stays
+   * deliberately over-guarded rather than trigger-happy. */
+  private async maybeRequeueLostPrompt(round: RoundRow, nowMs: number): Promise<void> {
+    const { cfg, store } = this.deps;
+    const hooks = this.deps.hooks;
+    if (!hooks.sessionActivityAt || !hooks.injectPending || !hooks.sessionAlive) return;
+    const graceMs = (cfg.daemon.round_stall_grace_min ?? DEFAULT_ROUND_STALL_GRACE_MIN) * 60_000;
+    const startedMs = Date.parse(round.started_at);
+    if (!Number.isFinite(startedMs) || nowMs - startedMs < graceMs) return;
+    if (store.hasLaterRound(round.pr, round.round_no)) return; // superseded — the deadline sweep owns that case
+    if (existsSync(join(this.deps.verdictDir, `pr-${round.pr}-round-${round.round_no}.json`))) return;
+    // Once per head from this net: further recovery belongs to the deadline
+    // path, which sees dead/wedged sessions rather than inferring from mtimes.
+    const head = store.getPr(round.pr)?.head_sha ?? "";
+    if (store.selfRequeueCount(round.pr, head) > 0) return;
+    const clearSilent = (): void => {
+      if (round.silent_since) store.clearRoundSilent(round.id);
+    };
+    try {
+      if ((await hooks.sessionAlive.call(hooks, round.pr)) !== true) {
+        // A dead session is the DEADLINE path's case (kill/rebirth semantics
+        // live there); this net acts only on a live-and-silent one.
+        clearSilent();
+        return;
+      }
+      if (await hooks.injectPending.call(hooks, round.pr)) {
+        clearSilent(); // bridge still retrying — patience, not loss
+        return;
+      }
+      const activity = await hooks.sessionActivityAt.call(hooks, round.pr);
+      if (activity === null || activity >= startedMs) {
+        clearSilent(); // unknown or alive-since — never guess
+        return;
+      }
+    } catch {
+      clearSilent(); // an unreadable signal is not evidence
+      return;
+    }
+    // Two consecutive silent sweeps before firing: the first observation only
+    // stamps the mark; only a round STILL silent on a later sweep requeues.
+    if (!round.silent_since) {
+      store.markRoundSilent(round.id);
+      this.log(`verdicts: #${round.pr} round ${round.round_no} looks silent (prompt consumed, no activity) — marked; requeue on the next silent sweep`);
+      return;
+    }
+    store.logEvent("round_prompt_lost", round.pr, {
+      round_id: round.id,
+      round_no: round.round_no,
+      started_at: round.started_at,
+      silent_since: round.silent_since,
+    });
+    await this.selfRequeue(round, "lost_prompt");
+  }
+
   /** Deadline sweep — a running round past `deadline_at` is an anomaly.
    * A superseded round (a newer round exists on the same PR) is cancelled
    * silently instead: its PR state, labels and reviewer requests belong to
@@ -746,7 +861,19 @@ export class VerdictWatcher {
     const nowMs = this.now().getTime();
     const { store } = this.deps;
     for (const round of store.runningRounds()) {
-      if (Date.parse(round.deadline_at) > nowMs) continue;
+      if (Date.parse(round.deadline_at) > nowMs) {
+        // lost-prompt net, well before the deadline: the round's
+        // inject was consumed (nothing pending, so the bridge is not merely
+        // retrying), no verdict is on disk, and the session's newest JSONL
+        // predates the round — the prompt never became a turn. Requeued
+        // through the SAME capped path, at most once per head here
+        // (deadline-time recovery keeps the rest of the budget). Sessions
+        // that were mid-recheck when the round arrived stay covered by the
+        // deadline path: their JSONL moved after round start, and guessing
+        // on an ambiguous signal would cancel live rounds.
+        await this.maybeRequeueLostPrompt(round, nowMs);
+        continue;
+      }
       if (store.hasLaterRound(round.pr, round.round_no)) {
         store.markRoundCancelled(round.id, `superseded — round ${round.round_no} outlived by a newer round`);
         store.logEvent("round_superseded", round.pr, { round_id: round.id, round_no: round.round_no });
