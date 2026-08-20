@@ -1,0 +1,521 @@
+diff --git a/extensions/vendor/openviking-pi/client.ts b/extensions/vendor/openviking-pi/client.ts
+--- a/extensions/vendor/openviking-pi/client.ts
++++ b/extensions/vendor/openviking-pi/client.ts
+@@ -74,6 +74,15 @@
+   status?: number;
+ }
+ 
++/** [QCR PATCH 4] `content/batch-write` result envelope. */
++export interface OVBatchWriteResult {
++  root_uri: string;
++  created: string[];
++  updated: string[];
++  unchanged: string[];
++  queue_status?: Record<string, unknown>;
++}
++
+ export interface OVResponse<T> {
+   ok: boolean;
+   result: T | null;
+@@ -294,6 +303,44 @@
+ 
+   // ========== Content ==========
+ 
++  /**
++   * [QCR PATCH 4] POST /api/v1/content/batch-write — the ONE durable write
++   * path. Deliberately no `content/write` wrapper: for memory targets that
++   * endpoint appends a server-side `MEMORY_FIELDS` footer which `content/read`
++   * strips again, so read → sha256 → replace_if_hash 409s forever and no API
++   * returns the stored hash. Files written through batch-write carry no footer
++   * and round-trip (assets/findings.md §3.3).
++   *
++   * Returns the whole envelope, not a boolean: a 409 CONFLICT is a real answer
++   * ("someone edited this since you read it"), not a failure to hide.
++   */
++  async batchWrite(
++    request: { root_uri: string; operations: unknown[]; wait: boolean },
++    timeoutMs = 30000,
++  ): Promise<OVResponse<OVBatchWriteResult>> {
++    return this.fetchJSON<OVBatchWriteResult>(
++      "/api/v1/content/batch-write",
++      { method: "POST", body: JSON.stringify(request) },
++      timeoutMs,
++    );
++  }
++
++  /**
++   * [QCR PATCH 4] POST /api/v1/fs/attrs/set_tags — the retrieval tag list that
++   * search filters read. Best-effort by contract: `viking_write` already put
++   * the tags in the body text, so a failure here narrows retrieval, it never
++   * loses the memory.
++   */
++  async setTags(uri: string, tags: string[], mode: "append" | "replace" = "append"): Promise<boolean> {
++    if (tags.length === 0) return true;
++    const res = await this.fetchJSON<any>(
++      "/api/v1/fs/attrs/set_tags",
++      { method: "POST", body: JSON.stringify({ uri, tags, mode }) },
++      10000,
++    );
++    return res.ok;
++  }
++
+   /** GET /api/v1/content/abstract — L0 summary */
+   async abstract(uri: string): Promise<string | null> {
+     const res = await this.fetchJSON<string>(
+diff --git a/extensions/vendor/openviking-pi/index.ts b/extensions/vendor/openviking-pi/index.ts
+--- a/extensions/vendor/openviking-pi/index.ts
++++ b/extensions/vendor/openviking-pi/index.ts
+@@ -180,7 +180,9 @@
+     if (!config.takeoverEnabled && archiveOverview && archiveOverview.trim()) {
+       parts.push(archiveOverview);
+     }
+-    parts.push("OpenViking tools: viking_search, viking_read, viking_browse, viking_remember, viking_forget, viking_add_resource, viking_archive_expand.");
++    // [QCR PATCH 4] viking_remember / viking_forget / viking_add_resource are
++    // gone; viking_write is the one write tool.
++    parts.push("OpenViking tools: viking_search, viking_read, viking_browse, viking_write, viking_archive_expand.");
+ 
+     const additions = parts.join("\n\n");
+     if (!additions) return;
+diff --git a/extensions/vendor/openviking-pi/qcr-write.ts b/extensions/vendor/openviking-pi/qcr-write.ts
+new file mode 100644
+--- /dev/null
++++ b/extensions/vendor/openviking-pi/qcr-write.ts
+@@ -0,0 +1,221 @@
++// QCR FORK — file added by PATCH 4 (durable writes). Not upstream.
++//
++// The pure half of the `viking_write` tool: URI/tag validation, body
++// rendering, hashing and request assembly. It is deliberately free of pi and
++// of the OV client so `tests/openviking-fork.test.ts` can exercise it in the
++// normal vitest run — `tools.ts` cannot be imported from a test because it
++// pulls `typebox` and `@earendil-works/pi-ai`, neither of which is installed
++// in this repo (pi lives only in the container).
++//
++// WHY THIS EXISTS AT ALL: upstream's `viking_remember` is not a write. It
++// prefixes the text with `[Remember — <category>]` and appends it as a SESSION
++// MESSAGE; the fact becomes durable memory only through commit-time
++// extraction, which needs a `vlm` — and our deployment configures none
++// (memories are authored, never extracted). Verified against a running
++// v0.4.15 server: assets/findings.md §3.2.
++//
++// WHY batch-write AND NOT content/write: for memory-context targets
++// `content/write` appends a server-side `MEMORY_FIELDS` footer that
++// `content/read` strips again, so the natural read → sha256 → write round trip
++// 409s forever and no API returns the stored hash. Files created *by*
++// batch-write carry no footer and round-trip correctly. batch-write is
++// therefore the ONE write path — findings §3.3.
++
++import { createHash } from "node:crypto";
++
++/** Memory targets keep a text-extension allowlist server-side; these are the
++ * two we ever author. */
++export const ALLOWED_EXTENSIONS: readonly string[] = [".md", ".txt"];
++
++/** Tags are our own convention (`#pinned`, `#manual`, `#feedback`, `#bug`,
++ * `#rejected-proposal`), so the grammar is ours and it is strict: a mistyped
++ * tag that silently lands is worse than a refused write. */
++export const TAG_RE = /^[a-z0-9][a-z0-9._-]*$/;
++export const MAX_TAGS = 16;
++
++export interface BatchWriteOperation {
++  uri: string;
++  content: string;
++  precondition:
++    | { kind: "create_if_absent" }
++    | { kind: "replace_if_hash"; base_hash: string };
++}
++
++export interface BatchWriteRequest {
++  root_uri: string;
++  operations: BatchWriteOperation[];
++  wait: boolean;
++}
++
++export interface WriteRequestOk {
++  ok: true;
++  request: BatchWriteRequest;
++  /** The exact bytes sent — the caller reports this back so a follow-up
++   * replace has its precondition without a read. */
++  body: string;
++  /** `sha256:<hex>` over `body`, i.e. the stored bytes of what we just wrote. */
++  hash: string;
++  tags: string[];
++}
++
++export interface WriteRequestError {
++  ok: false;
++  /** Rendered verbatim to the model — say what to do, not just what broke. */
++  error: string;
++}
++
++export type WriteRequestResult = WriteRequestOk | WriteRequestError;
++
++export interface WriteRequestInput {
++  uri: unknown;
++  content: unknown;
++  tags?: unknown;
++  mode?: unknown;
++  expect_hash?: unknown;
++  wait?: unknown;
++}
++
++/** `sha256:<lowercase-hex>` — the shape batch-write's `base_hash` wants. */
++export function sha256Prefixed(body: string): string {
++  return `sha256:${createHash("sha256").update(Buffer.from(body, "utf8")).digest("hex")}`;
++}
++
++/** Accepts a bare hex digest or an already-prefixed one; rejects anything
++ * else rather than sending a precondition the server will misread. */
++export function normalizeHash(raw: unknown): string | null {
++  const value = String(raw ?? "").trim().toLowerCase();
++  const bare = value.startsWith("sha256:") ? value.slice("sha256:".length) : value;
++  if (!/^[0-9a-f]{64}$/.test(bare)) return null;
++  return `sha256:${bare}`;
++}
++
++/** `viking://a/b/c.md` → `viking://a/b`. Empty when there is no parent. */
++export function parentUri(uri: string): string {
++  const cleaned = uri.replace(/\/+$/, "");
++  const cut = cleaned.lastIndexOf("/");
++  if (cut < 0) return "";
++  const parent = cleaned.slice(0, cut);
++  return parent === "viking:/" || parent === "viking://" ? "" : parent;
++}
++
++/** A write target must be a concrete text file under a viking:// directory.
++ * Server-side the reviewer's USER key confines it to `user/reviewer/` anyway
++ * (findings §1) — this only catches the obvious mistakes early. */
++export function validateWriteUri(uri: string): string | null {
++  if (!uri) return "viking_write needs a `uri`.";
++  if (!uri.startsWith("viking://")) {
++    return `viking_write only writes viking:// URIs; got "${uri}".`;
++  }
++  if (/\s/.test(uri) || uri.includes("..")) {
++    return `Refusing to write "${uri}": a URI may not contain whitespace or "..".`;
++  }
++  if (!ALLOWED_EXTENSIONS.some((ext) => uri.endsWith(ext))) {
++    return `Refusing to write "${uri}": memory files must end in ${ALLOWED_EXTENSIONS.join(" or ")}.`;
++  }
++  if (!parentUri(uri)) {
++    return `Refusing to write "${uri}": it has no parent directory to write under.`;
++  }
++  return null;
++}
++
++export interface TagResult {
++  ok: boolean;
++  tags: string[];
++  error?: string;
++}
++
++/** Normalizes `["#Pinned", "manual"]` → `["pinned", "manual"]`, deduped and
++ * order-preserving. */
++export function normalizeTags(raw: unknown): TagResult {
++  if (raw === undefined || raw === null) return { ok: true, tags: [] };
++  const list = Array.isArray(raw) ? raw : [raw];
++  const out: string[] = [];
++  for (const entry of list) {
++    const tag = String(entry ?? "").trim().replace(/^#+/, "").toLowerCase();
++    if (!tag) continue;
++    if (!TAG_RE.test(tag)) {
++      return {
++        ok: false,
++        tags: [],
++        error: `Invalid tag "${String(entry)}": tags are lowercase words like "pinned" or "review-ops".`,
++      };
++    }
++    if (!out.includes(tag)) out.push(tag);
++  }
++  if (out.length > MAX_TAGS) {
++    return { ok: false, tags: [], error: `Too many tags (${out.length}); the cap is ${MAX_TAGS}.` };
++  }
++  return { ok: true, tags: out };
++}
++
++/**
++ * The stored body. Tags are rendered as a visible `Tags: #a #b` line rather
++ * than as a `MEMORY_FIELDS` block: plain text is what search indexes and what
++ * `content/read` returns unmodified, and it cannot be stripped by a server
++ * that reserves that footer for its own extractor. The retrieval tag list is
++ * set separately, best-effort, by the tool (fs/attrs/set_tags).
++ */
++export function renderMemoryBody(content: unknown, tags: readonly string[]): string {
++  const trimmed = String(content ?? "").replace(/\s+$/, "");
++  if (!trimmed) return "";
++  if (tags.length === 0) return `${trimmed}\n`;
++  if (/(^|\n)Tags:[ \t]*#/.test(trimmed)) return `${trimmed}\n`; // author wrote their own
++  return `${trimmed}\n\nTags: ${tags.map((t) => `#${t}`).join(" ")}\n`;
++}
++
++/**
++ * Validate + assemble one `content/batch-write` request.
++ *
++ * `mode` defaults to `create` and `replace` REQUIRES `expect_hash`: there is
++ * no blind-overwrite path, because a memory file is a shared document (the EOD
++ * curator and the TUI write it too) and a lost update is silent.
++ */
++export function buildWriteRequest(input: WriteRequestInput): WriteRequestResult {
++  const uri = String(input.uri ?? "").trim();
++  const uriProblem = validateWriteUri(uri);
++  if (uriProblem) return { ok: false, error: uriProblem };
++
++  const rawMode = String(input.mode ?? "create").trim().toLowerCase();
++  if (rawMode !== "create" && rawMode !== "replace") {
++    return { ok: false, error: `Unknown mode "${rawMode}": use "create" or "replace".` };
++  }
++
++  const tags = normalizeTags(input.tags);
++  if (!tags.ok) return { ok: false, error: tags.error ?? "Invalid tags." };
++
++  const body = renderMemoryBody(input.content, tags.tags);
++  if (!body.trim()) return { ok: false, error: "viking_write needs non-empty `content`." };
++
++  let precondition: BatchWriteOperation["precondition"];
++  if (rawMode === "create") {
++    precondition = { kind: "create_if_absent" };
++  } else {
++    const baseHash = normalizeHash(input.expect_hash);
++    if (!baseHash) {
++      return {
++        ok: false,
++        error:
++          'mode "replace" requires `expect_hash` — the sha256 of the CURRENT stored bytes ' +
++          "(the hash returned by the last viking_write, or read it from the daemon). " +
++          "Writing without one would silently overwrite someone else's edit.",
++      };
++    }
++    precondition = { kind: "replace_if_hash", base_hash: baseHash };
++  }
++
++  return {
++    ok: true,
++    body,
++    hash: sha256Prefixed(body),
++    tags: tags.tags,
++    request: {
++      root_uri: parentUri(uri),
++      operations: [{ uri, content: body, precondition }],
++      // wait=false by default: `wait` blocks on the semantic/vector refresh,
++      // measured at ~1.6 CORE-SECONDS per write on the 2-CPU container quota
++      // (findings §6). The bytes are durable either way; only searchability
++      // lags. "OpenViking must never block or delay a review round."
++      wait: input.wait === true,
++    },
++  };
++}
+diff --git a/extensions/vendor/openviking-pi/tools.ts b/extensions/vendor/openviking-pi/tools.ts
+--- a/extensions/vendor/openviking-pi/tools.ts
++++ b/extensions/vendor/openviking-pi/tools.ts
+@@ -2,6 +2,8 @@
+ import { StringEnum } from "@earendil-works/pi-ai";
+ import type { OVClient } from "./client.js";
+ import type { SyncManager } from "./sync.js";
++// [QCR PATCH 4]
++import { buildWriteRequest } from "./qcr-write.js";
+ 
+ export interface RegisterToolsOptions {
+   /** [QCR PATCH 2] A pi-subagents leaf gets the READ tools only. A lens pass
+@@ -13,7 +15,7 @@
+ export function registerTools(
+   pi: any,
+   client: OVClient,
+-  sync?: SyncManager,
++  _sync?: SyncManager,
+   opts: RegisterToolsOptions = {},
+ ): void {
+   const leaf = opts.leaf === true;
+@@ -124,112 +126,95 @@
+     },
+   });
+ 
+-  // [QCR PATCH 2] Every WRITE tool is gated behind `leaf`; the read tools
+-  // above stay available everywhere.
++  // [QCR PATCH 4] THREE UPSTREAM WRITE TOOLS ARE DELETED HERE.
++  //
++  // `viking_remember` — NOT a write. It appended `[Remember — <category>] …`
++  //   as a session message and relied on commit-time extraction to promote it,
++  //   i.e. on a `vlm` we deliberately do not configure. Verified on a running
++  //   v0.4.15: nothing durable is produced (findings §3.2). It is replaced by
++  //   `viking_write` below, not merely removed.
++  // `viking_forget` — deleted a memory by URI, or by a >0.8 search match.
++  //   Curation belongs to the EOD sweep and the TUI; retire is a tag+directory
++  //   convention, not an rm. A fuzzy-matched delete from a review session is a
++  //   silent data-loss path.
++  // `viking_add_resource` — fetched an arbitrary URL into the store. The
++  //   reviewer READS code and CI results; it does not ingest the web
++  //   (scoping rule 2), and this would be an unreviewed egress path.
++  //
++  // `viking_write` is therefore the ONLY write tool a session can reach.
+   if (!leaf) {
+-  // --- viking_remember ---
+-  pi.registerTool({
+-    name: "viking_remember",
+-    label: "Viking Remember",
+-    description: "Store a fact or memory in OpenViking. Stored as a session message and extracted into long-term memory on commit. Use for important information the agent should remember: preferences, decisions, gotchas, lessons learned.",
+-    promptSnippet: "Store a fact in OpenViking for cross-session persistence",
+-    promptGuidelines: [
+-      "Use viking_remember for facts that should survive across sessions but don't belong in MEMORY.md.",
+-      "Good for: user preferences, architectural decisions, gotchas, environment details.",
+-    ],
+-    parameters: Type.Object({
+-      content: Type.String({ description: "The fact or observation to store" }),
+-      category: Type.Optional(Type.String({ description: "Category hint: 'preference', 'entity', 'event', 'case', 'pattern'" })),
+-    }),
+-    async execute(
+-      _id: string, params: any, _signal: AbortSignal,
+-      _onUpdate: any, _ctx: any,
+-    ) {
+-      if (!client.connected) {
+-        return { content: [{ type: "text", text: "OpenViking server is not reachable." }] };
+-      }
+-      // Store as a tagged message directly in OV — the extractor picks up [Remember — ...] prefix
+-      const category = params.category ?? "general";
+-      const tagged = `[Remember — ${category}] ${params.content}`;
+-
+-      // Directly add to OV session if available
+-      let stored = false;
+-      if (sync?.sessionId) {
+-        stored = await client.addMessage(sync.sessionId, "user", tagged);
+-      }
+-
+-      return {
+-        content: [{ type: "text", text: stored ? `Remembered in OpenViking: "${params.content}" (${category})` : `Queued for OpenViking: "${params.content}" (${category})` }],
+-        details: { stored, category, tagged },
+-      };
+-    },
+-  });
++    pi.registerTool({
++      name: "viking_write",
++      label: "Viking Write",
++      description:
++        "Durably write a memory file to OpenViking (content/batch-write). Use this — not a session message — for anything that must survive the session: review lessons, project gotchas, decisions. mode 'create' fails if the file exists; mode 'replace' requires expect_hash and fails if the file changed since you read it. Returns the hash of what it wrote.",
++      promptSnippet: "Durably write a memory file to OpenViking",
++      promptGuidelines: [
++        "Write one self-contained fact or lesson per file; a memory read months later has no conversation around it.",
++        "Prefer mode 'create' with a fresh filename. Only 'replace' an entry you just read, passing its hash as expect_hash.",
++        "A 409 means someone else edited the file — re-read it and decide, never retry blindly.",
++      ],
++      parameters: Type.Object({
++        uri: Type.String({ description: "Target viking:// URI, ending in .md (e.g. 'viking://user/reviewer/memories/experiences/pr-5312-migration.md')" }),
++        content: Type.String({ description: "Markdown body of the memory" }),
++        tags: Type.Optional(Type.Array(Type.String(), { description: "Convention tags without '#', e.g. ['pinned','review-ops']" })),
++        mode: Type.Optional(StringEnum(["create", "replace"] as const)),
++        expect_hash: Type.Optional(Type.String({ description: "Required for mode 'replace': sha256 of the CURRENT stored bytes" })),
++        wait: Type.Optional(Type.Boolean({ description: "Block until the search index is refreshed (slow — costs ~1.6 core-seconds). Default false; the bytes are durable either way." })),
++      }),
++      async execute(
++        _id: string, params: any, _signal: AbortSignal,
++        _onUpdate: any, _ctx: any,
++      ) {
++        if (!client.connected) {
++          return { content: [{ type: "text", text: "OpenViking server is not reachable — nothing was written." }] };
++        }
++        const built = buildWriteRequest(params ?? {});
++        if (!built.ok) {
++          return { content: [{ type: "text", text: built.error }], details: { written: false } };
++        }
+ 
+-  // --- viking_forget ---
+-  pi.registerTool({
+-    name: "viking_forget",
+-    label: "Viking Forget",
+-    description: "Delete a memory by URI, or search for a specific memory and remove it. Use to correct outdated or wrong information.",
+-    promptSnippet: "Delete a memory from OpenViking by URI or query",
+-    parameters: Type.Object({
+-      uri: Type.Optional(Type.String({ description: "Exact viking:// URI to delete" })),
+-      query: Type.Optional(Type.String({ description: "Search query — deletes the strongest match if score > 0.8" })),
+-    }),
+-    async execute(
+-      _id: string, params: any, _signal: AbortSignal,
+-      _onUpdate: any, _ctx: any,
+-    ) {
+-      if (!client.connected) {
+-        return { content: [{ type: "text", text: "OpenViking server is not reachable." }] };
+-      }
+-      if (params.uri) {
+-        const ok = await client.delete(params.uri);
+-        return {
+-          content: [{ type: "text", text: ok ? `Deleted: ${params.uri}` : `Failed to delete: ${params.uri}` }],
+-        };
+-      }
+-      if (params.query) {
+-        const results = await client.find(params.query, { topK: 1 });
+-        if (results.length > 0 && results[0].score > 0.8) {
+-          const ok = await client.delete(results[0].uri);
++        const res = await client.batchWrite(built.request);
++        if (!res.ok) {
++          const message = res.error?.message || `HTTP ${res.status ?? 0}`;
++          const conflict = res.status === 409;
+           return {
+-            content: [{ type: "text", text: ok ? `Deleted: ${results[0].uri}` : `Failed: ${results[0].uri}` }],
++            content: [{
++              type: "text",
++              text: conflict
++                ? `Write REFUSED (409): ${message} Nothing was written. Re-read ${built.request.operations[0]?.uri} and decide on the current content.`
++                : `Write failed: ${message} Nothing was written.`,
++            }],
++            details: { written: false, status: res.status, conflict },
+           };
+         }
+-        return { content: [{ type: "text", text: "No strong match found (score > 0.8 required)." }] };
+-      }
+-      return { content: [{ type: "text", text: "Provide either 'uri' or 'query'." }] };
+-    },
+-  });
+-
+-  // --- viking_add_resource ---
+-  pi.registerTool({
+-    name: "viking_add_resource",
+-    label: "Viking Add Resource",
+-    description: "Ingest a URL into OpenViking. The page is auto-processed into L0/L1/L2 tiers and indexed for semantic search. HTTP only — local file paths are not supported by the OV server.",
+-    promptSnippet: "Ingest a URL into OpenViking for indexed retrieval",
+-    parameters: Type.Object({
+-      url: Type.String({ description: "URL to ingest (HTTP only, no file paths)" }),
+-      reason: Type.Optional(Type.String({ description: "Why this resource is relevant (improves indexing)" })),
+-    }),
+-    async execute(
+-      _id: string, params: any, _signal: AbortSignal,
+-      _onUpdate: any, _ctx: any,
+-    ) {
+-      if (!client.connected) {
+-        return { content: [{ type: "text", text: "OpenViking server is not reachable." }] };
+-      }
+-      const result = await client.addResource(params.url);
+-      if (!result) {
+-        return { content: [{ type: "text", text: `Failed to ingest: ${params.url}` }] };
+-      }
+-      return {
+-        content: [{ type: "text", text: `Ingested: ${result.root_uri}` }],
+-        details: result,
+-      };
+-    },
+-  });
+ 
++        const result = res.result;
++        const uri = built.request.operations[0]?.uri ?? "";
++        const outcome = (result?.created ?? []).includes(uri)
++          ? "created"
++          : (result?.updated ?? []).includes(uri)
++            ? "updated"
++            : (result?.unchanged ?? []).includes(uri)
++              ? "unchanged (byte-identical)"
++              : "written";
++        // Best effort, deliberately after the durable write and never fatal:
++        // the tags are already in the body text.
++        const tagged = built.tags.length > 0 ? await client.setTags(uri, built.tags) : true;
++        return {
++          content: [{
++            type: "text",
++            text:
++              `${uri} ${outcome}. hash=${built.hash}` +
++              (built.tags.length > 0
++                ? ` tags=${built.tags.map((t) => `#${t}`).join(" ")}${tagged ? "" : " (body only — the retrieval tag list was not updated)"}`
++                : "") +
++              " Pass that hash as expect_hash to replace this entry later.",
++          }],
++          details: { written: true, uri, outcome, hash: built.hash, tags: built.tags, tagged, result },
++        };
++      },
++    });
+   }
+ 
+   // --- viking_archive_expand ---

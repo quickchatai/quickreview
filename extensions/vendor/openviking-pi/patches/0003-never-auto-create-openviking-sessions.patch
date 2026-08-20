@@ -1,0 +1,120 @@
+diff --git a/extensions/vendor/openviking-pi/client.ts b/extensions/vendor/openviking-pi/client.ts
+--- a/extensions/vendor/openviking-pi/client.ts
++++ b/extensions/vendor/openviking-pi/client.ts
+@@ -157,20 +157,21 @@
+ 
+   // ========== Sessions ==========
+ 
+-  /** POST /api/v1/sessions — create or reuse session */
+-  async createSession(sessionId: string): Promise<boolean> {
+-    const res = await this.fetchJSON<any>("/api/v1/sessions", {
+-      method: "POST",
+-      body: JSON.stringify({ session_id: sessionId }),
+-    });
+-    return res.ok;
+-  }
++  // [QCR PATCH 3] `createSession()` (POST /api/v1/sessions) is DELETED and the
++  // `auto_create` query parameter is gone from getSession. This client cannot
++  // bring an OpenViking session into existence by any route.
++  //
++  // The daemon owns session lifecycle because creation carries a payload only
++  // it knows: the extraction-disabling memory_policy
++  // (`{self,peer,working_memory}.enabled = false`). A session created without
++  // it leaves a FAILED background task on every single commit, since our
++  // deployment configures no `vlm` (assets/findings.md §2.3/§2.5).
++  // An extension-created session would look identical and quietly rot.
+ 
+-  /** GET /api/v1/sessions/{id} — session metadata */
+-  async getSession(sessionId: string, autoCreate = false): Promise<OVSessionMeta | null> {
+-    const q = autoCreate ? "?auto_create=true" : "";
++  /** GET /api/v1/sessions/{id} — session metadata. Never creates. */
++  async getSession(sessionId: string): Promise<OVSessionMeta | null> {
+     const res = await this.fetchJSON<OVSessionMeta>(
+-      `/api/v1/sessions/${encodeURIComponent(sessionId)}${q}`,
++      `/api/v1/sessions/${encodeURIComponent(sessionId)}`,
+       undefined, 5000,
+     );
+     return res.ok ? res.result : null;
+diff --git a/extensions/vendor/openviking-pi/index.ts b/extensions/vendor/openviking-pi/index.ts
+--- a/extensions/vendor/openviking-pi/index.ts
++++ b/extensions/vendor/openviking-pi/index.ts
+@@ -112,16 +112,16 @@
+         return;
+       }
+ 
+-      // Ensure OV session
++      // [QCR PATCH 3] Attach to the session the DAEMON created; never mint
++      // one. No session is a normal, non-fatal state: the tools still work,
++      // only ambient turn-sync is off.
+       const piSessionId = ctx.sessionManager.getSessionId();
+-      const ok = await sync.ensureSession(piSessionId);
+-      if (!ok) {
+-        if (config.logLevel !== "silent") {
+-          ctx.ui.notify("OpenViking: failed to create session", "error");
+-        }
+-        return;
++      const attached = await sync.ensureSession();
++      if (attached) {
++        await sync.replayPending();
++      } else if (config.logLevel === "info") {
++        ctx.ui.notify("OpenViking: no daemon session — memory tools only", "info");
+       }
+-      await sync.replayPending();
+ 
+       // Profile injection
+       profileBlock = await buildSessionProfileBlock(client, config);
+diff --git a/extensions/vendor/openviking-pi/sync.ts b/extensions/vendor/openviking-pi/sync.ts
+--- a/extensions/vendor/openviking-pi/sync.ts
++++ b/extensions/vendor/openviking-pi/sync.ts
+@@ -2,7 +2,8 @@
+ import { appendFileSync, mkdirSync } from "node:fs";
+ import { dirname } from "node:path";
+ import type { OVConfig } from "./config.js";
+-import { deriveHarnessSessionId } from "./shared/session-model.mjs";
++// [QCR PATCH 3] `deriveHarnessSessionId` is no longer imported — minting an OV
++// session id from pi's is exactly what this fork must not do.
+ import { enqueue, listPending, replayPending } from "./shared/pending-queue.mjs";
+ import { extractBranchCapturePayloads } from "./lib/capture-adapter.mjs";
+ import { countUndeliveredForSession, estimatePayloadTokens } from "./lib/takeover-core.mjs";
+@@ -50,10 +51,39 @@
+     this.syncedEntryCount = next;
+   }
+ 
+-  async ensureSession(piSessionId: string): Promise<boolean> {
++  /**
++   * [QCR PATCH 3] ATTACH to the session the daemon created — never create one,
++   * and never derive an id from pi's own session id (upstream did:
++   * `deriveHarnessSessionId("pi-", piSessionId)`, which mints a fresh OV
++   * session on first message and gets extraction-enabled defaults).
++   *
++   * The id rides the environment, which is how everything else per-session
++   * reaches a pi in this daemon (`env K=V … pi …` — tmux panes inherit the
++   * tmux SERVER env, not the client's). `OPENVIKING_SESSION_ID` is the
++   * upstream-shaped name; `QCR_OV_SESSION_ID` is the one that survives
++   * `src/sessions.ts`'s QCR_-only argv prefix, so both are read.
++   *
++   * Returns false — a normal, non-fatal state — when there is no id, or when
++   * the named session does not exist server-side. False means "no ambient
++   * sync"; the memory tools are unaffected.
++   */
++  async ensureSession(env: Record<string, string | undefined> = process.env): Promise<boolean> {
+     if (this.ovSessionId) return true;
+ 
+-    const id = deriveHarnessSessionId("pi-", piSessionId);
++    const id = (env.OPENVIKING_SESSION_ID ?? env.QCR_OV_SESSION_ID ?? "").trim();
++    if (!id) {
++      debugLog("ensureSession: no daemon-provided session id; ambient sync disabled");
++      return false;
++    }
++
++    // Existence check, not a creation: getSession no longer has an
++    // auto_create route (client.ts, PATCH 3).
++    const meta = await this.client.getSession(id);
++    if (!meta) {
++      debugLog(`ensureSession: session=${id} does not exist; ambient sync disabled`);
++      return false;
++    }
++
+     this.ovSessionId = id;
+     return true;
+   }

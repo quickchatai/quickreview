@@ -1,0 +1,44 @@
+OpenViking pi coding-agent extension
+Copyright the OpenViking authors (github.com/volcengine/OpenViking).
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not
+use these files except in compliance with the License. A copy of the License
+is in the LICENSE file beside this notice, and at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+License for the specific language governing permissions and limitations under
+the License.
+
+(The OpenViking project as a whole is AGPLv3; `examples/` — which is where
+this extension lives — is Apache-2.0. See the upstream README, "License".)
+
+------------------------------------------------------------------------------
+MODIFICATIONS (Apache-2.0 section 4(b))
+
+This is a MODIFIED copy, vendored into quickchat's quickreviewd review sandbox
+.
+
+  Upstream:      github.com/volcengine/OpenViking
+  Path:          examples/pi-coding-agent-extension
+  Tag:           v0.4.15
+  Base commit:   d436baa23c83938b22bb0aab08b0ce48568b5ff4
+
+Changed by the quickreviewd maintainers, 2026-08-20:
+
+  1. The `session_before_compact` handler was removed entirely.
+  2. Ambient recall injection, turn sync and auto-commit no longer run in
+     pi-subagents leaf processes.
+  3. The extension no longer creates OpenViking sessions.
+  4. A `viking_write` tool was added (durable `content/batch-write`); the
+     `viking_remember`, `viking_forget` and `viking_add_resource` tools were
+     removed.
+
+Plus vendoring scaffolding: build-conformance fixes for this repo's stricter
+tsconfig, ambient type declarations for uninstalled packages, three unused
+files dropped, and a guard that refuses to authenticate with the OpenViking
+server's root API key. The full delta is in `patches/` and every changed hunk
+carries a `[QCR PATCH n]` or `[QCR build conformance]` marker. See README.md.

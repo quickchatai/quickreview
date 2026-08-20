@@ -1,0 +1,202 @@
+diff --git a/extensions/vendor/openviking-pi/index.ts b/extensions/vendor/openviking-pi/index.ts
+--- a/extensions/vendor/openviking-pi/index.ts
++++ b/extensions/vendor/openviking-pi/index.ts
+@@ -31,8 +31,14 @@
+ import { guardVikingUriToolCall } from "./lib/uri-guard-adapter.mjs";
+ import { registerTools } from "./tools.js";
+ import { createTakeoverManager } from "./takeover.js";
++// [QCR PATCH 2]
++import { isLeafProcess } from "./qcr-leaf.js";
+ 
+ export default async function (pi: ExtensionAPI) {
++  // [QCR PATCH 2] Decided once, from argv, before anything else: a
++  // pi-subagents leaf gets the tools and nothing ambient. See qcr-leaf.ts.
++  const leaf = isLeafProcess();
++
+   // --- Load config ---
+   const config = loadConfigFromModuleUrl(import.meta.url);
+   if (!config.enabled) return;
+@@ -94,6 +100,18 @@
+         return;
+       }
+ 
++      // [QCR PATCH 2] A leaf stops here: tools register (read-only — see
++      // tools.ts), nothing ambient runs. No OV session, no profile block, no
++      // recall injection, no turn sync, no commit.
++      if (leaf) {
++        if (!toolsRegistered) {
++          registerTools(pi, client, sync, { leaf: true });
++          toolsRegistered = true;
++        }
++        started = true;
++        return;
++      }
++
+       // Ensure OV session
+       const piSessionId = ctx.sessionManager.getSessionId();
+       const ok = await sync.ensureSession(piSessionId);
+@@ -121,7 +139,7 @@
+ 
+       // Register tools (also needed for pi -c continuations).
+       if (!toolsRegistered) {
+-        registerTools(pi, client, sync);
++        registerTools(pi, client, sync, { leaf: false });
+         toolsRegistered = true;
+       }
+       updateStatus(ctx, connected, 0, sync.sessionId, config, takeover.state);
+@@ -148,6 +166,8 @@
+     await start(ctx);
+ 
+     if (!connected || bypassed) return;
++    // [QCR PATCH 2] No recall queue and no injected profile inside a leaf.
++    if (leaf) return;
+ 
+     // Queue recall for the context hook. Pi renders the user message before
+     // that hook, so recall latency does not delay the message appearing.
+@@ -173,6 +193,8 @@
+   // --- context ---
+   pi.on("context", async (event, _ctx) => {
+     if (!connected || bypassed) return;
++    // [QCR PATCH 2] A leaf's context is exactly the pass prompt it was given.
++    if (leaf) return;
+ 
+     // Keep recall synchronous with the provider request so the current prompt
+     // still receives current-query memory, without blocking user-message UI.
+@@ -195,6 +217,9 @@
+   // --- turn_end ---
+   pi.on("turn_end", async (event, ctx) => {
+     if (!connected || bypassed || !config.syncTurns) return;
++    // [QCR PATCH 2] No turn sync and therefore no threshold auto-commit from
++    // a leaf — a commit there would archive the SHEPHERD's session.
++    if (leaf) return;
+ 
+     const branch = ctx.sessionManager.getBranch();
+     const result = await sync.syncBranch(branch);
+@@ -225,6 +250,8 @@
+   // --- session_shutdown ---
+   pi.on("session_shutdown", async (_event, ctx) => {
+     if (!connected || bypassed) return;
++    // [QCR PATCH 2] A leaf exits after every pass; it commits nothing.
++    if (leaf) return;
+ 
+     await sync.shutdown();
+     if (config.takeoverEnabled) {
+diff --git a/extensions/vendor/openviking-pi/qcr-leaf.ts b/extensions/vendor/openviking-pi/qcr-leaf.ts
+new file mode 100644
+--- /dev/null
++++ b/extensions/vendor/openviking-pi/qcr-leaf.ts
+@@ -0,0 +1,70 @@
++// QCR FORK — file added by PATCH 2 (leaf isolation). Not upstream.
++//
++// A "leaf" is a pi process that is NOT the shepherd session: a pi-subagents
++// child running one lens pass. Leaves must never do ambient OpenViking work —
++// no recall injection into their context, no turn sync, no commit — because:
++//
++//   * the single-shepherd invariant (root CLAUDE.md rule 9) says the PR's ONE
++//     main pi owns the review; a leaf is a stateless evaluator of a diff, and
++//     memory injected under it is unaccounted context;
++//   * a commit from a leaf would archive the SHEPHERD's session (the OV
++//     session id is inherited through the environment), reordering the one
++//     conversation the daemon owns.
++//
++// pi-subagents already builds child argv with `--no-extensions`
++// (assets/findings.md §4.3), so a leaf structurally never loads this
++// file. That is one layer. This is the second: the child inherits the parent
++// ENVIRONMENT, so anything keyed off env alone would read as "main" inside a
++// leaf. Detection therefore keys off ARGV, which pi-subagents builds from
++// scratch:
++//
++//   [...piBin.baseArgs, "--mode", "json", "-p", "--no-session", "--no-skills",
++//    "--no-extensions", ...allowlisted custom-tool extensions]
++//
++// None of those flags appear in the shepherd argv that `src/sessions.ts`
++// buildPiCommand emits (--approve/--model/--session-dir/--system-prompt/
++// --theme/--extension/--name), so the two are cleanly separable.
++//
++// VERIFY-ON-PIN: the flag set above is pi-subagents @1f54189 as read at the
++// pinned pi 0.84.1. A pi or pi-subagents bump re-verifies it.
++
++/** Flags that only ever appear on a pi-subagents child command line. */
++export const LEAF_ARGV_FLAGS: readonly string[] = [
++  "--no-extensions",
++  "--no-session",
++  "--no-skills",
++  "--print",
++  "-p",
++];
++
++/** Env var that FORCES leaf mode. There is deliberately no env var that forces
++ * MAIN mode: env is inherited by children, so a "this is the shepherd" marker
++ * would be inherited by every leaf and defeat the whole check. */
++export const FORCE_LEAF_ENV = "QCR_OV_LEAF";
++
++function truthy(value: string | undefined): boolean {
++  const v = (value ?? "").trim().toLowerCase();
++  return v === "1" || v === "true" || v === "yes" || v === "on";
++}
++
++/**
++ * True when this process is a pi-subagents leaf (or has been forced to behave
++ * as one). Fail direction: an UNKNOWN argv reads as "main", which is the
++ * shepherd's behaviour — the leaf never loads this extension anyway, so a
++ * false negative costs nothing while a false positive would silently disable
++ * memory for the review session.
++ */
++export function isLeafProcess(
++  argv: readonly string[] = process.argv,
++  env: Record<string, string | undefined> = process.env,
++): boolean {
++  if (truthy(env[FORCE_LEAF_ENV])) return true;
++  for (let i = 0; i < argv.length; i++) {
++    const arg = argv[i];
++    if (arg === undefined) continue;
++    if (LEAF_ARGV_FLAGS.includes(arg)) return true;
++    if (arg === "--mode=json") return true;
++    if (arg === "--mode" && argv[i + 1] === "json") return true;
++  }
++  return false;
++}
+diff --git a/extensions/vendor/openviking-pi/tools.ts b/extensions/vendor/openviking-pi/tools.ts
+--- a/extensions/vendor/openviking-pi/tools.ts
++++ b/extensions/vendor/openviking-pi/tools.ts
+@@ -3,7 +3,20 @@
+ import type { OVClient } from "./client.js";
+ import type { SyncManager } from "./sync.js";
+ 
+-export function registerTools(pi: any, client: OVClient, sync?: SyncManager): void {
++export interface RegisterToolsOptions {
++  /** [QCR PATCH 2] A pi-subagents leaf gets the READ tools only. A lens pass
++   * evaluates a diff; authoring memory is the shepherd session's job, and a
++   * leaf has no session identity to author under. */
++  leaf?: boolean;
++}
++
++export function registerTools(
++  pi: any,
++  client: OVClient,
++  sync?: SyncManager,
++  opts: RegisterToolsOptions = {},
++): void {
++  const leaf = opts.leaf === true;
+ 
+   // --- viking_search ---
+   pi.registerTool({
+@@ -111,6 +124,9 @@
+     },
+   });
+ 
++  // [QCR PATCH 2] Every WRITE tool is gated behind `leaf`; the read tools
++  // above stay available everywhere.
++  if (!leaf) {
+   // --- viking_remember ---
+   pi.registerTool({
+     name: "viking_remember",
+@@ -214,6 +230,8 @@
+     },
+   });
+ 
++  }
++
+   // --- viking_archive_expand ---
+   pi.registerTool({
+     name: "viking_archive_expand",

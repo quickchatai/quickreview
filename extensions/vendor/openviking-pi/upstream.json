@@ -1,0 +1,39 @@
+{
+  "_": "Machine-readable provenance for the vendored fork. `commit` is mirror 1 of 2: config.toml [openviking] extension_commit is the other, and tests/openviking-fork.test.ts fails on drift. Update BOTH on a rebase, together with NOTICE and README.md.",
+  "repo": "https://github.com/volcengine/OpenViking",
+  "path": "examples/pi-coding-agent-extension",
+  "tag": "v0.4.15",
+  "commit": "d436baa23c83938b22bb0aab08b0ce48568b5ff4",
+  "license": "Apache-2.0",
+  "license_scope": "the OpenViking server is AGPLv3; examples/ (this code) is Apache-2.0",
+  "vendored_files": [
+    "index.ts",
+    "config.ts",
+    "config.json",
+    "client.ts",
+    "recall.ts",
+    "sync.ts",
+    "tools.ts",
+    "takeover.ts",
+    "lib/",
+    "shared/",
+    "LICENSE (from examples/LICENSE)"
+  ],
+  "not_vendored": [
+    "scripts/",
+    "tests/",
+    "README.md",
+    "DESIGN.md",
+    "TAKEOVER.md",
+    "shared/setup-wizard.mjs",
+    "shared/plugin-config.mjs",
+    "shared/debug-log.mjs"
+  ],
+  "patches": [
+    "0000-vendoring-and-build-conformance.patch",
+    "0001-remove-session-before-compact-handler.patch",
+    "0002-no-ambient-work-in-subagent-leaves.patch",
+    "0003-never-auto-create-openviking-sessions.patch",
+    "0004-viking-write-durable-batch-write.patch"
+  ]
+}

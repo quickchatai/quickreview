@@ -1,0 +1,101 @@
+diff --git a/extensions/vendor/openviking-pi/config.json b/extensions/vendor/openviking-pi/config.json
+--- a/extensions/vendor/openviking-pi/config.json
++++ b/extensions/vendor/openviking-pi/config.json
+@@ -12,7 +12,7 @@
+   "commitKeepRecentCount": 10,
+   "_qcr_fork": "Vendored + patched fork of the OpenViking pi extension; see README.md. takeover.enabled below is belt-and-braces only — config.ts forces it off in code (PATCH 1).",
+   "takeover": {
+-    "enabled": true,
++    "enabled": false,
+     "tokenThreshold": 30000,
+     "keepRecentTurns": 3,
+     "overviewBudget": 3000,
+diff --git a/extensions/vendor/openviking-pi/config.ts b/extensions/vendor/openviking-pi/config.ts
+--- a/extensions/vendor/openviking-pi/config.ts
++++ b/extensions/vendor/openviking-pi/config.ts
+@@ -191,7 +191,15 @@
+   config.resumeContextBudget = clampInt(config.resumeContextBudget, 1024, 128000, DEFAULT_CONFIG.resumeContextBudget);
+   config.commitTokenThreshold = clampInt(config.commitTokenThreshold, 1000, 1000000, DEFAULT_CONFIG.commitTokenThreshold);
+   config.commitKeepRecentCount = clampInt(config.commitKeepRecentCount, 0, 1000, DEFAULT_CONFIG.commitKeepRecentCount);
+-  config.takeoverEnabled = config.takeoverEnabled !== false;
++  // [QCR PATCH 1] was `config.takeoverEnabled !== false` — i.e. ON unless the
++  // config file explicitly said otherwise. Takeover REPLACES pi's compaction
++  // (it rewrites the context window from a server-side archive overview), and
++  // this fork removed the compaction handler outright so ledger-pin owns that
++  // event alone. A half-wired takeover — advancing its boundary on turn_end
++  // and transforming context — with no compaction handler behind it is worse
++  // than either end state, so it is forced off in CODE, not in config.json:
++  // a config knob is a thing an operator can flip, and this one is structural.
++  config.takeoverEnabled = false;
+   config.takeoverTokenThreshold = clampInt(config.takeoverTokenThreshold, 1, 1000000, DEFAULT_CONFIG.takeoverTokenThreshold);
+   config.takeoverKeepRecentTurns = clampInt(config.takeoverKeepRecentTurns, 0, 100, DEFAULT_CONFIG.takeoverKeepRecentTurns);
+   config.takeoverOverviewBudget = clampInt(config.takeoverOverviewBudget, 100, 50000, DEFAULT_CONFIG.takeoverOverviewBudget);
+diff --git a/extensions/vendor/openviking-pi/index.ts b/extensions/vendor/openviking-pi/index.ts
+--- a/extensions/vendor/openviking-pi/index.ts
++++ b/extensions/vendor/openviking-pi/index.ts
+@@ -61,7 +61,8 @@
+   let profileBlock = "";
+   let archiveOverview = "";
+   let toolsRegistered = false;
+-  let compacted = false;
++  // [QCR PATCH 1] `compacted` is gone with the session_before_compact handler
++  // that was the only thing setting it.
+   let started = false;
+   let startPromise: Promise<void> | null = null;
+ 
+@@ -155,7 +156,8 @@
+     // Compose system prompt additions
+     const parts: string[] = [];
+     if (profileBlock) parts.push(profileBlock);
+-    if (!config.takeoverEnabled && archiveOverview && (compacted || archiveOverview.trim())) {
++    // [QCR PATCH 1] was `(compacted || archiveOverview.trim())`.
++    if (!config.takeoverEnabled && archiveOverview && archiveOverview.trim()) {
+       parts.push(archiveOverview);
+     }
+     parts.push("OpenViking tools: viking_search, viking_read, viking_browse, viking_remember, viking_forget, viking_add_resource, viking_archive_expand.");
+@@ -202,28 +204,23 @@
+   });
+ 
+   // --- session_before_compact ---
+-  pi.on("session_before_compact", async (event, _ctx) => {
+-    if (!connected || bypassed) return;
+-
+-    if (config.takeoverEnabled) {
+-      const prep = (event as any)?.preparation ?? {};
+-      return await takeover.handleBeforeCompact({
+-        firstKeptEntryId: prep.firstKeptEntryId,
+-        tokensBefore: prep.tokensBefore ?? 0,
+-      });
+-    }
+-
+-    const archiveId = await sync.commit();
+-    compacted = true;
+-
+-    // Cache archive overview for rehydration after compaction
+-    if (archiveId && sync.sessionId) {
+-      archiveOverview = await fetchArchiveOverview(
+-        client, sync.sessionId, config,
+-      );
+-    }
+-    // Return nothing → pi proceeds with default compaction
+-  });
++  //
++  // [QCR PATCH 1] DELETED. `extensions/ledger-pin.ts` is the sole owner of
++  // this event: it re-pins the review ledger block that pi's token-driven
++  // compaction would otherwise summarise away, and pi does not document how
++  // two registered handlers merge. Upstream registered its handler
++  // UNCONDITIONALLY — `takeover.enabled: false` only changed what the handler
++  // did (a synchronous sync.commit() instead of a takeover), it did not
++  // unhook it (verified on a running v0.4.15 + pi 0.84.1:
++  // assets/findings.md §4.2). So the knob is NOT a substitute for
++  // this deletion; do not "restore and disable".
++  //
++  // Nothing replaces it. Losing an archive-overview refresh at compaction
++  // costs a stale rehydration block; losing the ledger costs the review.
++  //
++  // Consequences kept in sync elsewhere in this file: `compacted` is gone,
++  // and config.ts forces takeoverEnabled=false so takeover — which exists
++  // only to REPLACE compaction — can never rewrite the context either.
+ 
+   // --- session_shutdown ---
+   pi.on("session_shutdown", async (_event, ctx) => {

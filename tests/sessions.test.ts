@@ -148,6 +148,24 @@ describe("buildPiCommand", () => {
     expect(argv.join(" ")).not.toMatch(/update/i);
   });
 
+  it("loads the vendored OpenViking fork, after ledger-pin", () => {
+    const paths = manager().extensionPaths();
+    const ov = join(root, "extensions", "vendor", "openviking-pi", "index.ts");
+    expect(paths).toContain(ov);
+    // Load order is handler-registration order in pi. ledger-pin owns
+    // session_before_compact and must be registered first; the fork's own
+    // compaction handler is deleted (PATCH 1), but the ordering is the
+    // belt-and-braces half of that invariant.
+    expect(paths.indexOf(join(root, "extensions", "ledger-pin.ts"))).toBeLessThan(paths.indexOf(ov));
+    // It rides argv, not a settings.json discovery dir: pi-subagents children
+    // are built with --no-extensions, so leaves get no memory surface.
+    const argv = buildPiCommand({
+      piBin: "pi", model: "m", sessionDir: "d", systemPromptPath: "p",
+      extensionPaths: paths, sessionName: "pr-1",
+    });
+    expect(argv).toContain(ov);
+  });
+
   it("always pre-trusts the project (--approve) — the reviewer never blocks on pi's trust modal", () => {
     const argv = buildPiCommand({
       piBin: "pi", model: "m", sessionDir: "d", systemPromptPath: "p", extensionPaths: [], sessionName: "s",

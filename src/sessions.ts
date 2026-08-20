@@ -175,6 +175,20 @@ export class PiSessionManager implements SessionHooks {
       // purpose: pi-subagents' child processes load only the global settings
       // extensions, so passes stay unregistered inside a leaf.
       join(this.root, "extensions", "register-lens-agents.ts"),
+      // The vendored + patched OpenViking extension: the memory
+      // tools a session reaches. LAST on purpose — it is the only extension
+      // here we did not write, and pi registers handlers in load order, so
+      // ours (ledger-pin above all) are in place before it arrives.
+      //
+      // It rides argv for the same reason register-lens-agents does: a
+      // pi-subagents child is built with --no-extensions, so a lens pass gets
+      // no memory surface at all. Its own PATCH 2 is the second layer.
+      //
+      // Its four patches are load-bearing — read
+      // extensions/vendor/openviking-pi/README.md before touching this line.
+      // In particular PATCH 1 removed the extension's session_before_compact
+      // handler so ledger-pin stays the sole owner of compaction.
+      join(this.root, "extensions", "vendor", "openviking-pi", "index.ts"),
     ];
   }
 

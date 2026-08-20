@@ -1,0 +1,726 @@
+diff --git a/extensions/vendor/openviking-pi/client.ts b/extensions/vendor/openviking-pi/client.ts
+--- a/extensions/vendor/openviking-pi/client.ts
++++ b/extensions/vendor/openviking-pi/client.ts
+@@ -128,7 +128,9 @@
+         signal: controller.signal,
+       });
+       clearTimeout(timer);
+-      const body = await resp.json().catch(() => ({}));
++      // [QCR build conformance] `any`: this repo compiles with `strict` +
++      // `noUncheckedIndexedAccess`, under which `resp.json()` is `unknown`.
++      const body: any = await resp.json().catch(() => ({}));
+       const traceId = body?.result?.trace_id || body?.error?.trace_id || body?.trace_id || undefined;
+       if (!resp.ok || body.status === "error") {
+         return {
+@@ -395,7 +397,9 @@
+ 
+     if (spaces.length > 0) {
+       // Prefer the fallback space if it exists, then "default", then first available
+-      let chosen = spaces[0];
++      // [QCR build conformance] `?? fallbackSpace` for noUncheckedIndexedAccess
++      // (length > 0 is already checked, so the fallback is unreachable).
++      let chosen: string = spaces[0] ?? fallbackSpace;
+       if (spaces.includes(fallbackSpace)) chosen = fallbackSpace;
+       else if (spaces.includes("default")) chosen = "default";
+       this.resolvedSpaces.set(scope, chosen);
+@@ -417,7 +421,8 @@
+     if (parts.length === 0) return trimmed;
+ 
+     const reserved = scope === "user" ? OVClient.RESERVED_USER : OVClient.RESERVED_AGENT;
+-    if (!reserved.has(parts[0])) return trimmed; // already has space
++    // [QCR build conformance] `?? ""` for noUncheckedIndexedAccess.
++    if (!reserved.has(parts[0] ?? "")) return trimmed; // already has space
+ 
+     const space = await this.resolveScopeSpace(scope);
+     return `viking://${scope}/${space}/${parts.join("/")}`;
+diff --git a/extensions/vendor/openviking-pi/config.json b/extensions/vendor/openviking-pi/config.json
+--- a/extensions/vendor/openviking-pi/config.json
++++ b/extensions/vendor/openviking-pi/config.json
+@@ -10,6 +10,7 @@
+   "resumeContextBudget": 32000,
+   "commitTokenThreshold": 20000,
+   "commitKeepRecentCount": 10,
++  "_qcr_fork": "Vendored + patched fork of the OpenViking pi extension; see README.md. takeover.enabled below is belt-and-braces only — config.ts forces it off in code (PATCH 1).",
+   "takeover": {
+     "enabled": true,
+     "tokenThreshold": 30000,
+diff --git a/extensions/vendor/openviking-pi/config.ts b/extensions/vendor/openviking-pi/config.ts
+--- a/extensions/vendor/openviking-pi/config.ts
++++ b/extensions/vendor/openviking-pi/config.ts
+@@ -1,9 +1,46 @@
+ import { readFileSync, existsSync } from "node:fs";
+-import { join, dirname } from "node:path";
++import { homedir } from "node:os";
++import { join, dirname, resolve as resolvePath } from "node:path";
+ import { fileURLToPath } from "node:url";
+ import { buildUserAgent, resolveOpenVikingCredentials } from "./shared/credentials.mjs";
+ import { resolveEffectivePeerId } from "./shared/workspace-peer.mjs";
+ 
++/**
++ * QCR FORK — hardening guard (NOT one of the four numbered patches).
++ *
++ * `resolveOpenVikingCredentials()` falls back to `ov.conf`'s
++ * `server.root_api_key` when nothing else supplies a key. In our container
++ * `~/.openviking` is a symlink to the state volume that holds the SERVER's own
++ * ov.conf, so that fallback would silently authenticate every review session
++ * as ROOT. The phase's ratified rule is absolute — "never use an ADMIN or ROOT
++ * key anywhere": ROOT is a full-impersonation credential and an ADMIN key can
++ * list every user key in plaintext (assets/findings.md §1).
++ *
++ * So: if the resolved key IS the server's root key, drop it. An unauthenticated
++ * client degrades to 401 and the extension reports "not reachable" — loud, and
++ * memory-less by design. A wrong-identity client would have been silent.
++ */
++type ResolvedCredentials = ReturnType<typeof resolveOpenVikingCredentials>;
++
++export function withoutRootKey(creds: ResolvedCredentials): ResolvedCredentials {
++  const rootKey = readServerRootKey();
++  if (!rootKey || creds.apiKey !== rootKey) return creds;
++  return { ...creds, apiKey: "", hasApiKey: false };
++}
++
++function readServerRootKey(): string {
++  const raw = (process.env.OPENVIKING_CONFIG_FILE ?? "").trim();
++  const path = raw ? resolvePath(raw.startsWith("~/") ? join(homedir(), raw.slice(2)) : raw)
++                   : join(homedir(), ".openviking", "ov.conf");
++  try {
++    const parsed = JSON.parse(readFileSync(path, "utf8")) as { server?: { root_api_key?: unknown } };
++    const key = parsed?.server?.root_api_key;
++    return typeof key === "string" ? key.trim() : "";
++  } catch {
++    return "";
++  }
++}
++
+ /** Hand-maintained: this extension ships no manifest to read a version from. */
+ export const EXTENSION_VERSION = "0.1.0";
+ 
+@@ -101,7 +138,7 @@
+   }
+ 
+   const takeover = file.takeover && typeof file.takeover === "object" ? file.takeover : {};
+-  const creds = resolveOpenVikingCredentials();
++  const creds = withoutRootKey(resolveOpenVikingCredentials());
+   const config: OVConfig = {
+     ...DEFAULT_CONFIG,
+     ...file,
+diff --git a/extensions/vendor/openviking-pi/index.ts b/extensions/vendor/openviking-pi/index.ts
+--- a/extensions/vendor/openviking-pi/index.ts
++++ b/extensions/vendor/openviking-pi/index.ts
+@@ -8,6 +8,17 @@
+  *
+  * Design informed by: OpenClaw (synchronous recall), Claude Code plugin
+  * (most mature, production-hardened), Hermes (anti-pattern: stale prefetch).
++ *
++ * ── QCR FORK ────────────────────────────────────────────────────────────────
++ * Vendored from volcengine/OpenViking @ v0.4.15, examples/pi-coding-agent-
++ * extension. Four numbered patches; every hunk carries a `[QCR PATCH n]`
++ * marker so a rebase is a search, not an audit. See README.md here.
++ *   PATCH 1 — no session_before_compact handler (extensions/ledger-pin.ts is
++ *             the sole owner of compaction) and takeover forced off.
++ *   PATCH 2 — no ambient recall/sync/commit in a pi-subagents leaf.
++ *   PATCH 3 — never auto-create an OV session; the daemon owns lifecycle.
++ *   PATCH 4 — viking_write (durable content/batch-write), the ONLY write tool.
++ * ────────────────────────────────────────────────────────────────────────────
+  */
+ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+ import { appendFileSync, mkdirSync } from "node:fs";
+diff --git a/extensions/vendor/openviking-pi/NOTICE b/extensions/vendor/openviking-pi/NOTICE
+new file mode 100644
+--- /dev/null
++++ b/extensions/vendor/openviking-pi/NOTICE
+@@ -0,0 +1,44 @@
++OpenViking pi coding-agent extension
++Copyright the OpenViking authors (github.com/volcengine/OpenViking).
++
++Licensed under the Apache License, Version 2.0 (the "License"); you may not
++use these files except in compliance with the License. A copy of the License
++is in the LICENSE file beside this notice, and at
++
++    http://www.apache.org/licenses/LICENSE-2.0
++
++Unless required by applicable law or agreed to in writing, software
++distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
++WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
++License for the specific language governing permissions and limitations under
++the License.
++
++(The OpenViking project as a whole is AGPLv3; `examples/` — which is where
++this extension lives — is Apache-2.0. See the upstream README, "License".)
++
++------------------------------------------------------------------------------
++MODIFICATIONS (Apache-2.0 section 4(b))
++
++This is a MODIFIED copy, vendored into quickchat's quickreviewd review sandbox
++.
++
++  Upstream:      github.com/volcengine/OpenViking
++  Path:          examples/pi-coding-agent-extension
++  Tag:           v0.4.15
++  Base commit:   d436baa23c83938b22bb0aab08b0ce48568b5ff4
++
++Changed by the quickreviewd maintainers, 2026-08-20:
++
++  1. The `session_before_compact` handler was removed entirely.
++  2. Ambient recall injection, turn sync and auto-commit no longer run in
++     pi-subagents leaf processes.
++  3. The extension no longer creates OpenViking sessions.
++  4. A `viking_write` tool was added (durable `content/batch-write`); the
++     `viking_remember`, `viking_forget` and `viking_add_resource` tools were
++     removed.
++
++Plus vendoring scaffolding: build-conformance fixes for this repo's stricter
++tsconfig, ambient type declarations for uninstalled packages, three unused
++files dropped, and a guard that refuses to authenticate with the OpenViking
++server's root API key. The full delta is in `patches/` and every changed hunk
++carries a `[QCR PATCH n]` or `[QCR build conformance]` marker. See README.md.
+diff --git a/extensions/vendor/openviking-pi/README.md b/extensions/vendor/openviking-pi/README.md
+new file mode 100644
+--- /dev/null
++++ b/extensions/vendor/openviking-pi/README.md
+@@ -0,0 +1,220 @@
++# openviking-pi — vendored, patched fork
++
++The OpenViking pi extension our sessions load. Vendored, not depended on:
++upstream ships it as an `examples/` directory, not a package, and we need four
++behaviour changes that upstream has no reason to make.
++
++| | |
++|---|---|
++| Upstream | `github.com/volcengine/OpenViking` |
++| Path | `examples/pi-coding-agent-extension` |
++| Tag | `v0.4.15` |
++| **Base commit** | **`d436baa23c83938b22bb0aab08b0ce48568b5ff4`** |
++| Licence | Apache-2.0 (`LICENSE`, `NOTICE`) — the OpenViking *server* is AGPLv3, `examples/` is not |
++| Entry point | `index.ts` (pi loads TypeScript sources directly) |
++| Loaded by | `src/sessions.ts` → `extensionPaths()` → `pi --extension <path>` |
++
++The base commit is pinned in `config.toml [openviking] extension_commit`, next
++to the server `version` it must move with, and `tests/openviking-fork.test.ts`
++fails on drift between the two.
++
++## Why a fork rather than configuration
++
++Every one of the four patches was tried as configuration first and does not
++exist there. The evidence is a spike against a **running v0.4.15 server plus
++the pinned pi 0.84.1** — `assets/findings.md` in the issue tracker,
++with transcripts. Read it before changing anything here; several of its
++findings contradict the OpenViking docs, which lead the tag.
++
++## The patch series
++
++Four numbered behaviour patches, applied in order over the vendored upstream
++files, plus one unnumbered scaffolding patch. They live in `patches/` as
++`git apply`-able diffs and every hunk they add carries a greppable marker:
++
++```sh
++grep -rn "QCR PATCH" extensions/vendor/openviking-pi
++```
++
++### 0000 — vendoring and build conformance *(not a behaviour patch)*
++
++* Fork banner in `index.ts`; `NOTICE` (Apache-2.0 §4(b) requires stating that
++  the files were modified); this README.
++* `vendor-pi-types.d.ts` — ambient declarations for
++  `@earendil-works/pi-coding-agent` (`ExtensionAPI`), `typebox` and
++  `@earendil-works/pi-ai`. None is installed here; pi lives only in the
++  container. This repo's `tsconfig.json` compiles `extensions/**/*.ts`, so the
++  fork is typechecked even though it is never emitted.
++* Three `[QCR build conformance]` fixes in `client.ts` for `strict` +
++  `noUncheckedIndexedAccess`.
++* `shared/setup-wizard.mjs`, `shared/plugin-config.mjs`,
++  `shared/debug-log.mjs` deleted — unreachable from `index.ts`. The wizard in
++  particular is an interactive installer, which has no place in a daemon.
++* **Root-key guard** in `config.ts` (`withoutRootKey`). Upstream's credential
++  resolver falls back to `ov.conf`'s `server.root_api_key`, and in our
++  container `~/.openviking` is a symlink to the state volume holding the
++  *server's own* ov.conf — so the fallback would silently authenticate every
++  review session as ROOT. The phase rule is absolute: never an ADMIN or ROOT
++  key anywhere (findings §1). If the resolved key is the server's root key it
++  is dropped; the client then 401s and the extension reports "not reachable",
++  which is loud. Keep this on any rebase.
++* Only the files `index.ts` reaches are vendored — `scripts/`, upstream
++  `tests/`, `DESIGN.md`, `TAKEOVER.md` and the upstream `README.md` are not.
++
++### 0001 — `session_before_compact` is deleted
++
++`extensions/ledger-pin.ts` is the sole owner of compaction. It re-pins the
++review ledger block that pi's token-driven compaction would otherwise
++summarise away; pi does not document how two registered handlers merge, and
++the failure mode is losing the ledger — the one thing ledger-pin exists to
++protect.
++
++**Do not "restore and disable" via `takeover.enabled: false`.** Verified on
++the running server (findings §4.2): upstream registers the handler
++**unconditionally**. The knob only changed what it did — with takeover off it
++still ran a synchronous `sync.commit()` on the compaction path — and takeover
++defaults **on** (`config.takeoverEnabled = config.takeoverEnabled !== false`).
++
++The same patch forces `takeoverEnabled = false` in `config.ts`, in code.
++Takeover exists to *replace* compaction; with the handler gone, a takeover
++that still advances its boundary on `turn_end` and rewrites `context` would be
++the worst of both. `config.json` also says `takeover.enabled: false`, which is
++belt-and-braces only — a config knob is something an operator can flip, and
++this one is structural.
++
++Touches: `index.ts` (handler + the `compacted` flag it set), `config.ts`,
++`config.json`.
++
++### 0002 — no ambient work in a subagent/leaf process
++
++A pi-subagents child running one lens pass gets the read tools and nothing
++else: no recall injection, no profile block, no turn sync, no commit.
++
++Two reasons. The single-shepherd invariant (root `CLAUDE.md` rule 9) makes the
++PR's one main pi the owner of the review; a pass is a stateless evaluator of a
++diff and memory injected under it is unaccounted context. And a commit from a
++leaf would archive the **shepherd's** session, because the OV session id
++reaches the child through the inherited environment.
++
++pi-subagents builds child argv with `--no-extensions` (findings §4.3), so a
++leaf structurally never loads this file — that is layer one. This patch is
++layer two, and it keys off **argv**, not env: the child inherits the parent's
++environment, so an env marker would read as "main" inside every leaf. See
++`qcr-leaf.ts` for the flag set and the fail direction (unknown argv ⇒ main).
++
++Touches: `qcr-leaf.ts` (new), `index.ts` (five guards + the `registerTools`
++call sites), `tools.ts` (the `leaf` option and the write-tool gate).
++
++### 0003 — the extension never creates an OpenViking session
++
++`client.createSession()` is deleted, `getSession()` lost its `auto_create`
++query parameter, and `sync.ensureSession()` no longer derives an id from pi's
++session id — it **attaches** to an id the daemon put in the environment
++(`OPENVIKING_SESSION_ID`, or `QCR_OV_SESSION_ID` which survives
++`src/sessions.ts`'s `QCR_`-only argv prefix) and verifies it exists.
++
++The daemon owns session lifecycle because creation carries a payload only it
++knows: the extraction-disabling `memory_policy`
++(`{self,peer,working_memory}.enabled = false`). Our deployment configures no
++`vlm`, so a session created without it leaves a **failed background task on
++every commit** (findings §2.3 / §2.5) while looking perfectly healthy.
++
++No session id is a normal, non-fatal state: ambient sync is off, the memory
++tools still work. Degrading memory-less is always allowed; blocking a review
++round on memory never is.
++
++Touches: `client.ts`, `sync.ts`, `index.ts` (the call site).
++
++### 0004 — `viking_write`, the only write tool
++
++Upstream's `viking_remember` is **not a write**: it appends
++`[Remember — <category>] …` as a session message and relies on commit-time
++extraction to promote it — i.e. on the `vlm` we deliberately do not configure.
++Verified: nothing durable is produced (findings §3.2). Since sessions
++authoring their own memories is the ratified design, they need a real write
++tool.
++
++`viking_write(uri, content, tags?, mode?, expect_hash?, wait?)`:
++
++* **`content/batch-write` only, never `content/write`.** For memory targets
++  `content/write` appends a server-side `MEMORY_FIELDS` footer that
++  `content/read` strips again, so `read → sha256 → replace_if_hash` 409s
++  forever and no API returns the stored hash. Files written through
++  batch-write carry no footer and round-trip (findings §3.3).
++* **Preconditions always.** `mode: "create"` sends `create_if_absent`;
++  `mode: "replace"` **requires** `expect_hash` and sends `replace_if_hash`.
++  There is no blind-overwrite path — a memory file is a shared document (the
++  EOD curator and the TUI write it too) and a lost update is silent. A 409 is
++  reported as a distinct outcome, with instructions to re-read rather than
++  retry.
++* **The response carries the hash of the bytes just written**, so a follow-up
++  replace needs no read.
++* **Tags** are rendered into the body as a visible `Tags: #a #b` line — plain
++  text is what search indexes and what `content/read` returns unmodified — and
++  *additionally* pushed to the retrieval tag list via `fs/attrs/set_tags`,
++  best-effort, after the durable write. A `set_tags` failure narrows
++  retrieval; it never loses the memory.
++* **`wait: false` by default.** `wait` blocks on the semantic/vector refresh,
++  measured at ~1.6 **core-seconds** per write on the 2-CPU container quota
++  (findings §6). The bytes are durable either way; only searchability lags.
++
++The patch also deletes `viking_forget` (curation belongs to the EOD sweep and
++the TUI; retire is a tag+directory convention, not an `rm`, and a fuzzy
++`>0.8`-match delete is a silent data-loss path) and `viking_add_resource` (the
++reviewer reads code and CI results, it does not ingest the web — scoping
++rule 2 — and this was an unreviewed egress path).
++
++Remaining tool set: `viking_search`, `viking_read`, `viking_browse`,
++`viking_write`, `viking_archive_expand`. In a leaf, the same minus
++`viking_write`.
++
++The pure half — URI/tag validation, body rendering, hashing, request assembly
++— lives in `qcr-write.ts` so it can be unit-tested; `tools.ts` cannot be
++imported from a test because it pulls `typebox` and `@earendil-works/pi-ai`.
++
++Touches: `qcr-write.ts` (new), `client.ts` (`batchWrite`, `setTags`),
++`tools.ts`, `index.ts` (the advertised tool list).
++
++## Rebasing onto a newer upstream
++
++```sh
++git clone --filter=blob:none https://github.com/volcengine/OpenViking /tmp/ov
++git -C /tmp/ov checkout <new-tag>
++# 1. Refresh the vendored files (only the ones listed by `git ls-files` here):
++#    copy examples/pi-coding-agent-extension/{index,config,client,recall,sync,
++#    tools,takeover}.ts, config.json, lib/, shared/ and examples/LICENSE.
++# 2. Re-apply, in order:
++for p in extensions/vendor/openviking-pi/patches/0*.patch; do
++  git apply --3way "$p" || echo "RESOLVE: $p"
++done
++# 3. Re-verify all four patches, then:
++timeout 900 npm test && npm run build
++```
++
++Then update `extension_commit` and `version` in `config.toml [openviking]`,
++the base commit in `NOTICE` and in the table above, and re-run the live
++verification below. A bump re-verifies **all four** patches — a patch that no
++longer applies is a patch whose reason may have changed, not a patch to drop.
++
++`tests/openviking-fork.test.ts` is the guard rail: it asserts the four patches
++are still present (markers, and the *absence* of what each one removed) and
++that the pinned commit here matches `config.toml`. It cannot tell you whether
++upstream grew a *new* compaction handler or a *new* write tool — read the
++upstream diff for those two things specifically.
++
++## What is verified, and what is not
++
++Verified on a running v0.4.15 + pi 0.84.1 (findings, with transcripts):
++the extension loads on our pinned pi and registers its tools; `takeover.enabled
++: false` does not unhook `session_before_compact`; `viking_remember` is not a
++durable write; `batch-write` preconditions 409 correctly and the
++`MEMORY_FIELDS` footgun is real; pi-subagents children carry `--no-extensions`;
++`OPENVIKING_PEER_ID` overrides the path-derived peer id.
++
++**Not yet verified end to end** (needs a session smoke on the VM, where a real
++model provider exists): that a `viking_write` entry is readable through the
++daemon's client against a live server, and that the ledger block survives a
++real compaction with this fork loaded. The second half of that is the open
++item — "does a no-op second handler drop ledger-pin's pinned block?" —
++which this patch series makes moot by construction rather than by measurement.
++Fold both into `npm run smoke:session`.
+diff --git a/extensions/vendor/openviking-pi/shared/debug-log.mjs b/extensions/vendor/openviking-pi/shared/debug-log.mjs
+deleted file mode 100644
+--- a/extensions/vendor/openviking-pi/shared/debug-log.mjs
++++ /dev/null
+@@ -1,58 +0,0 @@
+-// GENERATED FROM examples/memory-plugin-shared/lib. DO NOT EDIT.
+-/**
+- * Shared structured debug logger for OpenViking memory plugin hook scripts.
+- *
+- * Harness-specific wrappers load config and pass {debug, debugLogPath}. This
+- * module stays path-agnostic so it can be vendored into each plugin snapshot.
+- */
+-
+-import { appendFileSync, mkdirSync } from "node:fs";
+-import { dirname } from "node:path";
+-
+-function ensureDir(filePath) {
+-  try {
+-    mkdirSync(dirname(filePath), { recursive: true });
+-  } catch { /* best effort */ }
+-}
+-
+-function writeLine(filePath, obj) {
+-  try {
+-    appendFileSync(filePath, JSON.stringify(obj) + "\n");
+-  } catch { /* best effort */ }
+-}
+-
+-function localISO() {
+-  const d = new Date();
+-  const off = d.getTimezoneOffset();
+-  const sign = off <= 0 ? "+" : "-";
+-  const abs = Math.abs(off);
+-  const local = new Date(d.getTime() - off * 60000);
+-  return local.toISOString().replace(
+-    "Z",
+-    `${sign}${String(Math.floor(abs / 60)).padStart(2, "0")}:${String(abs % 60).padStart(2, "0")}`,
+-  );
+-}
+-
+-const noop = () => {};
+-
+-export function createLogger(hookName, overrideCfg) {
+-  const c = overrideCfg || {};
+-  if (!c.debug) return { log: noop, logError: noop };
+-
+-  const logPath = c.debugLogPath;
+-  if (!logPath) return { log: noop, logError: noop };
+-  ensureDir(logPath);
+-
+-  function log(stage, data) {
+-    writeLine(logPath, { ts: localISO(), hook: hookName, stage, data });
+-  }
+-
+-  function logError(stage, err) {
+-    const error = err instanceof Error
+-      ? { message: err.message, stack: err.stack }
+-      : String(err);
+-    writeLine(logPath, { ts: localISO(), hook: hookName, stage, error });
+-  }
+-
+-  return { log, logError };
+-}
+diff --git a/extensions/vendor/openviking-pi/shared/plugin-config.mjs b/extensions/vendor/openviking-pi/shared/plugin-config.mjs
+deleted file mode 100644
+--- a/extensions/vendor/openviking-pi/shared/plugin-config.mjs
++++ /dev/null
+@@ -1,90 +0,0 @@
+-// GENERATED FROM examples/memory-plugin-shared/lib. DO NOT EDIT.
+-/**
+- * Per-harness plugin settings from ovcli.conf.
+- *
+- * ovcli.conf carried connection fields only, so every harness had to keep its
+- * tuning knobs in ov.conf's harness section — a server-side file that a
+- * client-side plugin has no business editing. The `plugin` section fixes that:
+- * shared keys apply to every harness that reads them, and a per-harness object
+- * overrides them.
+- *
+- *   {
+- *     "url": "...", "api_key": "...",
+- *     "plugin": {
+- *       "recallQueryExpansion": "off",
+- *       "recallCompress": "auto"
+- *     }
+- *   }
+- *
+- * Resolution stays env → ovcli.conf plugin.<harness> → ovcli.conf plugin →
+- * ov.conf harness section (legacy) → defaults.
+- *
+- * Consumers: Claude Code and Codex only. The other harnesses ship this module
+- * through `sync.mjs` but still read their knobs from the environment, so a
+- * `plugin` entry named after them is inert. `HARNESS_KEYS` lists what a harness
+- * loader actually consumes today — add a key here as its loader starts calling
+- * `loadPluginSettings`, not before, so the section never promises a knob that
+- * silently does nothing.
+- */
+-
+-import { readFileSync } from "node:fs";
+-import { homedir } from "node:os";
+-import { join, resolve as resolvePath } from "node:path";
+-
+-const DEFAULT_OVCLI_CONF_PATH = join(homedir(), ".openviking", "ovcli.conf");
+-
+-export const HARNESS_KEYS = {
+-  claudeCode: "claude_code",
+-  codex: "codex",
+-};
+-
+-function tryLoadJson(path) {
+-  try {
+-    return JSON.parse(readFileSync(path, "utf-8"));
+-  } catch {
+-    return null;
+-  }
+-}
+-
+-/**
+- * Merge the shared plugin section with the harness-specific override.
+- * Returns a flat settings object; unknown keys pass through untouched so a
+- * harness can add its own knobs without touching this module.
+- */
+-export function loadPluginSettings(harness, env = process.env) {
+-  const path = resolvePath(
+-    (env.OPENVIKING_CLI_CONFIG_FILE || DEFAULT_OVCLI_CONF_PATH).replace(/^~/, homedir()),
+-  );
+-  const file = tryLoadJson(path);
+-  const plugin = file && typeof file.plugin === "object" && file.plugin ? file.plugin : {};
+-
+-  const shared = {};
+-  for (const [key, value] of Object.entries(plugin)) {
+-    if (value && typeof value === "object" && !Array.isArray(value)) continue;
+-    shared[key] = value;
+-  }
+-  const scoped = harness && plugin[harness] && typeof plugin[harness] === "object"
+-    ? plugin[harness]
+-    : {};
+-
+-  return { ...shared, ...scoped };
+-}
+-
+-const REWRITE_MODES = new Set(["off", "client", "server", "auto"]);
+-
+-/**
+- * Normalize the tri-state rewrite knob.
+- *
+- * off    — never compress
+- * client — always compress locally through the host CLI
+- * server — always ask the server for a digest
+- * auto   — prefer local (cost lands on the user's own subscription), fall back
+- *          to the server when no healthy host CLI is available
+- */
+-export function normalizeRewriteMode(value, fallback = "off") {
+-  const raw = String(value ?? "").trim().toLowerCase();
+-  if (REWRITE_MODES.has(raw)) return raw;
+-  if (raw === "1" || raw === "true" || raw === "yes") return "auto";
+-  if (raw === "0" || raw === "false" || raw === "no") return "off";
+-  return fallback;
+-}
+diff --git a/extensions/vendor/openviking-pi/shared/setup-wizard.mjs b/extensions/vendor/openviking-pi/shared/setup-wizard.mjs
+deleted file mode 100644
+--- a/extensions/vendor/openviking-pi/shared/setup-wizard.mjs
++++ /dev/null
+@@ -1,111 +0,0 @@
+-// GENERATED FROM examples/memory-plugin-shared/lib. DO NOT EDIT.
+-/**
+- * Interactive ovcli.conf setup wizard shared by the OpenViking memory plugins.
+- *
+- * Lets a pure-marketplace install (no installer script) configure the server
+- * URL and API key that both the lifecycle hooks and the stdio MCP proxy read:
+- *
+- *   node <plugin>/scripts/setup.mjs
+- *
+- * Conventions: show current values, keep existing secrets on empty input,
+- * merge-write (never drop unknown fields), back up the previous file, 0600.
+- */
+-
+-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from "node:fs";
+-import { dirname } from "node:path";
+-import { createInterface } from "node:readline/promises";
+-import { loadCredentialFiles } from "./credentials.mjs";
+-
+-const CLOUD_URL = "https://api.vikingdb.cn-beijing.volces.com/openviking";
+-const LOCAL_URL = "http://127.0.0.1:1933";
+-
+-function maskSecret(value) {
+-  const s = String(value || "");
+-  if (!s) return "(not set)";
+-  if (s.length <= 8) return "****";
+-  return `${s.slice(0, 4)}…${s.slice(-4)} (${s.length} chars)`;
+-}
+-
+-function readJsonSafe(path) {
+-  try {
+-    return JSON.parse(readFileSync(path, "utf-8"));
+-  } catch {
+-    return {};
+-  }
+-}
+-
+-export async function runSetupWizard({
+-  input = process.stdin,
+-  output = process.stdout,
+-  env = process.env,
+-} = {}) {
+-  const { cliPath } = loadCredentialFiles(env);
+-  const current = readJsonSafe(cliPath);
+-  const rl = createInterface({ input, output });
+-  const say = (line = "") => output.write(`${line}\n`);
+-
+-  try {
+-    say("OpenViking memory plugin setup");
+-    say(`Config file: ${cliPath}`);
+-    say("");
+-    say("Current values:");
+-    say(`  url:     ${current.url || "(not set)"}`);
+-    say(`  api_key: ${maskSecret(current.api_key)}`);
+-    if (current.account) say(`  account: ${current.account}`);
+-    if (current.user) say(`  user:    ${current.user}`);
+-    say("");
+-
+-    const defaultUrl = current.url || LOCAL_URL;
+-    say("Where do you connect to OpenViking?");
+-    say(`  1) Self-hosted / local        [${LOCAL_URL}]`);
+-    say(`  2) Volcengine OpenViking Cloud [${CLOUD_URL}]`);
+-    say(`  3) Custom URL / keep current   [${defaultUrl}]`);
+-    const mode = (await rl.question("Choice [1/2/3, default 3]: ")).trim();
+-    let url = defaultUrl;
+-    if (mode === "1") {
+-      url = LOCAL_URL;
+-    } else if (mode === "2") {
+-      url = CLOUD_URL;
+-    } else {
+-      const answer = (await rl.question(`Server URL [${defaultUrl}]: `)).trim();
+-      if (answer) url = answer;
+-    }
+-
+-    const keyPrompt = current.api_key
+-      ? `API key [enter = keep ${maskSecret(current.api_key)}, '-' = clear]: `
+-      : "API key (leave empty for unauthenticated local mode): ";
+-    const keyAnswer = await rl.question(keyPrompt);
+-    let apiKey = current.api_key || "";
+-    if (keyAnswer === "-") apiKey = "";
+-    else if (keyAnswer.trim()) apiKey = keyAnswer.trim();
+-    else if (!current.api_key) apiKey = "";
+-
+-    const next = { ...current, url, api_key: apiKey };
+-
+-    say("");
+-    say("Changes:");
+-    say(`  url:     ${current.url || "(not set)"} -> ${next.url}`);
+-    say(`  api_key: ${maskSecret(current.api_key)} -> ${maskSecret(next.api_key)}`);
+-    const confirm = (await rl.question("Write config? [Y/n] ")).trim().toLowerCase();
+-    if (confirm === "n" || confirm === "no") {
+-      say("Aborted; nothing written.");
+-      return { written: false, path: cliPath };
+-    }
+-
+-    mkdirSync(dirname(cliPath), { recursive: true });
+-    if (existsSync(cliPath)) {
+-      copyFileSync(cliPath, `${cliPath}.bak.${Date.now()}`);
+-    }
+-    writeFileSync(cliPath, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
+-    try {
+-      chmodSync(cliPath, 0o600);
+-    } catch {
+-      /* best effort on platforms without chmod semantics */
+-    }
+-    say(`Written: ${cliPath}`);
+-    say("The stdio MCP proxy and hooks pick this up on the next harness start.");
+-    return { written: true, path: cliPath };
+-  } finally {
+-    rl.close();
+-  }
+-}
+diff --git a/extensions/vendor/openviking-pi/vendor-pi-types.d.ts b/extensions/vendor/openviking-pi/vendor-pi-types.d.ts
+new file mode 100644
+--- /dev/null
++++ b/extensions/vendor/openviking-pi/vendor-pi-types.d.ts
+@@ -0,0 +1,46 @@
++// QCR FORK — file added for BUILD CONFORMANCE (not a numbered patch).
++//
++// `tsconfig.json` compiles `extensions/**/*.ts`, so the vendored fork is
++// typechecked by `npm run build` even though it is never emitted for use (pi
++// loads the .ts sources directly through jiti). None of the three packages the
++// upstream sources import is installed here — pi and its ecosystem live only
++// inside the container — so the slice each one uses is declared ambiently.
++//
++// This file merges with `extensions/pi-api.d.ts`, which already declares
++// `@earendil-works/pi-coding-agent` for our own extensions; ambient module
++// declarations merge, so both halves are visible everywhere.
++//
++// VERIFY-ON-PIN, every declaration below: nothing here is checked against the
++// real packages. Keep the shapes loose — a wrong-but-narrow type would turn a
++// working upstream call into a build error on the next rebase.
++
++declare module "@earendil-works/pi-coding-agent" {
++  /** The object a pi extension's default export receives. Deliberately
++   * permissive: the fork only ever calls `on`, `registerTool`,
++   * `registerCommand` and (through takeover.ts) `appendEntry`. */
++  export interface ExtensionAPI {
++    on(event: string, handler: (event: any, ctx: any) => any): void;
++    registerTool(definition: any): void;
++    /** Typed just enough that the handler's parameters are not implicit
++     * `any` under `strict` — the fork registers `/viking`. */
++    registerCommand(
++      name: string,
++      definition: { description?: string; handler: (args: string, ctx: any) => any },
++    ): void;
++    appendEntry?(customType: string, data: any): void;
++    getAllTools?(): unknown;
++    [key: string]: unknown;
++  }
++}
++
++declare module "typebox" {
++  /** TypeBox schema builders. `any` on purpose — the fork uses Type.Object /
++   * Type.String / Type.Number / Type.Optional / Type.Array as opaque schema
++   * values that go straight to pi. */
++  export const Type: any;
++}
++
++declare module "@earendil-works/pi-ai" {
++  /** `StringEnum(["a","b"] as const)` — a TypeBox string-enum helper. */
++  export function StringEnum(values: readonly string[]): any;
++}
