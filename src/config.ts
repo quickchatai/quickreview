@@ -469,6 +469,13 @@ export interface Config {
     timezone: string;
     /** Daily overseer heartbeat wall time; same zone as `time`. */
     heartbeat_time: string;
+    /** Watch the pinned area across the sweep and raise an anomaly
+     * if curation touched it. Off ⇒ the EOD inject is byte-identical to
+     * legacy behaviour. */
+    pinned_watchdog: boolean;
+    /** How long after the inject the watchdog keeps looking, when the day's
+     * digest never appears to close the window early. */
+    pinned_watchdog_window_min: number;
   };
   caps: {
     improvement_pr_max_lines: number;
@@ -589,7 +596,12 @@ export function parseConfig(toml: string): Config {
 // Both knobs default so legacy configs keep parsing.
     daemon: { max_self_requeues: DEFAULT_MAX_SELF_REQUEUES, expire_overdue_after_h: 24, ...(req(raw, "daemon") as Partial<Config["daemon"]>) } as Config["daemon"],
     // heartbeat_time defaults so legacy configs keep parsing.
-    eod: { heartbeat_time: "09:00", ...(req(raw, "eod") as Partial<Config["eod"]>) } as Config["eod"],
+    eod: {
+      heartbeat_time: "09:00",
+      pinned_watchdog: true,
+      pinned_watchdog_window_min: 90,
+      ...(req(raw, "eod") as Partial<Config["eod"]>),
+    } as Config["eod"],
     caps: { ...(req(raw, "caps") as Config["caps"]) },
     models: parseModels(req(raw, "models") as Record<string, any>),
     pi: { ...(req(raw, "pi") as Config["pi"]) },
