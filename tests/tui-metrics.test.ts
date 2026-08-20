@@ -289,7 +289,7 @@ describe("metrics dashboard", () => {
   });
 
   it("renders every chart card in the single-column stack (scrolling the fold into view)", () => {
-    const text = [0, 40, 80, 120]
+    const text = [0, 38, 76, 114, 152, 190]
       .map((scroll) => renderMetrics(mkView({ scroll }), 200, 44).lines.map(stripAnsi).join("\n"))
       .join("\n");
     for (const title of [

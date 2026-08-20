@@ -18,6 +18,7 @@
 import type { Dist, DailyRow, MetricsPayload, MetricsWindow, OpsInfo, TimelinePayload } from "../metrics.js";
 import type { TuiConfig } from "../config.js";
 import type { App } from "./app.js";
+import { paintCmdBar } from "./cmdbar.js";
 import { HEAD_ARGV, logArgv, type LocalRunner } from "./deploytab.js";
 import type { BoardKey } from "./keys.js";
 import { Frame, SGR, displayWidth, fit, rule, sanitizeText, truncate } from "./paint.js";
@@ -653,6 +654,7 @@ export function renderMetrics(view: MetricsView, cols: number, rows: number): Fr
       "quickreview",
       view.dryRun ? "DRY-RUN" : `${SGR.bgRed}${SGR.bold} LIVE ${SGR.reset}`,
       drill ? `metrics · #${drill.pr}` : "metrics",
+      drill ? `${FG.dim}Esc back to the dashboard · j/k scroll${RESET}` : "",
     ]),
   );
 
@@ -660,8 +662,8 @@ export function renderMetrics(view: MetricsView, cols: number, rows: number): Fr
     const lines = drill.payload
       ? timelineLines(drill.payload, cols - 4, now)
       : [drill.error ? `${FG.dim}metrics unavailable: ${drill.error}${RESET}` : `${FG.dim}loading timeline for #${drill.pr}…${RESET}`];
-    for (let r = 0; r < rows - 3; r++) frame.boxRow(1 + r, [{ text: ` ${lines[view.scroll + r] ?? ""}`, width: cols - 2 }]);
-    frame.boxRow(rows - 2, [{ text: ` ${FG.dim}Esc back to the dashboard · j/k scroll · 1 board · q quit${RESET}`, width: cols - 2 }]);
+    for (let r = 0; r < rows - 4; r++) frame.boxRow(1 + r, [{ text: ` ${lines[view.scroll + r] ?? ""}`, width: cols - 2 }]);
+    paintCmdBar(frame, "metrics", cols, rows);
     frame.set(rows - 1, rule(cols, "└", "┘", []));
     return frame;
   }
@@ -675,17 +677,19 @@ export function renderMetrics(view: MetricsView, cols: number, rows: number): Fr
     frame.zones.push({ x1: z.x1, y1: 2, x2: z.x2, y2: 2, action: { t: "window", window: z.window } satisfies MetricsAction });
   }
 
-  const bodyRows = rows - 5; // top bar + switcher + stat strip + hints + bottom
+  const bodyRows = rows - 6; // top bar + switcher + stat strip + command bar (2 rows) + bottom
   if (!view.payload) {
     const msg = view.error ? `${FG.dim}metrics unavailable: ${view.error}${RESET}` : `${FG.dim}loading metrics…${RESET}`;
-    for (let r = 2; r <= rows - 3; r++) frame.boxRow(r, [{ text: r === 2 ? ` ${msg}` : "", width: cols - 2 }]);
-    frame.boxRow(rows - 2, [{ text: ` ${FG.dim}[1]board [5]metrics  7/0/a window  r refresh  q quit${RESET}`, width: cols - 2 }]);
+    for (let r = 2; r <= rows - 4; r++) frame.boxRow(r, [{ text: r === 2 ? ` ${msg}` : "", width: cols - 2 }]);
+    paintCmdBar(frame, "metrics", cols, rows);
     frame.set(rows - 1, rule(cols, "└", "┘", []));
     return frame;
   }
 
   const win = view.payload.windows[view.window];
-  frame.boxRow(2, [{ text: ` ${statStrip(win, cols - 3)}`, width: cols - 2 }]);
+  const bf = view.payload.backfill;
+  const bfNote = `${FG.dim}backfill ${bf.rounds} rounds / ${bf.prs} PRs${bf.oldest ? ` since ${bf.oldest}` : ""}${RESET}`;
+  frame.boxRow(2, [{ text: ` ${statStrip(win, cols - 3)}  ${bfNote}`, width: cols - 2 }]);
 
   const widths = columnWidths(cols);
   const cards = metricsCards(win, view.payload.daily, bodyRows, {
@@ -700,13 +704,7 @@ export function renderMetrics(view: MetricsView, cols: number, rows: number): Fr
       widths.map((w, i) => ({ text: ` ${columns[i]?.[view.scroll + r] ?? ""}`, width: w })),
     );
   }
-  const bf = view.payload.backfill;
-  frame.boxRow(rows - 2, [
-    {
-      text: ` ${FG.dim}[1]board [5]metrics  7/0/a window  # PR timeline  j/k scroll  r refresh  q quit  ·  backfill ${bf.rounds} rounds / ${bf.prs} PRs${bf.oldest ? ` since ${bf.oldest}` : ""}${RESET}`,
-      width: cols - 2,
-    },
-  ]);
+  paintCmdBar(frame, "metrics", cols, rows);
   frame.set(rows - 1, rule(cols, "└", "┘", []));
   return frame;
 }

@@ -6,6 +6,7 @@ import type { WhyPayload } from "../cli.js";
 import type { TuiConfig } from "../config.js";
 import type { AlertBadge } from "./alerts.js";
 import { renderBoard, type BoardAction, type BoardView } from "./board.js";
+import { barHitKey } from "./cmdbar.js";
 import { decodeInputKey, decodeKey } from "./keys.js";
 import { formatEvent, moveSelection, reselect, sortPrs, type EventLine } from "./model.js";
 import { TripleCtrlC } from "./chord.js";
@@ -495,7 +496,29 @@ export class App {
     return sorted[this.view.selected]?.number;
   }
 
+  /** Synthesize a keypress through the normal input path — the command bar's
+   * buttons and any tab code that wants "exactly what the key would do". */
+  pressKey(key: string): void {
+    this.handleInput(Buffer.from(key, "utf8"));
+  }
+
   private handleMouse(ev: MouseEvent): void {
+    // The command bar answers first, on every tab: a click on one of its
+    // buttons IS that keypress, wherever it lands.
+    if (ev.kind === "click") {
+      const cols = this.out.columns ?? 80;
+      const rows = this.out.rows ?? 24;
+      const k = barHitKey(this.tab, ev.x, ev.y, cols, rows);
+      if (k !== undefined) {
+        // A focused pi pane would swallow the synthesized key as text.
+        if (this.view.piFocus) {
+          this.blurPiPane();
+          this.repaint();
+        }
+        this.pressKey(k);
+        return;
+      }
+    }
     if (this.tab === "companion") return; // the attach (or its placeholder) owns it
     if (this.tab === "digest") {
       // Memory & learning tab: clicks hit the tab's own zones (rows select,

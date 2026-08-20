@@ -9,6 +9,7 @@ import { execFile } from "node:child_process";
 import type { TuiConfig } from "../config.js";
 import type { App } from "./app.js";
 import type { BoardKey } from "./keys.js";
+import { paintCmdBar } from "./cmdbar.js";
 import { Frame, SGR, displayWidth, rule, stripAnsi, truncate } from "./paint.js";
 import type { RemoteResult, SshRunner } from "./remote.js";
 import { FG, RESET } from "./theme.js";
@@ -265,14 +266,15 @@ export function renderDeployTab(st: DeployState, dryRun: boolean, cols: number, 
             ? `VM: ${st.containerStatus}`
             : `${SGR.bold}VM: ${st.containerStatus}${SGR.reset}`;
     const suffix = st.armedKind !== undefined ? "  any other key/click cancels" : "  (also: D D deploy · S S stop/start)";
-    frame.boxRow(1, [{ text: ` ${dBtn}  ${pBtn}  ${vm}${FG.dim}${suffix}${RESET}`, width: cols - 2 }]);
+    const refreshing = st.loading ? "  refreshing…" : "";
+    frame.boxRow(1, [{ text: ` ${dBtn}  ${pBtn}  ${vm}${FG.dim}${suffix}${refreshing}${RESET}`, width: cols - 2 }]);
     const dW = displayWidth(stripAnsi(dLabel));
     st.buttonZone = { x1: 2, y1: 2, x2: 1 + dW, y2: 2 };
     const pX = 2 + dW + 2;
     st.powerZone = { x1: pX, y1: 2, x2: pX + displayWidth(stripAnsi(pLabel)) - 1, y2: 2 };
   }
 
-  const bodyRows = rows - 4; // top bar + button row + hints + bottom border
+  const bodyRows = rows - 5; // top bar + button row + command bar (2 rows) + bottom border
   if (run) {
     // Live log view: tail-follow; st.scroll counts lines BACK from the tail.
     const all = run.partial ? [...run.lines, run.partial] : run.lines;
@@ -289,11 +291,7 @@ export function renderDeployTab(st: DeployState, dryRun: boolean, cols: number, 
       frame.boxRow(2 + r, [{ text: ` ${lines[st.scroll + r] ?? ""}`, width: cols - 2 }]);
     }
   }
-  const refreshing = st.loading ? "  refreshing…" : "";
-  const hints = run
-    ? `[1]board [2]memory [4]deploy  j/k scroll log  ${run.running ? "x abort" : "x close log"}  q quit`
-    : `[1]board [2]memory [4]deploy  click ▶ or D D deploy  j/k scroll  r refresh  q quit`;
-  frame.boxRow(rows - 2, [{ text: ` ${SGR.dim}${hints}${refreshing}${SGR.reset}`, width: cols - 2 }]);
+  paintCmdBar(frame, "deploy", cols, rows);
   frame.set(rows - 1, rule(cols, "└", "┘", []));
   return frame;
 }

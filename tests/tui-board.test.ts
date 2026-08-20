@@ -181,7 +181,7 @@ describe("adaptive layout", () => {
     expect(piRows(24)).toBe(10); // 21 usable / 2
     expect(piRows(40)).toBe(18);
     expect(piRows(14)).toBe(6); // floor
-    expect(piRows(11)).toBe(5); // squeezed: body keeps 3 rows
+    expect(piRows(11)).toBe(4); // squeezed: body keeps 3 rows
   });
 
   it("centers the events overlay band on the screen", async () => {
@@ -321,9 +321,9 @@ describe("renderBoard", () => {
     expect(text).toContain("j/k scroll · e/Esc close");
     expect(text).toContain("verdict_applied #5040");
     expect(frame.zones.some((z) => (z.action as { t: string; pr?: number }).t === "event-jump")).toBe(true);
-    // Footer hint flips while it is open (visible once the bar has room).
+    // The command bar keeps its constant "e events" button while it is open.
     const wide = renderBoard(view({ events, eventsFocus: true }), 220, 24).lines.map(stripAnsi).join("\n");
-    expect(wide).toContain("close events");
+    expect(wide).toContain("e events");
 
     const scrolled = renderBoard(view({ events, eventsFocus: true, eventsScroll: 2 }), 100, 24).lines.map(stripAnsi).join("\n");
     expect(scrolled).not.toContain("verdict_applied #5040");

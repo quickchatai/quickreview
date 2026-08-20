@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { TUI_DEFAULTS } from "../src/config.js";
 import { App } from "../src/tui/app.js";
+import { barHitKey } from "../src/tui/cmdbar.js";
 import type { DigestFetcher } from "../src/tui/digesttab.js";
 import { installMemoryLearningHooks, pinnedBudget, renderMemoryView, type MemTabState } from "../src/tui/memtab.js";
 import { blockHash, parseMemory, type MemEditOp, type MemoryStore } from "../src/tui/memory.js";
@@ -328,16 +329,19 @@ describe("mouse operation (FT-0129 UX)", () => {
     expect(accept).toHaveBeenCalledWith(app, "baseline-mergebase-2026-08-20");
   });
 
-  it("digest view: hint chunk 'v memory view' is clickable and toggles", async () => {
+  it("digest view: the bar's [v view] button is clickable and toggles", async () => {
     const { app } = makeApp();
     const st = install(app, new FakeMemory());
     app.hooks.digestScreen!(app, 140, 40);
     await settle();
+    // The bar renders the button on row B; its hit range maps back to `v`,
+    // which pressKey routes through the tab's own key handler.
     const screen = stripAnsi(app.hooks.digestScreen!(app, 140, 40));
-    const lines = screen.split("\n");
-    const y = lines.findIndex((l) => l.includes("v memory view")) + 1;
-    const x = lines[y - 1]!.indexOf("v memory view") + 2;
-    app.hooks.digestClick!(app, x, y);
+    const rowB = screen.split("\n")[38]!; // frame row rows-2
+    const x = rowB.indexOf("[v view]") + 2; // 1-based terminal x of the `v`
+    expect(x).toBeGreaterThan(2);
+    expect(barHitKey("digest", x, 39, 140, 40)).toBe("v");
+    app.pressKey("v");
     expect(st.view).toBe("memory");
   });
 
@@ -360,9 +364,9 @@ describe("the [2] tab is VISIBLY Memory & learning (rename regression)", () => {
     await settle();
     const screen = stripAnsi(app.hooks.digestScreen!(app, 110, 30));
     expect(screen).toContain("memory & learning · digest");
-    expect(screen).toContain("v memory view");
-    expect(screen).toContain("[2]memory");
-    expect(screen).not.toContain("[2]digest");
+    expect(screen).toContain("[v view]");
+    expect(screen).toContain("[2 memory]");
+    expect(screen).not.toContain("2 digest");
   });
 });
 
