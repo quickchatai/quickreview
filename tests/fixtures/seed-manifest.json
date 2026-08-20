@@ -13,7 +13,7 @@
     "agents/pass-ui.md": "116a0ce70461be3299108f8acbda91f5d3d011f968da63ec0b2e5ae845aa1b1c",
     "agents/pass-validate.md": "95b8a786c4cf5a81bf122fdfaddf628a29d2fbac9b81de6812da138bafc4eb96",
     "prompts/conversation-system.md": "aa23d3c488ed44aa9345827d76c1165b1f54b6aa402bd07e348e7fb681c3d3df",
-    "prompts/eod-sweep.md": "7ecb10b411a5e74ca9f692d0a7bb4bb4e2409fa6e43832504101622cb131af83",
+    "prompts/eod-sweep.md": "ec03d329b90a8de1fa5d1437ca6221bedee64e736393761352afd86337404aa6",
     "prompts/overseer-system.md": "e69e8bc69fd7a5300416c2d3b967a29f1f31ebcd0ae3b1fdc9954b1d11533791",
     "prompts/pass-common.md": "251b224408953ae096366d3b9741ef87bc4dda8310d4cf9664a1bc97f6e10a5a"
   }

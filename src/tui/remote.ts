@@ -1,8 +1,11 @@
 // Remote access layer for qcr tui — every VM touch goes through here, and
-// every command it can produce is read-only against the box except the three
+// every command it can produce is read-only against the box except the
 // user-initiated writes (attach keystrokes ride a pty in attach.ts; inject
-// files in msg.ts; `sendKeysArgv` types into the board's focused pi pane).
-// None of them touch GitHub, so none of them go near the mutation gate.
+// files in msg.ts; `sendKeysArgv` types into the board's focused pi pane;
+// adds memory edits via scripts/memedit.mjs in memory.ts and
+// rubric-proposal dir removal in proposals.ts — both operator keystrokes).
+// None of them touch GitHub mutations, so none go near the gate (the
+// proposals pane's gh reads are reads — direct per the gate rules).
 // Command construction is pure so tests can assert the exact argv; execution
 // is one injectable runner.
 import { spawn } from "node:child_process";

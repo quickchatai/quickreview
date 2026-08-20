@@ -44,22 +44,20 @@ const RULE_6 =
  * manifest (so any FURTHER drift is still caught) but is exempt from the
  * byte-identity comparison against the original asset.
  *
- * Adding to this list requires the owner's explicit ratification, recorded here.
- *
- * - conversation-system.md, overseer-system.md — 2026-08-18, the owner: reseed to
- *   remove the retired ESCALATE verdict and the `mark-escalation-worthy`
- *   command, which the 2026-08-18 no-escalation decision (CLAUDE.md rule 10)
- *   scrapped. The seeds had been left contradicting the live behaviour, held
- *   only by downstream supersession.
+ * The registry lives in tests/fixtures/ratified-divergence.json:
+ * each entry is a seeded path with its ratification notes. Two writers only —
+ * a human recording a ratified reseed, and the TUI's rubric-accept path
+ * (the owner's accept click IS the ratification; the TUI appends the entry,
+ * re-pins the manifest hash, and commits). Adding an entry any other way is
+ * a rule-6 violation, not a fix.
  */
-// conversation-system.md carries TWO ratified reseeds: 2026-08-18 (rule 10
-// de-escalation) and 2026-08-19 (the owner: NEEDS_HUMAN retired — the review is
-// never handed to a human; verdict always on the merits + a
-// "For a human to double-check" section). Hash re-pinned each time.
-const RATIFIED_DIVERGENCE = new Set<string>([
-  "prompts/conversation-system.md",
-  "prompts/overseer-system.md",
-]);
+interface DivergenceRegistry {
+  files: Record<string, string[]>;
+}
+const divergence = JSON.parse(
+  readFileSync(join(repoRoot, "tests/fixtures/ratified-divergence.json"), "utf8"),
+) as DivergenceRegistry;
+const RATIFIED_DIVERGENCE = new Set<string>(Object.keys(divergence.files));
 
 /** Files that are OURS to edit — they must never be frozen by the manifest. */
 const NON_SEEDED = [
@@ -137,7 +135,7 @@ describe("seed integrity (hard rule 6)", () => {
     }
   });
 
-  it("every ratified-divergence entry is a real seeded path", () => {
+  it("every ratified-divergence entry is a real seeded path with a ratification note", () => {
     // A typo here would silently exempt nothing (harmless) or, worse, look like
     // cover for a file that was never actually ratified. Keep it honest.
     for (const rel of RATIFIED_DIVERGENCE) {
@@ -145,6 +143,11 @@ describe("seed integrity (hard rule 6)", () => {
         seededPaths,
         `${rel} is listed as a ratified divergence but is not a seeded file`,
       ).toContain(rel);
+      const notes = divergence.files[rel] ?? [];
+      expect(notes.length, `${rel} has no ratification note — who ratified it, when?`).toBeGreaterThan(0);
+      for (const note of notes) {
+        expect(note, `${rel}: ratification note must carry a date and 'the owner'`).toMatch(/^\d{4}-\d{2}-\d{2} .*the owner/);
+      }
     }
   });
 
