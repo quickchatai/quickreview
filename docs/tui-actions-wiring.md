@@ -1,0 +1,185 @@
+# Wiring the companion → TUI action channel
+
+`src/tui/actions.ts` and `src/tui/filters.ts` are self-contained; nothing
+imports them yet. This document is the exact insertion recipe. All edits are
+in `src/tui/index.ts` plus one-line consumption changes in `board.ts` /
+`app.ts` / `memtab.ts`. Instant execution (no confirm gate) is the ratified
+decision — do not add one while wiring.
+
+## 1. Where the watcher lives: `src/tui/index.ts`, the `if (companionUp)` block
+
+Everything goes inside the existing `if (companionUp) { … }` block (the one
+that already builds the feed writer, the alert consumer, and the memedit
+sweep) — the action channel is companion machinery, so `--no-companion`
+must disable it for free.
+
+Two return values that index.ts currently discards must be captured first
+(same statements, keep everything else):
+
+```ts
+// was: installDeployHooks(app, new RealDeployFetcher(cfg, realSshRunner, localRunner));
+const deployState = installDeployHooks(app, new RealDeployFetcher(cfg, realSshRunner, localRunner));
+// was: installMetricsHooks(app, undefined, localHeadProbe(localRunner));
+const metricsView = installMetricsHooks(app, undefined, localHeadProbe(localRunner));
+```
+
+(`memState` — the `installMemoryLearningHooks` return — is already captured.)
+
+## 2. The TuiDriver implementation (~30 lines)
+
+Place right after the memedit sweep wiring, still inside `if (companionUp)`:
+
+```ts
+const { processTuiActions } = await import("./actions.js");
+const tuiActionsDir = join(full.companion.alerts_dir, "tui-actions");
+const driver: import("./actions.js").TuiDriver = {
+  switchTab: (tab) => {
+    app.tab = tab === "memory" ? "digest" : tab;   // App's [2] tab id is "digest"
+    app.repaint();
+  },
+  selectPr: (pr) => {
+    app.tab = "board";
+    app.selectPr(pr);                              // public App API — selects + refreshes detail
+    app.repaint();
+  },
+  metricsWindow: (w) => {
+    app.tab = "metrics";
+    metricsView.drill = undefined;
+    metricsView.window = w === "7d" ? "d7" : w === "30d" ? "d30" : "all";
+    metricsView.scroll = 0;
+    app.repaint();
+  },
+  metricsPr: (pr) => {
+    app.tab = "metrics";
+    app.repaint();
+    // Drive the tab's own PR-entry state machine so the timeline FETCH runs
+    // (drillTo is closure-private): # opens entry, digits accumulate, ⏎ drills.
+    app.pressKey("#");
+    for (const d of String(pr)) app.pressKey(d);
+    app.pressKey("\r");
+  },
+  digestDay: (date) => {
+    app.tab = "digest";
+    memState.view = "digest";
+    app.repaint();
+    // Page to the day through the tab's own [ / ] keys so content loads
+    // (pageDigest is closure-private). files are newest-first date-named.
+    const i = memState.digest.files.findIndex((f) => f.startsWith(date));
+    if (i < 0) { app.notice(`companion ▸ no digest for ${date}`); return; }
+    const delta = i - memState.digest.back;
+    for (let k = 0; k < Math.abs(delta); k++) app.pressKey(delta > 0 ? "[" : "]");
+  },
+  memoryView: (opts) => {
+    app.tab = "digest";
+    if (opts.day !== undefined) driver.digestDay(opts.day);   // day highlight = digest-selected day
+    memState.view = "memory";
+    memState.memFilter = opts.tag ?? memState.memFilter ?? null;  // see §4
+    app.repaint();
+  },
+  setBoardFilter: (f) => {
+    app.tab = "board";
+    app.view.boardFilter = f;                      // see §4
+    app.repaint();
+  },
+  setMemoryFilter: (tag) => {
+    app.tab = "digest";
+    memState.view = "memory";
+    memState.memFilter = tag;                      // see §4
+    app.repaint();
+  },
+  msgSession: (session, text) => app.hooks.sendMessage?.(session, text, app),
+  overseerInject: (text) => app.hooks.sendMessage?.("overseer", text, app),
+  deployTab: (action) => {
+    app.tab = "deploy";
+    app.repaint();
+    if (action === "abort") { app.pressKey("x"); return; }   // kills a running run (closes a finished log otherwise)
+    if (action === "deploy") { app.pressKey("D"); app.pressKey("D"); return; }  // arm+confirm inside the window = instant (ratified)
+    // stop/start: the tab's S button computes its own kind from the observed
+    // container state (powerKind()); refuse a mismatched request rather than
+    // silently doing the opposite.
+    const kind = deployState.containerStatus !== undefined && !/^Up /.test(deployState.containerStatus) ? "start" : "stop";
+    if (kind !== action) { app.notice(`companion ▸ deploy_tab ${action} refused — container is ${deployState.containerStatus ?? "unknown"}`); return; }
+    app.pressKey("S");
+    app.pressKey("S");
+  },
+};
+```
+
+Notes on the property names used above (all real, as of this branch):
+- `app.tab` (`Tab = "board" | "digest" | "companion" | "deploy" | "metrics"`),
+  `app.selectPr(pr)`, `app.pressKey(key)`, `app.notice(text)`,
+  `app.hooks.sendMessage` (installed by `installMessageHooks`; validates the
+  session name again and reports pending/✓/✖ on the notice line itself).
+- `metricsView.window` is `"d7" | "d30" | "all"` (`MetricsWindowKey`) — hence
+  the mapping from the verb's `"7d" | "30d" | "all"`.
+- `memState.view` is `"digest" | "memory"`; `memState.digest.back`/`files`
+  are the digest pager (`DigestState`).
+- `deployState.containerStatus` is the docker-ps status string the power
+  button reads (`/^Up /` = running).
+
+## 3. The onPoll chaining (memedit's busy-flag style)
+
+Immediately after the driver, chain onto `app.hooks.onPoll` exactly like the
+memedit sweep does (prev-hook capture + in-flight flag so a slow sweep never
+stacks):
+
+```ts
+let tuiActBusy = false;
+const prevOnPoll3 = app.hooks.onPoll;
+app.hooks.onPoll = (a) => {
+  prevOnPoll3?.(a);
+  if (tuiActBusy) return;
+  tuiActBusy = true;
+  void processTuiActions(tuiActionsDir, driver)
+    .then((done) => {
+      for (const r of done) a.notice(r.trace ?? `companion tui-action ${r.file}: ✖ ${r.message}`);
+    })
+    .catch(() => {
+      /* best-effort — never break the poll loop */
+    })
+    .finally(() => {
+      tuiActBusy = false;
+    });
+};
+```
+
+(`processTuiActions` already writes the `.result.json` files and archives
+requests to `.done/` before executing; the notice line is the only extra
+delivery.)
+
+## 4. One-line filter consumption per tab
+
+The filter STATE lives on existing view objects; the helpers are pure.
+
+**board.ts** — two small changes:
+1. `BoardView` gains a field: `boardFilter?: import("./filters.js").BoardFilter | null;`
+2. In `renderBoard`, where the PR list is derived (`sortPrs(view.snapshot.prs)`),
+   wrap it: `applyBoardFilter(sortPrs(view.snapshot.prs), view.boardFilter)`
+   — and paint `filterLabel(view.boardFilter)` (empty string when inactive)
+   on the header/notice row. NOTE: `app.ts` also calls `sortPrs(...)` for
+   selection movement (`onPoll`, up/down, `selectPr`, `selectedSession`,
+   `selectedPrNumber`); wrap those with the same
+   `applyBoardFilter(..., this.view.boardFilter)` so the selection can never
+   land on a hidden row. (Extracting a shared
+   `visiblePrs(view) = applyBoardFilter(sortPrs(view.snapshot?.prs ?? []), view.boardFilter)`
+   helper into model.ts keeps this to one expression per site.)
+3. Clear key: in `App.handleInput`'s board `case "char"` handling (or a new
+   decode), `F` sets `this.view.boardFilter = null` — the indicator promises
+   "F clears".
+
+**memtab.ts** — three small changes:
+1. `MemTabState` gains: `memFilter?: string | null;`
+2. In `renderMemoryView` AND `memoryViewKey`, the timeline derivation
+   `timelineOrder(st.entries)` becomes
+   `applyMemoryFilter(timelineOrder(st.entries), st.memFilter)` (both sites,
+   or one shared local — the render and the verbs must agree on ordinals,
+   otherwise `x`/`p`/`e` would address a hidden entry). Paint
+   `memoryFilterLabel(st.memFilter)` beside the `MEMORY (n)` header.
+3. In `memoryViewKey`'s `case "char"`: `case "F": st.memFilter = null; …`
+
+## 5. Companion side
+
+`prompts/companion.md` already documents the request-file contract
+(`## Driving the TUI`) — nothing to wire; the companion container
+mounts `alerts_dir` at `/alerts`, so `/alerts/tui-actions/` appears as soon
+as the first sweep (or the companion) creates it.
