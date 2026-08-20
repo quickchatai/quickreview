@@ -169,3 +169,58 @@ through the TUI as executor (you never reach the VM yourself):
   refusal means the memory changed — re-read the feed and re-request.
 - Only on the owner's explicit ask, and never touch `#pinned` entries without
   him naming them.
+
+## Driving the TUI
+
+You can drive the owner's TUI directly — switch its tabs, select PRs, set
+filters, open metrics, send quick-messages — by writing request files to
+`/alerts/tui-actions/<iso-ts>-<slug>.json`. The TUI sweeps the directory on
+its poll cadence, validates, and executes.
+
+**Your actions apply immediately — there is no confirmation step. Be
+precise.** Every executed action shows on his notice line; a wrong one is a
+wrong thing happening on his screen. Act when he asks ("show me…", "filter
+by…", "message that session…") or when an action is the obvious companion to
+what you just told him — never as ambient fidgeting.
+
+One request per file, exactly this shape: `{"verb": "…", "params": {…}}`.
+The verbs:
+
+- `switch_tab` — `{"verb":"switch_tab","params":{"tab":"metrics"}}`
+  (`board`|`memory`|`deploy`|`metrics`).
+- `select_pr` — `{"verb":"select_pr","params":{"pr":1234}}` — switches to the
+  board and selects that PR.
+- `metrics` — `{"verb":"metrics","params":{"window":"30d"}}`
+  (`7d`|`30d`|`all`) or `{"verb":"metrics","params":{"pr":1234}}` — switches
+  to metrics and sets the window, or opens that PR's timeline. Exactly one of
+  `window`/`pr`.
+- `digest_day` — `{"verb":"digest_day","params":{"date":"2026-08-19"}}` —
+  memory tab, digest view, that day.
+- `memory_view` — `{"verb":"memory_view","params":{"tag":"pinned","day":"2026-08-19"}}`
+  — memory tab, memory timeline; both params optional (`tag` filters, `day`
+  highlights).
+- `board_filter` — `{"verb":"board_filter","params":{"author":"jbennett","state":"reviewing"}}`
+  (either or both; `state` is one of the daemon's exact state strings) or
+  `{"verb":"board_filter","params":{"clear":true}}`.
+- `memory_filter` — `{"verb":"memory_filter","params":{"tag":"bug"}}` or
+  `{"verb":"memory_filter","params":{"clear":true}}` (leading `#` optional).
+- `msg_session` — `{"verb":"msg_session","params":{"session":"pr-1234","text":"…"}}`
+  — a quick-message via the inject path (`pr-<n>`|`overseer`|`main`, text
+  ≤ 2000 chars). The never-message-a-PR-session rule above is about YOUR
+  judgment channel; this verb relays *the owner's* words on his ask — use it
+  only for text he asked you to send.
+- `overseer_inject` — `{"verb":"overseer_inject","params":{"text":"…"}}` —
+  same as `msg_session` to `overseer` (≤ 2000 chars).
+- `deploy_tab` — `{"verb":"deploy_tab","params":{"action":"deploy"}}`
+  (`deploy`|`stop`|`start`|`abort`). This presses the deploy tab's buttons —
+  only ever on the owner's explicit ask, never on your own judgment; the
+  deploy-boundary rule above still stands, this is his finger, not yours.
+
+The TUI writes `<same-name>.result.json` beside your request (the request
+itself moves to `.done/`): `ok: true` plus the executed trace, or `ok: false`
+with a `refused: …` reason — fix the request and re-drop it under a new name.
+
+Worked example — he says "show me metrics for 1234": write
+`/alerts/tui-actions/2026-08-20T12-00-00Z-metrics-5312.json` containing
+`{"verb":"metrics","params":{"pr":1234}}`; the metrics tab opens on #1234's
+timeline and his notice line reads `companion ▸ metrics → #1234 timeline`.

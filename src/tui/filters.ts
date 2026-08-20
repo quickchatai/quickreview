@@ -1,0 +1,72 @@
+// Board/memory filter helpers — pure functions the tabs consume at
+// wiring time. No tab-module imports: the board and the memory tab each call
+// `applyBoardFilter` / `applyMemoryFilter` over their own rows and render
+// `filterLabel` as the active-filter indicator. Filters are a VIEW concern —
+// they never touch the poller's snapshot or the memory store.
+import type { MemoryEntry } from "./memory.js";
+import type { SnapshotPr } from "./model.js";
+
+export interface BoardFilter {
+  /** Case-insensitive substring match against the PR author login. */
+  author?: string;
+  /** Exact match against the daemon's lifecycle state strings. */
+  state?: string;
+}
+
+/** True when the filter would pass everything — treated the same as null. */
+export function isEmptyBoardFilter(f: BoardFilter | null | undefined): boolean {
+  return !f || ((f.author === undefined || f.author === "") && (f.state === undefined || f.state === ""));
+}
+
+/**
+ * Filter board rows. Author is a case-insensitive substring (a PR with no
+ * author never matches an author filter); state is exact against the daemon's
+ * state strings (`queued`, `reviewing`, `awaiting_author`, …). Both set = AND.
+ * A null/empty filter returns the input array unchanged (same reference, so
+ * an unfiltered board costs nothing).
+ */
+export function applyBoardFilter<T extends Pick<SnapshotPr, "state"> & { author?: string | null }>(
+  prs: T[],
+  f: BoardFilter | null | undefined,
+): T[] {
+  if (isEmptyBoardFilter(f)) return prs;
+  const author = f!.author?.toLowerCase();
+  const state = f!.state;
+  return prs.filter((p) => {
+    if (author !== undefined && author !== "" && !(p.author ?? "").toLowerCase().includes(author)) return false;
+    if (state !== undefined && state !== "" && p.state !== state) return false;
+    return true;
+  });
+}
+
+/** The active-filter indicator, e.g. `⛉ author:jbennett · state:reviewing — F clears`.
+ * Empty string when nothing filters (paint nothing). */
+export function filterLabel(f: BoardFilter | null | undefined): string {
+  if (isEmptyBoardFilter(f)) return "";
+  const bits: string[] = [];
+  if (f!.author) bits.push(`author:${f!.author}`);
+  if (f!.state) bits.push(`state:${f!.state}`);
+  return `⛉ ${bits.join(" · ")} — F clears`;
+}
+
+/** Normalize a tag for comparison: leading '#'s dropped, lowercased. */
+function normTag(tag: string): string {
+  return tag.replace(/^#+/, "").toLowerCase();
+}
+
+/**
+ * Filter memory timeline entries by tag: exact tag match, case-insensitive,
+ * a leading '#' on the query is ignored (`#pinned` ≡ `pinned`). Null/empty
+ * tag returns the input unchanged.
+ */
+export function applyMemoryFilter<T extends Pick<MemoryEntry, "tags">>(entries: T[], tag: string | null | undefined): T[] {
+  if (tag === null || tag === undefined || normTag(tag) === "") return entries;
+  const want = normTag(tag);
+  return entries.filter((e) => e.tags.some((t) => normTag(t) === want));
+}
+
+/** The memory view's indicator, same shape as the board's. */
+export function memoryFilterLabel(tag: string | null | undefined): string {
+  if (tag === null || tag === undefined || normTag(tag) === "") return "";
+  return `⛉ #${normTag(tag)} — F clears`;
+}
