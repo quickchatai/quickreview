@@ -6,6 +6,7 @@
 import type { TuiConfig } from "../config.js";
 import type { App } from "./app.js";
 import type { BoardKey } from "./keys.js";
+import { paintCmdBar } from "./cmdbar.js";
 import { awaitingRows, sortPrs, type SnapshotPr } from "./model.js";
 import { Frame, SGR, rule, truncate } from "./paint.js";
 import type { SshRunner } from "./remote.js";
@@ -92,7 +93,7 @@ export function renderDigestTab(
 
   const leftW = Math.floor((cols - 3) * 0.55);
   const rightW = cols - 3 - leftW;
-  const bodyRows = rows - 3; // top bar + hints + bottom border
+  const bodyRows = rows - 4; // top bar + command bar (2 rows) + bottom border
 
   const left: string[] = [];
   if (!st.loaded) left.push(`${SGR.dim}loading…${SGR.reset}`);
@@ -118,18 +119,7 @@ export function renderDigestTab(
       { text: ` ${right[r] ?? ""}`, width: rightW },
     ]);
   }
-  const hint = ` [1]board [2]memory  v memory view  j/k scroll  [ older  ] newer  ↓/↑ pick  ⏎ attach  q quit`;
-  frame.boxRow(rows - 2, [{ text: `${SGR.dim}${hint}${SGR.reset}`, width: cols - 2 }]);
-  // Clickable hint chunks — the mouse path into the same key state machine.
-  for (const [chunk, key] of [
-    ["[1]board", "1"],
-    ["v memory view", "v"],
-    ["[ older", "["],
-    ["] newer", "]"],
-  ] as const) {
-    const at = hint.indexOf(chunk);
-    if (at >= 0) frame.zones.push({ x1: 2 + at, y1: rows - 1, x2: 2 + at + chunk.length - 1, y2: rows - 1, action: { t: "key", key } satisfies DigestAction });
-  }
+  paintCmdBar(frame, "digest", cols, rows);
   frame.set(rows - 1, rule(cols, "└", "┘", []));
   return frame;
 }

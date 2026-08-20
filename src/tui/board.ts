@@ -6,6 +6,7 @@
 import type { WhyPayload } from "../cli.js";
 import type { StatusSnapshot } from "../state.js";
 import type { AlertBadge } from "./alerts.js";
+import { paintCmdBar } from "./cmdbar.js";
 import { formatEvent, glyphFor, sortPrs, type EventLine, type SnapshotPr } from "./model.js";
 import { Frame, SGR, displayWidth, fit, rule, sanitizeText, stripAnsi, truncate, wrap } from "./paint.js";
 import type { PiPaneView } from "./pipane.js";
@@ -86,14 +87,14 @@ export function listWidth(prs: SnapshotPr[], cols: number, now: Date = new Date(
  * Floors at 6 rows and never squeezes the list/detail body below 3.
  */
 export function piRows(rows: number): number {
-  const usable = rows - 3; // top bar + hint bar + bottom border
+  const usable = rows - 4; // top bar + two-row command bar + bottom border
   return Math.max(0, Math.min(Math.max(6, Math.floor(usable * 0.5)), usable - 3));
 }
 
 /** Geometry of the floating EVENTS overlay: a centered band over the board,
  * bordered top and bottom, ~60% of the height. */
 export function eventsOverlayBand(rows: number): { top: number; height: number } {
-  const height = Math.max(5, Math.min(Math.floor(rows * 0.6), rows - 4));
+  const height = Math.max(5, Math.min(Math.floor(rows * 0.6), rows - 5)); // never under the 2-row bar
   return { top: Math.max(1, Math.floor((rows - height) / 2)), height };
 }
 
@@ -242,24 +243,6 @@ export function detailLines(detail: WhyPayload | undefined, pr: SnapshotPr | und
   return lines;
 }
 
-/** Hint-bar buttons: label + the key they synthesize when clicked. */
-export const HINT_BUTTONS: Array<{ label: string; key: string }> = [
-  { label: "1 board", key: "1" },
-  { label: "2 memory", key: "2" },
-  { label: "3 companion", key: "3" },
-  { label: "4 deploy", key: "4" },
-  { label: "5 metrics", key: "5" },
-  { label: "⏎ attach", key: "\r" },
-  { label: "m message", key: "m" },
-  { label: "g github", key: "g" },
-  { label: "o overseer", key: "o" },
-  { label: "w detail", key: "w" },
-  { label: "e events", key: "e" },
-  { label: "r refresh", key: "r" },
-  { label: "? keys", key: "?" },
-  { label: "q quit", key: "q" },
-];
-
 export const HELP_LINES = [
   "1/2/3/4/5     board / memory & learning / companion / deploy / metrics tab (c = companion too)",
   "               metrics tab: 7 / 0 / a switch the 7d / 30d / all window; # <pr> ⏎ opens a PR timeline (Esc back)",
@@ -350,7 +333,7 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
   const az = alertZone(view, cols);
   if (az) frame.zones.push({ x1: az.x1, y1: 1, x2: az.x2, y2: 1, action: { t: "tab", tab: "companion" } satisfies BoardAction });
   const pRows = piRows(rows);
-  const bodyRows = rows - 3 - pRows; // top bar + hint bar + bottom border
+  const bodyRows = rows - 4 - pRows; // top bar + command bar (2 rows) + bottom border
   const sorted = view.snapshot ? sortPrs(view.snapshot.prs) : [];
   const listW = listWidth(sorted, cols, now);
   const detailW = cols - 2 - listW - 1;
@@ -369,9 +352,10 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
 
   if (view.detailFull) {
     const lines = detailLines(view.detail, selectedPr, cols - 4, now);
-    for (let r = 0; r < rows - 2; r++) {
+    for (let r = 0; r < rows - 4; r++) {
       frame.boxRow(1 + r, [{ text: ` ${lines[r] ?? ""}`, width: cols - 2 }]);
     }
+    paintCmdBar(frame, "board", cols, rows);
     frame.set(rows - 1, rule(cols, "└", "┘", ["w back"]));
     return frame;
   }
@@ -381,6 +365,11 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
   sorted.forEach((pr, i) => {
     listLines.push(styledRow(pr, i === view.selected, listW - 1, now, view.repo));
     const y = 1 + listLines.length - 1 + 1; // frame row of this PR line (below top bar)
+    // Only PAINTED rows get zones: with a long list, off-screen rows would
+    // otherwise leave phantom click targets over the pi region and the
+    // bar-row gaps — a click there could select (or double-click attach)
+    // an invisible PR.
+    if (i >= bodyRows - 1) return;
     frame.zones.push({ x1: 2, y1: y, x2: listW, y2: y, action: { t: "select-pr", pr: pr.number } satisfies BoardAction });
     frame.zones.push({ x1: 4, y1: y, x2: 4 + String(pr.number).length + 1, y2: y, action: { t: "open-github", pr: pr.number } satisfies BoardAction });
   });
@@ -425,27 +414,8 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
   // EVENTS: no longer a permanent strip — a floating overlay on `e`.
   if (view.eventsFocus) renderEventsOverlay(frame, view, cols, rows);
 
-  // Hint bar as clickable buttons.
-  let x = 2;
-  const parts: string[] = [];
-  for (const b of HINT_BUTTONS) {
-    const text = b.key === "e" && view.eventsFocus ? "e close events" : b.label;
-    const label = `[ ${text} ]`;
-    const action: BoardAction =
-      b.key === "1"
-        ? { t: "tab", tab: "board" }
-        : b.key === "2"
-          ? { t: "tab", tab: "digest" }
-          : b.key === "4"
-            ? { t: "tab", tab: "deploy" }
-            : b.key === "5"
-              ? { t: "tab", tab: "metrics" }
-              : { t: "key", key: b.key };
-    frame.zones.push({ x1: x, y1: rows - 1, x2: x + label.length - 1, y2: rows - 1, action });
-    parts.push(`${FG.dim}[${RESET} ${text} ${FG.dim}]${RESET}`);
-    x += label.length + 1;
-  }
-  frame.boxRow(rows - 2, [{ text: ` ${parts.join(" ")}`, width: cols - 2 }]);
+  // The shared two-row command bar replaces the board's own hint row.
+  paintCmdBar(frame, "board", cols, rows);
   frame.set(rows - 1, rule(cols, "└", "┘", []));
   return frame;
 }

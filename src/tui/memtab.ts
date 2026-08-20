@@ -21,6 +21,7 @@ import type { App } from "./app.js";
 import { decodeKey, type BoardKey } from "./keys.js";
 import { hitTest, type Zone } from "./mouse.js";
 import { autofileDefects, type TrackerPaths } from "./autofile.js";
+import { paintCmdBar } from "./cmdbar.js";
 import { currentFile, renderDigestTab, SshDigestFetcher, type DigestAction, type DigestFetcher, type DigestState } from "./digesttab.js";
 import { awaitingRows, sortPrs } from "./model.js";
 import { blockHash, defectEntries, timelineOrder, SshMemoryStore, type MemoryEntry, type MemoryStore } from "./memory.js";
@@ -138,7 +139,7 @@ export function renderMemoryView(
   // the one-line list is for picking, never the only way to read a lesson.
   const leftW = Math.floor((cols - 3) * 0.38);
   const rightW = cols - 3 - leftW;
-  const bodyRows = rows - 3;
+  const bodyRows = rows - 4; // top bar + command bar (2 rows) + bottom border
 
   const ordered = timelineOrder(st.entries);
   const left: string[] = [];
@@ -232,20 +233,7 @@ export function renderMemoryView(
     if (la) frame.zones.push({ x1: 2, y1: r + 2, x2: leftW + 1, y2: r + 2, action: la });
     if (rr) for (const z of rr.zones) frame.zones.push({ x1: rightX0 + z.x1, y1: r + 2, x2: rightX0 + z.x2, y2: r + 2, action: z.action });
   }
-  const hint = zonedRow(
-    [
-      { text: "[v digest view]", action: { t: "key", key: "v" } },
-      { text: "[t focus]", action: { t: "key", key: "t" } },
-      { text: "↓/↑ pick", dim: true },
-      { text: "[◀ older", action: { t: "key", key: "[" } },
-      { text: "▶ newer]", action: { t: "key", key: "]" } },
-      { text: "click an entry to read it · verbs are buttons", dim: true },
-      { text: "q quit", dim: true },
-    ],
-    " · ",
-  );
-  frame.boxRow(rows - 2, [{ text: ` ${hint.text}`, width: cols - 2 }]);
-  for (const z of hint.zones) frame.zones.push({ x1: 2 + z.x1, y1: rows - 1, x2: 2 + z.x2, y2: rows - 1, action: z.action });
+  paintCmdBar(frame, "digest", cols, rows);
   frame.set(rows - 1, rule(cols, "└", "┘", []));
   return frame;
 }
@@ -427,7 +415,9 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
     if (!action) return;
     switch (action.t) {
       case "key":
-        theApp.hooks.digestKey?.(theApp, decodeKey(Buffer.from(action.key, "utf8")));
+        // Through the app's input path, so bar-style keys AND globals work
+        // uniformly (the tab handler still gets first crack).
+        theApp.pressKey(action.key);
         return;
       case "mem":
         st.view = "memory";
@@ -477,6 +467,10 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
   const digestViewKey = (theApp: App, key: BoardKey): boolean => {
     const awaiting = theApp.view.snapshot ? awaitingRows(sortPrs(theApp.view.snapshot.prs), now()) : [];
     switch (key.kind) {
+      case "events":
+        // `e` is the MEMORY view's edit; here it would fall through to the
+        // board's events overlay and silently toggle it — swallow instead.
+        return true;
       case "down":
       case "up": {
         if (key.arrow) {
@@ -633,10 +627,11 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
       case "github":
       case "overseer":
       case "main-session":
-      case "reconnect":
         return true;
       default:
-        return false; // tabs/quit/help stay with the app
+        // tabs/quit/help — and reconnect: the bar promises [s ssh]
+        // everywhere, so it must reach the app from this view too.
+        return false;
     }
   };
 

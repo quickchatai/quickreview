@@ -6,6 +6,7 @@
 // this tab's resting screen, one ⏎ from re-attaching.
 import { AttachScreen, type PtySpawner } from "./attach.js";
 import type { App } from "./app.js";
+import { paintCmdBar } from "./cmdbar.js";
 import type { CompanionLifecycle } from "./companion.js";
 import { CLEAR, Frame, SGR, rule } from "./paint.js";
 import { FG, RESET } from "./theme.js";
@@ -25,7 +26,8 @@ export function renderCompanionRest(app: App, cols: number, rows: number, hint: 
       ? `  latest alert: ${latest.tier === "alert" ? FG.anomaly : FG.accent}${latest.title}${RESET}${latest.pr !== null ? ` (#${latest.pr})` : ""}`
       : `  ${FG.dim}no alerts today${RESET}`,
   ];
-  for (let r = 1; r < rows - 1; r++) frame.boxRow(r, [{ text: lines[r - 1] ?? "", width: cols - 2 }]);
+  for (let r = 1; r < rows - 3; r++) frame.boxRow(r, [{ text: lines[r - 1] ?? "", width: cols - 2 }]);
+  paintCmdBar(frame, "companion", cols, rows);
   frame.set(rows - 1, rule(cols, "└", "┘", []));
   return CLEAR + frame.render();
 }

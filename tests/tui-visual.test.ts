@@ -139,14 +139,12 @@ describe("rich board", () => {
     expect(text).toContain("⚑ needs-you");
   });
 
-  it("declares zones: rows select, numbers open GitHub, hint buttons act", () => {
+  it("declares zones: rows select, numbers open GitHub (bar clicks live in cmdbar)", () => {
     const frame = renderBoard(view(), 140, 40);
     const zones = frame.zones as Zone<BoardAction>[];
     const kinds = zones.map((z) => z.action.t);
     expect(kinds).toContain("select-pr");
     expect(kinds).toContain("open-github");
-    expect(kinds).toContain("tab");
-    expect(kinds).toContain("key");
     // Sort order: reviewing first — #5277 is the first row (terminal row 3).
     expect(hitTest(zones, 20, 3)).toEqual({ t: "select-pr", pr: 5277 });
     expect(hitTest(zones, 5, 3)).toEqual({ t: "open-github", pr: 5277 });
@@ -195,7 +193,7 @@ describe("live pi mirror pane", () => {
     expect(frame.lines.join("\n")).toContain("\x1b[36m▌ pi");
     // The pane really is the lower half, not a strip.
     expect(frame.meta["piRows"]).toBe(18);
-    expect(frame.meta["piTop"]).toBe(40 - 3 - 18 + 1);
+    expect(frame.meta["piTop"]).toBe(40 - 4 - 18 + 1);
   });
 
   it("clicking anywhere in the pane focuses it in place — never a full-screen attach", () => {
