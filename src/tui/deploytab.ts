@@ -291,8 +291,8 @@ export function renderDeployTab(st: DeployState, dryRun: boolean, cols: number, 
   }
   const refreshing = st.loading ? "  refreshing…" : "";
   const hints = run
-    ? `[1]board [2]digest [4]deploy  j/k scroll log  ${run.running ? "x abort" : "x close log"}  q quit`
-    : `[1]board [2]digest [4]deploy  click ▶ or D D deploy  j/k scroll  r refresh  q quit`;
+    ? `[1]board [2]memory [4]deploy  j/k scroll log  ${run.running ? "x abort" : "x close log"}  q quit`
+    : `[1]board [2]memory [4]deploy  click ▶ or D D deploy  j/k scroll  r refresh  q quit`;
   frame.boxRow(rows - 2, [{ text: ` ${SGR.dim}${hints}${refreshing}${SGR.reset}`, width: cols - 2 }]);
   frame.set(rows - 1, rule(cols, "└", "┘", []));
   return frame;

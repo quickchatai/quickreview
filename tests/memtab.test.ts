@@ -273,6 +273,20 @@ describe("companion memedit requests", () => {
   });
 });
 
+describe("the [2] tab is VISIBLY Memory & learning (rename regression)", () => {
+  it("digest view header and hints carry the rename and advertise v", async () => {
+    const { app } = makeApp();
+    install(app, new FakeMemory());
+    app.hooks.digestScreen!(app, 110, 30);
+    await settle();
+    const screen = stripAnsi(app.hooks.digestScreen!(app, 110, 30));
+    expect(screen).toContain("memory & learning · digest");
+    expect(screen).toContain("v memory view");
+    expect(screen).toContain("[2]memory");
+    expect(screen).not.toContain("[2]digest");
+  });
+});
+
 describe("quit vs late async repaints (ghost-frame regression)", () => {
   it("a load resolving after quit paints nothing onto the restored screen", async () => {
     const { app, written } = makeApp();

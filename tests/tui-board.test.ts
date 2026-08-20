@@ -216,7 +216,7 @@ describe("renderBoard", () => {
     expect(text).toContain("PI pr-5012 · live mirror · click to type");
     expect(text).toContain("> reading tasks.py");
     expect(text).toContain("1 board");
-    expect(text).toContain("2 digest");
+    expect(text).toContain("2 memory");
     expect(frame.lines.length).toBe(24);
     // The demoted EVENTS strip is gone until `e` asks for it.
     expect(text).not.toContain("EVENTS");
