@@ -21,6 +21,16 @@
 #   * refuses when config.toml's [pi] version and the ansible group_vars
 #     pi_version disagree, and refuses on the "PIN-ME" placeholder. The pin
 #     never floats and this script never bumps it (spec §9).
+#   * refuses on OpenViking pin drift, the same way. Three pins,
+#     two mirrors:
+#       - [openviking] version              == group_vars openviking_version
+#       - [openviking] llama_cpp_python_version
+#                                           == group_vars llama_cpp_python_version
+#         (the Dockerfile venv layer interpolates the group_vars, never a
+#          literal — so agreeing here means agreeing in the image)
+#       - [openviking] extension_commit     == extensions/vendor/openviking-pi/
+#                                              upstream.json "commit"
+#         (the vendored fork rides the rsync, not the image)
 #
 # This script performs NO live run on its own beyond ansible/ssh; every live
 # invocation belongs to the owner on a machine with VM access.
@@ -47,6 +57,7 @@ CONFIG="${QCR_CONFIG:-$SANDBOX_DIR/config.toml}"
 GROUP_VARS="$ANSIBLE_DIR/group_vars/all.yml"
 PLAYBOOK="$ANSIBLE_DIR/playbook.yml"
 CONTAINER="quickreview-sandbox"
+OV_UPSTREAM="$SANDBOX_DIR/extensions/vendor/openviking-pi/upstream.json"
 
 # The playbook (an asset — never edited from here) carries no tags, so "sync"
 # is expressed as a start-at-task: everything from the working-copy rsync
@@ -92,9 +103,10 @@ config_pi_version() {
   ' "$CONFIG"
 }
 
-group_vars_pi_version() {
-  awk '
-    /^[[:space:]]*pi_version[[:space:]]*:/ {
+# A `<key>: "<value>"` scalar out of the ansible group_vars.
+group_vars_key() {
+  awk -v key="$1" '
+    $0 ~ "^[[:space:]]*" key "[[:space:]]*:" {
       line = $0
       sub(/^[^:]*:[[:space:]]*/, "", line)
       gsub(/["'"'"']/, "", line)
@@ -103,6 +115,52 @@ group_vars_pi_version() {
       exit
     }
   ' "$GROUP_VARS"
+}
+
+group_vars_pi_version() { group_vars_key pi_version; }
+
+# A `<key> = "<value>"` scalar out of a named config.toml table.
+config_table_key() {
+  awk -v table="$1" -v key="$2" '
+    $0 ~ "^\\[" table "\\]"  { in_t = 1; next }
+    /^\[/                    { in_t = 0 }
+    in_t && $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+      line = $0
+      sub(/^[^=]*=[[:space:]]*/, "", line)
+      gsub(/["'"'"']/, "", line)
+      sub(/[[:space:]]*(#.*)?$/, "", line)
+      print line
+      exit
+    }
+  ' "$CONFIG"
+}
+
+# upstream.json's "commit" — the vendored fork's base commit (mirror 2 of 2).
+upstream_commit() {
+  [[ -f "$OV_UPSTREAM" ]] || return 0
+  awk -F'"' '/^[[:space:]]*"commit"[[:space:]]*:/ { print $4; exit }' "$OV_UPSTREAM"
+}
+
+# One pin, two spellings that must agree. Empty on EITHER side is fatal: a pin
+# we cannot read is a pin we cannot verify, and this script never guesses.
+check_pin() {
+  local label="$1" a_where="$2" a="$3" b_where="$4" b="$5"
+  [[ -n "$a" ]] || die "$a_where has no $label pin — cannot verify it"
+  [[ -n "$b" ]] || die "$b_where has no $label pin — cannot verify it"
+  if [[ "$a" != "$b" ]]; then
+    cat >&2 <<EOF
+$SELF: $label pin mismatch — refusing to deploy.
+
+    $a_where = "$a"
+    $b_where = "$b"
+
+Deploying would change a pinned version on the VM. That is a deliberate act:
+reconcile the two by hand, then run
+    $SELF rebuild
+so the image is rebuilt against the new pin.
+EOF
+    exit 1
+  fi
 }
 
 first_inventory_host() {
@@ -167,6 +225,30 @@ EOF
   exit 1
 fi
 
+# 2b. the OpenViking pins must agree too. Same discipline as pi: the
+# memory engine never floats, and a rebase of the vendored fork that nobody
+# recorded in config.toml is exactly the drift `extension_commit` exists to
+# catch. `[openviking]` is fully defaulted in code, so an older config.toml may
+# genuinely carry no block — in that case there is nothing to compare and the
+# check stands down rather than inventing a mismatch.
+CFG_OV="$(config_table_key openviking version || true)"
+if [[ -n "$CFG_OV" ]]; then
+  check_pin "openviking" \
+    'config.toml   [openviking] version' "$CFG_OV" \
+    'group_vars    openviking_version' "$(group_vars_key openviking_version || true)"
+  check_pin "llama-cpp-python" \
+    'config.toml   [openviking] llama_cpp_python_version' "$(config_table_key openviking llama_cpp_python_version || true)" \
+    'group_vars    llama_cpp_python_version' "$(group_vars_key llama_cpp_python_version || true)"
+  CFG_OV_EXT="$(config_table_key openviking extension_commit || true)"
+  if [[ -n "$CFG_OV_EXT" ]]; then
+    check_pin "openviking pi-extension base commit" \
+      'config.toml   [openviking] extension_commit' "$CFG_OV_EXT" \
+      'upstream.json "commit"' "$(upstream_commit || true)"
+  fi
+else
+  note "config.toml carries no [openviking] block — memory-engine pins not verified"
+fi
+
 # 3. sandbox_src must be wired, or the rsync task no-ops
 if ! grep -Eq '^[[:space:]]*sandbox_src[[:space:]]*:' "$GROUP_VARS"; then
   die "group_vars/all.yml has no active 'sandbox_src' — uncomment it (it must point at $SANDBOX_DIR) or the working copy is never synced"
@@ -196,6 +278,11 @@ print_plan() {
   echo "  ansible      $ANSIBLE_DIR"
   echo "  inventory    $INVENTORY"
   echo "  pi pin       $CFG_PI (config.toml == group_vars, not bumped)"
+  if [[ -n "$CFG_OV" ]]; then
+    echo "  memory pins  openviking $CFG_OV (config.toml == group_vars == image layer), extension ${CFG_OV_EXT:-<unset>} (config.toml == upstream.json)"
+  else
+    echo "  memory pins  <no [openviking] block in config.toml — unverified>"
+  fi
   echo "  vm host      ${VM_HOST:-<unset — set QC_VM_HOST>}"
   case "$MODE" in
     sync)    echo "  action       mirror-rsync working copy -> /opt/quickreview/sandbox (--delete, runtime dirs kept), restart container (no image rebuild)" ;;

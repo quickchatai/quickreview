@@ -36,26 +36,13 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 # pi — pinned, never floating
 RUN npm install -g {{ pi_npm_package }}@{{ pi_version }}
 
-# pi-memory extension — pinned, never floating. The npm name is collided with
-# unrelated packages (josephkern/catlain/@chendpoc): hard-fail the build unless
-# the INSTALLED package's repository resolves to github.com/jayzeng/pi-memory.
-RUN npm install -g {{ pi_memory_package }}@{{ pi_memory_version }} \
-    && url="$(node -p "String((require(require('child_process').execSync('npm root -g').toString().trim() + '/{{ pi_memory_package }}/package.json').repository || {}).url)")" \
-    && echo "pi-memory repository.url: $url" \
-    && echo "$url" | grep -Eq 'github\.com[:/]jayzeng/pi-memory' \
-    || { echo "FATAL: {{ pi_memory_package }}@{{ pi_memory_version }} is not jayzeng/pi-memory" >&2; exit 1; }
-
-# qmd — the semantic-search CLI pi-memory's `memory_search` shells out to
-#. Same provenance discipline as pi-memory even though the name is
-# scoped: hard-fail unless the installed package's repository resolves to
-# github.com/tobi/qmd, and smoke the binary in the layer — its node-llama-cpp
-# native dep must actually load, not just install.
-RUN npm install -g {{ qmd_npm_package }}@{{ qmd_version }} \
-    && url="$(node -p "String((require(require('child_process').execSync('npm root -g').toString().trim() + '/{{ qmd_npm_package }}/package.json').repository || {}).url)")" \
-    && echo "qmd repository.url: $url" \
-    && echo "$url" | grep -Eq 'github\.com[:/]tobi/qmd' \
-    && qmd --version \
-    || { echo "FATAL: {{ qmd_npm_package }}@{{ qmd_version }} failed verification (not tobi/qmd, or the binary does not run)" >&2; exit 1; }
+# NOTE: the pi-memory extension and the qmd search CLI used to be
+# installed here. Both retired with the hand-rolled memory engine — memory is
+# OpenViking (below) and the only memory extension a session loads is the
+# vendored, patched `extensions/vendor/openviking-pi`, passed per spawn. Do not
+# re-add either: a second memory engine writing MEMORY.md would fork memory,
+# and pi-memory also hooks `session_before_compact`, which extensions/
+# ledger-pin.ts must own alone.
 
 # pi-subagents extension — amosblomqvist/pi-subagents is a raw extension repo
 # (no package.json, NOT on npm; the npm/pi.dev "pi-subagents" name belongs to
@@ -79,8 +66,13 @@ RUN git clone {{ pi_subagents_repo }} /opt/pi-extensions/pi-subagents \
 # Both versions come from group_vars (the triple mirror with config.toml
 # [openviking]); a literal here would be exactly the drift the pin prevents.
 # The layer hard-fails unless the INSTALLED distribution reports the pinned
-# version and the server entry point exists — same provenance discipline as the
-# pi-memory and qmd layers above.
+# version and the server entry point exists — the same provenance discipline the
+# pi and pi-subagents pins above get.
+#
+# The vendored pi extension's upstream base commit is pinned too, in
+# config.toml [openviking] extension_commit + extensions/vendor/openviking-pi/
+# upstream.json; it rides the repo rather than this image, so there is no layer
+# for it here.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       python3-venv python3-dev cmake \
     && python3 -m venv {{ openviking_venv }} \

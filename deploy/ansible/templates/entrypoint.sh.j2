@@ -131,7 +131,6 @@ OV_CONF_RENDER
 node <<'PI_EXT_MERGE'
 const fs = require("fs");
 const path = require("path");
-const { execSync } = require("child_process");
 
 const file = path.join(process.env.HOME, ".pi", "agent", "settings.json");
 fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -139,11 +138,13 @@ let settings = {};
 if (fs.existsSync(file)) settings = JSON.parse(fs.readFileSync(file, "utf8"));
 if (!Array.isArray(settings.extensions)) settings.extensions = [];
 
-const globalRoot = execSync("npm root -g").toString().trim();
+// pi-memory is NOT registered here any more — the hand-rolled memory
+// engine is retired. Memory is OpenViking, and its (vendored, patched) pi
+// extension is passed per spawn by src/sessions.ts, deliberately NOT registered
+// globally: a globally-registered memory extension would also load in the
+// isolated children pi-subagents spawns, and lens passes must do no ambient
+// memory work.
 const wanted = [
-  // pi-memory: resolve the globally-installed package's entry point (its
-  // package.json "main" is index.ts; pi loads TS extensions natively).
-  require.resolve("pi-memory", { paths: [globalRoot] }),
   // pi-subagents: raw-repo extension baked into the image (Dockerfile pin).
   "/opt/pi-extensions/pi-subagents/index.ts",
   // Repo-shipped guard, rides `deploy.sh sync`.

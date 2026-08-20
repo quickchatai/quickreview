@@ -9,6 +9,7 @@ import { homedir } from "node:os";
 import {
   fsSecretReader,
   loadConfig,
+  openVikingBaseUrl,
   sandboxRoot,
   slackTokenPath,
   validateSlackConfig,
@@ -27,7 +28,8 @@ import { TokenMinter } from "./githubAuth.js";
 import { FeedbackEngine, feedbackDayAddendum, warsawDay, type FeedbackEvent } from "./feedback.js";
 import { PASS_ADDENDA, buildAgents } from "./include.js";
 import { fileImprovementPr, fileIssue, type Run } from "./improvements.js";
-import { OpenVikingSupervisor } from "./openviking/index.js";
+import { OpenVikingClient, OpenVikingSupervisor, keyFromFile, openVikingStore } from "./openviking/index.js";
+import { OV_REVIEWER_KEY_SECRET } from "./memory/ovsession.js";
 import { reconcileOrphanedRounds } from "./reconcile.js";
 import { PiSessionManager } from "./sessions.js";
 import { SlackApiClient } from "./slack/api.js";
@@ -478,7 +480,25 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         log(`built ${built.length} pass agents into state/agents${fb ? " (+ same-day feedback addendum)" : ""}`);
       };
       rebuildAgents();
-      feedback = new FeedbackEngine({ store: d.store, rebuildAgents, root, log });
+      // Reviewer memory: the ONE daemon-side `MemoryStore`, over the
+      // supervised OpenViking server on loopback. The reviewer USER key is
+      // read from the secrets mount lazily (`keyFromFile` re-checks on a TTL),
+      // so a key that lands after boot is picked up without a restart — and an
+      // ABSENT key degrades exactly like a dead server, which is the correct
+      // behaviour on a dev PC. Never an ADMIN or ROOT key.
+      const memory = openVikingStore(
+        new OpenVikingClient({
+          baseUrl: openVikingBaseUrl(cfg.openviking),
+          apiKey: keyFromFile(join(cfg.github.secrets_dir, OV_REVIEWER_KEY_SECRET)),
+          user: cfg.openviking.user,
+          account: cfg.openviking.account,
+          timeoutMs: cfg.openviking.request_timeout_ms,
+          log,
+          onGap: (gap) => log("openviking gap", gap),
+        }),
+        { defaultCategory: cfg.openviking.default_category, cacheTtlMs: cfg.openviking.read_cache_ttl_ms, log },
+      );
+      feedback = new FeedbackEngine({ store: d.store, rebuildAgents, memory, log });
 
       // Adopt live sessions + sweep stale worktrees (never kills a live session).
       const active = d.store.allPrs().filter((p) => p.state !== "closed").map((p) => p.number);

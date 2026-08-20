@@ -2,9 +2,9 @@
 // every memory entry opens with, shared by the writers (feedback sink,
 // import) and the readers (OpenViking store's native set_tags, the EOD
 // curator, the TUI auto-filer). It lives here rather than in `feedback.ts`
-// because the store imports it: from `feedback.ts` it would drag `eod.ts`,
-// `include.ts` and `pi-memory.ts` into every consumer of the memory store —
-// including the TUI, which has no business loading the addendum registry.
+// because the store imports it: from `feedback.ts` it would drag `eod.ts` and
+// `include.ts` into every consumer of the memory store — including the TUI,
+// which has no business loading the addendum registry.
 //
 // The seam carries TEXT, not a tag map (see `store.ts`), so tags ride inside
 // the entry as a leading, machine-parseable run: `#hash #tags k=v k=v prose…`.

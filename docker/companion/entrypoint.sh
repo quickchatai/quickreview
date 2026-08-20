@@ -36,35 +36,28 @@ set -g pane-border-style 'fg=colour238'
 set -g pane-active-border-style 'fg=colour245'
 TMUXCONF
 
-# Extension discovery for pi-memory. ~/.pi lives on a named volume; the merge
-# below preserves every existing key (hand edits win, append-only extensions).
-# The "extensions" array is VERIFIED live on the VM (2026-08-14: pi-memory,
-# pi-subagents and bash-guard all load from it on 0.84.1).
+# pi settings. ~/.pi lives on a named volume; the merge below preserves every
+# existing key (hand edits win, append-only extensions).
+#
+# NO MEMORY EXTENSION IS REGISTERED HERE. pi-memory retired with the
+# hand-rolled engine; the companion's memory is OpenViking on the VM, and its
+# vendored+patched extension is passed per spawn with `--extension` by
+# src/tui/companion.ts — a per-spawn flag, not a global registration.
 SETTINGS="$PI_HOME_DIR/agent/settings.json"
 mkdir -p "$PI_HOME_DIR/agent"
 # Idempotent MERGE (mirrors the VM entrypoint): seed-only-if-absent silently
-# skipped pi-memory forever once pi itself had written settings.json.
+# skipped keys forever once pi itself had written settings.json.
 node <<'PI_EXT_MERGE'
 const fs = require("fs");
 const path = process.env.HOME + "/.pi/agent/settings.json";
-let memoryMain = null;
-try {
-  const globalRoot = require("child_process").execSync("npm root -g").toString().trim();
-  memoryMain = require.resolve("pi-memory", { paths: [globalRoot] });
-} catch {}
 let cfg = {};
 try { cfg = JSON.parse(fs.readFileSync(path, "utf8")); } catch {}
 if (!Array.isArray(cfg.extensions)) cfg.extensions = [];
-if (memoryMain) {
-  if (!cfg.extensions.includes(memoryMain)) cfg.extensions.push(memoryMain);
-  console.log("pi extensions registered:", cfg.extensions.join(", "));
-} else {
-  console.error("WARNING: pi-memory not resolvable — companion runs without memory");
-}
 // Never block on pi's interactive "Trust project folder?" modal (mirrors the
 // VM entrypoint; the owner, 2026-08-20 — pr-5334 stall).
 cfg.defaultProjectTrust = "always";
 fs.writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n");
+console.log("pi settings merged (extensions: " + (cfg.extensions.join(", ") || "none registered globally") + ")");
 PI_EXT_MERGE
 
 # OpenAI auth: the OAuth route (`/login` once inside a pi session) persists in

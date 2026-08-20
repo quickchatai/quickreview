@@ -1,10 +1,11 @@
 // Remote access layer for qcr tui — every VM touch goes through here, and
 // every command it can produce is read-only against the box except the
 // user-initiated writes (attach keystrokes ride a pty in attach.ts; inject
-// files in msg.ts; `sendKeysArgv` types into the board's focused pi pane;
-// adds memory edits — carried by the MemoryStore seam, whose
-// pi-memory implementation runs over this same runner (src/memory/) — and
-// rubric-proposal dir removal in proposals.ts, both operator keystrokes).
+// files in msg.ts; `sendKeysArgv` types into the board's focused pi pane; and
+// rubric-proposal dir removal in proposals.ts, an operator keystroke). Memory
+// edits do NOT ride this runner any more: the TUI talks HTTP to
+// OpenViking over the memory forward's loopback listener — see
+// src/tui/memory.ts.
 // None of them touch GitHub mutations, so none go near the gate (the
 // proposals pane's gh reads are reads — direct per the gate rules).
 // Command construction is pure so tests can assert the exact argv; execution

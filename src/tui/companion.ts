@@ -7,7 +7,7 @@
 // Lifecycle contract (grilled):
 //   `qcr tui` start → adopt a running container, else `docker start`, else
 //   `docker run` it. Quit → `docker stop` (conversation, pihome auth and
-//   pi-memory survive on volumes; next start is a fast resume). TUI crash →
+//   the pi home survive on volumes; next start is a fast resume). TUI crash →
 //   the container keeps running and the next start adopts it. A second
 //   concurrent TUI attaches to the same container, never spawns a twin:
 //   ensureUp() and spawnPi() are both idempotent and there is no kill path

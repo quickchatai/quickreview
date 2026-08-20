@@ -14,6 +14,12 @@ global watcher over all reviews in flight (anomalies, commands, the EOD sweep).
 The daemon spawns nothing else, ever. (`companion` is a separate boundary and
 lives on the owner's PC — see CLAUDE.md.)
 
+A PR's **OpenViking session** (`pr-<n>`) is not a third kind and does
+not count against S1: it is a **row in the memory store**, created and deleted
+over HTTP, holding that review's raw working notes. Nothing schedules it,
+nothing runs in it, and it shares the tmux session's name only so an operator
+reading `state/` sees the correspondence at a glance.
+
 **S2 — The daemon nudges; it never schedules an agent.**
 Everything the daemon sends a session is a deterministic instruction computed
 in daemon code without an LLM: the `RoundOrder` (round type, pass plan, tiers,

@@ -1,12 +1,12 @@
-// the curated-memory import: pi-memory → the engine store.
+// the curated-memory import: the archived markdown file → the store.
 //
-// One repeatable pass that moves the memory WORTH KEEPING out of today's
-// pi-memory file and into whatever `MemoryStore` the engine phase stands up.
-// Both ends are the seam (`store.ts`): the source is a `MemoryStore` (in
-// production `PiMemoryStore`), the destination is a `MemoryStore` (later the
-// OpenViking one). Nothing in this file knows either engine — that is the
-// point, and it is why the import could be written before the destination
-// existed.
+// One repeatable pass that moves the memory WORTH KEEPING out of the retired
+// engine's MEMORY.md and into the `MemoryStore` the engine phase stands up.
+// Both ends are the seam (`store.ts`): the source is a `MemorySource` (in
+// production the read-only `legacy-file.ts` reader), the destination is a
+// `MemoryStore` (in production the OpenViking one). Nothing in this file knows
+// either end's mechanics — that is the point, and it is why the import could
+// be written before the destination existed.
 //
 // What crosses, and what deliberately does not:
 //
@@ -28,9 +28,9 @@
 //     day-to-day scratch (what it did, what it looked at) — the noise the
 //     import exists to leave behind. Recognising them positively is not
 //     possible (they have no marker); recognising the curated set positively
-//     is, because every curated writer tags its entries — the EOD sweep by
-//     prompt, memedit's `add` by minting `#manual`, memedit's `note` by
-//     refusing untagged text at all.
+//     is, because every curated writer tagged its entries — the EOD sweep by
+//     prompt, the operator's own `add` by minting `#manual`, a machine `note`
+//     by refusing untagged text at all.
 //
 // Best effort, NO GATE (the owner, 2026-08-20): there is no probe-parity
 // check, no pass/fail bar and no abort path. Whatever imports, imports; gaps
@@ -46,7 +46,17 @@
 // can express; a store with native hash preconditions layers its own on top).
 import { createHash } from "node:crypto";
 import { chmod as nodeChmod, stat as nodeStat } from "node:fs/promises";
-import { matchesQuery, normalizeTag, refOf, type MemoryEntry, type MemoryOp, type MemorySearchOptions, type MemoryStore, type MemoryWriteResult } from "./store.js";
+import {
+  matchesQuery,
+  normalizeTag,
+  refOf,
+  type MemoryEntry,
+  type MemoryOp,
+  type MemorySearchOptions,
+  type MemorySource,
+  type MemoryStore,
+  type MemoryWriteResult,
+} from "./store.js";
 
 /** Tag stamped on every imported entry — the TUI's handle on this migration. */
 export const IMPORT_TAG = "imported";
@@ -68,7 +78,7 @@ export type ImportCategory = "pinned" | "standing" | "learning" | "bug" | "feedb
 export type SkipReason =
   /** No curated tag: a session's day-to-day working note. */
   | "raw-daily-note"
-  /** A pi-memory compaction handoff block, not a lesson. */
+  /** A session compaction handoff block, not a lesson. */
   | "session-handoff"
   /** A `#bug`/`#feedback` thread already tagged closed. */
   | "closed-thread"
@@ -164,6 +174,8 @@ export function keyOfDestEntry(e: MemoryEntry): string {
  * searchable.
  */
 export function importedText(e: MemoryEntry, category: ImportCategory, key: string): string {
+  // "from pi-memory" is the PROVENANCE of the source entry — the engine it was
+  // written in — and stays spelled that way in already-imported entries.
   const head = `#${IMPORT_TAG} #${category} ${IMPORT_KEY_PREFIX}${key} — from pi-memory ${e.ts} [${e.id}#${e.block}]`;
   return `${head}\n${e.text.trim()}`;
 }
@@ -233,8 +245,9 @@ const nameOf = (r: EntryRef): string => `${r.ts} [${r.id}#${r.block}] "${r.excer
 // ---- the import ------------------------------------------------------------
 
 export interface ImportOptions {
-  /** Where the curated memory is today (production: a `PiMemoryStore`). */
-  source: MemoryStore;
+  /** Where the curated memory came from — READ ONLY (production: the archived
+   * markdown file through `legacy-file.ts`). */
+  source: MemorySource;
   /** Where it is going. Any `MemoryStore` — the engine's implementation is
    * none of this module's business. */
   dest: MemoryStore;
@@ -481,7 +494,7 @@ const nodeArchiveFs: ArchiveFs = {
 const octal = (mode: number): string => `0${(mode & 0o777).toString(8)}`;
 
 /**
- * Leave the pi-memory file exactly where it is, read-only (0444). The file is
+ * Leave the legacy memory file exactly where it is, read-only (0444). It is
  * never deleted or moved: after the engine cutover it is the historical
  * record, and a stray writer finding it writable would silently fork memory.
  * Failure is reported, never thrown — the import has no abort path.

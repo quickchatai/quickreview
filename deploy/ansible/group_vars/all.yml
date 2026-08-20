@@ -31,23 +31,11 @@ pi_version: "0.84.1"
 pi_subagents_repo: "https://github.com/amosblomqvist/pi-subagents.git"
 pi_subagents_commit: "1f541897588b995144f0bb8e71a335d1c85b1e62"
 
-# pi-memory: MUST be jayzeng/pi-memory (§2) — the npm name is collided
-# with unrelated packages by josephkern/catlain/@chendpoc. Exact-version pin
-# (registry-verified 2026-08-14: pi-memory@0.4.2 repository.url =
-# github.com/jayzeng/pi-memory); the Dockerfile hard-fails the build if the
-# installed package's repository does not resolve to jayzeng/pi-memory.
-pi_memory_package: "pi-memory"
-pi_memory_version: "0.4.2"
-
-# qmd: the semantic-search CLI pi-memory's `memory_search` shells out to
-# (without it every session pays a failed memory_search per round).
-# Scoped npm package @tobilu/qmd, repo github.com/tobi/qmd (registry-verified
-# 2026-08-19: dist-tags.latest = 2.8.3, repository.url = tobi/qmd, engines
-# node >=22 — matches node_major). The Dockerfile hard-fails the build if the
-# installed package's repository does not resolve to tobi/qmd, and smokes
-# `qmd --version` in the layer (node-llama-cpp native dep must actually load).
-qmd_npm_package: "@tobilu/qmd"
-qmd_version: "2.8.3"
+# RETIRED: pi_memory_package/pi_memory_version and
+# qmd_npm_package/qmd_version. The hand-rolled memory engine is gone — memory
+# is OpenViking (below) and its pi extension is vendored in the repo, not
+# installed from npm. Re-adding either pin would put a second memory engine in
+# the image; that is the thing this phase deleted.
 
 # OpenViking (github.com/volcengine/OpenViking) — the context store the daemon
 # supervises as a second process inside the container, on LOOPBACK 1933

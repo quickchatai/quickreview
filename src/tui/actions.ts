@@ -14,7 +14,8 @@
 // line, so a surprising action is visible the moment it happens. Do not add
 // a confirmation step here.
 //
-// Idempotency (pattern copied from src/tui/memrequests.ts): a request is
+// Idempotency (the archive-before-execute pattern the retired memory-edit
+// request channel also used): a request is
 // archived to `.done/` BEFORE it is executed — a crash mid-execute must not
 // re-run it on the next sweep (msg_session/overseer_inject would double-send,
 // deploy_tab would double-arm). A crash after archive but before execute
@@ -261,7 +262,7 @@ export interface ProcessedAction {
 }
 
 /** Result files older than this are swept; `.done/` keeps the newest N.
- * (Same housekeeping bounds as memrequests.ts.) */
+ * (Bounded the same way the retired memory-request sweep was.) */
 const RESULT_TTL_MS = 24 * 3600 * 1000;
 const DONE_KEEP = 200;
 

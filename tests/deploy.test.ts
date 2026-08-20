@@ -12,7 +12,15 @@ import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const deploySh = join(root, "scripts", "deploy.sh");
 
-const GROUP_VARS = (piVersion: string, withSandboxSrc = true) =>
+/** The OpenViking half of the pins. `undefined` = no such pin in
+ * the file, which is a distinct case from a mismatching one. */
+interface OvPins {
+  version?: string;
+  llama?: string;
+  extension?: string;
+}
+
+const GROUP_VARS = (piVersion: string, withSandboxSrc = true, ov?: OvPins) =>
   [
     "---",
     "sandbox_root: /opt/quickreview",
@@ -21,11 +29,13 @@ const GROUP_VARS = (piVersion: string, withSandboxSrc = true) =>
     'image_tag: v1',
     'pi_npm_package: "@earendil-works/pi-coding-agent"',
     `pi_version: "${piVersion}"`,
+    ...(ov?.version === undefined ? [] : [`openviking_version: "${ov.version}"`]),
+    ...(ov?.llama === undefined ? [] : [`llama_cpp_python_version: "${ov.llama}"`]),
     ...(withSandboxSrc ? ['sandbox_src: "/tmp/whatever"'] : ['# sandbox_src: "/tmp/whatever"']),
     "",
   ].join("\n");
 
-const CONFIG = (piVersion: string) =>
+const CONFIG = (piVersion: string, ov?: OvPins) =>
   [
     "dry_run = true",
     "",
@@ -33,6 +43,15 @@ const CONFIG = (piVersion: string) =>
     'package = "@earendil-works/pi-coding-agent"',
     `version = "${piVersion}"`,
     'session_dir = "state/pi-sessions"',
+    ...(ov === undefined
+      ? []
+      : [
+          "",
+          "[openviking]",
+          ...(ov.version === undefined ? [] : [`version = "${ov.version}"`]),
+          ...(ov.llama === undefined ? [] : [`llama_cpp_python_version = "${ov.llama}"`]),
+          ...(ov.extension === undefined ? [] : [`extension_commit = "${ov.extension}"`]),
+        ]),
     "",
   ].join("\n");
 
@@ -44,15 +63,34 @@ interface Env {
 
 let env: Env;
 
-function makeScratch(opts: { configPi: string; groupVarsPi: string; sandboxSrc?: boolean }): Env {
+function makeScratch(opts: {
+  configPi: string;
+  groupVarsPi: string;
+  sandboxSrc?: boolean;
+  /** `[openviking]` in config.toml + the matching group_vars keys. */
+  configOv?: OvPins;
+  groupVarsOv?: OvPins;
+  /** extensions/vendor/openviking-pi/upstream.json "commit". */
+  upstreamCommit?: string;
+}): Env {
   const dir = mkdtempSync(join(tmpdir(), "qcr-deploy-"));
   const sandbox = join(dir, "sandbox");
   const ansible = join(dir, "ansible");
   mkdirSync(sandbox, { recursive: true });
   mkdirSync(join(ansible, "group_vars"), { recursive: true });
 
-  writeFileSync(join(sandbox, "config.toml"), CONFIG(opts.configPi));
-  writeFileSync(join(ansible, "group_vars", "all.yml"), GROUP_VARS(opts.groupVarsPi, opts.sandboxSrc ?? true));
+  writeFileSync(join(sandbox, "config.toml"), CONFIG(opts.configPi, opts.configOv));
+  writeFileSync(
+    join(ansible, "group_vars", "all.yml"),
+    GROUP_VARS(opts.groupVarsPi, opts.sandboxSrc ?? true, opts.groupVarsOv ?? opts.configOv),
+  );
+  if (opts.upstreamCommit !== undefined) {
+    mkdirSync(join(sandbox, "extensions", "vendor", "openviking-pi"), { recursive: true });
+    writeFileSync(
+      join(sandbox, "extensions", "vendor", "openviking-pi", "upstream.json"),
+      JSON.stringify({ repo: "https://github.com/volcengine/OpenViking", commit: opts.upstreamCommit }, null, 2) + "\n",
+    );
+  }
   writeFileSync(join(ansible, "playbook.yml"), "---\n# stub playbook (the real asset is never touched by tests)\n");
   writeFileSync(join(ansible, "inventory.ini"), "[quickreview]\nquickreview-vm ansible_user=mat\n");
 
@@ -162,5 +200,81 @@ describe("deploy.sh --dry-run", () => {
     env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
     expect(run(env, ["--wat"]).code).toBe(1);
     expect(run(env, ["sync", "rebuild"]).stderr).toContain("two modes");
+  });
+});
+
+// ---- the memory-engine pins --------------------------------------
+// The pi pin never floats; neither does OpenViking's. Three pins, two mirrors:
+// server version and llama-cpp-python against the ansible group_vars (which
+// the Dockerfile venv layer interpolates, so agreeing there means agreeing in
+// the image), and the vendored fork's base commit against upstream.json.
+describe("deploy.sh — OpenViking pin drift", () => {
+  const OV: OvPins = { version: "0.4.15", llama: "0.3.35", extension: "d436baa23c83938b22bb0aab08b0ce48568b5ff4" };
+
+  it("passes and names the memory pins in the plan when everything agrees", () => {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", configOv: OV, upstreamCommit: OV.extension! });
+    const r = run(env, ["--dry-run"]);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain("memory pins  openviking 0.4.15");
+    expect(r.stdout).toContain("extension d436baa2");
+  });
+
+  it("refuses when the pinned server version would change", () => {
+    env = makeScratch({
+      configPi: "0.84.1",
+      groupVarsPi: "0.84.1",
+      configOv: OV,
+      groupVarsOv: { ...OV, version: "0.4.16" },
+      upstreamCommit: OV.extension!,
+    });
+    const r = run(env, ["--dry-run"]);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("openviking pin mismatch");
+    expect(r.stderr).toContain('config.toml   [openviking] version = "0.4.15"');
+    expect(r.stderr).toContain('group_vars    openviking_version = "0.4.16"');
+  });
+
+  it("refuses when llama-cpp-python drifts — the server cannot boot without it", () => {
+    env = makeScratch({
+      configPi: "0.84.1",
+      groupVarsPi: "0.84.1",
+      configOv: OV,
+      groupVarsOv: { ...OV, llama: "0.3.36" },
+      upstreamCommit: OV.extension!,
+    });
+    const r = run(env, ["--dry-run"]);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("llama-cpp-python pin mismatch");
+  });
+
+  it("refuses when the vendored fork was rebased without recording it", () => {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", configOv: OV, upstreamCommit: "0000000000000000000000000000000000000000" });
+    const r = run(env, ["--dry-run"]);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("openviking pi-extension base commit pin mismatch");
+  });
+
+  it("a pin present on one side only is fatal, never silently skipped", () => {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", configOv: OV, groupVarsOv: { version: OV.version } });
+    const r = run(env, ["--dry-run"]);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("has no llama-cpp-python pin");
+  });
+
+  it("an extension_commit with no upstream.json beside it is fatal", () => {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", configOv: OV });
+    const r = run(env, ["--dry-run"]);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('upstream.json "commit" has no openviking pi-extension base commit pin');
+  });
+
+  it("stands down (with a note) on a config.toml carrying no [openviking] block", () => {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
+    const r = run(env, ["--dry-run"]);
+    expect(r.code).toBe(0);
+    // The plan SAYS it did not verify them — standing down is never silent.
+    // (The `note` itself goes to stderr, which this helper only captures on a
+    // non-zero exit.)
+    expect(r.stdout).toContain("memory pins  <no [openviking] block");
   });
 });

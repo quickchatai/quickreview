@@ -24,7 +24,7 @@
 //     Every gap is reported back (`gaps`, `degraded`) for the caller to log
 //     and alert on; none of them is ever a reason to hold a round.
 //
-// Nothing here knows about HTTP, OpenViking, or pi-memory: an implementation
+// Nothing here knows about HTTP or OpenViking: an implementation
 // of `ContextAssembler` is injected (see src/dispatch.ts `DispatchDeps.memory`).
 
 /**

@@ -33,8 +33,7 @@
     "package": "@earendil-works/pi-coding-agent",
     "version": "0.84.1",
     "extensions": {
-      "pi-subagents": "github:amosblomqvist/pi-subagents",
-      "pi-memory": "pi-memory@0.4.2"
+      "pi-subagents": "github:amosblomqvist/pi-subagents"
     }
   }
 }

@@ -128,8 +128,8 @@ scripts/qcr tui --no-companion  # board only: no container, feed, alerts or tab
   fresh, and the first message it reads is the assembled opening context —
   yesterday's digest, a deterministic compacted summary of yesterday, the
   conversation tail, unresolved alerts, the live board snapshot and the alert
-  knobs in force (`prompts/companion-day-open.md`). pi-memory carries over; the
-  transcript does not.
+  knobs in force (`prompts/companion-day-open.md`). Memory carries over (it
+  lives in OpenViking on the VM); the transcript does not.
 - **Boundaries**: overseer *inject* is its only channel to the daemon, its
   commits are prefixed `[companion]`, and it never runs `deploy.sh`.
 

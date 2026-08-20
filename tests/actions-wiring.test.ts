@@ -22,7 +22,7 @@ import type { CompanionStrip } from "../src/tui/strip.js";
 import { decodeKey } from "../src/tui/keys.js";
 import { installMemoryLearningHooks, type MemTabState } from "../src/tui/memtab.js";
 import { timelineOrder } from "../src/tui/memory.js";
-import { blockHash, parseMemory } from "../src/memory/pi-memory.js";
+import { legacyBlockHash as blockHash, parseLegacyMemory as parseMemory } from "../src/memory/legacy-file.js";
 import type { MemoryEntry, MemoryOp, MemoryStore } from "../src/memory/store.js";
 import { installMetricsHooks, type MetricsFetcher } from "../src/tui/metricstab.js";
 import { stripAnsi } from "../src/tui/paint.js";

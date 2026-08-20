@@ -33,7 +33,6 @@
 import { zoneDateString } from "./eod.js";
 import { VALIDATE_PASS, type PassAddendum } from "./include.js";
 import { formatEventTags, parseEventTags } from "./memory/eventtags.js";
-import { localPiMemoryStore } from "./memory/pi-memory.js";
 import type { MemoryStore } from "./memory/store.js";
 import type { FeedbackSignalRow, StateStore } from "./state.js";
 
@@ -196,7 +195,7 @@ export function eventTagsFor(e: FeedbackEvent, day: string): FeedbackEventTags {
 export { formatEventTags, parseEventTags };
 
 /** The `#tags` an entry opens with — kept beside the `k=v` run: they are what
- * pi-memory search, the import classifier and the EOD sweep already read. */
+ * memory search, the import classifier and the EOD sweep already read. */
 function hashTagsFor(e: FeedbackEvent): string {
   return e.kind === "feedback_comment" ? "#feedback" : "#feedback #operations";
 }
@@ -270,11 +269,11 @@ export interface FeedbackEngineDeps {
    * passes the day it just stamped, so a rebuild triggered at 23:59:59
    * cannot recompute a newer day and drop the very comment that caused it. */
   rebuildAgents: (day?: string) => void;
-  /** Reviewer memory. Defaults to the daemon's own store (rooted at `root`),
-   * so wire.ts needs no memory wiring; tests pass a fake. */
-  memory?: MemoryStore;
-  /** Sandbox root — where the default store finds its engine. */
-  root?: string;
+  /** Reviewer memory — REQUIRED, and injected rather than constructed here
+   *. The sink must not be able to conjure an engine of its own: a
+   * second store would be a second opinion about where memory lives. wire.ts
+   * hands it the OpenViking store; tests pass a fake. */
+  memory: MemoryStore;
   /** How long the sink waits for the memory write before giving up on it and
    * returning (the signal is already ledgered). A store that hangs must not
    * hold the webhook path open. */
@@ -297,7 +296,7 @@ export class FeedbackEngine {
   constructor(deps: FeedbackEngineDeps) {
     this.deps = deps;
     this.log = deps.log ?? (() => {});
-    this.memory = deps.memory ?? localPiMemoryStore({ root: deps.root ?? process.cwd() });
+    this.memory = deps.memory;
   }
 
   /** Deterministic ingest: dedupe → ledger → memory entry → (explicit

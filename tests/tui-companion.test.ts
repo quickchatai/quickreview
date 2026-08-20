@@ -319,19 +319,35 @@ describe("companion image", () => {
     expect(dockerfile).toContain(`PI_PACKAGE=${pkg.pi.package}`);
   });
 
-  it("installs pi-memory — the gap the VM image leaves open", () => {
-    expect(dockerfile).toContain(`PI_MEMORY_SPEC=${pkg.pi.extensions["pi-memory"]}`);
-    // --ignore-scripts: npm otherwise dies on this git dep.
-    expect(dockerfile).toMatch(/npm install -g --ignore-scripts \$\{PI_MEMORY_SPEC\}/);
+  // the retired engine must not creep back. pi-memory and qmd were
+  // the hand-rolled memory engine's two npm dependencies; both went with it.
+  // Re-installing either would put a SECOND memory engine in the companion:
+  // one writing a local MEMORY.md nobody reads, and one hooking
+  // `session_before_compact`, which extensions/ledger-pin.ts must own alone.
+  it("installs NO memory extension — memory is OpenViking over the host forward", () => {
+    expect(pkg.pi.extensions["pi-memory"]).toBeUndefined();
+    // Mechanism, not mention: the historical note explaining WHY they are gone
+    // is allowed to name them; an install layer is not.
+    const installs = dockerfile.split("\n").filter((l) => /^\s*(RUN|&&)\s+npm install/.test(l));
+    expect(installs.join("\n")).not.toMatch(/pi-memory|qmd/i);
+    expect(dockerfile).not.toMatch(/^ARG (PI_MEMORY_SPEC|QMD_SPEC)=/m);
+    // The one memory extension a companion pi loads is the vendored, patched
+    // fork — passed per spawn from /workspace, never baked in.
+    expect(dockerfile).toContain("openviking-pi");
   });
 
-  it("pins qmd to the same version as the VM image's group_vars —", () => {
+  it("registers no memory extension in the entrypoint either", () => {
+    expect(entrypoint).not.toMatch(/require\.resolve\("pi-memory"/);
+    expect(entrypoint).not.toMatch(/extensions\.push/);
+    // The VM image dropped the same registration in the same slice.
+    const vmEntrypoint = readFileSync(resolve(root, "deploy/ansible/templates/entrypoint.sh.j2"), "utf8");
+    expect(vmEntrypoint).not.toMatch(/require\.resolve\("pi-memory"/);
+    const vmDockerfile = readFileSync(resolve(root, "deploy/ansible/templates/Dockerfile.j2"), "utf8");
+    expect(vmDockerfile).not.toMatch(/npm install -g \{\{ pi_memory_package \}\}/);
+    expect(vmDockerfile).not.toMatch(/npm install -g \{\{ qmd_npm_package \}\}/);
     const gv = readFileSync(resolve(root, "deploy/ansible/group_vars/all.yml"), "utf8");
-    const pkgName = /^qmd_npm_package:\s*"([^"]+)"/m.exec(gv);
-    const version = /^qmd_version:\s*"([^"]+)"/m.exec(gv);
-    expect(pkgName?.[1]).toBe("@tobilu/qmd");
-    expect(version?.[1]).toBeTruthy();
-    expect(dockerfile).toContain(`QMD_SPEC=${pkgName![1]}@${version![1]}`);
+    expect(gv).not.toMatch(/^pi_memory_version:/m);
+    expect(gv).not.toMatch(/^qmd_version:/m);
   });
 
   it("takes its uid from the host user — bind mounts are written, not just read", () => {

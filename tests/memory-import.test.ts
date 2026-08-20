@@ -1,5 +1,5 @@
 // the curated-memory import, exercised end to end over the seam:
-// a pi-memory file parsed into the SOURCE store, a fake destination store, no
+// an archived memory file read by the SOURCE reader, a fake destination store, no
 // subprocess, no ssh, no filesystem except the injected archive seam.
 //
 // What is pinned here is the ticket's spec: what crosses (pinned standing
@@ -18,7 +18,7 @@ import {
   type ArchiveFs,
   type ImportReport,
 } from "../src/memory/import.js";
-import { parseMemory } from "../src/memory/pi-memory.js";
+import { parseLegacyMemory as parseMemory } from "../src/memory/legacy-file.js";
 import type { MemoryEntry, MemoryOp, MemoryStore, MemoryWriteResult } from "../src/memory/store.js";
 
 const SAMPLE = `<!-- 2026-08-19 18:13:54 [01a01ab3] -->

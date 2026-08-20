@@ -4,8 +4,9 @@
 // Thin on purpose: everything that decides what crosses lives in the import
 // module; this file only wires the two ends of the seam and prints the log.
 //
-//   source — pi-memory's MEMORY.md through `localPiMemoryStore` (the file
-//            this process can see; --memory overrides the path).
+//   source — the retired engine's MEMORY.md through the read-only
+//            `legacy-file.ts` reader (the file this process can see;
+//            --memory overrides the path).
 //   dest   — ANY MemoryStore, loaded dynamically from `--dest <module>#<export>`
 //            so the runner never names a particular engine. The export may be
 //            a store or a zero-arg factory returning one (sync or async).
@@ -77,10 +78,10 @@ const args = parseArgs(process.argv.slice(2));
 if (!existsSync(join(DIST, "import.js"))) die("dist missing — run `npm run build` first");
 
 const { importMemory, recordingMemoryStore, archiveReadOnly, formatImportLog } = await import(pathToFileURL(join(DIST, "import.js")).href);
-const { localPiMemoryStore, localMemoryPath } = await import(pathToFileURL(join(DIST, "pi-memory.js")).href);
+const { legacyMemoryFileSource, legacyMemoryPath } = await import(pathToFileURL(join(DIST, "legacy-file.js")).href);
 
-const memoryPath = args.memory ? resolve(args.memory) : localMemoryPath();
-const source = localPiMemoryStore({ root: ROOT, memoryPath });
+const memoryPath = args.memory ? resolve(args.memory) : legacyMemoryPath();
+const source = legacyMemoryFileSource(memoryPath);
 const dryRun = args.dest === undefined;
 const dest = dryRun ? recordingMemoryStore() : await loadDest(args.dest);
 

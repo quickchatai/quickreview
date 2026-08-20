@@ -1,6 +1,8 @@
-// Memory & learning tab (FT-0129): render, verbs, proposal verdicts, the
-// companion request sweep. Fake stores/ssh throughout; the App is driven
-// through its public hooks exactly as the real key router does.
+// Memory & learning tab (FT-0129): render, verbs, proposal verdicts. Fake
+// stores/ssh throughout; the App is driven through its public hooks exactly as
+// the real key router does. Entry fixtures are spelled in the archived file's
+// shape and parsed by the read-only reader — the shortest honest way to write
+// entries with real tags, days and pin flags.
 import { EventEmitter } from "node:events";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,10 +13,9 @@ import { App } from "../src/tui/app.js";
 import { barHitKey } from "../src/tui/cmdbar.js";
 import type { DigestFetcher } from "../src/tui/digesttab.js";
 import { installMemoryLearningHooks, pinnedBudget, renderMemoryView, type MemTabState } from "../src/tui/memtab.js";
-import { blockHash, parseMemory } from "../src/memory/pi-memory.js";
+import { legacyBlockHash as blockHash, parseLegacyMemory as parseMemory } from "../src/memory/legacy-file.js";
 import type { MemoryEntry, MemoryOp, MemoryStore } from "../src/memory/store.js";
 import type { MemoryHealth } from "../src/tui/memory.js";
-import { parseMemRequest, processMemRequests } from "../src/tui/memrequests.js";
 import { renderDigestTab } from "../src/tui/digesttab.js";
 import { displayWidth, stripAnsi } from "../src/tui/paint.js";
 import type { RemoteResult } from "../src/tui/remote.js";
@@ -276,35 +277,10 @@ describe("management verbs", () => {
   });
 });
 
-describe("companion memedit requests", () => {
-  it("parses strict schemas and refuses garbage", () => {
-    expect(parseMemRequest(JSON.stringify({ op: "add", text: "hello" }))).toMatchObject({ ok: true });
-    expect(parseMemRequest(JSON.stringify({ op: "retire", id: "a", ts: "2026-08-20 09:01:42", block: 0, expect: "0123456789ab" }))).toMatchObject({ ok: true });
-    expect(parseMemRequest(JSON.stringify({ op: "retire", id: "a", ts: "bad", block: 0, expect: "0123456789ab" }))).toMatchObject({ ok: false });
-    expect(parseMemRequest(JSON.stringify({ op: "obliterate" }))).toMatchObject({ ok: false });
-    expect(parseMemRequest("nope")).toMatchObject({ ok: false });
-  });
-
-  it("applies valid requests, records results, and archives to .done", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "memreq-"));
-    writeFileSync(join(dir, "001-add.json"), JSON.stringify({ op: "add", text: "companion lesson" }));
-    writeFileSync(join(dir, "002-bad.json"), JSON.stringify({ op: "retire" }));
-    const mem = new FakeMemory();
-    const done = await processMemRequests(dir, mem);
-    expect(done).toHaveLength(2);
-    expect(mem.applied).toHaveLength(1);
-    expect(mem.applied[0]).toMatchObject({ op: "add", text: "companion lesson" });
-    expect(readdirSync(join(dir, ".done")).sort()).toEqual(["001-add.json", "002-bad.json"]);
-    const badResult = JSON.parse(readFileSync(join(dir, "002-bad.result.json"), "utf8"));
-    expect(badResult.ok).toBe(false);
-    expect(badResult.message).toContain("refused");
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  it("a missing dir is a quiet no-op", async () => {
-    expect(await processMemRequests("/nonexistent/memedit", new FakeMemory())).toEqual([]);
-  });
-});
+// The companion memory-edit request channel that used to be tested here is
+// RETIRED (FT-0167): since FT-0153 the companion reaches OpenViking directly
+// over a host-owned forward, holding both USER keys, so there is no
+// `/alerts/memedit` mediation left to exercise.
 
 describe("mouse operation (FT-0129 UX)", () => {
   it("clicking a timeline row selects it and the detail pane shows the FULL text", async () => {

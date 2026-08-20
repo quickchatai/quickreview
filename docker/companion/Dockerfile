@@ -7,8 +7,8 @@
 #
 # Deltas from the VM image, per assets/findings.md §Q4:
 #   - node:22 base instead of ubuntu + NodeSource (same major, less plumbing).
-#   - pi-memory is installed here for real — the VM image declares it in
-#     package.json's `pi` block but installs only the CLI (the gap).
+#   - no memory extension at all: memory is OpenViking over the
+#     host-owned forward, through the vendored extension mounted at /workspace.
 #   - no gh CLI / mint-token credential helper / webhook port: the companion
 #     reads the daemon over ssh and writes local files, it never mutates GitHub.
 #   - its own pihome volume: never share the VM's auth.json (OAuth tokens
@@ -42,38 +42,13 @@ ARG PI_PACKAGE=@earendil-works/pi-coding-agent
 ARG PI_VERSION=0.84.1
 RUN npm install -g ${PI_PACKAGE}@${PI_VERSION}
 
-# pi-memory — declared in package.json's `pi`.extensions but installed nowhere
-# (§Q3 gap). "Fresh conversation daily, memory carries" needs it
-# present and discovered.
-# VERIFY-ON-PIN: the install *route*. This installs the extension as a global
-# npm package from the pinned git tag and lets the entrypoint point pi at it via
-# ~/.pi/agent/settings.json "extensions"; pi 0.84.1's actual discovery contract
-# (settings.json array vs ~/.pi/agent/extensions/ drop-in vs `--extension`
-# path) is documented only second-hand (§5) and must be confirmed
-# against the real package. If the array route is wrong, the fallback is a
-# symlink into the discovery dir — no image rebuild needed.
-ARG PI_MEMORY_SPEC=pi-memory@0.4.2
-# Registry install, NOT github: — npm installs git specs for global packages
-# as a SYMLINK into /root/.npm/_cacache/tmp (0700, ephemeral), so the
-# non-root companion user could never load it (found live 2026-08-17). The
-# registry name is collided (jayzeng vs josephkern/catlain/@chendpoc), so the
-# build hard-fails unless the INSTALLED package's repository resolves to
-# github.com/jayzeng/pi-memory — same discipline as the VM image.
-RUN npm install -g --ignore-scripts ${PI_MEMORY_SPEC} \
-  && node -e "const p=require('/usr/local/lib/node_modules/pi-memory/package.json'); const r=(p.repository&&(p.repository.url||p.repository))||''; if(!/github\.com[:\/]jayzeng\/pi-memory/.test(r)) { console.error('pi-memory is NOT jayzeng/pi-memory:', r); process.exit(1); }" \
-  && chmod -R a+rX /usr/local/lib/node_modules/pi-memory
-
-# qmd — the semantic-search CLI pi-memory's `memory_search` shells out to
-# (pin must equal deploy/ansible/group_vars qmd_version — same
-# discipline as the pi pin above). Installed WITH scripts (unlike pi-memory's
-# git-spec workaround): the registry package's node-llama-cpp dep needs its
-# postinstall to set up the native binding, and `qmd --version` proves it
-# loads. Repository must resolve to github.com/tobi/qmd.
-ARG QMD_SPEC=@tobilu/qmd@2.8.3
-RUN npm install -g ${QMD_SPEC} \
-  && node -e "const p=require('/usr/local/lib/node_modules/@tobilu/qmd/package.json'); const r=(p.repository&&(p.repository.url||p.repository))||''; if(!/github\.com[:\/]tobi\/qmd/.test(r)) { console.error('qmd is NOT tobi/qmd:', r); process.exit(1); }" \
-  && qmd --version \
-  && chmod -R a+rX /usr/local/lib/node_modules/@tobilu/qmd
+# NO MEMORY EXTENSION IS INSTALLED HERE. The pi-memory extension and
+# the qmd search CLI both retired with the hand-rolled engine. The companion's
+# memory is OpenViking on the VM, reached over a host-owned forward, and its pi
+# extension is the vendored+patched `extensions/vendor/openviking-pi` bind-
+# mounted at /workspace and passed with `--extension` by src/tui/companion.ts —
+# nothing to bake into the image. Do not re-add either package: a second engine
+# writing a local MEMORY.md would fork the companion's memory silently.
 
 # Non-root, and the uid MUST match the invoking host user: every interesting
 # mount here is a host bind mount the companion writes (/alerts, /feed,

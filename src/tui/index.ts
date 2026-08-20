@@ -312,7 +312,7 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
   };
   app.view.repo = full.github.repo;
   const { spawn } = await import("node:child_process");
-  const { existsSync, mkdirSync, renameSync, writeFileSync } = await import("node:fs");
+  const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
   app.hooks.openUrl = (url) => {
     spawn("xdg-open", [url], { detached: true, stdio: "ignore" }).unref();
   };
@@ -344,9 +344,8 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
     });
   // ONE memory store for the whole TUI: OpenViking on the VM,
   // reached over the memory forward's loopback listener, holding BOTH user
-  // keys. The tab's verbs, the companion memedit executor and the memory feed
-  // all share this instance — a second one would mean a second sweep and a
-  // second health opinion.
+  // keys. Every memory surface in the TUI shares this instance — a second one
+  // would mean a second sweep and a second health opinion.
   const { tuiMemoryStore } = await import("./memory.js");
   const memStore = tuiMemoryStore();
   const memState = installMemoryLearningHooks(app, {
@@ -505,50 +504,16 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
       }
     });
 
-    // §6 (rule-8 amendment): companion memory-edit requests. The
-    // companion drops JSON under /alerts/memedit; the TUI validates and
-    // executes over its own ssh. Sweep serialized behind a simple in-flight
-    // flag so a slow ssh never stacks sweeps.
-    const { processMemRequests } = await import("./memrequests.js");
-    const memReqDir = join(full.companion.alerts_dir, "memedit");
-    // The companion cannot read VM memory itself; the TUI publishes the
-    // entries (with the expect-hashes addressed ops need) into the feed
-    // every ~12 polls and right after a request batch lands.
-    const memFeedPath = join(full.companion.feed_dir, "memory.json");
-    const writeMemFeed = async (): Promise<void> => {
-      const entries = await memStore.read();
-      // tmp+rename like feed.ts — the companion polls this file and must
-      // never see a torn write.
-      mkdirSync(full.companion.feed_dir, { recursive: true });
-      // `expect` is the wire name the companion's request schema uses for the
-      // store's content hash — the feed keeps publishing it under that name.
-      const payload = JSON.stringify({ written_at: new Date().toISOString(), entries: entries.map(({ hash, ...e }) => ({ ...e, expect: hash })) }, null, 2) + "\n";
-      writeFileSync(`${memFeedPath}.tmp`, payload);
-      renameSync(`${memFeedPath}.tmp`, memFeedPath);
-    };
-    let memReqBusy = false;
-    let memPollN = 0;
-    chainOnPoll(app, (a) => {
-      if (memReqBusy) return;
-      memReqBusy = true;
-      const feedDue = memPollN++ % 12 === 0;
-      void processMemRequests(memReqDir, memStore)
-        .then(async (done) => {
-          for (const r of done) a.notice(`companion memedit ${r.file}: ${r.ok ? "✓" : "✖"} ${r.message}`);
-          if (done.length > 0) memState.memLoaded = false; // timeline refresh on next open
-          if (done.length > 0 || feedDue) await writeMemFeed();
-        })
-        .catch(() => {
-          /* best-effort — never break the poll loop */
-        })
-        .finally(() => {
-          memReqBusy = false;
-        });
-    });
+    // No memory request-file channel here, and no memory feed:
+    // the companion reaches OpenViking DIRECTLY, over a host-owned forward,
+    // holding both USER keys. The `/alerts/memedit` mediation and the
+    // `/feed/memory.json` publication it depended on are retired —
+    // two write paths was the thing being deleted. Do not reintroduce either
+    // as an "offline fallback".
 
-    // the companion → TUI action channel. Same sweep discipline as
-    // the memedit requests above (poll cadence, busy flag so a slow sweep
-    // never stacks); processTuiActions itself archives-before-execute and
+    // the companion → TUI action channel. Sweep discipline is the
+    // usual one (poll cadence, busy flag so a slow sweep never stacks);
+    // processTuiActions itself archives-before-execute and
     // writes the result files. Each executed action's trace lands on the
     // notice line — instant execution is the ratified decision.
     const { processTuiActions } = await import("./actions.js");

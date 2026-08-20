@@ -8,7 +8,7 @@
 ---
 
 Good morning. It's **{{date}}** (Europe/Warsaw). Fresh conversation; your
-pi-memory carried over.
+memory carried over.
 
 ## Yesterday's digest
 

@@ -5,6 +5,13 @@
 section carries a one-line *Applied delta* where the post-merge code differed
 from this recipe.
 
+> **Historical, 2026-08-20.** This recipe places the action sweep
+> "right after the memedit sweep" and copies its busy-flag style. That
+> neighbour is **gone**: the companion memory-edit request channel retired
+> when the companion got direct OpenViking access (rule 8's superseding
+> amendment). The action sweep itself is unchanged and still the last
+> `chainOnPoll` inside `if (companionUp)`; only the landmark moved.
+
 `src/tui/actions.ts` and `src/tui/filters.ts` are self-contained; nothing
 imports them yet. This document is the exact insertion recipe. All edits are
 in `src/tui/index.ts` plus one-line consumption changes in `board.ts` /

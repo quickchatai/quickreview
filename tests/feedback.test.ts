@@ -1,9 +1,8 @@
 // The [feedback] tuning loop: explicit [feedback] comments +
 // behavioral signals, diverted OUT of the round path, deduped, written to
-// reviewer memory through memedit, and composed into a same-day
+// reviewer memory through the ONE MemoryStore seam, and composed into a same-day
 // validator-only addendum.
-import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -609,34 +608,50 @@ describe("FeedbackEngine.ingest", () => {
   });
 });
 
-// ---- memedit `note` op (real subprocess, like guards-shell) -----------------
+// ---- the `note` contract, after the engine swap ------------------
+// This used to drive `scripts/memedit.mjs` as a real subprocess and lean on the
+// engine to refuse untagged text. That engine is gone, so the property is
+// re-proved where it now lives: on the WRITER. Every entry the sink produces
+// opens with a `#tag`, and it always reaches the seam as `note` — never `add`.
+// Both halves matter downstream: the leading tag is what the EOD curator, the
+// import classifier and the store's native tag mirror all read, and `note` vs
+// `add` is what keeps a quoted PR comment from masquerading as the owner's own
+// standing instruction.
 
-describe("memedit note op", () => {
-  it("appends a pre-tagged entry verbatim and refuses untagged text", () => {
-    const dir = mkdtempSync(join(tmpdir(), "qcr-memedit-note-"));
-    const mem = join(dir, "MEMORY.md");
-    try {
-      writeFileSync(mem, "# Reviewer memory\n\nexisting preamble\n");
-      const run = (input: string) =>
-        spawnSync(process.execPath, [resolve(process.cwd(), "scripts", "memedit.mjs"), "note"], {
-          input,
-          env: { ...process.env, QCR_MEMORY_PATH: mem },
-          encoding: "utf8",
-        });
-      const ok = run("#feedback human [feedback] on PR #1: \"too strict\" — 2026-08-20");
-      expect(ok.status).toBe(0);
-      expect(ok.stdout).toContain("ok: note");
-      const text = readFileSync(mem, "utf8");
-      expect(text).toContain("existing preamble");
-      expect(text).toMatch(/<!-- \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[qcrd-[a-z0-9]+\] -->/);
-      expect(text).toContain("#feedback human [feedback] on PR #1");
-      expect(text).not.toContain("#manual #feedback"); // never re-tagged
+describe("the `note` contract", () => {
+  let store: StateStore;
+  beforeEach(() => {
+    store = new StateStore(":memory:");
+  });
+  afterEach(() => store.close());
 
-      const refused = run("untagged prose");
-      expect(refused.status).toBe(1);
-      expect(refused.stdout).toContain("refused: note: text must open with a #tag");
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
+  const every: FeedbackEvent[] = [
+    {
+      kind: "feedback_comment",
+      pr: 5325,
+      comment_id: 9,
+      in_reply_to_id: 7,
+      author: "pmercier",
+      body: "[feedback] over-specific",
+      scope: "review_comment",
+    },
+    { kind: "review_set_aside", pr: 1, review_id: 4, by: "pmercier", stale: false },
+    { kind: "merged_over_block", pr: 2 },
+    { kind: "bot_comment_deleted", pr: 3, comment_id: 9 },
+    { kind: "trigger_withdrawn", pr: 4, by: "pmercier" },
+  ];
+
+  it("writes every signal as a #tag-opening `note`, never an `add`", async () => {
+    const memory = new FakeMemoryStore();
+    const engine = new FeedbackEngine({ store, rebuildAgents: vi.fn(), memory });
+    for (const e of every) expect(await engine.ingest(e)).toBe("recorded");
+    expect(memory.applied).toHaveLength(every.length);
+    for (const op of memory.applied) {
+      expect(op.op).toBe("note");
+      const text = (op as { text: string }).text;
+      expect(text.startsWith("#")).toBe(true);
+      // `add` is the op that mints `#manual`; a machine entry must never carry it.
+      expect(text).not.toContain("#manual");
     }
   });
 });

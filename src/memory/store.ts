@@ -2,25 +2,25 @@
 //
 // Everything in this codebase that reads or writes reviewer memory talks to
 // `MemoryStore` — the daemon's [feedback] sink, the TUI's management verbs,
-// the companion request executor, the memory feed the companion polls. No
-// caller knows how memory is stored: today one markdown file edited by
-// `scripts/memedit.mjs` (`src/memory/pi-memory.ts`), later an OpenViking
-// server on loopback. Swapping the engine must mean swapping ONE
-// implementation of this interface, nothing else.
+// the EOD curator. No caller knows how memory is stored. Since the
+// seam has exactly ONE implementation, `OpenVikingStore`
+// (`src/openviking/store.ts`); the hand-rolled markdown engine it replaced is
+// gone, and the only thing left of it is a read-only `MemorySource` over the
+// archived file (`legacy-file.ts`), kept solely so the one-time import can
+// still see what it is importing.
 //
-// Nothing in THIS file may know about pi-memory, memedit, ssh or HTTP. It is
-// the vocabulary — entries, ops, results — and only that.
+// Nothing in THIS file may know about HTTP, OpenViking, or any file format.
+// It is the vocabulary — entries, ops, results — and only that.
 //
-// Shape notes (deliberate, they are what makes the seam swappable):
+// Shape notes (deliberate, they are what keeps the seam swappable):
 //
-//   * Async everywhere. Today's TUI path is already a remote round trip and
-//     the eventual engine is HTTP; a sync signature would have to be broken
-//     later.
+//   * Async everywhere. The engine is an HTTP server on loopback and the
+//     TUI's path is a forwarded round trip; a sync signature would be a lie.
 //   * ONE write method taking a discriminated op, not six verb methods. Every
-//     writer already funnels through a single serialized mutation path
-//     (memedit's flock today, a single batch-write endpoint later), so a
-//     single `apply` is the honest shape — and adding an op is a union arm,
-//     not an interface break for every fake in the test suite.
+//     writer funnels through a single serialized mutation path (one
+//     `content/batch-write` endpoint), so a single `apply` is the honest
+//     shape — and adding an op is a union arm, not an interface break for
+//     every fake in the test suite.
 //   * Writes RESOLVE with a result, they do not reject. A refusal ("stale
 //     view", "no such batch") is an ordinary answer callers render to the
 //     operator; only a broken transport throws. Callers must never have to
@@ -99,9 +99,20 @@ export interface MemorySearchOptions {
   limit?: number;
 }
 
-export interface MemoryStore {
-  /** Every entry the store holds, oldest first. */
+/**
+ * The READ half of the seam, on its own.
+ *
+ * Split out for the one caller that legitimately has no engine behind it: the
+ * import's SOURCE is the archived markdown file, which can be read and
+ * can never be written. Narrowing the source to this interface is what lets
+ * "the seam has exactly one `MemoryStore` implementation" stay literally true.
+ */
+export interface MemorySource {
+  /** Every entry the source holds, oldest first. */
   read(): Promise<MemoryEntry[]>;
+}
+
+export interface MemoryStore extends MemorySource {
   /** Entries matching free text and/or a tag. */
   search(query: string, opts?: MemorySearchOptions): Promise<MemoryEntry[]>;
   /** Apply one mutation. Resolves with a refusal rather than throwing. */
