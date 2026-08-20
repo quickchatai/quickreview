@@ -6,7 +6,7 @@ import type { WhyPayload } from "../cli.js";
 import type { TuiConfig } from "../config.js";
 import type { AlertBadge } from "./alerts.js";
 import { renderBoard, type BoardAction, type BoardView } from "./board.js";
-import { barHitKey } from "./cmdbar.js";
+import { barHitKey, registeredKeys } from "./cmdbar.js";
 import { decodeInputKey, decodeKey } from "./keys.js";
 import { formatEvent, moveSelection, reselect, sortPrs, type EventLine } from "./model.js";
 import { TripleCtrlC } from "./chord.js";
@@ -15,6 +15,7 @@ import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR, Frame } from "./paint.js";
 import { PANE_ESCAPE, PiMirror, keysToTmux } from "./pipane.js";
 import { Poller } from "./poll.js";
 import { prUrl } from "./theme.js";
+import { CompanionStrip, stripHeight, stripHit } from "./strip.js";
 import { eventsArgv, sendKeysArgv, whyArgv, type SshRunner } from "./remote.js";
 
 export interface AppHooks {
@@ -41,10 +42,9 @@ export interface AppHooks {
   /**: called after every poll and every events refresh — the ambient
    * feed writer hangs off this (daemon-owned cadence). */
   onPoll?: (app: App) => void;
-  /**: attach the local companion container's tmux session. */
+  /**: attach the local companion container's tmux session
+   * full-screen (reached from the strip's mirror rows + alerts). */
   companionAttach?: (app: App) => Promise<void>;
-  /**: what the companion tab shows when nothing is attached. */
-  companionScreen?: (app: App, cols: number, rows: number) => string;
   /** Deploy tab: what would a deploy ship (read-only — never deploys). */
   deployScreen?: (app: App, cols: number, rows: number) => string;
   /** Deploy tab key handling; returns true when it consumed the key. */
@@ -79,7 +79,7 @@ export interface AppHooks {
   reconnect?: (app: App) => void;
 }
 
-export type Tab = "board" | "digest" | "companion" | "deploy" | "metrics";
+export type Tab = "board" | "digest" | "deploy" | "metrics";
 
 /** Every encoding of the End key we might see — the pi pane's "back to live". */
 const END_KEYS = new Set(["\x1b[F", "\x1bOF", "\x1b[4~", "\x1b[8~"]);
@@ -96,6 +96,9 @@ export class App {
     help: false,
   };
   tab: Tab = "board";
+  /**: the companion strip above the command bar, on every tab.
+   * Wired by index.ts; absent in bare test harnesses (no strip painted). */
+  strip?: CompanionStrip;
   readonly poller: Poller;
   /** Live mirror of the selected PR's pi session (board's lower region). */
   readonly pi: PiMirror;
@@ -147,6 +150,7 @@ export class App {
     if (this.view.piFocus && this.piFocusPr === pr) return;
     this.piFocusPr = pr;
     this.view.piFocus = true;
+    this.strip?.blur(); // one keyboard owner at a time
     this.syncPiPane();
     void this.pi.refresh(pr);
     if (!this.piTimer) {
@@ -261,6 +265,7 @@ export class App {
     this.stopped = true;
     this.poller.stop();
     this.pi.stop();
+    this.strip?.stop();
     if (this.piTimer) clearInterval(this.piTimer);
     this.piTimer = undefined;
     this.input.off("data", this.onData);
@@ -312,7 +317,7 @@ export class App {
   /** True while something other than the board owns the terminal or holds
    * unsaved user input — hot-reload defers on it. */
   isBusy(): boolean {
-    return this.suspended || this.view.inputBox !== undefined || this.view.piFocus === true;
+    return this.suspended || this.view.inputBox !== undefined || this.view.piFocus === true || this.strip?.focused === true;
   }
 
   /** The PR the board is pointing at (survives a hot-reload). */
@@ -520,8 +525,25 @@ export class App {
         this.pressKey(k);
         return;
       }
+      // The companion strip is fixed chrome too: the input row focuses it,
+      // the mirror rows open the full-screen companion attach.
+      if (this.strip) {
+        const avail = this.strip.available();
+        const hit = stripHit(ev.x, ev.y, cols, rows, stripHeight(rows, avail));
+        if (hit === "input") {
+          if (avail) {
+            if (this.view.piFocus) this.blurPiPane();
+            this.strip.focus();
+            this.repaint();
+          }
+          return;
+        }
+        if (hit === "mirror") {
+          this.openCompanion();
+          return;
+        }
+      }
     }
-    if (this.tab === "companion") return; // the attach (or its placeholder) owns it
     if (this.tab === "digest") {
       // Memory & learning tab: clicks hit the tab's own zones (rows select,
       // buttons act); the wheel moves the selection / scrolls.
@@ -592,12 +614,12 @@ export class App {
         this.focusPiPane();
         return;
       case "tab":
-        if (action.tab === "companion") {
-          this.openCompanion();
-          return;
-        }
         this.tab = action.tab;
         break;
+      case "companion":
+        // The top-bar alert badge: open the companion attach directly.
+        this.openCompanion();
+        return;
       case "key":
         this.handleInput(Buffer.from(action.key, "utf8"));
         return;
@@ -649,31 +671,33 @@ export class App {
       this.sendKeysToPane(buf);
       return;
     }
+    // smart routing: a focused strip input owns every printable.
+    if (this.strip?.focused) {
+      this.handleStripKey(buf);
+      return;
+    }
+    // `/` always focuses the strip input, on every tab.
+    const raw = buf.toString("utf8");
+    if (raw === "/" && this.strip?.available()) {
+      this.strip.focus();
+      this.repaint();
+      return;
+    }
     if (this.tab === "digest" && this.hooks.digestKey?.(this, key)) return;
     if (this.tab === "deploy" && this.hooks.deployKey?.(this, key)) return;
     if (this.tab === "metrics" && this.hooks.metricsKey?.(this, key)) return;
-    if (this.tab === "companion") {
-      // The tab is the conversation: ⏎ re-attaches, tab/quit keys still work,
-      // everything else would silently act on the board — so it doesn't.
-      switch (key.kind) {
-        case "enter":
-        case "tab-companion":
-          this.openCompanion();
-          return;
-        case "tab-board":
-        case "tab-digest":
-        case "tab-deploy":
-        case "tab-metrics":
-        case "quit":
-        case "help":
-        // The bar promises identical globals on every tab — refresh and
-        // ssh-reconnect must work here too.
-        case "refresh":
-        case "reconnect":
-          break;
-        default:
-          return;
-      }
+    // An unregistered printable is a message to the companion, not a dead
+    // key: focus the strip input seeded with it (paste seeds whole).
+    if (
+      this.strip?.available() &&
+      raw.length > 0 &&
+      !raw.includes("\x1b") &&
+      raw >= " " &&
+      !(raw.length === 1 && registeredKeys(this.tab).has(raw))
+    ) {
+      this.strip.focus(raw);
+      this.repaint();
+      return;
     }
 
     switch (key.kind) {
@@ -695,9 +719,6 @@ export class App {
       case "tab-metrics":
         this.tab = "metrics";
         break;
-      case "tab-companion":
-        this.openCompanion();
-        return;
       case "up":
       case "down": {
         if (this.view.eventsFocus) {
@@ -769,17 +790,49 @@ export class App {
     this.repaint();
   }
 
-  /** The companion tab: switching to it *is* attaching to the local container's
-   * pi session (there is nothing else to show). Following an alert clears its
-   * focus — it has been acted on. */
+  /** Open the companion full-screen (the strip's mirror rows, the
+   * alert badge, an alert-armed ⏎). Following an alert clears its focus —
+   * it has been acted on. */
   openCompanion(): void {
-    this.tab = "companion";
     this.view.alertFocus = false;
     if (!this.hooks.companionAttach) {
-      this.repaint();
+      this.notice("companion unavailable (started with --no-companion?)");
       return;
     }
     void this.hooks.companionAttach(this);
+  }
+
+  /** Strip input mode: printables + backspace edit, ⏎ sends+clears+blurs,
+   * Esc clears+blurs. Everything routes through decodeInputKey, so verb
+   * chars are text while the input owns the keyboard. */
+  private handleStripKey(buf: Buffer): void {
+    const strip = this.strip!;
+    const key = decodeInputKey(buf);
+    switch (key.kind) {
+      case "char":
+        strip.input += key.ch;
+        break;
+      case "backspace":
+        strip.input = strip.input.slice(0, -1);
+        break;
+      case "escape":
+        strip.blur();
+        break;
+      case "enter": {
+        const text = strip.input.trim();
+        strip.blur();
+        if (text.length > 0) {
+          void strip.send(text).catch((err: unknown) => this.notice(`✖ ${String(err instanceof Error ? err.message : err)}`));
+        }
+        break;
+      }
+      case "quit":
+        this.quit();
+        return;
+      default:
+        return;
+    }
+    this.repaint();
   }
 
   /** Alert consumer → top bar. `alert` tier also grabs ⏎ (see handleInput). */
@@ -811,12 +864,6 @@ export class App {
       this.out.write(screen ?? `${CLEAR}digest tab lands in — [1] back to board`);
       return;
     }
-    if (this.tab === "companion") {
-      const screen = this.hooks.companionScreen?.(this, cols, rows);
-      this.lastFrame = undefined;
-      this.out.write(screen ?? `${CLEAR}companion unavailable (started with --no-companion?) — [1] back to board`);
-      return;
-    }
     if (this.tab === "deploy") {
       const screen = this.hooks.deployScreen?.(this, cols, rows);
       this.lastFrame = undefined;
@@ -830,7 +877,7 @@ export class App {
       return;
     }
     this.view.now = this.now();
-    const frame = renderBoard(this.view, cols, rows);
+    const frame = renderBoard(this.view, cols, rows, this.strip?.view());
     this.lastFrame = frame;
     this.out.write(frame.render());
   }

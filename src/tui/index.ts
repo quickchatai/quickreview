@@ -26,13 +26,16 @@ usage: qcr tui [<pr> | overseer | main] [--no-companion] [--no-reload]
   qcr tui overseer  deep-link into the overseer session
 
   --no-companion    skip the local companion entirely (container, ambient
-                    feed, alert pipeline and the companion tab)
+                    feed, alert pipeline; the companion strip shows "companion
+                    off")
   --no-reload       do not re-exec when a new dist/ build lands
 
-keys: 1/2/3/4/5 tabs (2 = memory & learning — v toggles digest/memory view,
+keys: 1/2/3/4 tabs (2 = memory & learning — v toggles digest/memory view,
       x×2 retire · p pin · e edit · n new · A/R accept/reject a rubric proposal;
-      3 = companion, also c; 4 = deploy — click ▶/■ buttons (D D deploy, S S stop/start);
-      5 = metrics — 7/0/a window, # <pr> ⏎ for a PR timeline) ·
+      3 = deploy — click ▶/■ buttons (D D deploy, S S stop/start);
+      4 = metrics — 7/0/a window, # <pr> ⏎ for a PR timeline) ·
+      companion strip on every tab: type any unclaimed key (or /) to start a
+      message — ⏎ sends · Esc clears; click its mirror rows to go full-screen ·
       j/k select · ⏎ attach ·
       Ctrl-q detach (twice = literal) · Ctrl-c ×3 hard-kill the TUI ·
       s reconnect ssh (GCP passphrase, once) ·
@@ -302,6 +305,22 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
       };
     },
   });
+
+  // the companion strip — chrome on every tab. Mirror + send go
+  // through the same local docker seam the lifecycle uses; refresh piggybacks
+  // the app poll (the strip's own 500ms timer only runs focused/after-send).
+  const { CompanionStrip } = await import("./strip.js");
+  app.strip = new CompanionStrip(full.companion, realDockerRunner, {
+    available: () => companionUp,
+    onUpdate: () => app.repaint(),
+  });
+  {
+    const prevOnPoll = app.hooks.onPoll;
+    app.hooks.onPoll = (a) => {
+      prevOnPoll?.(a);
+      void a.strip?.refresh();
+    };
+  }
 
   let alerts: { stop(): void } | undefined;
   if (companionUp) {

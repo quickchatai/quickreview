@@ -38,6 +38,7 @@ import {
   type ImprovementItem,
   type RubricProposal,
 } from "./proposals.js";
+import { paintStrip, stripHeight, type StripView } from "./strip.js";
 
 export interface MemTabState {
   view: "digest" | "memory";
@@ -125,6 +126,7 @@ export function renderMemoryView(
   cols: number,
   rows: number,
   repo?: string,
+  strip?: StripView,
 ): Frame {
   const frame = new Frame(cols, rows);
   frame.set(
@@ -139,7 +141,8 @@ export function renderMemoryView(
   // the one-line list is for picking, never the only way to read a lesson.
   const leftW = Math.floor((cols - 3) * 0.38);
   const rightW = cols - 3 - leftW;
-  const bodyRows = rows - 4; // top bar + command bar (2 rows) + bottom border
+  const stripRows = strip ? stripHeight(rows, strip.available) : 0;
+  const bodyRows = rows - 4 - stripRows; // top bar + strip + command bar (2 rows) + bottom border
 
   const ordered = timelineOrder(st.entries);
   const left: string[] = [];
@@ -233,6 +236,7 @@ export function renderMemoryView(
     if (la) frame.zones.push({ x1: 2, y1: r + 2, x2: leftW + 1, y2: r + 2, action: la });
     if (rr) for (const z of rr.zones) frame.zones.push({ x1: rightX0 + z.x1, y1: r + 2, x2: rightX0 + z.x2, y2: r + 2, action: z.action });
   }
+  if (strip) paintStrip(frame, strip, cols, rows);
   paintCmdBar(frame, "digest", cols, rows);
   frame.set(rows - 1, rule(cols, "└", "┘", []));
   return frame;
@@ -396,12 +400,12 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
     const today = now().toISOString().slice(0, 10);
     if (st.view === "digest") {
       const prs = theApp.view.snapshot ? sortPrs(theApp.view.snapshot.prs) : [];
-      const frame = renderDigestTab(st.digest, prs, theApp.view.dryRun, today, cols, rows);
+      const frame = renderDigestTab(st.digest, prs, theApp.view.dryRun, today, cols, rows, theApp.strip?.view());
       lastZones = frame.zones;
       return frame.render();
     }
     const day = currentFile(st.digest)?.slice(0, 10);
-    const frame = renderMemoryView(st, theApp.view.dryRun, day, cols, rows, theApp.view.repo);
+    const frame = renderMemoryView(st, theApp.view.dryRun, day, cols, rows, theApp.view.repo, theApp.strip?.view());
     lastZones = frame.zones;
     return frame.render();
   };

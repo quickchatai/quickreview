@@ -363,7 +363,7 @@ describe("alert badge in the top bar", () => {
     const seg = stripAnsi(alertSegment(badge, false));
     expect(bar.slice(zone.x1 - 1, zone.x2)).toBe(seg);
     const frame = renderBoard(view, 120, 30);
-    expect(frame.zones.some((z) => z.y1 === 1 && JSON.stringify(z.action) === JSON.stringify({ t: "tab", tab: "companion" }))).toBe(true);
+    expect(frame.zones.some((z) => z.y1 === 1 && JSON.stringify(z.action) === JSON.stringify({ t: "companion" }))).toBe(true);
   });
 
   it("has no zone when there is no alert", () => {
@@ -412,23 +412,25 @@ describe("companion tab", () => {
     return { app, s, spawned, close: () => (app.quit(), running) };
   }
 
-  it("attaches the LOCAL container argv — docker exec -it, no ssh", async () => {
+  it("attaches the LOCAL container argv — docker exec -it, no ssh — and never leaves the tab", async () => {
     const h = harness();
     h.app.openCompanion();
     await Promise.resolve();
-    expect(h.app.tab).toBe("companion");
+    expect(h.app.tab).toBe("board"); //: the companion is not a tab
     expect(h.spawned).toEqual([["exec", "-it", "qcr-companion", "tmux", "attach", "-t", "companion"]]);
     expect(h.spawned[0]).not.toContain("ssh");
     await h.close();
   });
 
-  it("'c' and '3' open the companion tab", async () => {
-    for (const key of ["c", "3"]) {
-      const h = harness();
-      h.s.type(key);
-      expect(h.app.tab).toBe("companion");
-      await h.close();
-    }
+  it("the companion tab keys are retired: 3 is deploy now, c is no tab at all", async () => {
+    const h = harness();
+    h.s.type("3");
+    expect(h.app.tab).toBe("deploy");
+    h.s.type("1");
+    h.s.type("c");
+    expect(h.app.tab).toBe("board");
+    expect(h.spawned).toEqual([]);
+    await h.close();
   });
 
   it("an alert-tier badge gives ⏎ to the companion, Esc gives it back", async () => {
@@ -439,7 +441,8 @@ describe("companion tab", () => {
     expect(h.app.view.alertFocus).toBe(false);
     h.app.setAlertBadge({ count: 2, folds: 0, latest: { tier: "alert", title: "t", cause: "c", pr: 5012, ts: "x" } });
     h.s.type("\r");
-    expect(h.app.tab).toBe("companion");
+    await Promise.resolve();
+    expect(h.spawned.length).toBe(1); // ⏎ followed the alert into the companion
     expect(h.app.view.alertFocus).toBe(false);
     await h.close();
   });
@@ -451,15 +454,13 @@ describe("companion tab", () => {
     await h.close();
   });
 
-  it("shows the REAL failure and offers retry when the companion is down, never a mislabel", async () => {
+  it("surfaces the REAL failure when the companion is down, never a mislabel", async () => {
     const h = harness(false);
     h.app.openCompanion();
     await Promise.resolve();
     expect(h.spawned).toEqual([]);
-    const text = stripAnsi(h.s.written());
-    expect(text).toContain("not running: docker build qcr-companion failed: boom");
-    expect(text).toContain("⏎ retry");
-    expect(text).not.toContain("disabled (--no-companion)");
+    expect(h.app.view.noticeLine).toContain("not running: docker build qcr-companion failed: boom");
+    expect(h.app.view.noticeLine).not.toContain("disabled (--no-companion)");
     await h.close();
   });
 

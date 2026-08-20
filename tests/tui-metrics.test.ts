@@ -568,7 +568,7 @@ describe("local-head probe", () => {
       { read: async (sha) => (asked.push(sha), { head: "deadbee", ahead: 4 }) },
     );
     const run = app.run();
-    streams.type("5");
+    streams.type("4");
     await new Promise((r) => setTimeout(r, 0));
     await new Promise((r) => setTimeout(r, 0));
     expect(asked).toEqual(["abc1234"]);
@@ -593,7 +593,7 @@ describe("local-head probe", () => {
       },
     );
     const run = app.run();
-    streams.type("5");
+    streams.type("4");
     await new Promise((r) => setTimeout(r, 0));
     await new Promise((r) => setTimeout(r, 0));
     expect(view.local).toBeUndefined();
@@ -651,7 +651,7 @@ describe("metrics tab wiring", () => {
     expect(metricsPrArgv(TUI_DEFAULTS, 5265).slice(-4)).toEqual(["metrics", "--pr", "5265", "--json"]);
   });
 
-  it("opens on 5, switches windows on 7/0/a, drills in with # <pr> ⏎ and Esc goes back", async () => {
+  it("opens on 4, switches windows on 7/0/a, drills in with # <pr> ⏎ and Esc goes back", async () => {
     const streams = fakeStreams();
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
     let overallCalls = 0;
@@ -661,7 +661,7 @@ describe("metrics tab wiring", () => {
       timeline: async (pr) => (timelineCalls.push(pr), { payload: timeline as never }),
     });
     const run = app.run();
-    streams.type("5");
+    streams.type("4");
     expect(app.tab).toBe("metrics");
     await new Promise((r) => setTimeout(r, 0)); // lazy load settles
     expect(overallCalls).toBe(1);
@@ -708,7 +708,7 @@ describe("metrics tab wiring", () => {
       timeline: async () => ({ payload: timeline as never }),
     });
     const run = app.run();
-    streams.type("5");
+    streams.type("4");
     await new Promise((r) => setTimeout(r, 0));
     streams.type("\x1b[<0;19;2M"); // left press on `[ all ]`
     expect(view.window).toBe("all");
@@ -724,7 +724,7 @@ describe("metrics tab wiring", () => {
       timeline: async () => ({ error: "ssh: connect timed out" }),
     });
     const run = app.run();
-    streams.type("5");
+    streams.type("4");
     await new Promise((r) => setTimeout(r, 0));
     expect(stripAnsi(streams.written())).toContain("metrics unavailable: ssh: connect timed out");
     app.quit();
