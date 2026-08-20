@@ -109,9 +109,13 @@ export function renderMemoryView(
     const budget = pinnedBudget(ordered);
     const budgetNote = budget.over ? ` ${SGR.bold}⚠ pinned ${budget.chars}ch > ~1900ch injection head${SGR.reset}` : "";
     left.push(`${SGR.bold}MEMORY (${ordered.length})${SGR.reset}${budgetNote}`);
-    ordered.forEach((e, i) => {
+    // The window follows the selection — the verb keys act on the inverse
+    // row, so it must never sit off-screen.
+    const visible = bodyRows - 1;
+    const start = Math.max(0, Math.min(st.sel - (visible - 1), ordered.length - visible));
+    ordered.slice(Math.max(0, start), Math.max(0, start) + visible).forEach((e, i) => {
       const line = entryLine(e, leftW - 3, highlightDay);
-      const selected = st.focus === "timeline" && i === st.sel;
+      const selected = st.focus === "timeline" && Math.max(0, start) + i === st.sel;
       left.push(selected ? `${SGR.inverse}${line}${SGR.reset}` : line);
     });
   }
@@ -143,7 +147,7 @@ export function renderMemoryView(
 
   for (let r = 0; r < bodyRows; r++) {
     frame.boxRow(1 + r, [
-      { text: ` ${left[r === 0 ? 0 : r + st.scroll] ?? ""}`, width: leftW + 1 },
+      { text: ` ${left[r] ?? ""}`, width: leftW + 1 },
       { text: ` ${right[r] ?? ""}`, width: rightW },
     ]);
   }
@@ -166,6 +170,9 @@ export interface MemTabDeps {
   reject?: (app: App, slug: string, reason: string) => Promise<{ ok: boolean; message: string }>;
   tracker?: TrackerPaths;
   gitRun?: AcceptDeps["git"]["run"];
+  /** The canonical repo root the accept path applies/ratifies/commits in —
+   * NOT process.cwd(): `qcr` runs from anywhere. */
+  repoRoot?: string;
   now?: () => Date;
 }
 
@@ -197,9 +204,15 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
   };
 
   const loadMemory = async (): Promise<void> => {
+    const prevKey = timelineOrder(st.entries)[st.sel] ? entryKey(timelineOrder(st.entries)[st.sel]!) : undefined;
     st.entries = await memory.read();
     st.memLoaded = true;
-    st.sel = Math.min(st.sel, Math.max(0, timelineOrder(st.entries).length - 1));
+    // Re-bind the selection to the same ENTRY, not the same ordinal — a
+    // refresh that reorders the timeline must not silently redirect the
+    // next verb keystroke to a different entry.
+    const ordered = timelineOrder(st.entries);
+    const rebound = prevKey ? ordered.findIndex((e) => entryKey(e) === prevKey) : -1;
+    st.sel = rebound >= 0 ? rebound : Math.min(st.sel, Math.max(0, ordered.length - 1));
     if (deps.tracker) {
       const filed = autofileDefects(deps.tracker, defectEntries(st.entries), now().toISOString());
       if (filed.length > 0) {
@@ -246,9 +259,9 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
   };
 
   const loadAll = (): void => {
-    void loadDigest();
-    void loadMemory();
-    void loadProposals();
+    guard("digest", loadDigest);
+    guard("memory", loadMemory);
+    guard("proposals", loadProposals);
   };
 
   const doAccept =
@@ -259,7 +272,7 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
           cfg: theApp.cfg,
           ssh: theApp.ssh,
           git: { run: deps.gitRun ?? failingGit },
-          repoRoot: process.cwd(),
+          repoRoot: deps.repoRoot ?? process.cwd(),
           today: () => now().toISOString().slice(0, 10),
         },
         slug,
@@ -284,8 +297,22 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
     });
   };
 
+  // Per-part lazy reload with in-flight guards: an invalidation of one part
+  // (e.g. a companion memedit flips memLoaded) re-fetches exactly that part
+  // on the next paint, and a paint during a load never stacks a second one.
+  const busy = { digest: false, memory: false, proposals: false };
+  const guard = (key: keyof typeof busy, run: () => Promise<void>): void => {
+    if (busy[key]) return;
+    busy[key] = true;
+    void run().finally(() => {
+      busy[key] = false;
+    });
+  };
+
   app.hooks.digestScreen = (theApp, cols, rows) => {
-    if (!st.digest.loaded && !st.memLoaded) loadAll();
+    if (!st.digest.loaded) guard("digest", loadDigest);
+    if (!st.memLoaded) guard("memory", loadMemory);
+    if (!st.propLoaded) guard("proposals", loadProposals);
     const today = now().toISOString().slice(0, 10);
     if (st.view === "digest") {
       const prs = theApp.view.snapshot ? sortPrs(theApp.view.snapshot.prs) : [];
@@ -377,14 +404,11 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
     switch (key.kind) {
       case "down":
       case "up": {
+        // j/k and arrows both move the selection; the render window follows
+        // it, so there is no separate scroll to desynchronize from.
         const delta = key.kind === "down" ? 1 : -1;
-        if (st.focus === "timeline" && key.arrow) {
-          st.sel = Math.max(0, Math.min(st.sel + delta, Math.max(0, ordered.length - 1)));
-        } else if (st.focus === "proposals" && key.arrow) {
-          st.propSel = Math.max(0, Math.min(st.propSel + delta, Math.max(0, st.proposals.length - 1)));
-        } else {
-          st.scroll = Math.max(0, st.scroll + delta);
-        }
+        if (st.focus === "timeline") st.sel = Math.max(0, Math.min(st.sel + delta, Math.max(0, ordered.length - 1)));
+        else st.propSel = Math.max(0, Math.min(st.propSel + delta, Math.max(0, st.proposals.length - 1)));
         theApp.repaint();
         return true;
       }
@@ -459,6 +483,16 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
             return true; // memory view swallows stray chars — nothing falls to the board
         }
       case "enter":
+      // Decoded board verbs must not leak through to the board while the
+      // memory view is up (`a` attaching an invisible board selection is one
+      // shift-miss from `A` accept). Tabs, quit, and help still fall through.
+      case "attach":
+      case "message":
+      case "detail":
+      case "github":
+      case "overseer":
+      case "main-session":
+      case "reconnect":
         return true;
       default:
         return false; // tabs/quit/help stay with the app

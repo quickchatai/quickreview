@@ -3,106 +3,117 @@
 // pi session (TUI management verbs + TUI-mediated companion edit
 // requests both land here). Design contract:
 //
+//   * Byte-splicing: the file is NEVER re-rendered from a parse. Ops splice
+//     only the addressed block's lines (plus, for pin/add, an inserted
+//     header); every other byte — preambles, fenced code, indentation,
+//     blank-line runs, HANDOFF sections — copies through verbatim.
 //   * Serialized: a lock directory beside the file (mkdir is atomic) with a
-//     5s bounded wait — concurrent pi-memory writes are file appends from the
-//     extension; the lock only serializes OUR read-modify-write against a
-//     second memedit.
-//   * Optimistic: every addressed op carries --expect <sha1-12 of the block's
-//     exact text>. The block is re-hashed at apply time; a mismatch (the
-//     overseer rewrote memory between the TUI's read and the keystroke)
-//     REFUSES the op — stale views never destroy fresh writes.
+//     5s bounded wait and a 60s stale-lock breaker. Refusals THROW (never
+//     process.exit inside the lock) so the lock always releases.
+//   * Optimistic: every addressed op carries --expect <sha1-12 of the
+//     block's text, joined+trimmed exactly as src/tui/memory.ts hashes it>.
+//     A mismatch (the overseer rewrote memory between the TUI's read and
+//     the keystroke) REFUSES the op — stale views never destroy fresh
+//     writes. pi-memory itself holds no lock, so the file's mtime
+//     is re-checked before the write and the op re-applied on movement.
 //   * Atomic: tmp + rename in the same directory, never in-place.
 //
 // Ops (payload text on stdin where applicable; every address is
 // --id X --ts 'YYYY-MM-DD HH:MM:SS' --block N --expect H):
 //   retire     remove the block
-//   pin        tag #pinned + move to top of file
+//   pin        tag #pinned + move to the top-of-file region (before the
+//              first header, after any preamble — the slice that survives
+//              pi-memory's injection truncation,: ~75 lines)
 //   unpin      drop the #pinned tag (in place)
-//   edit       replace block text (stdin)
+//   edit       replace block text (stdin; blank lines collapse — a blank
+//              line would split the block)
 //   add        append a #manual entry (stdin) — no address
 //
-// Addressing: batches are `<!-- YYYY-MM-DD HH:MM:SS [id] -->` headers; blocks
-// are blank-line-separated paragraphs inside a batch; N is the block's index
-// within its batch. The id ALONE is not unique (it is the writing
-// session's 8-char prefix, repeated across that session's batches) — the
-// (ts, id) pair is the batch key. Keep the parse in step with
-// src/tui/memory.ts.
-//
-// pi-memory itself takes NO lock and rewrites the file in place, so
-// beyond our own lock we stat the file before and after the transform and
-// retry when its mtime moved — an in-session write between our read and our
-// rename loses nothing. After a successful write, `qmd update` runs
-// best-effort so external edits reach memory_search (§6).
+// Addressing: batches start at a header comment — pi-memory writes THREE
+// variants: `<!-- TS [id] -->`, `<!-- last updated: TS [id] -->`,
+// `<!-- HANDOFF TS [id] -->` — and run to the next header. Blocks are
+// blank-line-separated line runs inside a batch; N is the block's index
+// within its batch. The id ALONE is not unique (it is the writing session's
+// 8-char prefix) — the (ts, id) pair keys the batch. Keep the header regex
+// and hash discipline in step with src/tui/memory.ts.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const MEMORY_PATH = process.env.QCR_MEMORY_PATH ?? "/home/review/.pi/agent/memory/MEMORY.md";
-const HEADER_RE = /^<!--\s*(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})\s*\[([^\]]+)\]\s*-->\s*$/;
+const HEADER_RE = /^<!--\s*(?:(?:last updated:|HANDOFF)\s+)?(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})\s*\[([^\]]+)\]\s*-->\s*$/;
 const LOCK_WAIT_MS = 5_000;
+const LOCK_STALE_MS = 60_000;
+
+class Refusal extends Error {}
 
 function die(msg) {
-  process.stdout.write(`refused: ${msg}\n`);
-  process.exit(1);
+  throw new Refusal(msg);
 }
 
 function hash(text) {
   return createHash("sha1").update(text, "utf8").digest("hex").slice(0, 12);
 }
 
-/** Parse into batches: { ts, id, blocks: string[] } preserving order. */
-function parse(md) {
+const blank = (line) => line.trim() === "";
+
+/**
+ * Structure WITHOUT rewriting: line-index ranges over the original lines.
+ * batches: { ts, id, headerLine (-1 for the id-less preamble), endLine
+ * (exclusive), blocks: [{ start, end }] } — block ranges hold only
+ * non-blank lines; blank lines stay outside every range and are never
+ * touched except when a whole block is removed.
+ */
+function scan(lines) {
   const batches = [];
-  let cur;
-  let block = [];
-  const flush = () => {
-    const text = block.join("\n").trim();
-    block = [];
-    if (cur && text.length > 0) cur.blocks.push(text);
-  };
-  for (const line of md.split("\n")) {
-    const m = HEADER_RE.exec(line);
+  let cur = null;
+  for (let i = 0; i < lines.length; i++) {
+    const m = HEADER_RE.exec(lines[i]);
     if (m) {
-      flush();
-      cur = { ts: `${m[1]} ${m[2]}`, id: m[3], blocks: [] };
+      if (cur) cur.endLine = i;
+      cur = { ts: `${m[1]} ${m[2]}`, id: m[3], headerLine: i, endLine: lines.length, blocks: [] };
       batches.push(cur);
       continue;
     }
-    if (line.trim() === "") {
-      flush();
-      continue;
-    }
+    if (blank(lines[i])) continue;
     if (!cur) {
-      // Preamble before the first header: preserve as an id-less batch.
-      cur = { ts: "", id: "", blocks: [] };
+      cur = { ts: "", id: "", headerLine: -1, endLine: lines.length, blocks: [] };
       batches.push(cur);
     }
-    block.push(line);
+    const last = cur.blocks[cur.blocks.length - 1];
+    if (last && last.end === i) last.end = i + 1;
+    else cur.blocks.push({ start: i, end: i + 1 });
   }
-  flush();
   return batches;
 }
 
-function render(batches) {
-  const out = [];
-  for (const b of batches) {
-    if (b.blocks.length === 0) continue; // an emptied batch drops its header
-    if (b.id !== "") out.push(`<!-- ${b.ts} [${b.id}] -->`);
-    for (const blk of b.blocks) {
-      out.push(blk);
-      out.push("");
-    }
-  }
-  while (out.length > 0 && out[out.length - 1] === "") out.pop();
-  return out.join("\n") + "\n";
+function blockText(lines, range) {
+  return lines
+    .slice(range.start, range.end)
+    .join("\n")
+    .trim();
 }
 
 function findBlock(batches, id, ts, blockIdx) {
   const batch = batches.find((b) => b.id === id && b.ts === ts);
   if (!batch) die(`no batch [${id}] @ ${ts}`);
   if (blockIdx < 0 || blockIdx >= batch.blocks.length) die(`batch [${id}] @ ${ts} has no block ${blockIdx}`);
-  return batch;
+  return { batch, range: batch.blocks[blockIdx] };
+}
+
+function checkExpect(lines, range, expect) {
+  if (hash(blockText(lines, range)) !== expect) die("stale view — memory changed underneath you, refresh and retry");
+}
+
+/** Remove a line range plus the blank run right after it (or before it, at a
+ * batch tail), so removals don't leave doubled blank lines. */
+function spliceOut(lines, start, end) {
+  let e = end;
+  while (e < lines.length && blank(lines[e])) e++;
+  let s = start;
+  if (e === lines.length) while (s > 0 && blank(lines[s - 1])) s--;
+  lines.splice(s, e - s);
 }
 
 function readStdin() {
@@ -126,6 +137,15 @@ function withLock(fn) {
       mkdirSync(lockDir);
       break;
     } catch {
+      // A crashed holder must not brick the tool forever: break stale locks.
+      try {
+        if (Date.now() - statSync(lockDir).mtimeMs > LOCK_STALE_MS) {
+          rmdirSync(lockDir);
+          continue;
+        }
+      } catch {
+        continue; // it vanished — retry the mkdir at once
+      }
       if (Date.now() > deadline) die("lock timeout — another memedit holds .memedit.lock");
       // Sleep 100ms synchronously (no spin): Atomics.wait on a throwaway buffer.
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
@@ -151,93 +171,121 @@ function writeAtomic(content) {
 // ---- argv ----
 const [op, ...rest] = process.argv.slice(2);
 const args = {};
-for (let i = 0; i < rest.length; i += 2) {
-  if (!rest[i]?.startsWith("--")) die(`bad argument '${rest[i]}'`);
-  args[rest[i].slice(2)] = rest[i + 1];
-}
-const needsAddress = op === "retire" || op === "pin" || op === "unpin" || op === "edit";
-if (needsAddress && (!args.id || !args.ts || args.block === undefined || !args.expect)) die(`${op} needs --id --ts --block --expect`);
-if (needsAddress && !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(args.ts)) die("--ts must be 'YYYY-MM-DD HH:MM:SS'");
-const blockIdx = needsAddress ? Number(args.block) : 0;
-if (needsAddress && !Number.isInteger(blockIdx)) die("--block must be an integer");
-const payload = op === "edit" || op === "add" ? readStdin() : "";
-if ((op === "edit" || op === "add") && payload.length === 0) die(`${op}: empty text on stdin`);
-if (payload.length > 4000) die(`${op}: text too long (${payload.length} > 4000 chars)`);
-
-function mtimeOf() {
-  try {
-    return statSync(MEMORY_PATH).mtimeMs;
-  } catch {
-    return -1;
+try {
+  for (let i = 0; i < rest.length; i += 2) {
+    if (!rest[i]?.startsWith("--")) die(`bad argument '${rest[i]}'`);
+    args[rest[i].slice(2)] = rest[i + 1];
   }
-}
+  const needsAddress = op === "retire" || op === "pin" || op === "unpin" || op === "edit";
+  if (needsAddress && (!args.id || !args.ts || args.block === undefined || !args.expect)) die(`${op} needs --id --ts --block --expect`);
+  if (needsAddress && !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(args.ts)) die("--ts must be 'YYYY-MM-DD HH:MM:SS'");
+  const blockIdx = needsAddress ? Number(args.block) : 0;
+  if (needsAddress && !Number.isInteger(blockIdx)) die("--block must be an integer");
+  const payload = op === "edit" || op === "add" ? readStdin() : "";
+  if ((op === "edit" || op === "add") && payload.length === 0) die(`${op}: empty text on stdin`);
+  if (payload.length > 4000) die(`${op}: text too long (${payload.length} > 4000 chars)`);
+  const payloadLines = payload.replace(/\n{2,}/g, "\n").split("\n");
 
-function transform(batches) {
-  switch (op) {
-    case "retire": {
-      const batch = findBlock(batches, args.id, args.ts, blockIdx);
-      if (hash(batch.blocks[blockIdx]) !== args.expect) die("stale view — memory changed underneath you, refresh and retry");
-      batch.blocks.splice(blockIdx, 1);
-      break;
+  const transform = (lines) => {
+    const batches = scan(lines);
+    switch (op) {
+      case "retire": {
+        const { batch, range } = findBlock(batches, args.id, args.ts, blockIdx);
+        checkExpect(lines, range, args.expect);
+        spliceOut(lines, range.start, range.end);
+        if (batch.blocks.length === 1 && batch.headerLine >= 0) {
+          // The batch is now empty — drop its (unmoved) header line too.
+          const h = scan(lines).find((b) => b.id === args.id && b.ts === args.ts);
+          if (h && h.blocks.length === 0) spliceOut(lines, h.headerLine, h.headerLine + 1);
+        }
+        break;
+      }
+      case "pin": {
+        const { batch, range } = findBlock(batches, args.id, args.ts, blockIdx);
+        checkExpect(lines, range, args.expect);
+        let text = blockText(lines, range);
+        if (!/(^|\s)#pinned(\s|$)/.test(text)) text = `#pinned ${text}`;
+        const emptied = batch.blocks.length === 1 && batch.headerLine >= 0;
+        spliceOut(lines, range.start, range.end);
+        if (emptied) {
+          const h = scan(lines).find((b) => b.id === args.id && b.ts === args.ts);
+          if (h && h.blocks.length === 0) spliceOut(lines, h.headerLine, h.headerLine + 1);
+        }
+        // Insert before the first header but AFTER any id-less preamble, so
+        // preamble lines are never absorbed into the pinned batch on the
+        // next parse. Derived id keeps (ts,id) unique.
+        const after = scan(lines);
+        const firstHeader = after.find((b) => b.headerLine >= 0);
+        const at = firstHeader ? firstHeader.headerLine : lines.length;
+        lines.splice(at, 0, `<!-- ${batch.ts} [${args.id}.p${blockIdx}] -->`, ...text.split("\n"), "");
+        break;
+      }
+      case "unpin": {
+        const { range } = findBlock(batches, args.id, args.ts, blockIdx);
+        checkExpect(lines, range, args.expect);
+        const text = blockText(lines, range)
+          .replace(/(^|\s)#pinned(?=\s|$)/g, "$1")
+          .replace(/^ +/, "")
+          .replace(/  +/g, " ");
+        lines.splice(range.start, range.end - range.start, ...text.split("\n"));
+        break;
+      }
+      case "edit": {
+        const { range } = findBlock(batches, args.id, args.ts, blockIdx);
+        checkExpect(lines, range, args.expect);
+        lines.splice(range.start, range.end - range.start, ...payloadLines);
+        break;
+      }
+      case "add": {
+        const text = /(^|\s)#manual(\s|$)/.test(payload) ? payload : `#manual ${payload}`;
+        while (lines.length > 0 && blank(lines[lines.length - 1])) lines.pop();
+        if (lines.length > 0) lines.push("");
+        lines.push(`<!-- ${localStamp()} [qcr-${Date.now().toString(36)}] -->`, ...text.replace(/\n{2,}/g, "\n").split("\n"));
+        break;
+      }
+      default:
+        die(`unknown op '${op ?? ""}' — retire|pin|unpin|edit|add`);
     }
-    case "pin": {
-      const batch = findBlock(batches, args.id, args.ts, blockIdx);
-      let text = batch.blocks[blockIdx];
-      if (hash(text) !== args.expect) die("stale view — memory changed underneath you, refresh and retry");
-      batch.blocks.splice(blockIdx, 1);
-      if (!/(^|\s)#pinned(\s|$)/.test(text)) text = `#pinned ${text}`;
-      // Top of file = the slice of MEMORY.md that survives pi-memory's
-      // injection truncation (first ~75 lines / ~1,991 chars) —
-      // pinned entries live there, one batch each, keeping the original
-      // stamp and a derived id ((ts, derived id) stays a unique key).
-      batches.unshift({ ts: batch.ts, id: `${args.id}.p${blockIdx}`, blocks: [text] });
-      break;
-    }
-    case "unpin": {
-      const batch = findBlock(batches, args.id, args.ts, blockIdx);
-      const text = batch.blocks[blockIdx];
-      if (hash(text) !== args.expect) die("stale view — memory changed underneath you, refresh and retry");
-      batch.blocks[blockIdx] = text.replace(/(^|\s)#pinned(?=\s|$)/g, "$1").replace(/^ +/, "").replace(/  +/g, " ");
-      break;
-    }
-    case "edit": {
-      const batch = findBlock(batches, args.id, args.ts, blockIdx);
-      if (hash(batch.blocks[blockIdx]) !== args.expect) die("stale view — memory changed underneath you, refresh and retry");
-      batch.blocks[blockIdx] = payload.replace(/\n{2,}/g, "\n");
-      break;
-    }
-    case "add": {
-      const text = /(^|\s)#manual(\s|$)/.test(payload) ? payload : `#manual ${payload}`;
-      batches.push({ ts: localStamp(), id: `qcr-${Date.now().toString(36)}`, blocks: [text.replace(/\n{2,}/g, "\n")] });
-      break;
-    }
-    default:
-      die(`unknown op '${op ?? ""}' — retire|pin|unpin|edit|add`);
-  }
-}
+  };
 
-withLock(() => {
-  // pi-memory holds no lock of its own: re-read and re-apply when the file's
-  // mtime moves between our read and our write (three attempts, then refuse).
-  for (let attempt = 0; ; attempt++) {
-    const before = mtimeOf();
-    let md = "";
-    try {
-      md = readFileSync(MEMORY_PATH, "utf8");
-    } catch {
-      if (op !== "add") die(`cannot read ${MEMORY_PATH}`);
+  withLock(() => {
+    // pi-memory holds no lock of its own: re-read and re-apply when the
+    // file's mtime moves between our read and our write (three attempts).
+    const mtimeOf = () => {
+      try {
+        return statSync(MEMORY_PATH).mtimeMs;
+      } catch {
+        return -1;
+      }
+    };
+    for (let attempt = 0; ; attempt++) {
+      const before = mtimeOf();
+      let md = "";
+      try {
+        md = readFileSync(MEMORY_PATH, "utf8");
+      } catch {
+        if (op !== "add") die(`cannot read ${MEMORY_PATH}`);
+      }
+      const hadFinalNewline = md.endsWith("\n") || md === "";
+      const lines = md.split("\n");
+      if (hadFinalNewline && lines[lines.length - 1] === "") lines.pop();
+      transform(lines);
+      if (mtimeOf() !== before) {
+        if (attempt >= 2) die("memory is being rewritten by a live session — try again");
+        continue;
+      }
+      writeAtomic(lines.join("\n") + "\n");
+      break;
     }
-    const batches = parse(md);
-    transform(batches);
-    if (mtimeOf() !== before) {
-      if (attempt >= 2) die("memory is being rewritten by a live session — try again");
-      continue;
-    }
-    writeAtomic(render(batches));
-    break;
+    process.stdout.write(`ok: ${op}\n`);
+  });
+} catch (err) {
+  if (err instanceof Refusal) {
+    process.stdout.write(`refused: ${err.message}\n`);
+    process.exit(1);
   }
-  process.stdout.write(`ok: ${op}\n`);
-});
+  throw err;
+}
 
 // Best-effort: refresh the qmd index so memory_search sees the edit (
 // §6 — search reads the index, not the files). Detached; failure is fine.

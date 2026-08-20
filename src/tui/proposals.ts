@@ -66,6 +66,7 @@ export function rubricRemoveArgv(cfg: TuiConfig, slug: string): string[] {
 /** Bot-filed improvement PRs + issues, one in-container gh read. gh's exit
  * code is ignored per list (a missing label must not blank the other list). */
 export function improvementsArgv(cfg: TuiConfig, repo: string): string[] {
+  if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error(`bad repo '${repo}'`);
   const gh = `GH_TOKEN="$(bash scripts/mint-token.sh)"`;
   return dockerSh(
     cfg,
@@ -103,19 +104,25 @@ export interface LocalGit {
   run(cmd: string, args: string[], stdin?: string): Promise<string>;
 }
 
-/** Paths a rubric patch may touch — pass rubrics and prompts, nothing else.
- * A proposal reaching for src/ or scripts/ is not a rubric change and is
- * refused outright. */
+/** EVERY path a rubric patch touches — both diff sides plus rename/copy
+ * headers, so a deletion (`+++ /dev/null` with a `---` victim) or a rename
+ * cannot smuggle a target past the allowlist. The sweep's patch is LLM
+ * output; this list is the containment. */
 export function patchTargets(patch: string): string[] {
   const files = new Set<string>();
-  for (const m of patch.matchAll(/^\+\+\+ (?:b\/)?(\S+)/gm)) {
+  for (const m of patch.matchAll(/^(?:\+\+\+|---) (?:[ab]\/)?(\S+)/gm)) {
     if (m[1] !== "/dev/null") files.add(m[1]!);
   }
+  for (const m of patch.matchAll(/^(?:rename|copy) (?:from|to) (\S+)/gm)) files.add(m[1]!);
   return [...files].sort();
 }
 
+/** Pass rubrics and prompts only — never src/, scripts/, or a traversal. */
 export function targetsAllowed(files: string[]): boolean {
-  return files.length > 0 && files.every((f) => f.startsWith("agents/") || f.startsWith("prompts/"));
+  return (
+    files.length > 0 &&
+    files.every((f) => (f.startsWith("agents/") || f.startsWith("prompts/")) && !f.split("/").includes("..") && !f.includes("\\"))
+  );
 }
 
 /** Append the ratification + re-pin manifest hashes for the seeded files the

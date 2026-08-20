@@ -91,6 +91,20 @@ describe("patch vetting", () => {
     expect(targetsAllowed(["agents/pass-baseline.md", "prompts/round-first.md"])).toBe(true);
     expect(targetsAllowed(["src/gate.ts"])).toBe(false);
     expect(targetsAllowed([])).toBe(false);
+    expect(targetsAllowed(["agents/../src/gate.ts"])).toBe(false); // traversal
+  });
+
+  it("sees deletions and renames — a +++ /dev/null cannot hide a victim (review fix)", () => {
+    const deletion = PATCH + `--- a/src/gate.ts\n+++ /dev/null\n@@ -1 +0,0 @@\n-export const gate = 1;\n`;
+    expect(patchTargets(deletion)).toContain("src/gate.ts");
+    expect(targetsAllowed(patchTargets(deletion))).toBe(false);
+    const rename = "rename from src/gate.ts\nrename to agents/pass-x.md\n" + PATCH;
+    expect(patchTargets(rename)).toContain("src/gate.ts");
+    expect(targetsAllowed(patchTargets(rename))).toBe(false);
+  });
+
+  it("refuses a malformed repo string in the gh read", () => {
+    expect(() => improvementsArgv(cfg, "owner/repo; rm -rf /")).toThrow(/bad repo/);
   });
 });
 

@@ -7,7 +7,7 @@
 // SAME memedit path the keyboard verbs use, then writes
 // `<name>.result.json` and moves the request to `.done/`. The TUI is the
 // executor; the companion never reaches the VM itself.
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { MemEditOp, MemoryStore } from "./memory.js";
 
@@ -54,21 +54,30 @@ export function parseMemRequest(text: string): { ok: true; op: MemEditOp } | { o
   return { ok: false, error: `unknown op '${String(op)}'` };
 }
 
-/** One sweep of the request dir. Serialized by the caller's poll cadence. */
+/** Result files older than this are swept; `.done/` keeps the newest N. */
+const RESULT_TTL_MS = 24 * 3600 * 1000;
+const DONE_KEEP = 200;
+
+/** One sweep of the request dir. Serialized by the caller's poll cadence.
+ * A request is archived to `.done/` BEFORE it is applied: a crash between
+ * apply and archive would otherwise re-apply it next sweep (an `add` would
+ * duplicate; addressed ops are only saved by their expect hash). A crash
+ * after archive but before apply loses one request — the companion re-reads
+ * the missing result and re-requests, which is the safer failure. */
 export async function processMemRequests(dir: string, store: MemoryStore): Promise<ProcessedRequest[]> {
   const out: ProcessedRequest[] = [];
   if (!existsSync(dir)) return out;
   const files = readdirSync(dir)
     .filter((f) => f.endsWith(".json") && !f.endsWith(".result.json"))
     .sort();
-  if (files.length === 0) return out;
   const doneDir = join(dir, ".done");
-  mkdirSync(doneDir, { recursive: true });
+  if (files.length > 0) mkdirSync(doneDir, { recursive: true });
   for (const file of files) {
-    const path = join(dir, file);
+    const text = readFileSync(join(dir, file), "utf8");
+    renameSync(join(dir, file), join(doneDir, file));
     let ok = false;
     let message: string;
-    const parsed = parseMemRequest(readFileSync(path, "utf8"));
+    const parsed = parseMemRequest(text);
     if (!parsed.ok) {
       message = `refused: ${parsed.error}`;
     } else {
@@ -77,8 +86,24 @@ export async function processMemRequests(dir: string, store: MemoryStore): Promi
       message = res.message;
     }
     writeFileSync(join(dir, `${file.replace(/\.json$/, "")}.result.json`), JSON.stringify({ ok, message, file }, null, 2) + "\n");
-    renameSync(path, join(doneDir, file));
     out.push({ file, ok, message });
   }
+  cleanup(dir, doneDir);
   return out;
+}
+
+/** Bounded housekeeping: results past their TTL, `.done/` past its cap. */
+function cleanup(dir: string, doneDir: string): void {
+  try {
+    const now = Date.now();
+    for (const f of readdirSync(dir)) {
+      if (!f.endsWith(".result.json")) continue;
+      if (now - statSync(join(dir, f)).mtimeMs > RESULT_TTL_MS) rmSync(join(dir, f), { force: true });
+    }
+    if (!existsSync(doneDir)) return;
+    const done = readdirSync(doneDir).sort(); // iso-ts names: oldest first
+    for (const f of done.slice(0, Math.max(0, done.length - DONE_KEEP))) rmSync(join(doneDir, f), { force: true });
+  } catch {
+    /* housekeeping is best-effort */
+  }
 }

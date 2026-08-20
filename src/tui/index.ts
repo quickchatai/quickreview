@@ -170,7 +170,7 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
   };
   app.view.repo = full.github.repo;
   const { spawn } = await import("node:child_process");
-  const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
+  const { existsSync, mkdirSync, renameSync, writeFileSync } = await import("node:fs");
   app.hooks.openUrl = (url) => {
     spawn("xdg-open", [url], { detached: true, stdio: "ignore" }).unref();
   };
@@ -202,6 +202,7 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
     });
   const memState = installMemoryLearningHooks(app, {
     gitRun,
+    repoRoot: sandboxRoot(),
     tracker: full.companion.tracker_dir
       ? { root: full.companion.tracker_dir, effort: "review-sandbox", parent: "" }
       : undefined,
@@ -360,10 +361,12 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
     const memFeedPath = join(full.companion.feed_dir, "memory.json");
     const writeMemFeed = async (): Promise<void> => {
       const entries = await memStore.read();
-      writeFileSync(
-        memFeedPath,
-        JSON.stringify({ written_at: new Date().toISOString(), entries: entries.map((e) => ({ ...e, expect: blockHash(e.text) })) }, null, 2) + "\n",
-      );
+      // tmp+rename like feed.ts — the companion polls this file and must
+      // never see a torn write.
+      mkdirSync(full.companion.feed_dir, { recursive: true });
+      const payload = JSON.stringify({ written_at: new Date().toISOString(), entries: entries.map((e) => ({ ...e, expect: blockHash(e.text) })) }, null, 2) + "\n";
+      writeFileSync(`${memFeedPath}.tmp`, payload);
+      renameSync(`${memFeedPath}.tmp`, memFeedPath);
     };
     let memReqBusy = false;
     let memPollN = 0;

@@ -4,14 +4,23 @@
 // writes as tracker actor `qcr-tui`, and dedupes on the memory entry's
 // (ts, id, block) key, stamped into each filed ticket as a `Memory-key:`
 // body line. Disabled entirely when no tracker dir is configured.
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSync, closeSync } from "node:fs";
 import { join } from "node:path";
 import type { MemoryEntry } from "./memory.js";
 
 export const MEMORY_KEY_LINE = "Memory-key:";
 
+/** Dedup key = hash of the entry's TEXT (pin/#pinned stripped), not its
+ * (ts,id,block) address: retiring an earlier block shifts later indices and
+ * pinning rewrites the id — either would make an already-filed defect look
+ * new and file a duplicate ticket. Same words = same defect. */
 export function memoryKey(e: MemoryEntry): string {
-  return `${e.ts}|${e.id}#${e.block}`;
+  const normalized = e.text
+    .replace(/(^|\s)#pinned(?=\s|$)/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+  return `sha1:${createHash("sha1").update(normalized, "utf8").digest("hex").slice(0, 16)}`;
 }
 
 export interface AutoFiled {

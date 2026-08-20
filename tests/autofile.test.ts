@@ -57,6 +57,12 @@ describe("autofile", () => {
     expect(readdirSync(join(root, "efforts/review-sandbox/tickets"))).toHaveLength(1);
   });
 
+  it("the key survives pin (id rewrite) and block-index shifts (review fix)", () => {
+    const e = entry();
+    const pinned = entry({ id: "01a01b03.p0", block: 3, text: `#pinned ${e.text}`, pinned: true, tags: [...e.tags, "pinned"] });
+    expect(memoryKey(pinned)).toBe(memoryKey(e));
+  });
+
   it("same batch, different blocks = different keys", () => {
     const filed = autofileDefects(paths, [entry(), entry({ block: 1, text: "#bug another defect entirely." })], "2026-08-20T10:00:00Z");
     expect(filed).toHaveLength(2);

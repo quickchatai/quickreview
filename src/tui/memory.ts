@@ -32,7 +32,11 @@ export interface MemoryEntry {
   pinned: boolean;
 }
 
-const HEADER_RE = /^<!--\s*(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})\s*\[([^\]]+)\]\s*-->\s*$/;
+// pi-memory writes THREE header variants: plain, `last updated:`
+// (overwrite mode), and `HANDOFF` (compaction). All three delimit batches —
+// missing one would mis-attribute its blocks to the previous batch and hand
+// every management verb the wrong address. Keep in step with memedit.mjs.
+const HEADER_RE = /^<!--\s*(?:(?:last updated:|HANDOFF)\s+)?(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})\s*\[([^\]]+)\]\s*-->\s*$/;
 
 /** sha1 of a block's exact text — the optimistic-concurrency token every
  * mutating op carries (`--expect`); memedit.mjs recomputes and refuses on

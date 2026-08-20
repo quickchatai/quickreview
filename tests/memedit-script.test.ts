@@ -130,3 +130,76 @@ describe("memedit.mjs", () => {
     expect(parseMemory(after).map((e) => e.text)).toEqual(parseMemory(SAMPLE).map((e) => e.text));
   });
 });
+
+// ---- review-fix regressions (2026-08-20 adversarial review) ----------------
+
+const GNARLY = `preamble line before any header — must survive untouched.
+
+<!-- 2026-08-19 18:13:54 [01a01ab3] -->
+#false-positive lesson one about merge bases.
+
+<!-- HANDOFF 2026-08-19 20:00:00 [beadfeed] -->
+## Session Handoff
+\`\`\`text
+LEDGER PR #5257 @ deadbeef
+  F1 [P1/1.0][baseline] indented line with meaning
+
+  F2 [P2/0.9] after a blank line INSIDE the fence
+\`\`\`
+
+<!-- last updated: 2026-08-20 08:00:00 [01a01b03] -->
+#bug #operations stale recheck flag lingers.
+`;
+
+describe("memedit.mjs — review regressions", () => {
+  it("an unrelated add leaves every other byte of a gnarly file untouched", () => {
+    writeFileSync(file, GNARLY);
+    const r = run(["add"], "probe");
+    expect(r.code).toBe(0);
+    const after = readFileSync(file, "utf8");
+    expect(after.startsWith(GNARLY)).toBe(true); // strict prefix: nothing rewritten
+    expect(after).toContain("#manual probe");
+  });
+
+  it("recognizes last updated: and HANDOFF headers as batch boundaries", () => {
+    writeFileSync(file, GNARLY);
+    // Retire the last-updated batch's block by its own (ts,id) — not the
+    // previous batch's.
+    const r = run(["retire", "--id", "01a01b03", "--ts", "2026-08-20 08:00:00", "--block", "0", "--expect", entryHash("01a01b03", "2026-08-20 08:00:00", 0)]);
+    expect(r.code).toBe(0);
+    const after = readFileSync(file, "utf8");
+    expect(after).not.toContain("stale recheck flag");
+    expect(after).toContain("HANDOFF 2026-08-19 20:00:00"); // neighbors intact
+    expect(after).toContain("F1 [P1/1.0][baseline] indented line with meaning");
+  });
+
+  it("indentation inside a HANDOFF fence survives an edit elsewhere", () => {
+    writeFileSync(file, GNARLY);
+    run(["edit", "--id", "01a01ab3", "--ts", "2026-08-19 18:13:54", "--block", "0", "--expect", entryHash("01a01ab3", "2026-08-19 18:13:54", 0)], "#false-positive amended lesson.");
+    const after = readFileSync(file, "utf8");
+    expect(after).toContain("  F1 [P1/1.0][baseline] indented line with meaning");
+    expect(after).toContain("preamble line before any header — must survive untouched.");
+  });
+
+  it("a refusal releases the lock (second op succeeds immediately)", () => {
+    writeFileSync(file, SAMPLE);
+    const bad = run(["retire", "--id", "01a01ab3", "--ts", "2026-08-19 18:13:54", "--block", "0", "--expect", "deadbeef0000"]);
+    expect(bad.code).toBe(1);
+    const good = run(["retire", "--id", "01a01ab3", "--ts", "2026-08-19 18:13:54", "--block", "0", "--expect", entryHash("01a01ab3", "2026-08-19 18:13:54", 0)]);
+    expect(good.code).toBe(0); // would time out on a leaked .memedit.lock
+  });
+
+  it("pin inserts AFTER a preamble, before the first header", () => {
+    writeFileSync(file, GNARLY);
+    run(["pin", "--id", "01a01b03", "--ts", "2026-08-20 08:00:00", "--block", "0", "--expect", entryHash("01a01b03", "2026-08-20 08:00:00", 0)]);
+    const after = readFileSync(file, "utf8");
+    const preambleAt = after.indexOf("preamble line");
+    const pinnedAt = after.indexOf("[01a01b03.p0]");
+    const firstHeaderAt = after.indexOf("[01a01ab3]");
+    expect(preambleAt).toBeGreaterThanOrEqual(0);
+    expect(pinnedAt).toBeGreaterThan(preambleAt);
+    expect(pinnedAt).toBeLessThan(firstHeaderAt);
+    const entries = parseMemory(after);
+    expect(entries[0]!.pinned).toBe(true); // preamble is id-less, not an entry
+  });
+});
