@@ -9,7 +9,8 @@ import type { AlertBadge } from "./alerts.js";
 import { paintCmdBar } from "./cmdbar.js";
 import { filterLabel, visiblePrs, type BoardFilter } from "./filters.js";
 import { formatEvent, glyphFor, type EventLine, type SnapshotPr } from "./model.js";
-import { Frame, SGR, displayWidth, fit, rule, sanitizeText, stripAnsi, truncate, wrap } from "./paint.js";
+import { ACCENT, ACCENT_BG, HEADING, MUTED, OK, RESET as DRESET, STRONG, WARN, modeBadge, sectionTitle, selected as selectedLine } from "./design.js";
+import { Frame, displayWidth, fit, rule, sanitizeText, stripAnsi, truncate, wrap } from "./paint.js";
 import type { PiPaneView } from "./pipane.js";
 import { paintStrip, stripHeight, type StripView } from "./strip.js";
 import type { Health } from "./poll.js";
@@ -116,20 +117,20 @@ export function alertSegment(badge: AlertBadge, focused: boolean): string {
   const where = latest.pr !== null ? ` #${latest.pr}` : "";
   const folds = badge.folds > 0 ? ` +${badge.folds}` : "";
   const label = `${glyph} ${badge.count}${where} ${truncate(latest.title, 40)}${folds}${focused ? " ⏎ companion" : ""}`;
-  return focused ? `${SGR.inverse}${color}${label}${RESET}${SGR.reset}` : `${color}${label}${RESET}`;
+  return focused ? selectedLine(`${color}${label}${RESET}`) : `${color}${label}${RESET}`;
 }
 
 /** Top-bar segments, left to right — shared by the renderer and the hit-test
  * geometry so the alert click zone can never drift from the text. */
 function barSegments(view: BoardView, alerts: boolean): string[] {
-  const mode = view.dryRun ? `${FG.accent}DRY-RUN${RESET}` : `${SGR.bgRed}${SGR.bold} LIVE ${SGR.reset}`;
+  const mode = modeBadge(view.dryRun);
   let health: string;
   switch (view.health.kind) {
     case "ok":
       health = `${FG.approve}●${RESET} daemon ok (hb ${view.health.heartbeatAgeS}s)`;
       break;
     case "stale":
-      health = `${SGR.yellow}▲ DATA STALE (${view.health.dataAgeS}s)${SGR.reset}`;
+      health = `${WARN}▲ DATA STALE (${view.health.dataAgeS}s)${DRESET}`;
       break;
     case "unreachable":
       health = `${FG.anomaly}✖ unreachable${RESET}`;
@@ -139,7 +140,7 @@ function barSegments(view: BoardView, alerts: boolean): string[] {
   const rounds = s ? `rounds ${s.running_rounds}/${s.max_concurrent_rounds ?? "?"}` : "";
   const spend = s?.today_spend_usd !== undefined ? `today $${s.today_spend_usd.toFixed(2)}` : "";
   const badge = alerts && view.alerts ? alertSegment(view.alerts, view.alertFocus === true) : "";
-  return [`${SGR.bold}quickreview${SGR.reset}`, mode, health, rounds, spend, badge].filter((x) => x !== "");
+  return [`${HEADING}quickreview${DRESET}`, mode, health, rounds, spend, badge].filter((x) => x !== "");
 }
 
 export function topBar(view: BoardView, cols: number): string {
@@ -167,28 +168,28 @@ function styledRow(pr: SnapshotPr, selected: boolean, width: number, now: Date, 
   const color = stateColor(pr.stale_recheck ? "reviewing" : pr.state);
   const chip = verdictChip(pr.last_verdict);
   const rounds = pr.rounds ? `${FG.dim}r${pr.rounds}${RESET}` : "";
-  const head = `${color}${glyphFor(pr)} ${SGR.bold}#${pr.number}${RESET}`;
+  const head = `${color}${glyphFor(pr)} ${STRONG}#${pr.number}${RESET}`;
   const meta = [`${FG.author}${pr.author ?? ""}${RESET}`, `${FG.dim}${fmtAge(pr.updated_at, now)}${RESET}`, rounds, chip]
     .filter((s) => stripAnsi(s) !== "")
     .join(" ");
   const used = displayWidth(`${stripAnsi(head)} ${stripAnsi(meta)} `);
   const title = truncate(pr.title, Math.max(4, width - used - 1));
-  const numLinked = repo ? `${color}${glyphFor(pr)} ${SGR.bold}${osc8(prUrl(repo, pr.number), `#${pr.number}`)}${RESET}` : head;
+  const numLinked = repo ? `${color}${glyphFor(pr)} ${STRONG}${osc8(prUrl(repo, pr.number), `#${pr.number}`)}${RESET}` : head;
   const body = `${numLinked} ${meta} ${title}`;
   const pad = " ".repeat(Math.max(0, width - displayWidth(body) - 1));
-  return selected ? `${SGR.inverse} ${body}${pad}${SGR.reset}` : ` ${body}${pad}`;
+  return selected ? selectedLine(` ${body}${pad}`) : ` ${body}${pad}`;
 }
 
 const VERDICT_ABBREV: Record<string, string> = { REQUEST_CHANGES: "RC", APPROVE: "APPROVE", COMMENT: "COMMENT" };
 
 function section(title: string, subtitle: string): string {
-  return `${FG.accent}${SGR.bold}${title}${RESET} ${FG.dim}${subtitle}${RESET}`;
+  return sectionTitle(title, subtitle);
 }
 
 export function detailLines(detail: WhyPayload | undefined, pr: SnapshotPr | undefined, width: number, now: Date = new Date(0)): string[] {
   const lines: string[] = [];
   if (!pr) return ["no PR selected"];
-  lines.push(`${stateColor(pr.state)}${SGR.bold}#${pr.number}${RESET} ${SGR.bold}${truncate(sanitizeText(pr.title), width - 8 - String(pr.number).length)}${RESET}`);
+  lines.push(`${stateColor(pr.state)}${STRONG}#${pr.number}${RESET} ${STRONG}${truncate(sanitizeText(pr.title), width - 8 - String(pr.number).length)}${RESET}`);
   if (!detail || detail.pr !== pr.number) {
     lines.push(`${FG.dim}loading detail…${RESET}`);
     return lines;
@@ -223,7 +224,7 @@ export function detailLines(detail: WhyPayload | undefined, pr: SnapshotPr | und
       if (t.length > 0) for (const wl of wrap(t, width)) lines.push(wl);
     }
   } else {
-    lines.push(truncate(`${FG.dim}(none archived — live ledger is pinned in the session)${RESET}`, width));
+    lines.push(truncate(`${FG.dim}none yet — the live ledger is pinned in the session${RESET}`, width));
   }
   const roundsBits = detail.rounds.map((r) => {
     const v = r.verdict ? (VERDICT_ABBREV[r.verdict] ?? r.verdict) : r.status === "running" ? "…" : "—";
@@ -286,8 +287,8 @@ export const HELP_LINES = [
 export function piHeader(pr: number | undefined, pane: PiPaneView | undefined, focused = false): string {
   if (pr === undefined) return `${FG.dim}PI — no PR selected${RESET}`;
   const name = focused
-    ? `${SGR.inverse}${FG.accent}PI pr-${pr}${RESET}${SGR.reset}`
-    : `${FG.dim}PI ${RESET}${FG.accent}pr-${pr}${RESET}`;
+    ? `${ACCENT_BG}PI pr-${pr}${DRESET}`
+    : `${MUTED}PI ${DRESET}${ACCENT}pr-${pr}${DRESET}`;
   const mine = pane && pane.pr === pr ? pane : undefined;
   if (!mine) return `${name}${FG.dim} · connecting…${RESET}`;
   if (mine.missing) {
@@ -319,7 +320,7 @@ export function piBody(pr: number | undefined, pane: PiPaneView | undefined, wid
 function renderEventsOverlay(frame: Frame, view: BoardView, cols: number, rows: number): void {
   const { top, height } = eventsOverlayBand(rows);
   const visible = Math.max(0, height - 2);
-  frame.set(top, rule(cols, "├", "┤", [`${FG.accent}${SGR.bold}EVENTS${RESET}`, `${FG.dim}what the daemon just did${RESET}`, `${FG.dim}j/k scroll · e/Esc close${RESET}`]));
+  frame.set(top, rule(cols, "├", "┤", [sectionTitle("EVENTS"), `${MUTED}what the daemon just did${DRESET}`, `${MUTED}j/k scroll · e/Esc close${DRESET}`]));
   const slice = view.events.slice(view.eventsScroll, view.eventsScroll + visible);
   for (let i = 0; i < visible; i++) {
     const e = slice[i];
@@ -351,7 +352,7 @@ export function renderBoard(view: BoardView, cols: number, rows: number, strip?:
   frame.meta = { listW, bodyRows, piTop: 1 + bodyRows, piRows: pRows };
 
   if (view.help) {
-    frame.boxRow(1, [{ text: ` ${FG.accent}${SGR.bold}KEYS${RESET} ${FG.dim}everything the TUI answers to${RESET}`, width: cols - 2 }]);
+    frame.boxRow(1, [{ text: ` ${sectionTitle("KEYS", "everything the TUI answers to")}`, width: cols - 2 }]);
     HELP_LINES.forEach((l, i) => {
       if (2 + i < rows - 1) frame.boxRow(2 + i, [{ text: `   ${l}`, width: cols - 2 }]);
     });
@@ -408,7 +409,7 @@ export function renderBoard(view: BoardView, cols: number, rows: number, strip?:
     frame.set(piTop, `│${piFocused ? `${FG.accent}${inner}${RESET}` : inner}│`);
   }
   if (view.inputBox) {
-    frame.boxRow(piTop + 1, [{ text: ` ${SGR.bold}MSG → ${view.inputBox.target}${SGR.reset}`, width: cols - 2 }]);
+    frame.boxRow(piTop + 1, [{ text: ` ${HEADING}MSG → ${view.inputBox.target}${DRESET}`, width: cols - 2 }]);
     frame.boxRow(piTop + 2, [{ text: ` > ${view.inputBox.text}▁`, width: cols - 2 }]);
     frame.boxRow(piTop + 3, [{ text: ` ⏎ send · Esc cancel · Alt-⏎ newline`, width: cols - 2 }]);
     for (let i = 4; i <= piLines; i++) frame.boxRow(piTop + i, [{ text: "", width: cols - 2 }]);

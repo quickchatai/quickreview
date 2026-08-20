@@ -10,7 +10,8 @@ import type { TuiConfig } from "../config.js";
 import type { App } from "./app.js";
 import type { BoardKey } from "./keys.js";
 import { paintCmdBar } from "./cmdbar.js";
-import { Frame, SGR, displayWidth, rule, stripAnsi, truncate } from "./paint.js";
+import { ACCENT, ACCENT_BG, BAD, HEADING, MUTED, OK, RESET as DRESET, STRONG, WARN_BG, badge, modeBadge, sectionTitle } from "./design.js";
+import { Frame, displayWidth, rule, stripAnsi, truncate } from "./paint.js";
 import type { RemoteResult, SshRunner } from "./remote.js";
 import { FG, RESET } from "./theme.js";
 import { paintStrip, stripHeight, type StripView } from "./strip.js";
@@ -175,33 +176,33 @@ export class RealDeployFetcher implements DeployFetcher {
 // ---- render -----------------------------------------------------------------
 
 function section(title: string, subtitle: string): string {
-  return `${FG.accent}${SGR.bold}${title}${RESET} ${FG.dim}${subtitle}${RESET}`;
+  return sectionTitle(title, subtitle);
 }
 
 /** The tab body as one scrollable column. Pure for tests. */
 export function deployLines(st: DeployState, width: number): string[] {
-  if (!st.loaded) return [`${SGR.dim}loading…${SGR.reset}`];
+  if (!st.loaded) return [`${MUTED}loading…${DRESET}`];
   const lines: string[] = [];
   const dep = st.deployed;
   const depText = dep
-    ? `${SGR.bold}${dep.sha}${SGR.reset}${dep.at ? ` ${FG.dim}${dep.at}${RESET}` : ""}${dep.mode ? ` ${FG.dim}(${dep.mode})${RESET}` : ""}`
+    ? `${STRONG}${dep.sha}${DRESET}${dep.at ? ` ${FG.dim}${dep.at}${RESET}` : ""}${dep.mode ? ` ${FG.dim}(${dep.mode})${RESET}` : ""}`
     : `${FG.dim}unknown — no BUILD_SHA on the VM yet (the next deploy writes it)${RESET}`;
   lines.push(truncate(`${section("DEPLOYED", "what the VM runs")}  ${depText}`, width));
-  const cleanliness = st.dirty.length === 0 ? `${FG.approve}clean${RESET}` : `${FG.anomaly}dirty — ${st.dirty.length} uncommitted (deploy.sh will refuse)${RESET}`;
-  lines.push(truncate(`${section("LOCAL", "this working copy")}     ${SGR.bold}${st.head ?? "?"}${SGR.reset}  ${cleanliness}`, width));
+  const cleanliness = st.dirty.length === 0 ? `${OK}clean${DRESET}` : `${BAD}dirty — ${st.dirty.length} uncommitted (deploy.sh will refuse)${DRESET}`;
+  lines.push(truncate(`${section("LOCAL", "this working copy")}     ${STRONG}${st.head ?? "?"}${DRESET}  ${cleanliness}`, width));
   for (const d of st.dirty.slice(0, 8)) lines.push(truncate(`    ${FG.dim}${d}${RESET}`, width));
   if (st.dirty.length > 8) lines.push(`    ${FG.dim}… ${st.dirty.length - 8} more${RESET}`);
   lines.push("");
 
   if (dep && st.head && dep.sha === st.head && st.dirty.length === 0) {
-    lines.push(`${FG.approve}✓ the VM already runs this commit — nothing to deploy${RESET}`);
+    lines.push(`${OK}✓ the VM already runs this commit — nothing to deploy${DRESET}`);
   } else if (dep) {
     if (st.commits === undefined) {
-      lines.push(truncate(`${FG.anomaly}deployed sha ${dep.sha} is unknown to local git — cannot diff${RESET}`, width));
+      lines.push(truncate(`${BAD}deployed sha ${dep.sha} is unknown to local git — cannot diff${DRESET}`, width));
     } else {
       lines.push(truncate(section(`PENDING (${st.commits.length})`, "commits a deploy would ship"), width));
       for (const c of st.commits) lines.push(truncate(`  ${c}`, width));
-      if (st.commits.length === 0) lines.push(`  ${FG.dim}(none)${RESET}`);
+      if (st.commits.length === 0) lines.push(`  ${MUTED}none yet — nothing to ship${DRESET}`);
       if (st.diffstat && st.diffstat.length > 0) {
         lines.push(truncate(section("DIFFSTAT", `${dep.sha}..HEAD`), width));
         for (const d of st.diffstat) lines.push(truncate(`  ${d}`, width));
@@ -213,16 +214,16 @@ export function deployLines(st: DeployState, width: number): string[] {
   for (const p of st.plan) lines.push(truncate(`  ${p}`, width));
   lines.push("");
   if (st.armedAt !== undefined) {
-    lines.push(truncate(`${SGR.bgRed}${SGR.bold} ARMED ${SGR.reset} press ${SGR.bold}D${SGR.reset} again to run ./scripts/deploy.sh sync (any other key cancels)`, width));
+    lines.push(truncate(`${badge("warn", "ARMED")} press ${STRONG}D${DRESET} again to run ./scripts/deploy.sh sync (any other key cancels)`, width));
   } else {
-    lines.push(truncate(`${SGR.bold}to deploy:${SGR.reset} press ${SGR.bold}D${SGR.reset} twice (runs ${FG.accent}./scripts/deploy.sh sync${RESET} in your terminal) — or run it yourself`, width));
+    lines.push(truncate(`${STRONG}to deploy:${DRESET} press ${STRONG}D${DRESET} twice (runs ${ACCENT}./scripts/deploy.sh sync${DRESET} in your terminal) — or run it yourself`, width));
   }
   return lines;
 }
 
 export function renderDeployTab(st: DeployState, dryRun: boolean, cols: number, rows: number, strip?: StripView): Frame {
   const frame = new Frame(cols, rows);
-  frame.set(0, rule(cols, "┌", "┐", ["quickreview", dryRun ? "DRY-RUN" : `${SGR.bgRed}${SGR.bold} LIVE ${SGR.reset}`, "deploy"]));
+  frame.set(0, rule(cols, "┌", "┐", [`${HEADING}quickreview${DRESET}`, modeBadge(dryRun), "deploy"]));
 
   // The button row — deploy + power, both mouse-clickable, pinned under the
   // title. While a run streams, the row becomes its status chip.
@@ -236,9 +237,11 @@ export function renderDeployTab(st: DeployState, dryRun: boolean, cols: number, 
     const [busy, ok, bad] = RUN_VERBS[run.kind];
     const label = run.running ? busy : run.code === 0 ? ok : `${bad} (exit ${run.code ?? "signal"}) `;
     const chip =
-      run.running || run.code === 0
-        ? `${SGR.inverse}${SGR.bold}${label}${SGR.reset}`
-        : `${SGR.bgRed}${SGR.bold}${label}${SGR.reset}`;
+      run.running
+        ? `${ACCENT_BG}${STRONG}${label}${DRESET}`
+        : run.code === 0
+          ? `${OK}${STRONG}${label}${DRESET}`
+          : `${BAD}${STRONG}${label}${DRESET}`;
     const suffix = run.running ? "  streaming — j/k scroll · x abort" : "  x close log · r refresh";
     frame.boxRow(1, [{ text: ` ${chip}${FG.dim}${suffix}${RESET}`, width: cols - 2 }]);
     st.buttonZone = undefined;
@@ -256,8 +259,8 @@ export function renderDeployTab(st: DeployState, dryRun: boolean, cols: number, 
       : powerKind === "stop"
         ? " ■ STOP VM APP "
         : " ▶ START VM APP ";
-    const dBtn = deployArmed ? `${SGR.bgRed}${SGR.bold}${dLabel}${SGR.reset}` : `${SGR.inverse}${SGR.bold}${dLabel}${SGR.reset}`;
-    const pBtn = powerArmed ? `${SGR.bgRed}${SGR.bold}${pLabel}${SGR.reset}` : `${SGR.inverse}${SGR.bold}${pLabel}${SGR.reset}`;
+    const dBtn = deployArmed ? `${WARN_BG}${STRONG}${dLabel}${DRESET}` : `${ACCENT_BG}${STRONG}${dLabel}${DRESET}`;
+    const pBtn = powerArmed ? `${WARN_BG}${STRONG}${pLabel}${DRESET}` : `${ACCENT_BG}${STRONG}${pLabel}${DRESET}`;
     const vm =
       st.containerStatus === undefined
         ? `${FG.dim}VM: …${RESET}`
@@ -265,7 +268,7 @@ export function renderDeployTab(st: DeployState, dryRun: boolean, cols: number, 
           ? `${FG.dim}VM: no container${RESET}`
           : running
             ? `VM: ${st.containerStatus}`
-            : `${SGR.bold}VM: ${st.containerStatus}${SGR.reset}`;
+            : `${STRONG}VM: ${st.containerStatus}${DRESET}`;
     const suffix = st.armedKind !== undefined ? "  any other key/click cancels" : "  (also: D D deploy · S S stop/start)";
     const refreshing = st.loading ? "  refreshing…" : "";
     frame.boxRow(1, [{ text: ` ${dBtn}  ${pBtn}  ${vm}${FG.dim}${suffix}${refreshing}${RESET}`, width: cols - 2 }]);

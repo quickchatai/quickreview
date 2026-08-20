@@ -5,8 +5,8 @@
 // paintCmdBar and barHitKey share the ONE layout() computation, so render and
 // hit-test cannot drift.
 import type { Tab } from "./app.js";
-import { Frame, SGR, displayWidth } from "./paint.js";
-import { FG, RESET } from "./theme.js";
+import { button } from "./design.js";
+import { Frame, displayWidth } from "./paint.js";
 
 export interface BarButton {
   key: string;
@@ -136,13 +136,10 @@ function layout(tab: Tab, cols: number): { a: Slot[]; b: Slot[] } {
   return { a, b };
 }
 
-/** Dim brackets, bold key glyph, normal label; the active nav slot inverse. */
+/** Muted brackets, accent-bold key glyph; the active nav slot ACCENT_BG —
+ * the one button language, shared with every in-pane verb (design.button). */
 function styleButton(s: Slot): string {
-  if (s.active) return `${SGR.inverse}${SGR.bold}[${s.label}]${SGR.reset}`;
-  const chars = [...s.label];
-  const head = chars[0] ?? "";
-  const rest = chars.slice(1).join("");
-  return `${FG.dim}[${RESET}${SGR.bold}${head}${SGR.reset}${rest}${FG.dim}]${RESET}`;
+  return button(s.label, s.active);
 }
 
 /** Slots composed onto one row string, cell-exact at their layout x-ranges. */

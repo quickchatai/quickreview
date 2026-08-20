@@ -2,6 +2,7 @@
 // switching, the per-PR timeline drill-down and key/zone routing. Fixtures are
 // local structural copies of the M1 payload contract, so this file never
 // imports src/metrics.ts; nothing sshes, nothing spawns.
+import { ACCENT, WARN } from "../src/tui/design.js";
 import { EventEmitter } from "node:events";
 import { describe, expect, it } from "vitest";
 import { TUI_DEFAULTS } from "../src/config.js";
@@ -330,13 +331,13 @@ describe("metrics dashboard", () => {
     }
   });
 
-  it("assigns a fixed accent per card, never the same hue twice in a row", () => {
+  it("every card rides the ONE accent (§8 retired the five-hue rotation)", () => {
     const cards = metricsCards(fullWindow as never, daily, 24);
     const hues = new Set(cards.map((c) => c.accent));
-    expect(hues.size).toBe(5);
-    for (let i = 1; i < cards.length; i++) expect(cards[i]!.accent).not.toBe(cards[i - 1]!.accent);
+    expect(hues.size).toBe(1);
     expect(cards[0]!.title).toBe("ACTIVITY");
-    expect(cards[0]!.accent).toBe(ACCENTS.cyan);
+    expect(cards[0]!.accent).toBe(ACCENT);
+    expect(ACCENTS.cyan).toBe(ACCENT);
   });
 
   it("caps the lens list at six rows plus a dim overflow row", () => {
@@ -461,12 +462,10 @@ describe("OPERATIONS card", () => {
       NOW,
     ).map(stripAnsi);
 
-  it("sorts right after ACTIVITY with its own accent", () => {
+  it("sorts right after ACTIVITY", () => {
     const cards = metricsCards(fullWindow as never, daily, 24, { ops: ops as never, now: NOW });
     expect(cards.map((c) => c.title).slice(0, 3)).toEqual(["ACTIVITY", "OPERATIONS", "TIME TO FIRST VERDICT"]);
-    const [activity, operations, ttfv] = cards;
-    expect(operations!.accent).not.toBe(activity!.accent);
-    expect(operations!.accent).not.toBe(ttfv!.accent);
+    const [, operations] = cards;
     expect(operations!.subtitle).toContain("dry-run");
     expect(operations!.subtitle).toContain("abc1234");
   });
@@ -496,9 +495,9 @@ describe("OPERATIONS card", () => {
     expect(ahead[2]!).toContain("4 commits ahead (deadbee)");
     expect(lines({ local: { head: "deadbee" } })[2]!).toContain("local deadbee differs");
     expect(lines({ local: { head: "deadbee", ahead: 1 } })[2]!).toContain("1 commit ahead");
-    // the accent is on the words, not just implied
+    // the warn color is on the words, not just implied
     const colored = opsLines(ops as never, { head: "deadbee", ahead: 4 }, fullWindow as never, 60, NOW);
-    expect(colored[2]!).toContain(ACCENTS.magenta);
+    expect(colored[2]!).toContain(WARN);
   });
 
   it("says nothing to do when the checkout matches the deployed sha", () => {

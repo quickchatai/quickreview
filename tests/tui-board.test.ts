@@ -1,3 +1,4 @@
+import { BAD_BG } from "../src/tui/design.js";
 import { describe, expect, it } from "vitest";
 import type { WhyPayload } from "../src/cli.js";
 import type { StatusSnapshot } from "../src/state.js";
@@ -71,7 +72,7 @@ describe("topBar", () => {
   it("marks LIVE loudly when dry_run is off", () => {
     const bar = topBar(view({ dryRun: false }), 100);
     expect(stripAnsi(bar)).toContain("LIVE");
-    expect(bar).toContain("\x1b[41m"); // red background
+    expect(bar).toContain(BAD_BG); // red truth chip (design.badge)
   });
 });
 
@@ -98,8 +99,8 @@ describe("detailLines", () => {
     expect(lines[1]).toBe("reviewing · round 2");
     expect(lines[2]).toContain("spend $1.30 · head a2e380f · trig");
     expect(lines).toContain("F1 [P1/0.9][delivery] tasks.py:88 open");
-    expect(lines.find((l) => l.startsWith("ROUNDS"))).toContain("r1 RC · r2 …");
-    expect(lines.find((l) => l.startsWith("THREADS"))).toContain("2 known");
+    expect(lines.find((l) => l.startsWith("▍ROUNDS"))).toContain("r1 RC · r2 …");
+    expect(lines.find((l) => l.startsWith("▍THREADS"))).toContain("2 known");
   });
 
   it("shows a loading line until the payload matches the selection", () => {

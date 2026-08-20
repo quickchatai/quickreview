@@ -8,7 +8,8 @@ import type { App } from "./app.js";
 import type { BoardKey } from "./keys.js";
 import { paintCmdBar } from "./cmdbar.js";
 import { awaitingRows, sortPrs, type SnapshotPr } from "./model.js";
-import { Frame, SGR, rule, truncate } from "./paint.js";
+import { HEADING, MUTED, RESET, modeBadge, sectionTitle, selected } from "./design.js";
+import { Frame, rule, truncate } from "./paint.js";
 import type { SshRunner } from "./remote.js";
 import { paintStrip, stripHeight, type StripView } from "./strip.js";
 
@@ -33,9 +34,9 @@ export function parseDigestList(stdout: string): string[] {
     .sort(); // lexicographic == chronological
 }
 
-/** Light markdown styling: headings bold, bullets kept, everything else raw. */
+/** Light markdown styling: headings accent, bullets kept, everything else raw. */
 export function styleDigestLine(line: string): string {
-  if (/^#{1,3} /.test(line)) return `${SGR.bold}${line.replace(/^#{1,3} /, "")}${SGR.reset}`;
+  if (/^#{1,3} /.test(line)) return `${HEADING}${line.replace(/^#{1,3} /, "")}${RESET}`;
   return line;
 }
 
@@ -91,7 +92,7 @@ export function renderDigestTab(
   const file = currentFile(st);
   const date = file?.slice(0, 10);
   const tag = date && date < today ? " (yesterday)" : "";
-  frame.set(0, rule(cols, "┌", "┐", ["quickreview", dryRun ? "DRY-RUN" : `${SGR.bgRed}${SGR.bold} LIVE ${SGR.reset}`, `memory & learning · digest ${date ?? "—"}${tag}`]));
+  frame.set(0, rule(cols, "┌", "┐", [`${HEADING}quickreview${RESET}`, modeBadge(dryRun), `memory & learning · digest ${date ?? "—"}${tag}`]));
 
   const leftW = Math.floor((cols - 3) * 0.55);
   const rightW = cols - 3 - leftW;
@@ -99,22 +100,22 @@ export function renderDigestTab(
   const bodyRows = rows - 4 - stripRows; // top bar + strip + command bar (2 rows) + bottom border
 
   const left: string[] = [];
-  if (!st.loaded) left.push(`${SGR.dim}loading…${SGR.reset}`);
-  else if (!file) left.push(`${SGR.dim}no digest yet — the EOD sweep writes digest/<date>.md at 18:00${SGR.reset}`);
-  else if (st.content === undefined) left.push(`${SGR.dim}loading ${file}…${SGR.reset}`);
+  if (!st.loaded) left.push(`${MUTED}loading…${RESET}`);
+  else if (!file) left.push(`${MUTED}none yet — the EOD sweep writes digest/<date>.md at 18:00${RESET}`);
+  else if (st.content === undefined) left.push(`${MUTED}loading ${file}…${RESET}`);
   else for (const line of st.content.split("\n")) left.push(styleDigestLine(line));
 
   const awaiting = awaitingRows(snapshotPrs, new Date(`${today}T12:00:00Z`));
-  const right: string[] = [`${SGR.bold}AWAITING YOU (${awaiting.length})${SGR.reset}`];
+  const right: string[] = [sectionTitle(`AWAITING YOU (${awaiting.length})`, "oldest first")];
   awaiting.forEach((row, i) => {
     const label = `${String(row.ageDays).padStart(3)}d ⚑ #${row.pr.number} ${row.pr.title}`;
-    right.push(i === st.awaitingSelected ? `${SGR.inverse}${truncate(label, rightW - 2)}${SGR.reset}` : truncate(label, rightW - 2));
+    right.push(i === st.awaitingSelected ? selected(truncate(label, rightW - 2)) : truncate(label, rightW - 2));
     // Clickable: first click selects, second (via the tab's click handler)
     // attaches — same convention as the board's PR rows.
     frame.zones.push({ x1: leftW + 4, y1: 2 + i + 1, x2: cols - 1, y2: 2 + i + 1, action: { t: "await", pr: row.pr.number, i } satisfies DigestAction });
   });
   right.push("");
-  right.push(`${SGR.dim}(⏎ attach · w why · m msg)${SGR.reset}`);
+  right.push(`${MUTED}(⏎ attach · w why · m msg)${RESET}`);
 
   for (let r = 0; r < bodyRows; r++) {
     frame.boxRow(1 + r, [

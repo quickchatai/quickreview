@@ -9,8 +9,8 @@
 //   command bar rows-3..rows-2, bottom border rows-1
 import type { CompanionConfig } from "../config.js";
 import type { DockerRunner } from "./companion.js";
-import { Frame, SGR, rule, sanitizeText, truncate } from "./paint.js";
-import { FG, RESET } from "./theme.js";
+import { ACCENT, ACCENT_BG, MUTED, RESET } from "./design.js";
+import { Frame, rule, sanitizeText, truncate } from "./paint.js";
 
 /** Full strip height: mirror area + input row, or the input row alone when
  * the terminal is too short for the mirror to earn its space. */
@@ -35,10 +35,10 @@ export const STRIP_PLACEHOLDER = "ask the companion — just type, ⏎ sends";
 export const STRIP_OFF = "companion off";
 
 function inputRow(view: StripView): string {
-  if (!view.available) return `${FG.dim}${STRIP_OFF}${RESET}`;
-  if (!view.focused && view.input.length === 0) return `${FG.dim}❯ ${STRIP_PLACEHOLDER}${RESET}`;
-  const cursor = view.focused ? `${SGR.inverse} ${SGR.reset}` : "";
-  return `${FG.accent}❯ ${RESET}${view.input}${cursor}`;
+  if (!view.available) return `${MUTED}${STRIP_OFF}${RESET}`;
+  if (!view.focused && view.input.length === 0) return `${MUTED}❯ ${STRIP_PLACEHOLDER}${RESET}`;
+  const cursor = view.focused ? `${ACCENT_BG} ${RESET}` : "";
+  return `${ACCENT}❯ ${RESET}${view.input}${cursor}`;
 }
 
 /** Mirror lines the expanded strip shows (the labelled divider is the 6th). */
@@ -49,7 +49,7 @@ export function paintStrip(frame: Frame, view: StripView, cols: number, rows: nu
   const h = stripHeight(rows, view.available);
   frame.boxRow(rows - 4, [{ text: ` ${inputRow(view)}`, width: cols - 2 }]);
   if (h === 1) return;
-  frame.set(rows - 10, rule(cols, "├", "┤", [`${FG.dim}companion${RESET}`]));
+  frame.set(rows - 10, rule(cols, "├", "┤", [view.focused ? `${ACCENT}companion${RESET}` : `${MUTED}companion${RESET}`]));
   const tail = view.mirror.slice(-MIRROR_LINES);
   const pad = MIRROR_LINES - tail.length;
   for (let i = 0; i < MIRROR_LINES; i++) {

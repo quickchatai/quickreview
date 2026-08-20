@@ -2,6 +2,7 @@
 // smart keyboard routing (unregistered printables become companion input),
 // mouse (input row focuses, mirror rows open the full-screen attach), and the
 // renderer contract that tab content never paints into the strip's rows.
+import { ACCENT_BG } from "../src/tui/design.js";
 import { EventEmitter } from "node:events";
 import { describe, expect, it } from "vitest";
 import { TUI_DEFAULTS } from "../src/config.js";
@@ -81,7 +82,7 @@ describe("paintStrip states", () => {
     paintStrip(frame, view({ focused: true, input: "why is #5012 parked" }), cols, rows);
     const raw = frame.lines[rows - 4]!;
     expect(stripAnsi(raw)).toContain("❯ why is #5012 parked");
-    expect(raw).toContain("\x1b[7m"); // the cursor block
+    expect(raw).toContain(ACCENT_BG); // the cursor block (accent fill, no ad-hoc inverse)
     expect(stripAnsi(raw)).not.toContain(STRIP_PLACEHOLDER);
   });
 

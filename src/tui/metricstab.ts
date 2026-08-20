@@ -21,7 +21,8 @@ import type { App } from "./app.js";
 import { paintCmdBar } from "./cmdbar.js";
 import { HEAD_ARGV, logArgv, type LocalRunner } from "./deploytab.js";
 import type { BoardKey } from "./keys.js";
-import { Frame, SGR, displayWidth, fit, rule, sanitizeText, truncate } from "./paint.js";
+import { ACCENT, ACCENT_BG, BAD, HEADING, MUTED, OK, RESET as DRESET, SEP, STRONG, WARN, modeBadge, sectionTitle } from "./design.js";
+import { Frame, displayWidth, fit, rule, sanitizeText, truncate } from "./paint.js";
 import { metricsArgv, metricsPrArgv, type SshRunner } from "./remote.js";
 import { FG, RESET, fmtAge, stateColor, verdictColor } from "./theme.js";
 import { paintStrip, stripHeight, type StripView } from "./strip.js";
@@ -30,13 +31,16 @@ import { paintStrip, stripHeight, type StripView } from "./strip.js";
 
 const SPARK = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"] as const;
 
-/** Fixed card accents — five hues, assigned per card, never cycled. */
+/** Card accents — §8 ("muted + one accent") retired the five-hue
+ * rotation: every card mark rides the ONE accent; red/green/state colors
+ * remain only where they carry truth (verdicts, states, failures). The keys
+ * survive so card definitions stay diff-stable. */
 export const ACCENTS = {
-  cyan: FG.accent,
-  blue: FG.reviewing,
-  green: FG.approve,
-  magenta: FG.awaiting_human,
-  yellow: FG.awaiting_author,
+  cyan: ACCENT,
+  blue: ACCENT,
+  green: ACCENT,
+  magenta: ACCENT,
+  yellow: ACCENT,
 } as const;
 
 function dim(s: string): string {
@@ -271,9 +275,10 @@ export interface MetricsView {
 
 // ---- cards ------------------------------------------------------------------
 
-/** Card title: accent name, then the stats/subtitle in dim ink beside it. */
-function section(title: string, subtitle: string, accent: string = FG.accent): string {
-  return subtitle.length > 0 ? `${accent}${SGR.bold}${title}${RESET} ${FG.dim}${subtitle}${RESET}` : `${accent}${SGR.bold}${title}${RESET}`;
+/** Card title: the one section language; the accent param is retired
+ * (§8 — one accent) but kept for signature stability. */
+function section(title: string, subtitle: string, _accent: string = ACCENT): string {
+  return sectionTitle(title, subtitle);
 }
 
 export interface MetricsCard {
@@ -333,38 +338,33 @@ export function opsLines(
   } else {
     // No snapshot at all means we cannot claim a mode — "LIVE" is the one
     // label that must never be guessed.
-    const mode =
-      ops.heartbeat === null
-        ? dim("mode unknown")
-        : ops.dry_run
-          ? `${ACCENTS.yellow}${SGR.bold}DRY-RUN${RESET}`
-          : `${SGR.bgRed}${SGR.bold} LIVE ${SGR.reset}`;
+    const mode = ops.heartbeat === null ? dim("mode unknown") : modeBadge(ops.dry_run);
     const beatS = ops.heartbeat ? Math.max(0, Math.floor((now.getTime() - new Date(ops.heartbeat).getTime()) / 1000)) : null;
     const beat =
       ops.heartbeat === null
         ? `${FG.anomaly}no heartbeat${RESET}`
-        : `${beatS !== null && beatS > HEARTBEAT_STALE_S ? FG.anomaly : FG.approve}♥${RESET} ${fmtAge(ops.heartbeat, now)} ago`;
-    const rounds = `${SGR.bold}${ops.running_rounds}${SGR.reset}/${ops.max_concurrent_rounds} rounds running`;
-    lines.push(`${mode}  ${beat}  ${FG.dim}·${RESET}  ${rounds}`);
+        : `${beatS !== null && beatS > HEARTBEAT_STALE_S ? BAD : OK}♥${DRESET} ${fmtAge(ops.heartbeat, now)} ago`;
+    const rounds = `${STRONG}${ops.running_rounds}${DRESET}/${ops.max_concurrent_rounds} rounds running`;
+    lines.push(`${mode}  ${beat} ${SEP} ${rounds}`);
 
     const b = ops.build;
     lines.push(
       b
-        ? `running ${SGR.bold}${b.sha}${SGR.reset}${b.at ? ` ${FG.dim}· deployed ${fmtAge(b.at, now)} ago${RESET}` : ""}${b.mode ? ` ${FG.dim}· ${b.mode}${RESET}` : ""}`
+        ? `running ${STRONG}${b.sha}${DRESET}${b.at ? ` ${FG.dim}· deployed ${fmtAge(b.at, now)} ago${RESET}` : ""}${b.mode ? ` ${FG.dim}· ${b.mode}${RESET}` : ""}`
         : dim("running an unknown commit — no BUILD_SHA on the VM yet"),
     );
     if (b && local?.head) {
       lines.push(
         local.head === b.sha
-          ? `${FG.approve}✓${RESET} ${FG.dim}your checkout (${local.head}) is what the VM runs${RESET}`
-          : `${ACCENTS.magenta}${SGR.bold}deploy needed${SGR.reset}${RESET} ${FG.dim}·${RESET} ` +
+          ? `${OK}✓${DRESET} ${FG.dim}your checkout (${local.head}) is what the VM runs${RESET}`
+          : `${WARN}${STRONG}deploy needed${DRESET}${SEP}` +
             `${local.ahead === undefined ? `local ${local.head} differs` : `${local.ahead} commit${local.ahead === 1 ? "" : "s"} ahead (${local.head})`}`,
       );
     }
   }
 
   lines.push("");
-  lines.push(dim("EVENTS"));
+  lines.push(sectionTitle("EVENTS"));
   const kinds = win.events_by_kind ?? [];
   if (kinds.length === 0) {
     lines.push(dim("no events in this window"));
@@ -569,15 +569,15 @@ export function packColumns(cards: MetricsCard[], widths: number[], targetRows =
 export function statStrip(win: MetricsWindow, width: number): string {
   const h = win.header;
   const bits = [
-    `${FG.dim}triggered${RESET} ${SGR.bold}${h.prs_triggered}${SGR.reset}`,
-    `${FG.dim}reviewed${RESET} ${SGR.bold}${h.prs_reviewed}${SGR.reset}`,
+    `${FG.dim}triggered${RESET} ${STRONG}${h.prs_triggered}${DRESET}`,
+    `${FG.dim}reviewed${RESET} ${STRONG}${h.prs_reviewed}${DRESET}`,
     `${FG.approve}✓${h.approvals}${RESET} ${FG.request_changes}✗${h.request_changes}${RESET}`,
-    `${FG.dim}rounds${RESET} ${SGR.bold}${h.rounds}${SGR.reset}`,
+    `${FG.dim}rounds${RESET} ${STRONG}${h.rounds}${DRESET}`,
     `${FG.accent}$${h.spend_usd.toFixed(2)}${RESET}`,
-    `${h.overruns > 0 ? FG.anomaly : FG.dim}overruns ${h.overruns}${RESET}`,
+    `${h.overruns > 0 ? WARN : FG.dim}overruns ${h.overruns}${RESET}`,
     `${FG.awaiting_human}⚑ ${h.awaiting_you} awaiting you${RESET}`,
   ];
-  return truncate(bits.join(`${FG.dim} · ${RESET}`), width);
+  return truncate(bits.join(SEP), width);
 }
 
 /** Window switcher, with the 1-based x-ranges of each button for zoning. */
@@ -591,7 +591,7 @@ export function windowSwitcher(
   for (const w of WINDOW_LABELS) {
     const plain = `[ ${w.label} ]`;
     zones.push({ x1: x, x2: x + plain.length - 1, window: w.key });
-    parts.push(w.key === selected ? `${SGR.inverse}${FG.accent}${plain}${RESET}${SGR.reset}` : `${FG.dim}[${RESET} ${w.label} ${FG.dim}]${RESET}`);
+    parts.push(w.key === selected ? `${ACCENT_BG}${plain}${DRESET}` : `${FG.dim}[${RESET} ${w.label} ${FG.dim}]${RESET}`);
     x += plain.length + 1;
   }
   return { text: parts.join(" "), zones };
@@ -623,7 +623,7 @@ export function kindColor(kind: string): string {
 export function timelineLines(tl: TimelinePayload, width: number, now: Date): string[] {
   const lines: string[] = [];
   const title = tl.title ? sanitizeText(tl.title) : "(unknown PR)";
-  lines.push(truncate(`${FG.accent}${SGR.bold}#${tl.pr}${RESET} ${SGR.bold}${title}${SGR.reset}${tl.author ? ` ${FG.author}${tl.author}${RESET}` : ""}`, width));
+  lines.push(truncate(`${HEADING}#${tl.pr}${DRESET} ${STRONG}${title}${DRESET}${tl.author ? ` ${FG.author}${tl.author}${RESET}` : ""}`, width));
   if (!tl.known) {
     lines.push(`${FG.dim}the daemon has no record of this PR${RESET}`);
     return lines;
@@ -653,8 +653,8 @@ export function renderMetrics(view: MetricsView, cols: number, rows: number, str
   frame.set(
     0,
     rule(cols, "┌", "┐", [
-      "quickreview",
-      view.dryRun ? "DRY-RUN" : `${SGR.bgRed}${SGR.bold} LIVE ${SGR.reset}`,
+      `${HEADING}quickreview${DRESET}`,
+      modeBadge(view.dryRun),
       drill ? `metrics · #${drill.pr}` : "metrics",
       drill ? `${FG.dim}Esc back to the dashboard · j/k scroll${RESET}` : "",
     ]),

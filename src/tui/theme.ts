@@ -2,6 +2,7 @@
 // state owns a hue used consistently across the list, detail, events, and
 // legend — a glance at the color tells the state without reading. Verdicts
 // and anomalies get their own fixed colors.
+import { ACCENT, MUTED } from "./design.js";
 import { ESC, rgb } from "./paint.js";
 
 export const FG = {
@@ -14,9 +15,9 @@ export const FG = {
   approve: rgb(152, 195, 121), // green
   request_changes: rgb(209, 154, 102), // orange
   anomaly: rgb(224, 108, 117), // red
-  accent: rgb(86, 182, 194), // cyan — titles, links
+  accent: ACCENT, // the ONE accent (design.ts, §8) — titles, links, focus
   text: rgb(171, 178, 191),
-  dim: rgb(92, 99, 112),
+  dim: MUTED,
   author: rgb(152, 195, 121),
 } as const;
 
