@@ -245,7 +245,7 @@ export function detailLines(detail: WhyPayload | undefined, pr: SnapshotPr | und
 /** Hint-bar buttons: label + the key they synthesize when clicked. */
 export const HINT_BUTTONS: Array<{ label: string; key: string }> = [
   { label: "1 board", key: "1" },
-  { label: "2 digest", key: "2" },
+  { label: "2 memory", key: "2" },
   { label: "3 companion", key: "3" },
   { label: "4 deploy", key: "4" },
   { label: "5 metrics", key: "5" },
@@ -261,7 +261,7 @@ export const HINT_BUTTONS: Array<{ label: string; key: string }> = [
 ];
 
 export const HELP_LINES = [
-  "1/2/3/4/5     board / digest / companion / deploy / metrics tab (c = companion too)",
+  "1/2/3/4/5     board / memory & learning / companion / deploy / metrics tab (c = companion too)",
   "               metrics tab: 7 / 0 / a switch the 7d / 30d / all window; # <pr> ⏎ opens a PR timeline (Esc back)",
   "               deploy tab: click ▶ DEPLOY TO VM (or D D) to deploy · ■ STOP/▶ START VM APP (or S S) to power the container",
   "s              reconnect VM ssh (the one ssh key-passphrase prompt, shared 4h)",
@@ -278,7 +278,7 @@ export const HELP_LINES = [
   "o / M          attach overseer / main session",
   "e              events overlay (j/k scroll, e/Esc close; click an event → its PR)",
   "r              force refresh",
-  "[ / ]          older / newer digest (digest tab)",
+  "[ / ]          older / newer day (memory & learning tab; v toggles digest/memory view)",
   "Ctrl-q         detach (inside attach; twice = literal)",
   "q              quit",
   "",

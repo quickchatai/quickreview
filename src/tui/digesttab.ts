@@ -85,7 +85,7 @@ export function renderDigestTab(
   const file = currentFile(st);
   const date = file?.slice(0, 10);
   const tag = date && date < today ? " (yesterday)" : "";
-  frame.set(0, rule(cols, "┌", "┐", ["quickreview", dryRun ? "DRY-RUN" : `${SGR.bgRed}${SGR.bold} LIVE ${SGR.reset}`, `digest ${date ?? "—"}${tag}`]));
+  frame.set(0, rule(cols, "┌", "┐", ["quickreview", dryRun ? "DRY-RUN" : `${SGR.bgRed}${SGR.bold} LIVE ${SGR.reset}`, `memory & learning · digest ${date ?? "—"}${tag}`]));
 
   const leftW = Math.floor((cols - 3) * 0.55);
   const rightW = cols - 3 - leftW;
@@ -112,7 +112,7 @@ export function renderDigestTab(
       { text: ` ${right[r] ?? ""}`, width: rightW },
     ]);
   }
-  frame.boxRow(rows - 2, [{ text: ` ${SGR.dim}[1]board [2]digest  j/k scroll  [ older  ] newer  ↓/↑ pick  ⏎ attach  q quit${SGR.reset}`, width: cols - 2 }]);
+  frame.boxRow(rows - 2, [{ text: ` ${SGR.dim}[1]board [2]memory  v memory view  j/k scroll  [ older  ] newer  ↓/↑ pick  ⏎ attach  q quit${SGR.reset}`, width: cols - 2 }]);
   frame.set(rows - 1, rule(cols, "└", "┘", []));
   return frame;
 }
