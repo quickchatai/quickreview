@@ -106,9 +106,25 @@ export function attachArgv(cfg: TuiConfig, session: string): string[] {
   return ["-tt", cfg.ssh_host, ...dockerPrefix(cfg), "-it", cfg.container, "tmux", "attach", "-t", session];
 }
 
+/**
+ * POSIX-quote one argv element for the remote shell. ssh does NOT pass argv
+ * through — it space-joins everything after the host into ONE string the
+ * remote shell re-parses. Unquoted, a multi-word `sh -c <script>` argument
+ * is shredded into separate words: `sh -c "cat '/x' || true"` reaches the
+ * VM as `sh -c cat '/x' || true`, so sh runs bare `cat` against an empty
+ * stdin and the `|| true` masks it — every dockerSh() read silently
+ * returned nothing (the empty Memory & learning tab, and the digest tab's
+ * reads before it). Quoting each element makes the remote shell rebuild
+ * the exact argv.
+ */
+export function shellQuote(arg: string): string {
+  if (/^[\w./:=@-]+$/.test(arg)) return arg; // common safe tokens stay readable
+  return `'${arg.replaceAll("'", `'\\''`)}'`;
+}
+
 export const realSshRunner: SshRunner = (host, argv, opts) =>
   new Promise((resolvePromise) => {
-    const child = spawn("ssh", ["-o", "BatchMode=yes", host, ...argv], { stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn("ssh", ["-o", "BatchMode=yes", host, argv.map(shellQuote).join(" ")], { stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     let settled = false;
