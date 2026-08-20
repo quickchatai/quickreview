@@ -32,6 +32,12 @@ export interface StripView {
 }
 
 export const STRIP_PLACEHOLDER = "ask the companion — just type, ⏎ sends";
+
+/** Draft text is ONE line: CR/LF/tab from a paste would break the frame's
+ * row discipline (and tmux send-keys would submit mid-paste). */
+export function stripInputText(s: string): string {
+  return s.replace(/[\r\n\t]/g, "");
+}
 export const STRIP_OFF = "companion off";
 
 function inputRow(view: StripView): string {
@@ -118,7 +124,7 @@ export class CompanionStrip {
   /** Literal text (`send-keys -l`) then Enter — two invocations, because `-l`
    * is a flag of the command and Enter must arrive as a named key. */
   async send(text: string): Promise<void> {
-    const lit = await this.docker(["exec", this.cfg.container_name, "tmux", "send-keys", "-t", this.cfg.session, "-l", text], { timeoutMs: 5_000 });
+    const lit = await this.docker(["exec", this.cfg.container_name, "tmux", "send-keys", "-t", this.cfg.session, "-l", "--", text], { timeoutMs: 5_000 });
     if (!lit.ok) throw new Error(`companion send failed: ${lit.stderr.trim() || `exit ${lit.code}`}`);
     const enter = await this.docker(["exec", this.cfg.container_name, "tmux", "send-keys", "-t", this.cfg.session, "Enter"], { timeoutMs: 5_000 });
     if (!enter.ok) throw new Error(`companion send failed: ${enter.stderr.trim() || `exit ${enter.code}`}`);
@@ -131,7 +137,7 @@ export class CompanionStrip {
   focus(seed = ""): void {
     if (!this.available()) return;
     this.focused = true;
-    this.input += seed;
+    this.input += stripInputText(seed);
     void this.refresh();
     this.ensureTimer();
   }

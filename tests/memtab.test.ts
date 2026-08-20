@@ -13,7 +13,8 @@ import type { DigestFetcher } from "../src/tui/digesttab.js";
 import { installMemoryLearningHooks, pinnedBudget, renderMemoryView, type MemTabState } from "../src/tui/memtab.js";
 import { blockHash, parseMemory, type MemEditOp, type MemoryStore } from "../src/tui/memory.js";
 import { parseMemRequest, processMemRequests } from "../src/tui/memrequests.js";
-import { stripAnsi } from "../src/tui/paint.js";
+import { renderDigestTab } from "../src/tui/digesttab.js";
+import { displayWidth, stripAnsi } from "../src/tui/paint.js";
 import type { RemoteResult } from "../src/tui/remote.js";
 
 const SAMPLE = `<!-- 2026-08-19 18:13:54 [01a01ab3] -->
@@ -80,6 +81,32 @@ function install(app: App, mem: FakeMemory, extra: Parameters<typeof installMemo
     ...extra,
   });
 }
+
+describe("body-row width contract (review P2: rows were cols+1 wide)", () => {
+  for (const cols of [100, 111]) {
+    it(`digest view + memory view render every line at EXACTLY ${cols} cells`, () => {
+      const rows = 28;
+      const digest = renderDigestTab({ files: ["2026-08-19.md"], back: 0, content: "# d", scroll: 0, awaitingSelected: 0, loaded: true }, [], true, "2026-08-19", cols, rows);
+      for (const line of digest.lines) expect(displayWidth(line)).toBe(cols);
+      const st: MemTabState = {
+        view: "memory",
+        digest: { files: [], back: 0, scroll: 0, awaitingSelected: 0, loaded: true },
+        entries: parseMemory(SAMPLE),
+        memLoaded: true,
+        focus: "timeline",
+        sel: 0,
+        propSel: 0,
+        scroll: 0,
+        proposals: [{ slug: "tighten-nits", head: ["# tighten"] }],
+        improvements: [],
+        propLoaded: true,
+        filedTotal: 0,
+      };
+      const memory = renderMemoryView(st, false, undefined, cols, rows);
+      for (const line of memory.lines) expect(displayWidth(line)).toBe(cols);
+    });
+  }
+});
 
 describe("renderMemoryView", () => {
   it("shows timeline, proposals, improvements, defects", async () => {

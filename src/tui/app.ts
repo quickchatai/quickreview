@@ -16,7 +16,7 @@ import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR, Frame } from "./paint.js";
 import { PANE_ESCAPE, PiMirror, keysToTmux } from "./pipane.js";
 import { Poller } from "./poll.js";
 import { prUrl } from "./theme.js";
-import { CompanionStrip, stripHeight, stripHit } from "./strip.js";
+import { CompanionStrip, stripHeight, stripHit, stripInputText } from "./strip.js";
 import { eventsArgv, sendKeysArgv, whyArgv, type SshRunner } from "./remote.js";
 
 export interface AppHooks {
@@ -348,7 +348,11 @@ export class App {
     // The mirror only costs an ssh while the board is the visible tab.
     this.syncPiPane();
     if (this.tab === "board" && !this.suspended) void this.pi.refresh(this.panePr());
-    this.hooks.onPoll?.(this);
+    try {
+      this.hooks.onPoll?.(this);
+    } catch {
+      /* a throwing wrapper must never kill the poll loop */
+    }
     this.repaint();
   }
 
@@ -360,7 +364,11 @@ export class App {
       this.rawEvents = parsed.events;
       const lines = parsed.events.map(formatEvent).reverse(); // newest first
       this.view.events = this.mergeNotices(lines);
-      this.hooks.onPoll?.(this); // feed the companion the fresh tail too
+      try {
+        this.hooks.onPoll?.(this); // feed the companion the fresh tail too
+      } catch {
+        /* a throwing wrapper must never kill the poll loop */
+      }
       this.repaint();
     } catch {
       /* keep the previous strip on parse failure */
@@ -521,6 +529,12 @@ export class App {
         // A focused pi pane would swallow the synthesized key as text.
         if (this.view.piFocus) {
           this.blurPiPane();
+          this.repaint();
+        }
+        // So would a focused strip — and [⏎] would SUBMIT the draft. Blur
+        // first (same rule as the pane): a bar click IS that keypress.
+        if (this.strip?.focused) {
+          this.strip.blur();
           this.repaint();
         }
         this.pressKey(k);
@@ -694,6 +708,8 @@ export class App {
       raw.length > 0 &&
       !raw.includes("\x1b") &&
       raw >= " " &&
+      raw !== "\x7f" && // backspace (DEL) is an edit, never draft text
+      raw !== "\b" &&
       !(raw.length === 1 && registeredKeys(this.tab).has(raw))
     ) {
       this.strip.focus(raw);
@@ -818,7 +834,7 @@ export class App {
     const key = decodeInputKey(buf);
     switch (key.kind) {
       case "char":
-        strip.input += key.ch;
+        strip.input += stripInputText(key.ch); // a multi-line paste must not corrupt the frame
         break;
       case "backspace":
         strip.input = strip.input.slice(0, -1);

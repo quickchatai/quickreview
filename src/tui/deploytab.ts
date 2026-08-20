@@ -412,7 +412,8 @@ export function installDeployHooks(app: App, fetcher?: DeployFetcher, now: () =>
       press(theApp, powerKind());
       return true;
     }
-    if (st.armedAt !== undefined) disarm(theApp); // any other key disarms
+    const disarmed = st.armedAt !== undefined;
+    if (disarmed) disarm(theApp); // any other key disarms
     if (st.run && key.kind === "char" && key.ch === "x") {
       if (st.run.running) {
         handle?.kill(); // abort — onExit lands with the signal code
@@ -447,7 +448,9 @@ export function installDeployHooks(app: App, fetcher?: DeployFetcher, now: () =>
         theApp.repaint();
         return true;
       default:
-        return false; // tabs/quit/help fall through to the app
+        // A key that just disarmed is CONSUMED — it must not also fall
+        // through and seed the companion strip (or act on the board).
+        return disarmed; // otherwise tabs/quit/help fall through to the app
     }
   };
 

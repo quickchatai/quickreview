@@ -145,7 +145,7 @@ export function renderMemoryView(
   // List left (38%), reading pane right: the full selected entry WRAPPED —
   // the one-line list is for picking, never the only way to read a lesson.
   const leftW = Math.floor((cols - 3) * 0.38);
-  const rightW = cols - 3 - leftW;
+  const rightW = cols - 4 - leftW; // │ + (leftW+1) + │ + rightW + │ = cols
   const stripRows = strip ? stripHeight(rows, strip.available) : 0;
   const bodyRows = rows - 4 - stripRows; // top bar + strip + command bar (2 rows) + bottom border
 
