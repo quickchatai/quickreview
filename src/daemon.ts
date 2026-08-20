@@ -50,8 +50,14 @@ export interface DaemonDeps {
   adapter?: DaemonAdapter;
   hooks?: SessionHooks;
   webhookSecret?: string;
-  /** B4's prompt renderer; default is the round order as JSON. */
-  renderPrompt?: (order: import("./types.js").RoundOrder) => string;
+  /** B4's prompt renderer; default is the round order as JSON. The second
+   * argument is the round's assembled memory seed — MEMORY_LESS
+   * when nothing is wired or the store was unreachable. */
+  renderPrompt?: (order: import("./types.js").RoundOrder, memory: import("./memory/context.js").RoundMemory) => string;
+  /** The pinned head + budgeted context block seeded into each round prompt
+   *. Absent ⇒ rounds render memory-less, which is a supported
+   * state, not a failure. */
+  memory?: import("./memory/context.js").RoundMemorySeed;
   /** Renderer for the recheck nudge (prompts/round-recheck.md); default JSON. */
   renderRecheckPrompt?: (order: RecheckOrder) => string;
   /** Hand-resolved merge files between two shas (the owner, 2026-08-19 —
@@ -367,6 +373,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         adapter: gh,
         hooks,
         renderPrompt: deps.renderPrompt,
+        ...(deps.memory ? { memory: deps.memory } : {}),
         prepareWorktree: deps.prepareWorktree,
         listBaseMigrations: deps.listBaseMigrations,
         directiveAuthor: deps.directiveAuthor,

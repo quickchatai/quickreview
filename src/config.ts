@@ -375,6 +375,27 @@ export interface OpenVikingConfig {
 
 /** [openviking] is optional in config.toml — the defaults ARE the shipped
  * configuration, exactly like [tui]/[companion]. */
+/** Round-seeding knobs: how much memory rides each round prompt and
+ * how long the daemon is willing to wait for it. Every value is defaulted —
+ * an absent `[memory]` block is a supported configuration, and a store that
+ * misses the deadline costs the round its context, never the round. */
+export interface MemoryConfig {
+  /** Token budget for the assembled context block. */
+  context_tokens: number;
+  /** Deadline for the head + block assembly, after which the round proceeds
+   * memory-less. */
+  context_timeout_ms: number;
+  /** Minimum minutes between degraded-memory overseer anomalies. The gap is
+   * logged every round regardless; only the alert is cooled down. */
+  alert_cooldown_min: number;
+}
+
+export const MEMORY_DEFAULTS: MemoryConfig = {
+  context_tokens: 2000,
+  context_timeout_ms: 3000,
+  alert_cooldown_min: 60,
+};
+
 export const OPENVIKING_DEFAULTS: OpenVikingConfig = {
   enabled: true,
   version: "0.4.15",
@@ -454,6 +475,7 @@ export interface Config {
   models: ModelsConfig;
   pi: { package: string; version: string; session_dir: string };
   openviking: OpenVikingConfig;
+  memory: MemoryConfig;
   tui: TuiConfig;
   companion: CompanionConfig;
   backfill: BackfillConfig;
@@ -567,6 +589,7 @@ export function parseConfig(toml: string): Config {
     models: parseModels(req(raw, "models") as Record<string, any>),
     pi: { ...(req(raw, "pi") as Config["pi"]) },
     openviking: resolveOpenVikingPaths({ ...OPENVIKING_DEFAULTS, ...((raw.openviking ?? {}) as Partial<OpenVikingConfig>) }),
+    memory: { ...MEMORY_DEFAULTS, ...((raw.memory ?? {}) as Partial<MemoryConfig>) },
     tui: { ...TUI_DEFAULTS, ...((raw.tui ?? {}) as Partial<TuiConfig>) },
     companion: resolveCompanionPaths({ ...COMPANION_DEFAULTS, ...((raw.companion ?? {}) as Partial<CompanionConfig>) }),
     backfill: { ...backfillDefaults(github), ...((raw.backfill ?? {}) as Partial<BackfillConfig>) },
