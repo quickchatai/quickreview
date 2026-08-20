@@ -1,5 +1,10 @@
 # Wiring the companion → TUI action channel
 
+**STATUS: APPLIED 2026-08-20** (branch worktree-uplift-wiring, +13 tests in
+`tests/actions-wiring.test.ts`). Kept as the record of the wiring; each
+section carries a one-line *Applied delta* where the post-merge code differed
+from this recipe.
+
 `src/tui/actions.ts` and `src/tui/filters.ts` are self-contained; nothing
 imports them yet. This document is the exact insertion recipe. All edits are
 in `src/tui/index.ts` plus one-line consumption changes in `board.ts` /
@@ -7,6 +12,10 @@ in `src/tui/index.ts` plus one-line consumption changes in `board.ts` /
 decision — do not add one while wiring.
 
 ## 1. Where the watcher lives: `src/tui/index.ts`, the `if (companionUp)` block
+
+> *Applied delta:* none — both captures landed exactly on the lines named
+> (`deployState` / `metricsView`), inside the companionUp block after the
+> memedit sweep.
 
 Everything goes inside the existing `if (companionUp) { … }` block (the one
 that already builds the feed writer, the alert consumer, and the memedit
@@ -26,6 +35,14 @@ const metricsView = installMetricsHooks(app, undefined, localHeadProbe(localRunn
 (`memState` — the `installMemoryLearningHooks` return — is already captured.)
 
 ## 2. The TuiDriver implementation (~30 lines)
+
+> *Applied delta:* implemented as the exported `buildTuiDriver(app, memState,
+> metricsView, deployState)` at module level in index.ts (so tests can drive a
+> real App through `processTuiActions`), with two additions: a `prep()` that
+> blurs a focused pi pane/companion strip before every action (one keyboard
+> owner — same rule the mouse handlers follow), and `memState.sel = 0` when
+> `memory_view`/`memory_filter` applies a tag (the old ordinal could exceed
+> the narrowed list).
 
 Place right after the memedit sweep wiring, still inside `if (companionUp)`:
 
@@ -119,6 +136,9 @@ Notes on the property names used above (all real, as of this branch):
 
 ## 3. The onPoll chaining (memedit's busy-flag style)
 
+> *Applied delta:* verbatim (with `const driver = buildTuiDriver(…)` supplying
+> the driver).
+
 Immediately after the driver, chain onto `app.hooks.onPoll` exactly like the
 memedit sweep does (prev-hook capture + in-flight flag so a slow sweep never
 stacks):
@@ -149,6 +169,18 @@ delivery.)
 
 ## 4. One-line filter consumption per tab
 
+> *Applied delta:* the shared helper is `visiblePrs(view)` in **filters.ts**
+> (not model.ts — model↔filters would otherwise cycle on the value import);
+> ALL six app.ts `sortPrs` sites (incl. onPoll's reselect) plus renderBoard go
+> through it. The board indicator paints as the `PRS (n)` section subtitle;
+> board `F` is a new `case "char"` in App.handleInput (clears only when a
+> filter is active). memtab shares one `orderedNow()` closure (render computes
+> the same expression from `st`), the selection-rebind in `loadMemory` uses it
+> too, the label sits beside `MEMORY (n)` with the FILTERED count, and `F` is
+> handled at the top of `digestKey` so it clears from both the digest and
+> memory views. `"F"` was added to cmdbar's `TAB_EXTRA_KEYS` for board+digest
+> so it is a registered key (never seeds the strip).
+
 The filter STATE lives on existing view objects; the helpers are pure.
 
 **board.ts** — two small changes:
@@ -178,6 +210,8 @@ The filter STATE lives on existing view objects; the helpers are pure.
 3. In `memoryViewKey`'s `case "char"`: `case "F": st.memFilter = null; …`
 
 ## 5. Companion side
+
+> *Applied delta:* none — nothing to wire, as stated.
 
 `prompts/companion.md` already documents the request-file contract
 (`## Driving the TUI`) — nothing to wire; the companion container

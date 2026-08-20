@@ -8,7 +8,8 @@ import type { AlertBadge } from "./alerts.js";
 import { renderBoard, type BoardAction, type BoardView } from "./board.js";
 import { barHitKey, registeredKeys } from "./cmdbar.js";
 import { decodeInputKey, decodeKey } from "./keys.js";
-import { formatEvent, moveSelection, reselect, sortPrs, type EventLine } from "./model.js";
+import { visiblePrs } from "./filters.js";
+import { formatEvent, moveSelection, reselect, type EventLine } from "./model.js";
 import { TripleCtrlC } from "./chord.js";
 import { MOUSE_OFF, MOUSE_ON, extractMouseEvents, hitTest, type MouseEvent, type Zone } from "./mouse.js";
 import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR, Frame } from "./paint.js";
@@ -337,7 +338,7 @@ export class App {
       }
       this.view.snapshot = snap;
       this.view.dryRun = snap.dry_run;
-      const sorted = sortPrs(snap.prs);
+      const sorted = visiblePrs(this.view);
       this.view.selected = reselect(sorted, this.selectedPr, this.view.selected);
       this.selectedPr = sorted[this.view.selected]?.number;
     }
@@ -406,14 +407,14 @@ export class App {
   /** Point the board selection at a PR (digest-tab actions jump here). */
   selectPr(pr: number): void {
     this.selectedPr = pr;
-    const sorted = this.view.snapshot ? sortPrs(this.view.snapshot.prs) : [];
+    const sorted = visiblePrs(this.view);
     this.view.selected = reselect(sorted, pr, this.view.selected);
     void this.refreshDetail();
     this.followSelection();
   }
 
   selectedSession(): string | undefined {
-    const sorted = this.view.snapshot ? sortPrs(this.view.snapshot.prs) : [];
+    const sorted = visiblePrs(this.view);
     const pr = sorted[this.view.selected];
     return pr ? `pr-${pr.number}` : undefined;
   }
@@ -497,7 +498,7 @@ export class App {
   }
 
   private selectedPrNumber(): number | undefined {
-    const sorted = this.view.snapshot ? sortPrs(this.view.snapshot.prs) : [];
+    const sorted = visiblePrs(this.view);
     return sorted[this.view.selected]?.number;
   }
 
@@ -576,7 +577,7 @@ export class App {
       if (this.view.eventsFocus) {
         this.view.eventsScroll = Math.max(0, Math.min(this.view.eventsScroll + delta, Math.max(0, this.view.events.length - 1)));
       } else {
-        const sorted = this.view.snapshot ? sortPrs(this.view.snapshot.prs) : [];
+        const sorted = visiblePrs(this.view);
         this.view.selected = moveSelection(this.view.selected, delta, sorted.length);
         this.selectedPr = sorted[this.view.selected]?.number;
         void this.refreshDetail();
@@ -726,7 +727,7 @@ export class App {
           this.view.eventsScroll = Math.max(0, Math.min(this.view.eventsScroll + delta, Math.max(0, this.view.events.length - 1)));
           break;
         }
-        const sorted = this.view.snapshot ? sortPrs(this.view.snapshot.prs) : [];
+        const sorted = visiblePrs(this.view);
         this.view.selected = moveSelection(this.view.selected, key.kind === "down" ? 1 : -1, sorted.length);
         this.selectedPr = sorted[this.view.selected]?.number;
         this.msgDraft = ""; // board navigation drops a cancelled draft
@@ -784,6 +785,13 @@ export class App {
         else this.openMessageBox(session);
         break;
       }
+      case "char":
+        // F clears the board filter — the indicator promises it.
+        if (key.ch === "F" && this.tab === "board" && this.view.boardFilter != null) {
+          this.view.boardFilter = null;
+          break;
+        }
+        return;
       default:
         return; // unknown keys repaint nothing
     }

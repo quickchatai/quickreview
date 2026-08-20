@@ -23,6 +23,7 @@ import { hitTest, type Zone } from "./mouse.js";
 import { autofileDefects, type TrackerPaths } from "./autofile.js";
 import { paintCmdBar } from "./cmdbar.js";
 import { currentFile, renderDigestTab, SshDigestFetcher, type DigestAction, type DigestFetcher, type DigestState } from "./digesttab.js";
+import { applyMemoryFilter, memoryFilterLabel } from "./filters.js";
 import { awaitingRows, sortPrs } from "./model.js";
 import { blockHash, defectEntries, timelineOrder, SshMemoryStore, type MemoryEntry, type MemoryStore } from "./memory.js";
 import { Frame, SGR, displayWidth, rule, sanitizeText, stripAnsi, truncate, wrap } from "./paint.js";
@@ -57,6 +58,9 @@ export interface MemTabState {
   /** One-line status of the last verb (also mirrored to app.notice). */
   status?: string;
   filedTotal: number;
+  /**: active timeline tag filter (companion `memory_filter` verb;
+   * F clears). Render AND verbs derive ordering through it — one list. */
+  memFilter?: string | null;
 }
 
 export function entryKey(e: MemoryEntry): string {
@@ -144,7 +148,7 @@ export function renderMemoryView(
   const stripRows = strip ? stripHeight(rows, strip.available) : 0;
   const bodyRows = rows - 4 - stripRows; // top bar + strip + command bar (2 rows) + bottom border
 
-  const ordered = timelineOrder(st.entries);
+  const ordered = applyMemoryFilter(timelineOrder(st.entries), st.memFilter);
   const left: string[] = [];
   const leftActions: Array<MemAction | undefined> = [];
   if (!st.memLoaded) left.push(`${SGR.dim}loading memory…${SGR.reset}`);
@@ -152,7 +156,8 @@ export function renderMemoryView(
   else {
     const budget = pinnedBudget(ordered);
     const budgetNote = budget.over ? ` ${SGR.bold}⚠ pinned ${budget.chars}ch${SGR.reset}` : "";
-    left.push(`${SGR.bold}MEMORY (${ordered.length})${SGR.reset}${budgetNote}`);
+    const fl = memoryFilterLabel(st.memFilter);
+    left.push(`${SGR.bold}MEMORY (${ordered.length})${SGR.reset}${budgetNote}${fl !== "" ? ` ${fl}` : ""}`);
     leftActions.push(undefined);
     // The window follows the selection — verbs act on the inverse row, so it
     // must never sit off-screen.
@@ -276,6 +281,11 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
     filedTotal: 0,
   };
 
+  /** THE timeline ordering — render (renderMemoryView computes the same
+   * expression from st) and every verb below share it, so x/p/e can never
+   * address an entry the filter hides. */
+  const orderedNow = (): MemoryEntry[] => applyMemoryFilter(timelineOrder(st.entries), st.memFilter);
+
   const loadDigest = async (): Promise<void> => {
     st.digest.files = await digestFetcher.list();
     st.digest.loaded = true;
@@ -285,13 +295,13 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
   };
 
   const loadMemory = async (): Promise<void> => {
-    const prevKey = timelineOrder(st.entries)[st.sel] ? entryKey(timelineOrder(st.entries)[st.sel]!) : undefined;
+    const prevKey = orderedNow()[st.sel] ? entryKey(orderedNow()[st.sel]!) : undefined;
     st.entries = await memory.read();
     st.memLoaded = true;
     // Re-bind the selection to the same ENTRY, not the same ordinal — a
     // refresh that reorders the timeline must not silently redirect the
     // next verb keystroke to a different entry.
-    const ordered = timelineOrder(st.entries);
+    const ordered = orderedNow();
     const rebound = prevKey ? ordered.findIndex((e) => entryKey(e) === prevKey) : -1;
     st.sel = rebound >= 0 ? rebound : Math.min(st.sel, Math.max(0, ordered.length - 1));
     if (deps.tracker) {
@@ -458,6 +468,12 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
   };
 
   app.hooks.digestKey = (theApp, key: BoardKey): boolean => {
+    // F clears the memory filter — the indicator promises it.
+    if (key.kind === "char" && key.ch === "F") {
+      st.memFilter = null;
+      theApp.repaint();
+      return true;
+    }
     if (key.kind === "char" && key.ch === "v") {
       st.view = st.view === "digest" ? "memory" : "digest";
       st.confirmRetire = undefined;
@@ -536,7 +552,7 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
   };
 
   const memoryViewKey = (theApp: App, key: BoardKey): boolean => {
-    const ordered = timelineOrder(st.entries);
+    const ordered = orderedNow();
     const selected = ordered[st.sel];
     const proposal = st.proposals[st.propSel];
     if (!(key.kind === "char" && key.ch === "x")) st.confirmRetire = undefined;

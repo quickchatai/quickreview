@@ -7,7 +7,8 @@ import type { WhyPayload } from "../cli.js";
 import type { StatusSnapshot } from "../state.js";
 import type { AlertBadge } from "./alerts.js";
 import { paintCmdBar } from "./cmdbar.js";
-import { formatEvent, glyphFor, sortPrs, type EventLine, type SnapshotPr } from "./model.js";
+import { filterLabel, visiblePrs, type BoardFilter } from "./filters.js";
+import { formatEvent, glyphFor, type EventLine, type SnapshotPr } from "./model.js";
 import { Frame, SGR, displayWidth, fit, rule, sanitizeText, stripAnsi, truncate, wrap } from "./paint.js";
 import type { PiPaneView } from "./pipane.js";
 import { paintStrip, stripHeight, type StripView } from "./strip.js";
@@ -57,6 +58,9 @@ export interface BoardView {
   /** A live `alert`-tier badge takes ⏎ until it is acknowledged (Esc) or
    * followed into the companion tab. */
   alertFocus?: boolean;
+  /**: active board filter (companion `board_filter` verb; F clears).
+   * Consumed through `visiblePrs` — never filter a sortPrs call directly. */
+  boardFilter?: BoardFilter | null;
 }
 
 // ---- layout ----------------------------------------------------------------
@@ -340,7 +344,7 @@ export function renderBoard(view: BoardView, cols: number, rows: number, strip?:
   const stripRows = strip ? stripHeight(rows, strip.available) : 0;
   const pRows = piRows(rows, stripRows);
   const bodyRows = rows - 4 - stripRows - pRows; // top bar + strip + command bar (2 rows) + bottom border
-  const sorted = view.snapshot ? sortPrs(view.snapshot.prs) : [];
+  const sorted = visiblePrs(view);
   const listW = listWidth(sorted, cols, now);
   const detailW = cols - 2 - listW - 1;
   const selectedPr = sorted[view.selected];
@@ -369,7 +373,8 @@ export function renderBoard(view: BoardView, cols: number, rows: number, strip?:
   }
 
   // Board body: list | detail.
-  const listLines: string[] = [section(`PRS (${sorted.length})`, "the daemon's live set")];
+  const flabel = filterLabel(view.boardFilter);
+  const listLines: string[] = [section(`PRS (${sorted.length})`, flabel !== "" ? flabel : "the daemon's live set")];
   sorted.forEach((pr, i) => {
     listLines.push(styledRow(pr, i === view.selected, listW - 1, now, view.repo));
     const y = 1 + listLines.length - 1 + 1; // frame row of this PR line (below top bar)
