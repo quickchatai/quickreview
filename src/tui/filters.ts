@@ -4,7 +4,7 @@
 // `filterLabel` as the active-filter indicator. Filters are a VIEW concern —
 // they never touch the poller's snapshot or the memory store.
 import type { MemoryEntry } from "./memory.js";
-import type { SnapshotPr } from "./model.js";
+import { sortPrs, type SnapshotPr } from "./model.js";
 
 export interface BoardFilter {
   /** Case-insensitive substring match against the PR author login. */
@@ -63,6 +63,13 @@ export function applyMemoryFilter<T extends Pick<MemoryEntry, "tags">>(entries: 
   if (tag === null || tag === undefined || normTag(tag) === "") return entries;
   const want = normTag(tag);
   return entries.filter((e) => e.tags.some((t) => normTag(t) === want));
+}
+
+/** The board's ONE filtered ordering — render, selection movement and the
+ * companion driver all derive rows from here, so a verb can never address a
+ * row the filter hid (the wiring invariant). */
+export function visiblePrs(view: { snapshot?: { prs: SnapshotPr[] }; boardFilter?: BoardFilter | null }): SnapshotPr[] {
+  return applyBoardFilter(sortPrs(view.snapshot?.prs ?? []), view.boardFilter);
 }
 
 /** The memory view's indicator, same shape as the board's. */

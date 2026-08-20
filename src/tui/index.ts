@@ -3,7 +3,11 @@
 import { spawn, spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { loadConfig, sandboxRoot } from "../config.js";
+import type { TuiDriver } from "./actions.js";
 import { App } from "./app.js";
+import type { DeployState } from "./deploytab.js";
+import type { MemTabState } from "./memtab.js";
+import type { MetricsView } from "./metricstab.js";
 import { ensureSshMaster } from "./connect.js";
 import { MOUSE_OFF, MOUSE_ON } from "./mouse.js";
 import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR } from "./paint.js";
@@ -73,6 +77,120 @@ export function parseTuiArgs(args: string[]): TuiArgs {
     resumeState: stateFile,
     help: flags.has("--help") || flags.has("-h"),
   };
+}
+
+/**
+ * the companion action channel's executor, mapped onto the App's
+ * public surface plus the per-tab states the install hooks return. Exported
+ * so tests can drive a real App through `processTuiActions`; runTui wires it
+ * inside the companionUp block. RATIFIED: actions run instantly — no confirm
+ * gate (see src/tui/actions.ts header).
+ */
+export function buildTuiDriver(app: App, memState: MemTabState, metricsView: MetricsView, deployState: DeployState): TuiDriver {
+  // One keyboard owner at a time: an action must never type into a focused
+  // pi pane or companion strip (same rule the mouse/tab handlers follow).
+  const prep = (): void => {
+    if (app.piFocused()) app.blurPiPane();
+    app.strip?.blur();
+  };
+  const driver: TuiDriver = {
+    switchTab: (tab) => {
+      prep();
+      app.tab = tab === "memory" ? "digest" : tab; // App's [2] tab id is "digest"
+      app.repaint();
+    },
+    selectPr: (pr) => {
+      prep();
+      app.tab = "board";
+      app.selectPr(pr); // public App API — selects + refreshes detail
+      app.repaint();
+    },
+    metricsWindow: (w) => {
+      prep();
+      app.tab = "metrics";
+      metricsView.drill = undefined;
+      metricsView.window = w === "7d" ? "d7" : w === "30d" ? "d30" : "all";
+      metricsView.scroll = 0;
+      app.repaint();
+    },
+    metricsPr: (pr) => {
+      prep();
+      app.tab = "metrics";
+      app.repaint();
+      // Drive the tab's own PR-entry state machine so the timeline FETCH runs
+      // (drillTo is closure-private): # opens entry, digits accumulate, ⏎ drills.
+      app.pressKey("#");
+      for (const d of String(pr)) app.pressKey(d);
+      app.pressKey("\r");
+    },
+    digestDay: (date) => {
+      prep();
+      app.tab = "digest";
+      memState.view = "digest";
+      app.repaint();
+      // Page to the day through the tab's own [ / ] keys so content loads
+      // (pageDigest is closure-private). files are newest-first date-named.
+      const i = memState.digest.files.findIndex((f) => f.startsWith(date));
+      if (i < 0) {
+        app.notice(`companion ▸ no digest for ${date}`);
+        return;
+      }
+      const delta = i - memState.digest.back;
+      for (let k = 0; k < Math.abs(delta); k++) app.pressKey(delta > 0 ? "[" : "]");
+    },
+    memoryView: (opts) => {
+      prep();
+      app.tab = "digest";
+      if (opts.day !== undefined) driver.digestDay(opts.day); // day highlight = digest-selected day
+      memState.view = "memory";
+      if (opts.tag !== undefined) {
+        memState.memFilter = opts.tag;
+        memState.sel = 0; // old ordinal may exceed the narrowed list
+      }
+      app.repaint();
+    },
+    setBoardFilter: (f) => {
+      prep();
+      app.tab = "board";
+      app.view.boardFilter = f;
+      app.repaint();
+    },
+    setMemoryFilter: (tag) => {
+      prep();
+      app.tab = "digest";
+      memState.view = "memory";
+      memState.memFilter = tag;
+      memState.sel = 0;
+      app.repaint();
+    },
+    msgSession: (session, text) => app.hooks.sendMessage?.(session, text, app),
+    overseerInject: (text) => app.hooks.sendMessage?.("overseer", text, app),
+    deployTab: (action) => {
+      prep();
+      app.tab = "deploy";
+      app.repaint();
+      if (action === "abort") {
+        app.pressKey("x"); // kills a running run (closes a finished log otherwise)
+        return;
+      }
+      if (action === "deploy") {
+        app.pressKey("D");
+        app.pressKey("D"); // arm+confirm inside the window = instant (ratified)
+        return;
+      }
+      // stop/start: the tab's S button computes its own kind from the observed
+      // container state (powerKind()); refuse a mismatched request rather than
+      // silently doing the opposite.
+      const kind = deployState.containerStatus !== undefined && !/^Up /.test(deployState.containerStatus) ? "start" : "stop";
+      if (kind !== action) {
+        app.notice(`companion ▸ deploy_tab ${action} refused — container is ${deployState.containerStatus ?? "unknown"}`);
+        return;
+      }
+      app.pressKey("S");
+      app.pressKey("S");
+    },
+  };
+  return driver;
 }
 
 export async function runTui(argv: string | string[] = []): Promise<void> {
@@ -234,11 +352,11 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
     };
   };
 
-  installDeployHooks(app, new RealDeployFetcher(cfg, realSshRunner, localRunner));
+  const deployState = installDeployHooks(app, new RealDeployFetcher(cfg, realSshRunner, localRunner));
   const { installMetricsHooks, localHeadProbe } = await import("./metricstab.js");
   // The metrics OPERATIONS card answers "deploy needed?" through the same
   // read-only local-git seam the deploy tab uses.
-  installMetricsHooks(app, undefined, localHeadProbe(localRunner));
+  const metricsView = installMetricsHooks(app, undefined, localHeadProbe(localRunner));
 
   // Companion container: adopt-or-start before the board comes up. A failure
   // here is a degraded mode, never a reason not to open the TUI.
@@ -406,6 +524,32 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
         })
         .finally(() => {
           memReqBusy = false;
+        });
+    };
+
+    // the companion → TUI action channel. Same sweep discipline as
+    // the memedit requests above (poll cadence, busy flag so a slow sweep
+    // never stacks); processTuiActions itself archives-before-execute and
+    // writes the result files. Each executed action's trace lands on the
+    // notice line — instant execution is the ratified decision.
+    const { processTuiActions } = await import("./actions.js");
+    const tuiActionsDir = join(full.companion.alerts_dir, "tui-actions");
+    const driver = buildTuiDriver(app, memState, metricsView, deployState);
+    let tuiActBusy = false;
+    const prevOnPoll3 = app.hooks.onPoll;
+    app.hooks.onPoll = (a) => {
+      prevOnPoll3?.(a);
+      if (tuiActBusy) return;
+      tuiActBusy = true;
+      void processTuiActions(tuiActionsDir, driver)
+        .then((done) => {
+          for (const r of done) a.notice(r.trace ?? `companion tui-action ${r.file}: ✖ ${r.message}`);
+        })
+        .catch(() => {
+          /* best-effort — never break the poll loop */
+        })
+        .finally(() => {
+          tuiActBusy = false;
         });
     };
   }
