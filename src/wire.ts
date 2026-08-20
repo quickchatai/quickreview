@@ -3,7 +3,7 @@
 // the overseer command executor, and the weekly overseer rotation. `npm run
 // daemon` runs this; createDaemon() alone (src/daemon.ts) stays the
 // stub-wired, test-friendly core.
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import {
@@ -28,8 +28,11 @@ import { TokenMinter } from "./githubAuth.js";
 import { FeedbackEngine, feedbackDayAddendum, warsawDay, type FeedbackEvent } from "./feedback.js";
 import { PASS_ADDENDA, buildAgents } from "./include.js";
 import { fileImprovementPr, fileIssue, type Run } from "./improvements.js";
-import { OpenVikingClient, OpenVikingSupervisor, keyFromFile, openVikingStore } from "./openviking/index.js";
-import { OV_REVIEWER_KEY_SECRET } from "./memory/ovsession.js";
+import { OpenVikingClient, OpenVikingSupervisor, keyFromFile, openVikingContextAssembler, openVikingStore } from "./openviking/index.js";
+import { OV_REVIEWER_KEY_SECRET, openVikingSessionLifecycle } from "./memory/ovsession.js";
+import type { ContextAssembler, RoundMemory } from "./memory/context.js";
+import type { MemoryStore } from "./memory/store.js";
+import { startEodPinWatch } from "./eodpinwatch.js";
 import { reconcileOrphanedRounds } from "./reconcile.js";
 import { PiSessionManager } from "./sessions.js";
 import { SlackApiClient } from "./slack/api.js";
@@ -60,7 +63,20 @@ export function buildParts(root = sandboxRoot(), cfg = loadConfig()): Production
     adapter.executeMutation(intent),
   );
   const adapter: GitHubAdapter = new GitHubAdapter(cfg, minter, gate);
-  const sessions = new PiSessionManager({ cfg, root });
+  // The PR's raw memory tier: the daemon owns create/delete of the
+  // OpenViking session a PR's pi attaches to. Its own client, on the reviewer
+  // USER key — never ADMIN/ROOT. Both directions are total, so a store that is
+  // down or unkeyed costs the raw tier and never a session.
+  const ovSessions = openVikingSessionLifecycle(
+    new OpenVikingClient({
+      baseUrl: openVikingBaseUrl(cfg.openviking),
+      apiKey: keyFromFile(join(cfg.github.secrets_dir, OV_REVIEWER_KEY_SECRET)),
+      user: cfg.openviking.user,
+      account: cfg.openviking.account,
+      timeoutMs: cfg.openviking.request_timeout_ms,
+    }),
+  );
+  const sessions = new PiSessionManager({ cfg, root, ovSessions });
   return { cfg, root, minter, gate, adapter, sessions };
 }
 
@@ -366,13 +382,25 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   const { cfg, root, gate, adapter, sessions } = parts;
   const log = (msg: string, extra?: unknown) => console.log(`[quickreviewd] ${msg}`, extra ?? "");
 
-  const renderPrompt = (order: RoundOrder): string =>
-    renderRoundPrompt(readFileSync(join(root, "prompts", roundTemplateFile(order.round_type)), "utf8"), order);
+  // The daemon's ONE memory store, built in onStart once secrets are readable.
+  // Everything that needs it is late-bound through this holder: the round
+  // assembler and the EOD pinned-area watchdog are constructed before it
+  // exists, and both degrade to "no memory" rather than to an error.
+  let memoryStore: MemoryStore | null = null;
+  let memoryAssembler: ContextAssembler | null = null;
+  const lateAssembler: ContextAssembler = {
+    pinnedHead: () => (memoryAssembler ? memoryAssembler.pinnedHead() : Promise.resolve("")),
+    contextBlock: (q, o) => (memoryAssembler ? memoryAssembler.contextBlock(q, o) : Promise.resolve("")),
+  };
+
+  const renderPrompt = (order: RoundOrder, memory: RoundMemory): string =>
+    renderRoundPrompt(readFileSync(join(root, "prompts", roundTemplateFile(order.round_type)), "utf8"), order, memory);
   // The recheck's own template — a nudge, not a round order.
   const renderRecheck = (order: RecheckOrder): string =>
     renderRecheckPrompt(readFileSync(join(root, "prompts", RECHECK_TEMPLATE_FILE), "utf8"), order);
 
   let eod: EodTimer | null = null;
+  let pinWatch: ReturnType<typeof startEodPinWatch> | null = null;
   let heartbeat: HeartbeatTimer | null = null;
   let commands: CommandWatcher | null = null;
   let slack: SlackRuntime | null = null;
@@ -407,6 +435,15 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     adapter,
     hooks,
     renderPrompt,
+    // Pinned head + one budgeted context block per round. Past the
+    // deadline the round dispatches memory-less and logs the gap — memory
+    // never blocks or delays a round.
+    memory: {
+      assembler: lateAssembler,
+      maxTokens: cfg.memory.context_tokens,
+      timeoutMs: cfg.memory.context_timeout_ms,
+      alertCooldownMin: cfg.memory.alert_cooldown_min,
+    },
     renderRecheckPrompt: renderRecheck,
     // Conflict resolutions are never trivial (the owner, 2026-08-19): git-level
     // auto-merge comparison in the base clone names the hand-resolved files.
@@ -486,19 +523,28 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       // so a key that lands after boot is picked up without a restart — and an
       // ABSENT key degrades exactly like a dead server, which is the correct
       // behaviour on a dev PC. Never an ADMIN or ROOT key.
-      const memory = openVikingStore(
-        new OpenVikingClient({
-          baseUrl: openVikingBaseUrl(cfg.openviking),
-          apiKey: keyFromFile(join(cfg.github.secrets_dir, OV_REVIEWER_KEY_SECRET)),
-          user: cfg.openviking.user,
-          account: cfg.openviking.account,
-          timeoutMs: cfg.openviking.request_timeout_ms,
-          log,
-          onGap: (gap) => log("openviking gap", gap),
-        }),
-        { defaultCategory: cfg.openviking.default_category, cacheTtlMs: cfg.openviking.read_cache_ttl_ms, log },
-      );
+      const memoryClient = new OpenVikingClient({
+        baseUrl: openVikingBaseUrl(cfg.openviking),
+        apiKey: keyFromFile(join(cfg.github.secrets_dir, OV_REVIEWER_KEY_SECRET)),
+        user: cfg.openviking.user,
+        account: cfg.openviking.account,
+        timeoutMs: cfg.openviking.request_timeout_ms,
+        log,
+        onGap: (gap) => log("openviking gap", gap),
+      });
+      const memory = openVikingStore(memoryClient, {
+        defaultCategory: cfg.openviking.default_category,
+        cacheTtlMs: cfg.openviking.read_cache_ttl_ms,
+        log,
+      });
       feedback = new FeedbackEngine({ store: d.store, rebuildAgents, memory, log });
+      memoryStore = memory;
+      memoryAssembler = openVikingContextAssembler({
+        client: memoryClient,
+        store: memory,
+        searchTimeoutMs: cfg.openviking.search_timeout_ms,
+        log,
+      });
 
       // Adopt live sessions + sweep stale worktrees (never kills a live session).
       const active = d.store.allPrs().filter((p) => p.state !== "closed").map((p) => p.number);
@@ -601,11 +647,29 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       await commands.start();
 
       // Daemon-clock EOD (Warsaw wall time; pi schedulers deliberately unused).
+      // Curation must never touch the owner's pinned entries. The
+      // watchdog fingerprints the pinned area around the sweep and raises an
+      // anomaly on any change. It WRAPS the inject rather than hooking inside
+      // the timer, so a broken watchdog can never skip the sweep.
+      const store = memoryStore;
+      pinWatch = cfg.eod.pinned_watchdog && store
+        ? startEodPinWatch({
+            readPinned: async () => (await store.read()).filter((e) => e.pinned),
+            logAnomaly: (kind, pr, reason, detail, injectMessage) => d.store.logAnomaly(kind, pr, reason, detail, injectMessage),
+            timeZone: cfg.eod.timezone,
+            digestReady: (date) => existsSync(join(root, "state", "digest", `${date}.md`)),
+            windowMin: cfg.eod.pinned_watchdog_window_min,
+            log,
+          })
+        : null;
+      const injectEod = async (m: string): Promise<void> => {
+        await wakeOverseerAsDaemon("eod-sweep", m);
+      };
       eod = startEodTimer({
         timeHHMM: cfg.eod.time,
         timeZone: cfg.eod.timezone,
         readPrompt: promptReader(join(root, "prompts", "eod-sweep.md")),
-        injectOverseer: (m) => wakeOverseerAsDaemon("eod-sweep", m),
+        injectOverseer: pinWatch ? pinWatch.wrapInject(injectEod) : injectEod,
         onFire: (date) => log(`EOD sweep injected for ${date}`),
         onError: (err) => log("EOD injection failed", err),
       });
