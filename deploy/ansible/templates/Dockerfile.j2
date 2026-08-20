@@ -67,6 +67,33 @@ RUN git clone {{ pi_subagents_repo }} /opt/pi-extensions/pi-subagents \
     && test -f /opt/pi-extensions/pi-subagents/index.ts \
     && echo "{{ pi_subagents_commit }}" > /opt/pi-extensions/pi-subagents/.pinned-commit
 
+# OpenViking — the context store the daemon supervises on loopback {{ openviking_port }}.
+# Its own venv so its ~90 Python deps never collide with anything system-side.
+#
+# llama-cpp-python is installed FIRST and deliberately: it is NOT an openviking
+# dependency but an undeclared optional extra, and without it the default local
+# dense embedder raises EmbeddingConfigurationError at startup — the official
+# image cannot boot (verified against a running 0.4.15, 2026-08-20). It is also
+# our fallback embedder when no OpenAI key is mounted.
+#
+# Both versions come from group_vars (the triple mirror with config.toml
+# [openviking]); a literal here would be exactly the drift the pin prevents.
+# The layer hard-fails unless the INSTALLED distribution reports the pinned
+# version and the server entry point exists — same provenance discipline as the
+# pi-memory and qmd layers above.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      python3-venv python3-dev cmake \
+    && python3 -m venv {{ openviking_venv }} \
+    && {{ openviking_venv }}/bin/pip install --no-cache-dir --upgrade pip \
+    && {{ openviking_venv }}/bin/pip install --no-cache-dir "llama-cpp-python=={{ llama_cpp_python_version }}" \
+    && {{ openviking_venv }}/bin/pip install --no-cache-dir "openviking=={{ openviking_version }}" \
+    && {{ openviking_venv }}/bin/python -c "import importlib.metadata as m, sys; v=m.version('openviking'); sys.exit(0 if v=='{{ openviking_version }}' else 'openviking version %s != {{ openviking_version }}' % v)" \
+    && {{ openviking_venv }}/bin/python -c "import importlib.metadata as m, sys; v=m.version('llama-cpp-python'); sys.exit(0 if v=='{{ llama_cpp_python_version }}' else 'llama-cpp-python %s != {{ llama_cpp_python_version }}' % v)" \
+    && {{ openviking_venv }}/bin/python -c "import llama_cpp" \
+    && test -x {{ openviking_venv }}/bin/openviking-server \
+    && rm -rf /var/lib/apt/lists/* \
+    || { echo "FATAL: openviking=={{ openviking_version }} / llama-cpp-python=={{ llama_cpp_python_version }} failed verification" >&2; exit 1; }
+
 RUN useradd --create-home --uid 1001 review
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 

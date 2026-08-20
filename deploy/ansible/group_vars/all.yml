@@ -49,6 +49,36 @@ pi_memory_version: "0.4.2"
 qmd_npm_package: "@tobilu/qmd"
 qmd_version: "2.8.3"
 
+# OpenViking (github.com/volcengine/OpenViking) — the context store the daemon
+# supervises as a second process inside the container, on LOOPBACK 1933
+#. Same pin discipline as pi_version: exact versions, never floating,
+# bumping is a deliberate edit + `-e rebuild_image=true`.
+#
+# TRIPLE MIRROR: openviking_version / llama_cpp_python_version here ==
+# config.toml [openviking] version / llama_cpp_python_version == the Dockerfile
+# venv layer (which interpolates THESE vars, never a literal).
+# tests/openviking.test.ts fails on drift.
+#
+# llama-cpp-python is NOT an openviking dependency — it is an undeclared
+# optional extra, and without it the default local dense embedder raises
+# EmbeddingConfigurationError at startup, so the server cannot boot at all
+# (verified against a running 0.4.15, 2026-08-20). PyPI-verified pins
+# (2026-08-20): openviking 0.4.15 (requires-python >=3.10; 24.04 ships 3.12),
+# llama-cpp-python 0.3.35.
+openviking_version: "0.4.15"
+llama_cpp_python_version: "0.3.35"
+openviking_venv: /opt/openviking/venv
+openviking_port: 1933                 # loopback only — NEVER a published port
+# ~/.openviking is symlinked here at boot, so memory lives on the state volume
+# and survives an image rebuild. Must equal config.toml [openviking] home.
+openviking_home: /opt/quickreview/state/openviking
+openviking_workers: 1                 # ov.conf server.workers (2-CPU cap)
+openviking_queue_concurrency: 2       # ov.conf queue_workers.* (defaults 4/4/8)
+# OpenAI embeddings ENABLED; ov.conf carries NO `vlm` section (extraction,
+# summaries and digest are off — memories are authored, never extracted).
+openviking_embedding_model: "text-embedding-3-small"
+openviking_embedding_dimension: 1536
+
 # tmux ≥3.5 for csi-u extended keys end-to-end (§3E):
 # Ubuntu 24.04 apt ships 3.4, so the image builds this release from source.
 tmux_version: "3.5a"

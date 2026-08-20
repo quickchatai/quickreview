@@ -29,6 +29,98 @@ if [[ -r "$SECRETS/openai_api_key" ]]; then
   export OPENAI_API_KEY
 fi
 
+# OpenViking — the context store the DAEMON supervises as a child
+# process on loopback {{ openviking_port }}. This block only prepares its state
+# and configuration; it never starts the server (nothing here backgrounds a
+# process, so the container keeps a single supervised process tree) and it
+# NEVER runs the server's own setup wizard (the `init` subcommand): that wizard
+# is interactive, and an interactive prompt in this container is exactly the
+# class of stall that wedged pr-5334. ov.conf is templated below instead.
+#
+# ~/.openviking is a SYMLINK onto the state volume, so memories, the vector db
+# and ov.conf all survive an image rebuild.
+OV_HOME={{ openviking_home }}
+mkdir -p "$OV_HOME/workspace" || echo "openviking: could not create $OV_HOME/workspace" >&2
+# Same migration idiom as the state symlink above: a real directory that
+# accumulated content is folded onto the volume once, then replaced by the link.
+if [[ -e "$HOME/.openviking" && ! -L "$HOME/.openviking" ]]; then
+  cp -a "$HOME/.openviking/." "$OV_HOME/" 2>/dev/null || true
+  rm -rf "$HOME/.openviking"
+fi
+[[ -L "$HOME/.openviking" ]] || ln -sfn "$OV_HOME" "$HOME/.openviking"
+
+# ov.conf is TEMPLATED on every boot, so a knob change ships with a restart
+# rather than a hand-edit on the VM. Rendered by node because ov.conf is JSON
+# and the OpenAI credential must be injected from the read-only secrets mount
+# at runtime (never baked into the image, never committed).
+#
+# Shape notes, verified against a running 0.4.15 — unknown fields are REJECTED
+# by the server, so nothing speculative goes in here:
+#   * NO `vlm` SECTION AT ALL. Extraction, summaries and digest stay off:
+#     memories are authored by sessions and the EOD curator, never extracted.
+#     (This is also why `doctor` is not the health gate — it exits 1 with no
+#     vlm configured. The daemon polls /ready.)
+#   * auth_mode "dev" is safe because the listener is loopback-only and the
+#     port is never published out of the container.
+#   * workers/queue_workers are cut for the 2-CPU cap: CPU is the measured
+#     cost (~1.63 core-seconds per ~500 B write), not RAM.
+#
+# The `||` is deliberate (the boot runs under `set -e`): a memory engine that
+# cannot be configured must never stop the reviewer from coming up. The daemon
+# supervises the server regardless — /ready simply stays false and rounds run
+# memory-less, which is the standing rule for every OpenViking call site.
+OPENVIKING_CONF="$OV_HOME/ov.conf" QCR_SECRETS="$SECRETS" node <<'OV_CONF_RENDER' || echo "openviking: ov.conf render FAILED — the daemon starts memory-less" >&2
+const fs = require("fs");
+const path = require("path");
+const home = process.env.OPENVIKING_CONF ? path.dirname(process.env.OPENVIKING_CONF) : "{{ openviking_home }}";
+const conf = {
+  server: {
+    host: "127.0.0.1",
+    port: {{ openviking_port }},
+    workers: {{ openviking_workers }},
+    auth_mode: "dev",
+  },
+  storage: { workspace: path.join(home, "workspace") },
+  queue_workers: {
+    external_parse: { max_concurrent: {{ openviking_queue_concurrency }} },
+    add_resource: {
+      max_concurrent: {{ openviking_queue_concurrency }},
+      file_vectorization_concurrency: {{ openviking_queue_concurrency }},
+    },
+    session_commit: { max_concurrent: {{ openviking_queue_concurrency }} },
+  },
+  memory: {
+    extraction_enabled: false,
+    session_skill_extraction_enabled: false,
+    link_enabled: false,
+  },
+  log: { level: "INFO", output: "stdout" },
+};
+// The read-only secrets mount — one constant, taken from $SECRETS above so a
+// moved mount cannot leave this half behind.
+const keyFile = path.join(process.env.QCR_SECRETS || "/opt/quickreview/secrets", "openai_api_key");
+if (fs.existsSync(keyFile)) {
+  conf.embedding = {
+    dense: {
+      provider: "openai",
+      model: "{{ openviking_embedding_model }}",
+      dimension: {{ openviking_embedding_dimension }},
+      input: "text",
+      api_key: fs.readFileSync(keyFile, "utf8").trim(),
+    },
+  };
+} else {
+  // Degrade, never fail: the built-in local dense embedder (llama-cpp-python,
+  // pinned in the image) keeps the server bootable without an OpenAI key.
+  console.warn("openviking: no openai_api_key in the secrets mount — falling back to the local dense embedder");
+}
+fs.mkdirSync(path.join(home, "workspace"), { recursive: true });
+const target = process.env.OPENVIKING_CONF || path.join(home, "ov.conf");
+fs.writeFileSync(target, JSON.stringify(conf, null, 2) + "\n", { mode: 0o600 });
+fs.chmodSync(target, 0o600);
+console.log("openviking: ov.conf rendered at " + target + " (no vlm section; auth_mode=dev on loopback)");
+OV_CONF_RENDER
+
 # pi extensions — register in $HOME/.pi/agent/settings.json (on the pihome
 # volume). Every pi process shares HOME=/home/review — main sessions AND the
 # isolated child processes pi-subagents spawns — so this one file covers all.

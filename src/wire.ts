@@ -27,6 +27,7 @@ import { TokenMinter } from "./githubAuth.js";
 import { FeedbackEngine, feedbackDayAddendum, warsawDay, type FeedbackEvent } from "./feedback.js";
 import { PASS_ADDENDA, buildAgents } from "./include.js";
 import { fileImprovementPr, fileIssue, type Run } from "./improvements.js";
+import { OpenVikingSupervisor } from "./openviking/index.js";
 import { reconcileOrphanedRounds } from "./reconcile.js";
 import { PiSessionManager } from "./sessions.js";
 import { SlackApiClient } from "./slack/api.js";
@@ -377,6 +378,11 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // boot gap between the webhook binding and onStart are dropped with a log —
   // the tuning loop is best-effort, never lifecycle.
   let feedback: FeedbackEngine | null = null;
+  // the OpenViking server, supervised as a child of this process.
+  // Started FIRST in onStart so it warms up while the agents build — but never
+  // awaited: there is deliberately NO boot ordering, and rounds run
+  // memory-less until `/ready` passes.
+  let openviking: OpenVikingSupervisor | null = null;
 
   // The origin store is built HERE, before the daemon, because both halves of
   // "who caused this turn" write to it: the router (Slack turns) and every
@@ -424,6 +430,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     // Passive pi auth-failure watch: pi's session JSONLs under the container
     // user's home (the pihome volume).
     piSessionsDir: join(homedir(), ".pi", "agent", "sessions"),
+    // The memory engine's heartbeat block — a cached, synchronous
+    // read of the supervisor's last health + /proc sample.
+    openvikingStatus: () => openviking?.status(),
 
     // The [feedback] tuning loop.
     onFeedback: async (e: FeedbackEvent) => {
@@ -435,6 +444,13 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     },
 
     async onStart(d) {
+      // OpenViking first and unawaited: the server takes seconds to
+      // become ready, so it starts warming while everything below builds. A
+      // missing binary (any dev PC) is reported once and never retried; a
+      // crash is respawned on a capped backoff ladder, forever.
+      openviking = new OpenVikingSupervisor({ cfg: cfg.openviking, log });
+      openviking.start();
+
       // Out-of-round wakes (recheck, ping-pong) can now respawn a sticky
       // session the last restart killed — the title comes from the registry.
       sessions.setTitleResolver((pr) => d.store.getPr(pr)?.title);
@@ -614,6 +630,16 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       eod?.stop();
       heartbeat?.stop();
       commands?.stop();
+      // SIGTERM then SIGKILL after a bounded grace — a memory engine must not
+      // be able to hold the daemon's exit open.
+      if (openviking) {
+        try {
+          await openviking.stop();
+        } catch (err) {
+          log("openviking: shutdown failed", err);
+        }
+        openviking = null;
+      }
       // Runs before the store closes, so the goodbye is ledgered; bounded by
       // the announcer itself, so it can never delay the exit.
       if (slack) {

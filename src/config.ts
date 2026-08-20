@@ -317,6 +317,101 @@ export const MODELS_TIER_DEFAULTS: Pick<
   pricing: {},
 };
 
+/**
+ * OpenViking (github.com/volcengine/OpenViking) — the context store the daemon
+ * runs as a SECOND process inside the container, on loopback :1933.
+ *
+ * Three invariants live in this block rather than in prose:
+ *
+ *   * `version` + `llama_cpp_python_version` are the TRIPLE-MIRRORED pins —
+ *     this block == `deploy/ansible/group_vars/all.yml` == the Dockerfile venv
+ *     layer, exactly like the `[pi]` pin. `tests/openviking.test.ts` fails on
+ *     drift, and the running server's self-reported version is drift-checked
+ *     against `version` in the heartbeat.
+ *   * `host` is loopback and the port is NEVER published out of the container
+ *     (the playbook's `published_ports` carries only the webhook port).
+ *   * every path here is a CONTAINER path; on a dev PC the binary is absent,
+ *     which the supervisor treats as "unavailable", not as a crash loop.
+ */
+export interface OpenVikingConfig {
+  /** Off ⇒ the supervisor is never constructed and status.json says so. */
+  enabled: boolean;
+  /** The pinned server version (mirror 1 of 3). */
+  version: string;
+  /** Pinned llama-cpp-python: an OPTIONAL extra openviking does not declare,
+   * without which the default local dense embedder raises
+   * EmbeddingConfigurationError at startup (verified against 0.4.15). */
+  llama_cpp_python_version: string;
+  host: string;
+  port: number;
+  /** `openviking-server` inside the image's venv. */
+  bin: string;
+  /** `~/.openviking` is symlinked here at boot — it must sit on the state
+   * volume so memory survives an image rebuild. */
+  home: string;
+  /** Empty ⇒ `<home>/ov.conf` (the path the boot template writes). */
+  config_file: string;
+  /** Empty ⇒ `<home>/workspace` (ov.conf `storage.workspace`). */
+  workspace: string;
+  /** ov.conf `server.workers` — one worker on a 2-CPU cap. */
+  workers: number;
+  /** ov.conf `queue_workers.*.max_concurrent` — reduced from the shipped
+   * defaults (4/4/8) for the same 2-CPU cap. */
+  queue_concurrency: number;
+  /** Health-poll cadence; the heartbeat reports the CACHED sample, so
+   * status.json writing never waits on the network. */
+  health_interval_s: number;
+  health_timeout_ms: number;
+  /** Restart backoff ladder; the last entry is the ceiling. The supervisor
+   * never gives up — a memory engine that stays down is worse than a slow
+   * retry, and every call site already degrades memory-less. */
+  restart_backoff_ms: number[];
+  /** A child that stayed up this long resets the backoff ladder. */
+  restart_reset_after_s: number;
+  /** ov.conf `embedding.dense` (OpenAI embeddings ENABLED, no `vlm`). */
+  embedding_model: string;
+  embedding_dimension: number;
+}
+
+/** [openviking] is optional in config.toml — the defaults ARE the shipped
+ * configuration, exactly like [tui]/[companion]. */
+export const OPENVIKING_DEFAULTS: OpenVikingConfig = {
+  enabled: true,
+  version: "0.4.15",
+  llama_cpp_python_version: "0.3.35",
+  host: "127.0.0.1",
+  port: 1933,
+  bin: "/opt/openviking/venv/bin/openviking-server",
+  home: "/opt/quickreview/state/openviking",
+  config_file: "", // → <home>/ov.conf
+  workspace: "", // → <home>/workspace
+  workers: 1,
+  queue_concurrency: 2,
+  health_interval_s: 30,
+  health_timeout_ms: 2000,
+  restart_backoff_ms: [1000, 2000, 5000, 15000, 30000, 60000],
+  restart_reset_after_s: 120,
+  embedding_model: "text-embedding-3-small",
+  embedding_dimension: 1536,
+};
+
+/** Derived paths: `config_file`/`workspace` default off `home`, so the three
+ * never drift apart in a hand-edited config. */
+export function resolveOpenVikingPaths(c: OpenVikingConfig): OpenVikingConfig {
+  const home = expandHome(c.home);
+  return {
+    ...c,
+    home,
+    config_file: c.config_file ? expandHome(c.config_file) : join(home, "ov.conf"),
+    workspace: c.workspace ? expandHome(c.workspace) : join(home, "workspace"),
+  };
+}
+
+/** `http://host:port` — the one place the base URL is spelled. */
+export function openVikingBaseUrl(c: OpenVikingConfig): string {
+  return `http://${c.host}:${c.port}`;
+}
+
 export interface Config {
   dry_run: boolean;
   github: GithubConfig;
@@ -358,6 +453,7 @@ export interface Config {
   };
   models: ModelsConfig;
   pi: { package: string; version: string; session_dir: string };
+  openviking: OpenVikingConfig;
   tui: TuiConfig;
   companion: CompanionConfig;
   backfill: BackfillConfig;
@@ -470,6 +566,7 @@ export function parseConfig(toml: string): Config {
     caps: { ...(req(raw, "caps") as Config["caps"]) },
     models: parseModels(req(raw, "models") as Record<string, any>),
     pi: { ...(req(raw, "pi") as Config["pi"]) },
+    openviking: resolveOpenVikingPaths({ ...OPENVIKING_DEFAULTS, ...((raw.openviking ?? {}) as Partial<OpenVikingConfig>) }),
     tui: { ...TUI_DEFAULTS, ...((raw.tui ?? {}) as Partial<TuiConfig>) },
     companion: resolveCompanionPaths({ ...COMPANION_DEFAULTS, ...((raw.companion ?? {}) as Partial<CompanionConfig>) }),
     backfill: { ...backfillDefaults(github), ...((raw.backfill ?? {}) as Partial<BackfillConfig>) },

@@ -4,6 +4,7 @@
 import Database from "better-sqlite3";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import type { OpenVikingStatus } from "./openviking/types.js";
 import type { VerdictPassEntry } from "./types.js";
 
 export type PrLifecycleState =
@@ -1541,6 +1542,10 @@ export interface StatusSnapshot {
   /** Present while pi sessions are failing API calls with token-expired
    * errors (src/authwatch.ts, fresh < 30 min). The TUI raises an alert. */
   pi_auth_expired?: { last_at: string; hits: number };
+  /** The supervised OpenViking server: reachable, `/ready`, reported
+   * version (drift-checked against the pin), RSS and CPU. Absent in snapshots
+   * from a daemon with no supervisor wired — readers must default. */
+  openviking?: OpenVikingStatus;
   heartbeat: string;
 }
 
@@ -1560,6 +1565,7 @@ export function buildStatusSnapshot(
   now: () => Date = () => new Date(),
   maxConcurrentRounds?: number,
   piAuth?: { last_at: string; hits: number },
+  openviking?: OpenVikingStatus,
 ): StatusSnapshot {
   const today = now().toISOString().slice(0, 10);
   // Expired zombie rounds never count towards any aggregate.
@@ -1589,6 +1595,7 @@ export function buildStatusSnapshot(
     today_spend_usd: store.roundsOn(today).reduce((n, r) => n + (r.status !== "expired" ? (r.est_usd ?? 0) : 0), 0),
     ...(digestHeadline ? { digest_headline: digestHeadline } : {}),
     ...(piAuth ? { pi_auth_expired: piAuth } : {}),
+    ...(openviking ? { openviking } : {}),
     heartbeat: now().toISOString(),
   };
 }

@@ -133,6 +133,10 @@
         - { path: "{{ sandbox_root }}/sandbox/agents", mode: "0755" }
         - { path: "{{ sandbox_root }}/sandbox/prompts", mode: "0755" }
         - { path: "{{ sandbox_root }}/state", mode: "0755" }
+        # OpenViking's home: ~/.openviking is symlinked here at boot,
+        # so memories + vector db + ov.conf survive an image rebuild. 0700 —
+        # ov.conf carries the OpenAI embedding credential.
+        - { path: "{{ openviking_home }}", mode: "0700" }
         - { path: "{{ sandbox_root }}/pihome", mode: "0700" }
         - { path: "{{ sandbox_root }}/secrets", mode: "0700" }
 
@@ -245,10 +249,19 @@
         # rebuild, fresh .tmux.conf/tmux server, daemon on the new build).
         restart: "{{ force_restart | default(false) | bool }}"
         restart_policy: unless-stopped
+        # PID-1 discipline: with a supervised OpenViking process
+        # beside the daemon, PID 1 must reap. tini forwards signals and adopts
+        # orphans; node as PID 1 reaps only its own direct children, so any
+        # grandchild the server leaves behind would accumulate as a zombie.
+        init: true
         # Hard caps — the VM is shared; the VM itself is never resized.
         cpus: "{{ container_cpus | float }}"
         memory: "{{ container_memory }}"
         memory_swap: "{{ container_memory }}"   # no swap ballooning past the cap
+        # The webhook port is the ONLY thing this container exposes.
+        # OpenViking's {{ openviking_port }} is deliberately absent: it is
+        # loopback-INSIDE-the-container, reachable by the daemon and the pi
+        # sessions and by nothing else. Do not publish it.
         published_ports:
           - "127.0.0.1:{{ webhook_port }}:{{ webhook_port }}"
         volumes:

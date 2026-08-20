@@ -80,6 +80,14 @@ export interface DaemonDeps {
    * (src/authwatch.ts). Absent (tests, stubs) ⇒ the watch never runs. */
   piSessionsDir?: string;
   /**
+   * The supervised OpenViking server's heartbeat block. A CACHED,
+   * synchronous read — wire.ts hands the supervisor's `status()` here. Absent
+   * (tests, stub daemons) ⇒ status.json simply carries no `openviking` key,
+   * and a throwing implementation is swallowed: the heartbeat must never fail
+   * on the memory engine.
+   */
+  openvikingStatus?: () => import("./openviking/types.js").OpenVikingStatus | undefined;
+  /**
    * Slack announcer (S5b), resolved LAZILY: wire.ts builds the Slack
    * subsystem in `onStart`, i.e. after the store exists and after this deps
    * object was assembled, so the seam is a getter rather than a value. Absent
@@ -400,8 +408,27 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
   };
 
   const writeStatus = (): void => {
+    // Fail-soft twice over: reading the OpenViking block can never abort the
+    // heartbeat (its own try/catch), and the write itself is guarded as before.
+    let openviking: import("./openviking/types.js").OpenVikingStatus | undefined;
     try {
-      writeStatusJson(stateDir, buildStatusSnapshot(store, cfg.dry_run, deps.digestHeadline?.(), undefined, cfg.daemon.max_concurrent_rounds, piAuthWatch?.status()));
+      openviking = deps.openvikingStatus?.();
+    } catch (err) {
+      log("openviking status read failed (heartbeat continues)", err);
+    }
+    try {
+      writeStatusJson(
+        stateDir,
+        buildStatusSnapshot(
+          store,
+          cfg.dry_run,
+          deps.digestHeadline?.(),
+          undefined,
+          cfg.daemon.max_concurrent_rounds,
+          piAuthWatch?.status(),
+          openviking,
+        ),
+      );
     } catch (err) {
       log("status.json write failed", err);
     }
