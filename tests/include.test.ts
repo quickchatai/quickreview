@@ -9,6 +9,8 @@ import {
   addendaForPass,
   addendumApplies,
   composeAddendum,
+  LEAF_MEMORY_TOOLS,
+  applyMemoryTools,
   applyModelOverride,
   applyNameOverride,
   applyThinkingOverride,
@@ -190,7 +192,13 @@ describe("buildAgents", () => {
     const out = join(root, "state", "agents");
     buildAgents(join(root, "agents"), out, { root });
     const alpha = readFileSync(join(out, "pass-alpha--terra-med.md"), "utf8");
-    expect(alpha.startsWith("---\nname: pass-alpha--terra-med\ndescription: a\ntools: read, bash\nmodel: openai-codex/gpt-5.6-terra\n")).toBe(true);
+    // `tools:` carries the seed's list plus the two read-only memory tools
+    // every built pass gets — the seed itself is untouched.
+    expect(
+      alpha.startsWith(
+        "---\nname: pass-alpha--terra-med\ndescription: a\ntools: read, bash, viking_search, viking_read\nmodel: openai-codex/gpt-5.6-terra\n",
+      ),
+    ).toBe(true);
     expect(alpha).toContain("thinking: medium\n");
     const high = readFileSync(join(out, "pass-alpha--sol-high.md"), "utf8");
     expect(high).toContain("name: pass-alpha--sol-high\n");
@@ -198,6 +206,28 @@ describe("buildAgents", () => {
     expect(high).toContain("thinking: high\n");
     // The thinking suffix never leaks into the model field.
     expect(high).not.toContain("model: openai-codex/gpt-5.6-sol:high");
+  });
+
+  it("grants every built pass exactly two read-only memory tools", () => {
+    const out = join(root, "state", "agents");
+    const built = buildAgents(join(root, "agents"), out, { root });
+    for (const b of built) {
+      const text = readFileSync(b.output, "utf8");
+      const line = /^tools:[ \t]*(.*)$/m.exec(text);
+      // pass-beta's seed carries no tools line at all — an absent list is not
+      // an allowlist, and the build never invents one (that would NARROW it).
+      if (b.pass === "pass-beta") {
+        expect(line).toBeNull();
+      } else {
+        const tools = line![1]!.split(",").map((t) => t.trim());
+        expect(tools.filter((t) => t.startsWith("viking_"))).toEqual(["viking_search", "viking_read"]);
+        // No write surface, ever — not here, and not in the fork's leaf process.
+        expect(tools).not.toContain("viking_write");
+      }
+      expect(text).toContain("Memory: two read-only tools, and you never write");
+    }
+    // The seed keeps its own tools line, byte for byte.
+    expect(readFileSync(join(root, "agents", "pass-alpha.md"), "utf8")).toContain("tools: read, bash\n");
   });
 
   it("appends the composed addendum to every built body (seeds untouched)", () => {
@@ -894,5 +924,52 @@ describe("pass-intent", () => {
     expect(validate).toContain("never let one through as a `P0`–`P2` or a `[blocker]`");
     expect(addendaForPass(VALIDATE_PASS).map((a) => a.id)).toContain("intent-cap-validate");
     expect(addendaForPass("pass-intent").map((a) => a.id)).not.toContain("intent-cap-validate");
+  });
+});
+
+// ----: the memory-tool allowlist and its contract ------------------
+
+describe("applyMemoryTools", () => {
+  it("appends exactly the two read-only tools", () => {
+    expect(applyMemoryTools("tools: read, bash, grep, glob\n")).toBe(
+      "tools: read, bash, grep, glob, viking_search, viking_read\n",
+    );
+    expect(LEAF_MEMORY_TOOLS).toEqual(["viking_search", "viking_read"]);
+  });
+
+  it("drops any other memory tool a seed might grow — no write surface in a leaf", () => {
+    expect(applyMemoryTools("tools: read, viking_write, viking_forget, grep\n")).toBe(
+      "tools: read, grep, viking_search, viking_read\n",
+    );
+  });
+
+  it("is idempotent — a rebuild of an unchanged tree is byte-stable", () => {
+    const once = applyMemoryTools("tools: read, bash\n");
+    expect(applyMemoryTools(once)).toBe(once);
+  });
+
+  it("never CREATES a tools line: absent means 'whatever the harness gives you'", () => {
+    expect(applyMemoryTools("name: pass-x\nmodel: m\n")).toBe("name: pass-x\nmodel: m\n");
+  });
+});
+
+describe("the memory addendum", () => {
+  const text = composeAddendum("pass-baseline");
+
+  it("binds every pass, the validator included", () => {
+    expect(PASS_ADDENDA.map((a) => a.id)).toContain("memory-read-only");
+    for (const pass of ["pass-baseline", "pass-intent", VALIDATE_PASS]) {
+      expect(addendaForPass(pass).map((a) => a.id), pass).toContain("memory-read-only");
+    }
+  });
+
+  it("says what memory is for, and that a pass may not write to it", () => {
+    expect(text).toContain("`viking_search`");
+    expect(text).toContain("`viking_read`");
+    expect(text).toContain("**You have no write tool and will not be given one.**");
+    expect(text).toContain("no remember, no write, no forget");
+    // Memory is neither authority nor an obstacle.
+    expect(text).toContain("memory never blocks a round");
+    expect(text).toContain("not evidence in an `evidence` field");
   });
 });

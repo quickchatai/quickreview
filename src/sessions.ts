@@ -23,6 +23,18 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Config } from "./config.js";
+import { openVikingBaseUrl } from "./config.js";
+import {
+  OV_DEFAULT_BASE_URL,
+  OV_REVIEWER_KEY_SECRET,
+  OV_REVIEWER_USER,
+  openVikingSessionEnv,
+  ovSessionIdForPr,
+  ovcliConfPathIn,
+  writeOvcliConf,
+  type OvSessionLifecycle,
+  type OvcliWriteResult,
+} from "./memory/ovsession.js";
 import { Tmux } from "./tmux.js";
 import type { ExecFn } from "./tmux.js";
 import type { RoundOrder, SessionHooks } from "./types.js";
@@ -30,6 +42,13 @@ import { renderConversationSystemPrompt, renderOverseerSystemPrompt } from "./te
 import { WorktreeManager } from "./worktrees.js";
 
 export const OVERSEER_SESSION = "overseer";
+
+/** Environment-variable prefixes that ride the `env K=V … pi …` argv (see
+ * spawnSession). `QCR_` is the daemon's routing surface; `OPENVIKING_` is the
+ * session's memory identity, which must be per-session and therefore cannot
+ * come from the tmux server environment. SECRETS ARE NEVER PREFIXED — argv is
+ * world-readable — so no third prefix carries a credential. */
+const ARGV_ENV_PREFIXES = ["QCR_", "OPENVIKING_"] as const;
 
 export function prSessionName(pr: number): string {
   return `pr-${pr}`;
@@ -111,6 +130,11 @@ export interface PiSessionManagerOptions {
   piBin?: string;
   /** HOME for the pi process — the container's pihome volume. */
   piHome?: string;
+  /** The PR's raw-notes tier: an OpenViking SESSION created when the
+   * PR's pi session is born and deleted when the PR closes. Absent ⇒ no raw
+   * tier is managed at all (test wiring, or a daemon with memory off) — the
+   * sessions still run, memory-less, which is the standing degradation rule. */
+  ovSessions?: OvSessionLifecycle;
   now?: () => Date;
 }
 
@@ -128,6 +152,7 @@ export class PiSessionManager implements SessionHooks {
   readonly worktrees: WorktreeManager;
   private readonly piBin: string;
   private readonly piHome: string;
+  private readonly ovSessions: OvSessionLifecycle | undefined;
   private readonly now: () => Date;
   private injectSeq = 0;
 
@@ -139,6 +164,7 @@ export class PiSessionManager implements SessionHooks {
       opts.worktrees ?? new WorktreeManager({ root: opts.root, repo: opts.cfg.github.repo, run: opts.exec });
     this.piBin = opts.piBin ?? "pi";
     this.piHome = opts.piHome ?? join(opts.root, "pihome");
+    this.ovSessions = opts.ovSessions;
     this.now = opts.now ?? (() => new Date());
   }
 
@@ -197,6 +223,65 @@ export class PiSessionManager implements SessionHooks {
     return join(this.root, "extensions", "muted-theme.json");
   }
 
+  // ---- OpenViking identity -------------------------------------
+
+  /** `http://host:port` from `[openviking]`; a hand-rolled config without the
+   * block falls back to the loopback default (the port is never published). */
+  ovBaseUrl(): string {
+    const ov = this.cfg.openviking;
+    return ov ? openVikingBaseUrl(ov) : OV_DEFAULT_BASE_URL;
+  }
+
+  /** The reviewer credential file every session resolves its key from. */
+  ovcliConfPath(): string {
+    return ovcliConfPathIn(this.piHome);
+  }
+
+  /**
+   * Write the reviewer USER key into the pi HOME, 0600, before a session is
+   * born. The key is deliberately NOT an environment variable and NOT on the
+   * argv — `ps` is readable by anything in the container — and it can never be
+   * the server's root key: `writeOvcliConf` refuses that, leaving the session
+   * unauthenticated (a loud 401) rather than omnipotent (silent).
+   */
+  provisionOvCredentials(): OvcliWriteResult {
+    return writeOvcliConf(
+      this.ovcliConfPath(),
+      {
+        url: this.ovBaseUrl(),
+        apiKey: this.secret(OV_REVIEWER_KEY_SECRET) ?? "",
+        user: OV_REVIEWER_USER,
+      },
+      {
+        serverConfigPath: this.cfg.openviking?.config_file,
+        log: (msg) => console.log(`[quickreviewd] sessions: ${msg}`),
+      },
+    );
+  }
+
+  /** Create the PR's raw-notes session. Total: a memory engine that is down
+   * costs the PR its raw tier and nothing else. */
+  private async ensureOvSession(pr: number): Promise<boolean> {
+    if (!this.ovSessions) return false;
+    try {
+      return await this.ovSessions.create(ovSessionIdForPr(pr));
+    } catch {
+      return false;
+    }
+  }
+
+  /** Delete the PR's raw-notes session and its archives — the raw tier ages
+   * out by DELETE, never by `commit` (which exists to PROMOTE notes into
+   * durable memory, i.e. the extraction we deliberately switched off). */
+  private async deleteOvSession(pr: number): Promise<boolean> {
+    if (!this.ovSessions) return false;
+    try {
+      return await this.ovSessions.remove(ovSessionIdForPr(pr));
+    } catch {
+      return false;
+    }
+  }
+
   // ---- environment -------------------------------------------------------
 
   /** Read a secret file from the app's secrets dir (never from process.env). */
@@ -232,6 +317,23 @@ export class PiSessionManager implements SessionHooks {
     };
     const openai = this.secret("openai_api_key");
     if (openai) env.OPENAI_API_KEY = openai;
+    // OpenViking identity. Explicit, because every session shares one
+    // working directory and the extension's path-derived peer id therefore
+    // cannot tell two PRs apart. The PR's raw-notes session is attached by id;
+    // the overseer owns no PR and so gets no session id (no raw tier, tools
+    // only). None of these is a secret — the key rides ovcli.conf at 0600.
+    const pr = prOfSession(session);
+    Object.assign(
+      env,
+      openVikingSessionEnv({
+        baseUrl: this.ovBaseUrl(),
+        user: OV_REVIEWER_USER,
+        peerId: session,
+        cliConfigPath: this.ovcliConfPath(),
+        serverConfigPath: this.cfg.openviking?.config_file,
+        ...(pr === undefined ? {} : { ovSessionId: ovSessionIdForPr(pr) }),
+      }),
+    );
     return { ...env, ...extra };
   }
 
@@ -259,6 +361,9 @@ export class PiSessionManager implements SessionHooks {
     extraEnv: NodeJS.ProcessEnv = {},
   ): Promise<void> {
     const promptPath = this.writeSystemPrompt(session, systemPromptBody);
+    // The reviewer credential lands before pi starts: the extension resolves it
+    // at load time, and a session born without it is memory-less for its life.
+    this.provisionOvCredentials();
     mkdirSync(this.injectDir(session), { recursive: true });
     mkdirSync(join(this.injectDir(session), ".done"), { recursive: true });
     mkdirSync(this.sessionDir(session), { recursive: true });
@@ -272,11 +377,16 @@ export class PiSessionManager implements SessionHooks {
       themePath: this.themePath(),
     });
     // tmux panes inherit the tmux SERVER's environment, not the client's, so
-    // per-session vars must ride the command line itself. Only the QCR_*
-    // routing vars are prefixed — HOME/PATH/OPENAI_API_KEY stay whatever the
-    // container (or dev box) provides, which is where pi's auth actually lives.
+    // per-session vars must ride the command line itself. Only the QCR_* routing
+    // vars and the OPENVIKING_* identity are prefixed — HOME/PATH/OPENAI_API_KEY
+    // stay whatever the container (or dev box) provides, which is where pi's
+    // auth actually lives.
+    //
+    // Nothing prefixed here is a secret, and nothing may become one: argv is
+    // world-readable inside the container (`ps`), which is why the OpenViking
+    // KEY rides a 0600 ovcli.conf instead (see provisionOvCredentials).
     const qcrPrefix = Object.entries(this.buildEnv(session, extraEnv))
-      .filter(([k, v]) => k.startsWith("QCR_") && v !== undefined)
+      .filter(([k, v]) => ARGV_ENV_PREFIXES.some((p) => k.startsWith(p)) && v !== undefined)
       .map(([k, v]) => `${k}=${v}`);
     await this.tmux.newSession(session, ["env", ...qcrPrefix, ...command], {
       cwd: this.root,
@@ -309,6 +419,10 @@ export class PiSessionManager implements SessionHooks {
   async ensurePrSession(pr: number, title: string, worktree: string): Promise<string> {
     const session = prSessionName(pr);
     if (await this.tmux.hasSession(session)) return session;
+    // The PR's raw-notes tier, created BEFORE pi starts so the extension has
+    // something to attach to on the first turn. A store object, not a session
+    // anyone schedules: the daemon still owns exactly two pi session kinds.
+    await this.ensureOvSession(pr);
     const template = readFileSync(join(this.root, "prompts", "conversation-system.md"), "utf8");
     const body = renderConversationSystemPrompt(template, { pr, title, worktree });
     await this.spawnSession(session, body, this.cfg.models.conversation, {
@@ -586,6 +700,11 @@ export class PiSessionManager implements SessionHooks {
     this.archiveSession(session, this.archiveDir(session));
     await this.worktrees.remove(pr);
     await this.tmux.killSession(session);
+    // The raw tier dies with the PR: DELETE removes the session's messages AND
+    // its archives (verified — the tree is gone). Deliberately AFTER the tmux
+    // kill, so nothing is still syncing turns into it, and deliberately NOT in
+    // killSession(): a wedged session is respawned and keeps its notes.
+    await this.deleteOvSession(pr);
   }
 
   // ---- overseer rotation -------------------------------------------------

@@ -7,10 +7,14 @@ import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkBashCommand } from "../extensions/bash-guard.js";
-import { buildAgents, stripAgentSpawnTools } from "../src/include.js";
-import { OVERSEER_SESSION, isSandboxSession } from "../src/sessions.js";
+import type { Config } from "../src/config.js";
+import { LEAF_MEMORY_TOOLS, buildAgents, stripAgentSpawnTools } from "../src/include.js";
+import { OVERSEER_SESSION, PiSessionManager, isSandboxSession } from "../src/sessions.js";
 import { MAX_HELD_WAKES, StateStore } from "../src/state.js";
+import { Tmux } from "../src/tmux.js";
+import type { ExecFn } from "../src/tmux.js";
 import { flushHeldWakes, wakeOrHold } from "../src/wakes.js";
+import { WorktreeManager } from "../src/worktrees.js";
 
 // ---- S1/S2: the daemon spawns two session kinds and launches no agent ------
 
@@ -36,6 +40,62 @@ describe("daemon topology", () => {
     expect(isSandboxSession(OVERSEER_SESSION)).toBe(true);
     for (const name of ["pass-security--sol-high", "pr-5263-pass", "companion", "reviewer"]) {
       expect(isSandboxSession(name), name).toBe(false);
+    }
+  });
+
+  //. A PR's OpenViking session shares the PR session's NAME and is not
+  // a session in this invariant's sense: it is a row in the memory store that
+  // the daemon creates and deletes over HTTP — nothing schedules it, nothing
+  // runs in it, no pi process is attached to it, and it never appears in tmux.
+  // The two daemon-owned pi session kinds are still exactly `pr-<n>` and
+  // `overseer`.
+  it("S1: an OpenViking session is a store object, not a daemon-owned pi session", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "shepherd-ov-"));
+    try {
+      mkdirSync(join(dir, "prompts"), { recursive: true });
+      writeFileSync(join(dir, "prompts", "conversation-system.md"), "shepherd of #{{n}}\n");
+      const live = new Set<string>();
+      const ov: string[] = [];
+      const exec: ExecFn = async (cmd, args) => {
+        if (cmd === "tmux") {
+          if (args[0] === "has-session") return { code: live.has(String(args[2]).replace(/^=/, "")) ? 0 : 1, stdout: "", stderr: "" };
+          if (args[0] === "new-session") live.add(String(args[3]));
+          if (args[0] === "list-sessions") return { code: 0, stdout: [...live].join("\n"), stderr: "" };
+          if (args[0] === "kill-session") live.delete(String(args[2]).replace(/^=/, ""));
+        }
+        return { code: 0, stdout: "", stderr: "" };
+      };
+      const m = new PiSessionManager({
+        cfg: {
+          github: { repo: "o/n", secrets_dir: join(dir, "secrets") },
+          pi: { version: "0.84.1", session_dir: "state/pi-sessions" },
+          models: { conversation: "openai/conv" },
+        } as unknown as Config,
+        root: dir,
+        tmux: new Tmux({ exec }),
+        worktrees: new WorktreeManager({ root: dir, repo: "o/n", cloneUrl: "/dev/null", run: exec }),
+        ovSessions: {
+          create: async (id) => {
+            ov.push(`create ${id}`);
+            return true;
+          },
+          remove: async (id) => {
+            ov.push(`delete ${id}`);
+            return true;
+          },
+        },
+      });
+
+      await m.ensurePrSession(5263, "t", "wt/pr-5263");
+      // One pi session was born; the OpenViking session was CREATED, not spawned.
+      expect([...live]).toEqual(["pr-5263"]);
+      expect(ov).toEqual(["create pr-5263"]);
+      // …and it is invisible to every session-topology surface.
+      const adoption = await m.adopt();
+      expect(adoption.adopted).toEqual(["pr-5263"]);
+      expect(adoption.prs).toEqual([5263]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 
@@ -130,6 +190,27 @@ describe("buildAgents — built passes cannot launch agents", () => {
       expect(frontmatter).toContain("read, bash, grep");
       expect(text).toContain("You are a leaf");
       expect(text).toContain("never launch another agent");
+    }
+  });
+
+  // leaves may LOOK THINGS UP and may not write. Two layers — this
+  // allowlist decides which memory tools exist inside a leaf at all, and the
+  // vendored fork's PATCH 2 withholds `viking_write` in any leaf process.
+  it("gives a leaf read-only memory and no way to author anything", () => {
+    const src = join(dir, "agents");
+    const out = join(dir, "built");
+    mkdirSync(src, { recursive: true });
+    writeFileSync(
+      join(src, "pass-baseline.md"),
+      "---\nname: pass-baseline\ntools: read, grep, viking_write\nmodel: openai/x\n---\n\nbody\n",
+    );
+
+    for (const agent of buildAgents(src, out, { riskPasses: [], validateTier: "terra-med" })) {
+      const text = readFileSync(agent.output, "utf8");
+      const tools = /^tools:[ \t]*(.*)$/m.exec(text)![1]!.split(",").map((t) => t.trim());
+      expect(tools.filter((t) => t.startsWith("viking_"))).toEqual([...LEAF_MEMORY_TOOLS]);
+      expect(tools).not.toContain("viking_write");
+      expect(text).toContain("You have no write tool and will not be given one.");
     }
   });
 

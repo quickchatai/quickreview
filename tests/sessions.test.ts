@@ -1,7 +1,7 @@
 // Session manager tests. Every process invocation goes through a fake exec
 // that records commands — no tmux, no pi, no git is ever spawned. Filesystem
 // work happens inside a temp sandbox root.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -45,7 +45,11 @@ const cfg = (): Config =>
     },
     models: { default: "openai/gpt-5.6-sol", conversation: "openai/conv", overseer: "openai/over", passes: {} },
     pi: { package: "@earendil-works/pi-coding-agent", version: "0.84.1", session_dir: "state/pi-sessions" },
-  }) satisfies Config;
+    // Only the fields sessions.ts reads: the loopback endpoint the
+    // sessions authenticate against, and the SERVER's ov.conf — passed so the
+    // fork's root-key guard reads the real file instead of guessing from HOME.
+    openviking: { host: "127.0.0.1", port: 1933, config_file: join(root, "ovhome", "ov.conf") },
+  }) as unknown as Config;
 
 /** Fake exec: records everything, fakes tmux list/has from `liveSessions`. */
 const fakeExec: ExecFn = async (cmd, args, opts) => {
@@ -62,6 +66,19 @@ const fakeExec: ExecFn = async (cmd, args, opts) => {
   return { code: 0, stdout: "", stderr: "" };
 };
 
+/** Records the OpenViking session lifecycle calls — no server, no HTTP. */
+let ovCalls: string[];
+const ovSessions = {
+  create: async (id: string) => {
+    ovCalls.push(`create ${id}`);
+    return true;
+  },
+  remove: async (id: string) => {
+    ovCalls.push(`delete ${id}`);
+    return true;
+  },
+};
+
 function manager(now = () => new Date("2026-08-13T10:00:00Z")): PiSessionManager {
   return new PiSessionManager({
     cfg: cfg(),
@@ -69,6 +86,7 @@ function manager(now = () => new Date("2026-08-13T10:00:00Z")): PiSessionManager
     tmux: new Tmux({ exec: fakeExec }),
     worktrees: new WorktreeManager({ root, repo: "o/n", cloneUrl: "/dev/null", run: fakeExec }),
     piHome: join(root, "pihome"),
+    ovSessions,
     now,
   });
 }
@@ -96,6 +114,7 @@ beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "qcr-sess-"));
   secrets = join(root, "secrets");
   calls = [];
+  ovCalls = [];
   liveSessions = new Set();
   mkdirSync(join(root, "prompts"), { recursive: true });
   mkdirSync(secrets, { recursive: true });
@@ -213,9 +232,19 @@ describe("birth", () => {
       expect(env.GITHUB_TOKEN).toBeUndefined();
       expect(env.QCR_TEST_PERSONAL_TOKEN).toBeUndefined();
       expect(Object.keys(env).sort()).toEqual([
-        "HOME", "LANG", "OPENAI_API_KEY", "PATH", "QCR_INJECT_DIR", "QCR_LEDGER_FILE",
+        "HOME", "LANG", "OPENAI_API_KEY",
+        // identity — non-secret every one of them (the reviewer key
+        // rides ovcli.conf at 0600, never argv and never the environment).
+        "OPENVIKING_BASE_URL", "OPENVIKING_CLI_CONFIG_FILE", "OPENVIKING_CONFIG_FILE",
+        "OPENVIKING_PEER_ID", "OPENVIKING_URL", "OPENVIKING_USER",
+        "PATH", "QCR_INJECT_DIR", "QCR_LEDGER_FILE", "QCR_OV_SESSION_ID",
         "QCR_PI_VERSION", "QCR_PR", "QCR_SANDBOX_ROOT", "QCR_SECRETS_DIR", "QCR_SESSION_NAME", "TERM",
       ]);
+      // No credential of any kind reached the environment.
+      for (const [k, v] of Object.entries(env)) {
+        expect(k, `${k} must not look like an OpenViking key`).not.toMatch(/OPENVIKING.*KEY/);
+        expect(String(v)).not.toContain("ov-reviewer-key");
+      }
     } finally {
       delete process.env.QCR_TEST_PERSONAL_TOKEN;
     }
@@ -224,6 +253,108 @@ describe("birth", () => {
   it("omits the OpenAI key when the secrets dir has none", async () => {
     rmSync(join(secrets, "openai_api_key"));
     expect(manager().buildEnv("pr-1").OPENAI_API_KEY).toBeUndefined();
+  });
+});
+
+describe("OpenViking identity and the PR's raw-notes session", () => {
+  it("puts the whole identity on the pi command line — and no key anywhere", async () => {
+    const m = manager();
+    writeFileSync(join(secrets, "openviking_reviewer_key"), "ov-reviewer-key\n");
+    await m.ensurePrSession(42, "T", "wt/pr-42");
+
+    const newSession = tmuxArgs().find((a) => a[0] === "new-session")!;
+    const prefix = newSession.filter((a) => a.startsWith("OPENVIKING_") || a.startsWith("QCR_OV_"));
+    expect(prefix).toContain("OPENVIKING_URL=http://127.0.0.1:1933");
+    expect(prefix).toContain("OPENVIKING_USER=reviewer");
+    // The peer id is per-session: all sessions share one cwd, so the
+    // extension's path-derived peer cannot separate two PRs.
+    expect(prefix).toContain("OPENVIKING_PEER_ID=pr-42");
+    // QCR_-prefixed spelling: only prefixed vars survive onto the argv, and
+    // the tmux SERVER env would be shared by every session.
+    expect(prefix).toContain("QCR_OV_SESSION_ID=pr-42");
+    expect(prefix).toContain(`OPENVIKING_CLI_CONFIG_FILE=${m.ovcliConfPath()}`);
+    // argv is world-readable (`ps`): the key must never appear on it.
+    expect(newSession.join(" ")).not.toContain("ov-reviewer-key");
+  });
+
+  it("the overseer gets the identity but owns no raw tier", async () => {
+    const m = manager();
+    await m.ensureOverseerSession();
+    const newSession = tmuxArgs().find((a) => a[0] === "new-session")!;
+    expect(newSession).toContain("OPENVIKING_PEER_ID=overseer");
+    expect(newSession.some((a) => a.startsWith("QCR_OV_SESSION_ID="))).toBe(false);
+    expect(ovCalls).toEqual([]);
+  });
+
+  it("drops the reviewer key into the pi HOME at 0600, never onto argv", async () => {
+    writeFileSync(join(secrets, "openviking_reviewer_key"), "ov-reviewer-key\n");
+    const m = manager();
+    await m.ensurePrSession(42, "T", "wt/pr-42");
+
+    const path = m.ovcliConfPath();
+    expect(path).toBe(join(root, "pihome", ".openviking", "ovcli.conf"));
+    const conf = JSON.parse(readFileSync(path, "utf8"));
+    expect(conf).toEqual({ url: "http://127.0.0.1:1933", user: "reviewer", api_key: "ov-reviewer-key" });
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+  });
+
+  it("REFUSES to hand a session the server's root key — 401 beats omnipotent", async () => {
+    mkdirSync(join(root, "ovhome"), { recursive: true });
+    writeFileSync(join(root, "ovhome", "ov.conf"), JSON.stringify({ server: { root_api_key: "ROOT-KEY" } }));
+    writeFileSync(join(secrets, "openviking_reviewer_key"), "ROOT-KEY\n");
+
+    const m = manager();
+    const result = m.provisionOvCredentials();
+
+    expect(result.keyed).toBe(false);
+    expect(result.reason).toBe("root-key-refused");
+    const conf = JSON.parse(readFileSync(m.ovcliConfPath(), "utf8"));
+    expect(conf.api_key).toBeUndefined();
+    expect(JSON.stringify(conf)).not.toContain("ROOT-KEY");
+  });
+
+  it("creates the PR's OpenViking session at birth and deletes it at close", async () => {
+    const m = manager();
+    await m.ensurePrSession(42, "T", "wt/pr-42");
+    expect(ovCalls).toEqual(["create pr-42"]);
+
+    // A wedged session is killed and reborn — the notes must SURVIVE that.
+    await m.killSession(42);
+    expect(ovCalls).toEqual(["create pr-42"]);
+
+    mkdirSync(join(root, "example-app", ".git"), { recursive: true });
+    await m.archiveAndClose(42);
+    expect(ovCalls).toEqual(["create pr-42", "delete pr-42"]);
+  });
+
+  it("a memory engine that is down costs the PR its raw tier and nothing else", async () => {
+    const m = new PiSessionManager({
+      cfg: cfg(),
+      root,
+      tmux: new Tmux({ exec: fakeExec }),
+      worktrees: new WorktreeManager({ root, repo: "o/n", cloneUrl: "/dev/null", run: fakeExec }),
+      piHome: join(root, "pihome"),
+      ovSessions: {
+        create: async () => {
+          throw new Error("connection refused");
+        },
+        remove: async () => {
+          throw new Error("connection refused");
+        },
+      },
+    });
+    await expect(m.ensurePrSession(42, "T", "wt/pr-42")).resolves.toBe("pr-42");
+    expect(liveSessions.has("pr-42")).toBe(true);
+    mkdirSync(join(root, "example-app", ".git"), { recursive: true });
+    await expect(m.archiveAndClose(42)).resolves.toBeUndefined();
+  });
+
+  it("runs memory-less when the secrets mount carries no reviewer key", async () => {
+    const m = manager();
+    const result = m.provisionOvCredentials();
+    expect(result.keyed).toBe(false);
+    expect(result.reason).toBe("no-key");
+    expect(JSON.parse(readFileSync(m.ovcliConfPath(), "utf8")).api_key).toBeUndefined();
   });
 });
 
