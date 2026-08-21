@@ -107,6 +107,10 @@ describe("CompanionLifecycle argv", () => {
       `companion-pihome:${CONTAINER.piHome}`,
       `/host/review-sandbox:${CONTAINER.workspace}:rw`,
       `/host/tracker:${CONTAINER.tracker}:rw`,
+      // the tracker's protocol doc lives OUTSIDE tracker_dir, so it
+      // needs its own mount — read-only, because the companion follows the
+      // protocol and never rewrites it.
+      `${CFG.tracker_docs_dir}:${CONTAINER.trackerDocs}:ro`,
       `/host/feed:${CONTAINER.feed}:rw`,
       `/host/alerts:${CONTAINER.alerts}:rw`,
     ]);
@@ -168,6 +172,85 @@ describe("CompanionLifecycle argv", () => {
   it("attaches locally through docker exec — no ssh in the argv", () => {
     expect(lc.attachArgv()).toEqual(["exec", "-it", "qcr-companion", "tmux", "attach", "-t", "companion"]);
     expect(lc.attachArgv()).not.toContain("ssh");
+  });
+});
+
+describe("mount drift", () => {
+  /** `docker inspect` as the real format string renders it: running flag on
+   * line 1, then one `dest=source` line per mount. */
+  const inspectWith = (running: boolean, mounts: Record<string, string>) => (argv: string[]) =>
+    argv[0] === "inspect"
+      ? {
+          ...OK,
+          stdout: [
+            String(running),
+            ...Object.entries(mounts).map(([dest, source]) => `${dest}=${source}`),
+            "",
+          ].join("\n"),
+        }
+      : undefined;
+
+  const CURRENT: Record<string, string> = {
+    [CONTAINER.piHome]: "companion-pihome",
+    [CONTAINER.workspace]: "/host/review-sandbox",
+    [CONTAINER.tracker]: "/host/tracker",
+    [CONTAINER.trackerDocs]: CFG.tracker_docs_dir,
+    [CONTAINER.feed]: "/host/feed",
+    [CONTAINER.alerts]: "/host/alerts",
+  };
+
+  it("adopts a running container whose mounts already match", async () => {
+    const { lc, calls } = lifecycle([inspectWith(true, CURRENT)]);
+    expect(await lc.ensureUp()).toBe("adopted");
+    expect(containerCalls(calls).map((c) => c[0])).toEqual(["inspect"]);
+  });
+
+  it("recreates a RUNNING container that is missing a mount", async () => {
+    const { [CONTAINER.trackerDocs]: _gone, ...stale } = CURRENT;
+    const { lc, calls } = lifecycle([inspectWith(true, stale), okFor("rm"), okFor("image"), okFor("run")]);
+    const progress: string[] = [];
+    expect(await lc.ensureUp((l) => progress.push(l))).toBe("recreated");
+    expect(containerCalls(calls).map((c) => c[0])).toEqual(["inspect", "rm", "image", "run"]);
+    expect(progress.some((l) => l.includes(`missing ${CONTAINER.trackerDocs}`))).toBe(true);
+  });
+
+  it("recreates a container carrying a STALE mount — the legacy ssh case", async () => {
+    // The live container on the owner's PC predates and still has
+    // ~/.ssh + an agent socket bound in. `docker start` would resurrect that
+    // boundary breach silently; rule 8 is meant to be structural.
+    const { lc, calls } = lifecycle([
+      inspectWith(false, { ...CURRENT, "/home/companion/.ssh": "/home/user/.ssh", "/ssh-agent": "/tmp/a.sock" }),
+      okFor("rm"),
+      okFor("image"),
+      okFor("run"),
+    ]);
+    const progress: string[] = [];
+    expect(await lc.ensureUp((l) => progress.push(l))).toBe("recreated");
+    expect(containerCalls(calls).map((c) => c[0])).toEqual(["inspect", "rm", "image", "run"]);
+    expect(progress.some((l) => l.includes("stale /home/companion/.ssh"))).toBe(true);
+    expect(progress.some((l) => l.includes("stale /ssh-agent"))).toBe(true);
+  });
+
+  it("recreates when a mount points at the wrong host path", async () => {
+    const { lc, calls } = lifecycle([
+      inspectWith(false, { ...CURRENT, [CONTAINER.tracker]: "/host/old-tracker" }),
+      okFor("rm"),
+      okFor("image"),
+      okFor("run"),
+    ]);
+    const progress: string[] = [];
+    expect(await lc.ensureUp((l) => progress.push(l))).toBe("recreated");
+    expect(progress.some((l) => l.includes("points at /host/old-tracker"))).toBe(true);
+  });
+
+  it("never concludes 'drifted' from an inspect it could not read", async () => {
+    // A format change, an old docker, a truncated answer: seeing nothing must
+    // mean 'no opinion', never 'recreate'. Destroying a container on a parse
+    // failure would be far worse than running one with a stale mount.
+    const { lc, calls } = lifecycle([inspect(true)]);
+    expect(await lc.ensureUp()).toBe("adopted");
+    expect(containerCalls(calls).map((c) => c[0])).toEqual(["inspect"]);
+    expect(lc.mountDrift(new Map())).toEqual([]);
   });
 });
 
@@ -280,9 +363,10 @@ describe("CompanionLifecycle state machine", () => {
   });
 
   it("status distinguishes absent / stopped / running", async () => {
-    expect(await lifecycle([inspect("absent")]).lc.status()).toEqual({ exists: false, running: false });
-    expect(await lifecycle([inspect(false)]).lc.status()).toEqual({ exists: true, running: false });
-    expect(await lifecycle([inspect(true)]).lc.status()).toEqual({ exists: true, running: true });
+    const none = new Map<string, string>();
+    expect(await lifecycle([inspect("absent")]).lc.status()).toEqual({ exists: false, running: false, mounts: none });
+    expect(await lifecycle([inspect(false)]).lc.status()).toEqual({ exists: true, running: false, mounts: none });
+    expect(await lifecycle([inspect(true)]).lc.status()).toEqual({ exists: true, running: true, mounts: none });
   });
 });
 

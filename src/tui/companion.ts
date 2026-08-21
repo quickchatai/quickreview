@@ -31,6 +31,9 @@ export type DockerRunner = (argv: string[], opts?: { timeoutMs?: number }) => Pr
 export interface ContainerStatus {
   exists: boolean;
   running: boolean;
+  /** `dest -> source` for every mount the container was CREATED with; empty
+   * when it does not exist or docker could not be asked. */
+  mounts: Map<string, string>;
 }
 
 /** The filesystem facts the lifecycle needs. Injectable so argv tests stay
@@ -68,6 +71,10 @@ export const CONTAINER = {
   piHome: "/home/companion/.pi",
   workspace: "/workspace",
   tracker: "/tracker",
+  /** The tracker's protocol docs, read-only. `/tracker` carries the
+   * issues; the doc that says how to write them lives one level up on the
+   * host, outside every other mount. */
+  trackerDocs: "/tracker-docs",
   feed: "/feed",
   alerts: "/alerts",
 } as const;
@@ -223,6 +230,8 @@ export class CompanionLifecycle {
       "--volume",
       `${this.cfg.tracker_dir}:${CONTAINER.tracker}:rw`,
       "--volume",
+      `${this.cfg.tracker_docs_dir}:${CONTAINER.trackerDocs}:ro`,
+      "--volume",
       `${this.cfg.feed_dir}:${CONTAINER.feed}:rw`,
       "--volume",
       `${this.cfg.alerts_dir}:${CONTAINER.alerts}:rw`,
@@ -369,9 +378,24 @@ export class CompanionLifecycle {
   // ---- state --------------------------------------------------------------
 
   async status(): Promise<ContainerStatus> {
-    const res = await this.docker(["inspect", "--format", "{{.State.Running}}", this.cfg.container_name]);
-    if (!res.ok) return { exists: false, running: false };
-    return { exists: true, running: res.stdout.trim() === "true" };
+    // One inspect answers both questions: is it up, and what was it created
+    // with. Line 1 is the running flag; every later line is `dest=source` for
+    // one mount. Keeping it to a single call means the drift check
+    // costs nothing on the start path.
+    const res = await this.docker([
+      "inspect",
+      "--format",
+      "{{.State.Running}}\n{{range .Mounts}}{{.Destination}}={{.Source}}\n{{end}}",
+      this.cfg.container_name,
+    ]);
+    if (!res.ok) return { exists: false, running: false, mounts: new Map() };
+    const [first = "", ...rest] = res.stdout.split("\n");
+    const mounts = new Map<string, string>();
+    for (const line of rest) {
+      const eq = line.indexOf("=");
+      if (eq > 0) mounts.set(line.slice(0, eq).trim(), line.slice(eq + 1).trim());
+    }
+    return { exists: true, running: first.trim() === "true", mounts };
   }
 
   /** True when the companion tmux session is already live in the container. */
@@ -473,9 +497,61 @@ export class CompanionLifecycle {
     return res.ok;
   }
 
+  /**
+   * Bind mounts are frozen at creation, so a container that predates a mount
+   * change keeps the OLD set forever — `docker start` on it silently resurrects
+   * the old boundary. That is not cosmetic: it is how a container created
+   * before still carries `~/.ssh` and an ssh-agent socket, defeating a
+   * boundary root CLAUDE.md rule 8 means to be structural.
+   *
+   * So: compare what the container HAS against what `runArgv()` asks for, and
+   * report the drift. Named volumes are compared by name, binds by host path.
+   * Extra mounts count as drift (that is the ssh case); an unreadable inspect
+   * reports nothing.
+   */
+  mountDrift(actual: Map<string, string>): string[] {
+    if (actual.size === 0) return [];
+    const drift: string[] = [];
+    for (const [dest, source] of this.expectedMounts()) {
+      const have = actual.get(dest);
+      if (have === undefined) drift.push(`missing ${dest}`);
+      else if (have !== source) drift.push(`${dest} points at ${have}, expected ${source}`);
+    }
+    for (const dest of actual.keys()) {
+      if (!this.expectedMounts().has(dest)) drift.push(`stale ${dest}`);
+    }
+    return drift;
+  }
+
+  /** `dest -> source` for every mount `runArgv()` declares. */
+  expectedMounts(): Map<string, string> {
+    return new Map([
+      [CONTAINER.piHome, this.cfg.pihome_volume],
+      [CONTAINER.workspace, this.cfg.repo_dir],
+      [CONTAINER.tracker, this.cfg.tracker_dir],
+      [CONTAINER.trackerDocs, this.cfg.tracker_docs_dir],
+      [CONTAINER.feed, this.cfg.feed_dir],
+      [CONTAINER.alerts, this.cfg.alerts_dir],
+    ]);
+  }
+
   async ensureUp(onProgress?: (line: string) => void): Promise<EnsureOutcome> {
     await this.resolveMemoryWiring(onProgress);
-    const st = await this.status();
+    let st = await this.status();
+    let recreating = false;
+    // Mount drift is repaired by recreation and nothing else. Do it before the
+    // adopt/start branches, so a stale container never survives a TUI start.
+    // The conversation is on the pihome volume and survives the rm.
+    if (st.exists) {
+      const drift = this.mountDrift(st.mounts);
+      if (drift.length > 0) {
+        onProgress?.(`companion mounts drifted (${drift.join("; ")}) — recreating`);
+        const removed = await this.docker(["rm", "-f", this.cfg.container_name]);
+        if (!removed.ok) throw new Error(`docker rm ${this.cfg.container_name} failed: ${errText(removed)}`);
+        st = { exists: false, running: false, mounts: new Map() };
+        recreating = true;
+      }
+    }
     if (st.running) {
       // A container created before the memory forward existed is still on the
       // old network; connecting is live and needs no recreate.
@@ -500,7 +576,7 @@ export class CompanionLifecycle {
     this.ensureDirs([this.cfg.feed_dir, this.cfg.alerts_dir]);
     const created = await this.docker(this.runArgv(), { timeoutMs: 120_000 });
     if (!created.ok) throw new Error(`docker run ${this.cfg.image} failed: ${errText(created)}`);
-    return st.exists ? "recreated" : "created";
+    return st.exists || recreating ? "recreated" : "created";
   }
 
   /** Idempotent: a live companion session is left strictly alone (a second

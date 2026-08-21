@@ -48,6 +48,10 @@ export interface CompanionConfig {
   repo_dir: string;
   /** Host path of the issue tracker → /tracker (rw, actor `companion`). */
   tracker_dir: string;
+  /** Host path of the tracker's protocol docs → /tracker-docs (READ-ONLY).
+   * Sits outside `tracker_dir`, so it needs its own mount: without it the
+   * companion drives wayfinder from a summary instead of the real adapter. */
+  tracker_docs_dir: string;
   /** Host dir the TUI writes ambient snapshots into → /feed. */
   feed_dir: string;
   /** Host dir the companion writes alert files into → /alerts. */
@@ -565,6 +569,7 @@ export const COMPANION_DEFAULTS: CompanionConfig = {
   model: "openai-codex/gpt-5.6-sol",
   repo_dir: "", // → sandboxRoot()
   tracker_dir: "~/src/tracker",
+  tracker_docs_dir: "~/src/tracker-docs",
   feed_dir: "", // → <root>/state/companion/feed
   alerts_dir: "", // → <root>/state/companion/alerts
   ssh_dir: "~/.ssh",
@@ -604,6 +609,7 @@ export function resolveCompanionPaths(c: CompanionConfig, root: string = sandbox
     ...c,
     repo_dir: c.repo_dir ? expandHome(c.repo_dir) : root,
     tracker_dir: expandHome(c.tracker_dir),
+    tracker_docs_dir: expandHome(c.tracker_docs_dir),
     feed_dir: c.feed_dir ? expandHome(c.feed_dir) : resolve(root, "state", "companion", "feed"),
     alerts_dir: c.alerts_dir ? expandHome(c.alerts_dir) : resolve(root, "state", "companion", "alerts"),
     ssh_dir: expandHome(c.ssh_dir),

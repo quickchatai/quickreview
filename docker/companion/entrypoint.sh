@@ -36,6 +36,20 @@ set -g pane-border-style 'fg=colour238'
 set -g pane-active-border-style 'fg=colour245'
 TMUXCONF
 
+# Git identity. The companion commits its own work to the mounted
+# repo with a `[companion]` prefix, and git refuses to commit at all without an
+# identity ("Please tell me who you are"). ~/.gitconfig lives on the container's
+# writable layer, NOT the pihome volume, so it is rewritten every start rather
+# than seeded once. Author, not committer-of-record for anyone else: the name
+# says plainly which hands made the commit.
+git config --global user.name "QCR Companion"
+git config --global user.email "companion@quickchat.ai"
+# The repo is bind-mounted from the host and owned by the same uid, so
+# safe.directory is not needed — but a uid mismatch (a rebuilt image with a
+# different COMPANION_UID) would otherwise wedge every git call with a
+# confusing ownership error rather than a permission one.
+git config --global --add safe.directory /workspace
+
 # pi settings. ~/.pi lives on a named volume; the merge below preserves every
 # existing key (hand edits win, append-only extensions).
 #
