@@ -8,6 +8,16 @@
 // files atomically (tmp + rename), so a watch event always sees a complete
 // file.
 //
+// #5362 (2026-08-21) proved that "resolved" is not "accepted": pi's
+// extension-facing sendUserMessage is fire-and-forget and swallows every
+// failure into an error banner, so a drop cannot be detected from here at all.
+// Three things changed as a result, each covering a different half:
+//   1. a delivery that reaches a streaming agent is QUEUED, not refused
+//      (`DELIVER_AS`),
+//   2. the busy flag brackets the agent RUN, not one assistant turn,
+//   3. the daemon stopped trusting delivery and reads a receipt out of the
+//      session's own JSONL (`SessionHooks.roundPromptAccepted`).
+//
 // pi is not installed here — everything touching the pi API is VERIFY-ON-PIN.
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, watch } from "node:fs";
 import { basename, join } from "node:path";
@@ -56,10 +66,31 @@ export function pendingFiles(dir: string): string[] {
 export const RETRY_BASE_MS = 2_000;
 export const RETRY_MAX_MS = 30_000;
 /** How long the busy flag may defer deliveries before it is overridden. If
- * the turn-boundary events never fire (or fire under other names on the
+ * the run-boundary events never fire (or fire under other names on the
  * pinned pi), busy-tracking must degrade to the old behaviour — not to a
  * bridge that never delivers anything again. */
 export const BUSY_MAX_HOLD_MS = 15 * 60_000;
+
+/**
+ * How a message that reaches pi while the agent is STREAMING is handled
+ * (`AgentSessionExtensionApi.sendUserMessage` options, mapped internally onto
+ * `streamingBehavior`). Without it pi throws
+ *   "Agent is already processing. Specify streamingBehavior…"
+ * and — because the extension-facing `sendUserMessage` is fire-and-forget
+ * (see `deliver` below) — the bridge never learns, archives the file, and the
+ * order is gone. `followUp` queues the message for after the current run
+ * instead, which is exactly the wake semantics the daemon wants and keeps the
+ * single-shepherd invariant (rule 9): never two instructions in flight, the
+ * queued one lands when the run ends.
+ *
+ * `steer` is deliberately NOT used: it interrupts the turn in progress, and a
+ * round's tail (ledger, then the verdict file) is the one part that must not
+ * be cut off.
+ * VERIFY-ON-PIN: option name `deliverAs` and its "followUp" value — read off
+ * the pinned 0.84.1 dist (`extensions/types.d.ts` sendUserMessage, mapped at
+ * `agent-session.js` `streamingBehavior: options?.deliverAs`).
+ */
+export const DELIVER_AS = "followUp" as const;
 
 export const activate: (pi: Pi) => void = (pi) => {
   const dir = resolveInjectDir(pi);
@@ -67,11 +98,18 @@ export const activate: (pi: Pi) => void = (pi) => {
   const inFlight = new Set<string>();
   let watcher: ReturnType<typeof watch> | undefined;
   let closed = false;
-  // Best-effort turn tracking. pi.sendUserMessage() while the agent
-  // is mid-turn dropped the message on the floor (#5317 round 2, #5257 round
-  // 8: the inject was consumed during a recheck turn and the round prompt
-  // never reached the session). While a turn is believed in flight, deliveries
-  // are DEFERRED, the file stays where it is, and the turn-end events drain.
+  // Best-effort RUN tracking (corrected 2026-08-21 after #5362).
+  // pi.sendUserMessage() while the agent is streaming dropped the message on
+  // the floor (#5317 round 2, #5257 round 8, #5362 round 2). While a run is
+  // believed in flight, deliveries are DEFERRED, the file stays where it is,
+  // and the settle event drains.
+  //
+  // The span that matters is the AGENT RUN, not one assistant turn:
+  // `turn_start`/`turn_end` fire once per turn INSIDE a run (pi increments
+  // turnIndex per turn and resets it at agent_start), so clearing `busy` on
+  // `turn_end` declared the session idle in the gap between every tool call
+  // while the run was still streaming. #5362's round-2 order landed in one of
+  // those gaps — 6.5s before the session finished — and was thrown away.
   let busy = false;
   let busySince = 0;
   // Per-file first-deferred timestamp: the BUSY_MAX_HOLD_MS override window
@@ -138,12 +176,20 @@ export const activate: (pi: Pi) => void = (pi) => {
       // side of the trade wins. (Reviewer's note, 2026-08-20: if replayed
       // non-round wakes ever get expensive, dedupe belongs daemon-side on
       // the wake content, never here — this extension stays drop-proof.)
-      // VERIFY-ON-PIN: sendUserMessage(content) — findings §3 option 2; it
-      // always triggers a turn, which is exactly the wake semantics we want.
-      // VERIFY-ON-PIN: whether a resolved sendUserMessage() promise implies
-      // the message was accepted into the session (vs dropped mid-turn) —
-      // the busy-deferral above exists precisely because it did not on 0.84.1.
-      await pi.sendUserMessage(content);
+      // A resolved sendUserMessage() does NOT mean the message was accepted.
+      // Tag burned 2026-08-21 on the pinned 0.84.1 (#5362): the
+      // extension-facing API is declared `sendUserMessage(...): void` and its
+      // runtime binding is
+      //     this.sendUserMessage(...).catch((err) => runner.emitError(…))
+      // so `await` here awaits `undefined` and ALWAYS resolves; every failure
+      // — "Agent is already processing" included — surfaces as a UI error
+      // banner and never as a rejection. The send-then-archive ordering below
+      // therefore cannot detect a drop on its own, which is why `DELIVER_AS`
+      // (queue instead of throw) and the daemon-side prompt receipt
+      // (`SessionHooks.roundPromptAccepted`) both exist. Keep the ordering
+      // anyway: it still covers a synchronous throw, and a replayed wake is
+      // cheap where a dropped round is not.
+      await pi.sendUserMessage(content, { deliverAs: DELIVER_AS });
       mkdirSync(doneDir, { recursive: true });
       renameSync(full, join(doneDir, basename(full)));
       firstDeferredAt.delete(full);
@@ -215,25 +261,32 @@ export const activate: (pi: Pi) => void = (pi) => {
     watcher = undefined;
   });
 
-  // Turn boundaries. "turn_end" and "agent_settled" are documented (findings
-  // §5); a matching start event is required for the busy flag to ever be set.
-  // VERIFY-ON-PIN: "turn_start" event name — NOT in findings §5. If it never
-  // fires on the pinned pi, busy stays false and the bridge degrades to
-  // send-then-archive with retries, never to holding wakes.
-  pi.on("turn_start", () => {
+  // Run boundaries. Verified on the pinned 0.84.1 dist
+  // (`core/extensions/types.d.ts`): `agent_start` = "fired when an agent loop
+  // starts", `agent_end` = "…ends", `agent_settled` = "fired after an agent
+  // run has FULLY SETTLED and no automatic retry, compaction, or queued
+  // continuation will run", `turn_start`/`turn_end` = "at the start/end of
+  // EACH TURN".
+  const markBusy = (): void => {
     busy = true;
     busySince = Date.now();
-  });
-  const settle = (): void => {
+  };
+  pi.on("agent_start", markBusy);
+  // A turn cannot start outside a run, so this only ever re-affirms `busy`.
+  // Kept as a belt: if `agent_start` is ever missed, the flag is still set.
+  pi.on("turn_start", markBusy);
+  // `agent_settled` is the ONLY clear. `turn_end` must not clear it (that was
+  // the #5362 bug) and neither may `agent_end`: pi emits `agent_settled`
+  // strictly later, once retries/compaction/queued continuations are done, and
+  // that is the first moment a send cannot be refused. If it somehow never
+  // fires, BUSY_MAX_HOLD_MS overrides per delivery — the bridge degrades to
+  // delivering, never to holding forever.
+  pi.on("agent_settled", () => {
     busy = false;
     // The moment the session can accept a turn again is the moment deferred
     // wakes should go in — event-driven, with the retry timer as backstop.
     void drain();
-  };
-  pi.on("turn_end", settle);
-  // VERIFY-ON-PIN: "agent_settled" semantics (findings §5) — treated as a
-  // second settle signal; harmless if it duplicates turn_end.
-  pi.on("agent_settled", settle);
+  });
 };
 
 export default activate;
