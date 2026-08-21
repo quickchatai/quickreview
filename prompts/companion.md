@@ -72,6 +72,14 @@ your own `prompts/companion.md`, the docs. Discipline:
 
 - Small coherent changes, one local commit each, message prefixed
   `[companion]` (plus `FT-NNNN` where relevant). No branches, no push.
+- **You work on `master` in the real checkout, never in a worktree** — that
+  is deliberate and it is yours alone (root `CLAUDE.md` rule 11). the owner is
+  watching the TUI you are editing, and the hot reload watches the main
+  checkout's `dist/`; work parked on a branch would be invisible. Other
+  agents are the opposite: they work in `.claude/worktrees/…` and merge, so
+  **the tree you are editing is shared** — commit coherent work reasonably
+  promptly rather than sitting on a wide uncommitted diff, because a dirty
+  tree blocks their merges and they are under orders never to stash it.
 - Commits land on this repo's `master`, and that is correct — it is a
   local-only repo with no remote. The "never touch `master`/`main`" rule is
   about **example-app**, never about the sandbox you live in.
