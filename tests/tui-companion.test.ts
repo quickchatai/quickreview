@@ -152,9 +152,7 @@ describe("CompanionLifecycle argv", () => {
       // folder?" modal either. This is the same flag sessions.ts passes, and
       // its absence here is why the companion prompted on every start.
       "--approve",
-      // the wake extension ships with the mounted repo.
-      "--extension",
-      `${CONTAINER.workspace}/extensions/companion-wake.ts`,
+      // Ambient feed changes stay in /feed and never become synthetic turns.
       "--extension",
       `${CONTAINER.workspace}/extensions/muted-theme.ts`,
       "--theme",

@@ -2,7 +2,7 @@
 // I/O is a temp dir per test; nothing spawns docker, notify-send, ssh or pi.
 import { FG } from "../src/tui/theme.js";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -22,10 +22,9 @@ import {
 import { alertSegment, alertZone, topBar, renderBoard, type BoardView } from "../src/tui/board.js";
 import { CompanionLifecycle, type DockerRunner } from "../src/tui/companion.js";
 import { installCompanionTabHooks } from "../src/tui/companiontab.js";
-import { FeedWriter, eventKey, type FeedEvent } from "../src/tui/feed.js";
+import { EVENT_TAIL_CAP, FeedWriter, eventKey, type FeedEvent } from "../src/tui/feed.js";
 import { stripAnsi } from "../src/tui/paint.js";
 import { CompanionSidebar } from "../src/tui/sidebar.js";
-import { WAKE_THROTTLE_MS, parseWake, resolveFeedDir, shouldWake, wakeMessage } from "../extensions/companion-wake.js";
 
 let dir = "";
 
@@ -80,67 +79,26 @@ describe("FeedWriter", () => {
     expect(readFileSync(restarted.eventsPath, "utf8").trim().split("\n")).toHaveLength(1);
   });
 
-  it("wakes on the first write, then only on meaningful change", () => {
+  it("stores state changes and events without ever creating a chat wake", () => {
     const w = new FeedWriter(dir);
-    expect(w.write(snap(), [], "ok").meaningful).toBe(true);
-    rmSync(w.wakePath);
-
-    // A pure timestamp/heartbeat tick is not news.
-    const tick = w.write(snap({ written_at: "2026-08-14T10:00:30Z", heartbeat: "2026-08-14T10:00:30Z", total_spend_usd: 2 }), [], "ok");
-    expect(tick.meaningful).toBe(false);
-    expect(existsSync(w.wakePath)).toBe(false);
-
-    // A state transition is.
-    const moved = w.write(
-      snap({ prs: [{ number: 5012, state: "awaiting_author", title: "t", head_sha: "abc", stale_recheck: false, rounds: 1, last_verdict: "REQUEST_CHANGES" }] }),
-      [],
-      "ok",
-    );
-    expect(moved.meaningful).toBe(true);
-    expect(moved.gist).toContain("#5012 reviewing→awaiting_author");
-    expect(JSON.parse(readFileSync(w.wakePath, "utf8")).gist).toContain("#5012");
-  });
-
-  it("wakes on new events and on a health flip", () => {
-    const w = new FeedWriter(dir);
+    // Remove a marker left by the retired implementation; start() must clean it.
+    writeFileSync(join(dir, "wake"), "legacy");
     w.write(snap(), [], "ok");
-    const withEvent = w.write(snap(), [ev("2026-08-14T10:01:00Z")], "ok");
-    expect(withEvent.meaningful).toBe(true);
-    expect(withEvent.gist).toContain("1 new event");
-    const flip = w.write(snap(), [ev("2026-08-14T10:01:00Z")], "stale");
-    expect(flip.meaningful).toBe(true);
-    expect(flip.gist).toContain("daemon ok→stale");
+    w.write(
+      snap({ prs: [{ number: 5012, state: "awaiting_author", title: "t", head_sha: "abc", stale_recheck: false, rounds: 1, last_verdict: "REQUEST_CHANGES" }] }),
+      [ev("2026-08-14T10:01:00Z")],
+      "stale",
+    );
+    expect(readdirSync(dir)).not.toContain("wake");
+    expect(readFileSync(w.eventsPath, "utf8")).toContain("2026-08-14T10:01:00Z");
   });
-});
 
-// ---- companion-side wake extension (pure parts; pi itself is never loaded) --
-
-describe("companion-wake extension", () => {
-  it("reads the marker written by FeedWriter and phrases a one-line wake", () => {
+  it("bounds an old event journal as short-term state", () => {
+    const lines = Array.from({ length: EVENT_TAIL_CAP + 1 }, (_, i) => JSON.stringify(ev(`2026-08-14T10:${String(i).padStart(6, "0")}Z`)));
+    writeFileSync(join(dir, "events.jsonl"), lines.join("\n") + "\n");
     const w = new FeedWriter(dir);
-    const res = w.write(snap(), [ev("2026-08-14T10:00:00Z")], "ok");
-    const parsed = parseWake(readFileSync(w.wakePath, "utf8"));
-    expect(parsed.gist).toBe(res.gist);
-    expect(wakeMessage(parsed.gist)).toBe(`feed updated: ${res.gist}`);
-  });
-
-  it("degrades a torn/garbled marker to a wake without a gist", () => {
-    expect(parseWake("{half-writ").gist).toBe("");
-    expect(wakeMessage("")).toBe("feed updated: board changed");
-  });
-
-  it("never wakes twice on the same marker, and never faster than the throttle", () => {
-    const t0 = 1_000_000;
-    expect(shouldWake(t0, 0, "m1", "")).toBe(true); // first wake of a session
-    expect(shouldWake(t0 + 1_000, t0, "m1", "m1")).toBe(false); // same marker re-notified
-    expect(shouldWake(t0 + 1_000, t0, "m2", "m1")).toBe(false); // new marker, throttled
-    expect(shouldWake(t0 + WAKE_THROTTLE_MS, t0, "m2", "m1")).toBe(true);
-    expect(WAKE_THROTTLE_MS).toBe(60_000);
-  });
-
-  it("takes the feed dir from the container env, defaulting to /feed", () => {
-    expect(resolveFeedDir({ QCR_FEED_DIR: "/feed-x" })).toBe("/feed-x");
-    expect(resolveFeedDir({})).toBe("/feed");
+    w.start();
+    expect(readFileSync(w.eventsPath, "utf8").trim().split("\n")).toHaveLength(EVENT_TAIL_CAP / 2);
   });
 });
 

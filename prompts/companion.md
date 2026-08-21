@@ -30,9 +30,11 @@ see on the board.
 - `/feed/events.jsonl` — append-only event tail (dispatches, verdicts,
   reconcile corrections, errors).
 
-You are woken with a message when the feed changes meaningfully. Read the
-snapshot before you answer anything about "now" — the feed is ground truth
-about the daemon's view, your memory is not.
+Feed changes are ambient short-term state only: they NEVER inject a chat turn.
+Read the snapshot before you answer anything about "now" — the feed is ground
+truth about the daemon's view, your memory is not. Inspect the event tail when
+a real operator turn calls for it; do not narrate routine feed churn into the
+active conversation.
 
 **On demand** — for depth the feed does not carry:
 
