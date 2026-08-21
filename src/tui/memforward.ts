@@ -213,7 +213,14 @@ export class MemoryForward {
         // that never got an address, and leaking them across a retry is worse
         // than a no-op close.
         handle.close();
-        return this.settle("failed", `could not bind ${cfg.binds.join(", ")}:${cfg.port} — is something else on the port?`);
+        // The port being taken usually means a forward appeared BETWEEN our
+        // probe and our bind — the hot-reload handover is exactly that window.
+        // Re-probe before calling it a failure, so the race heals itself
+        // instead of leaving memory dead until someone presses `r`.
+        if (await this.deps.probe(this.deps.baseUrl, this.deps.probeTimeoutMs)) {
+          return this.settle("adopted", "another forward claimed the port first — adopted, left alone on quit");
+        }
+        return this.settle("failed", `could not bind ${cfg.binds.join(", ")}:${cfg.port} — something else holds the port and is not answering`);
       }
       this.handle = handle;
       return this.settle("owned", this.ownedDetail(bound, cfg.binds.length));

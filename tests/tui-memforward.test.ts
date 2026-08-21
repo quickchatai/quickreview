@@ -87,8 +87,9 @@ describe("MemoryForward", () => {
     expect(f.closed()).toBe(1);
   });
 
-  it("reports failure, not a crash, when every bind fails", async () => {
-    const { fwd, f } = build([false], fakeModule({ bound: 0 }));
+  it("reports failure, not a crash, when every bind fails and nothing answers", async () => {
+    // probe: false (nothing there) -> bind fails -> re-probe: still false.
+    const { fwd, f } = build([false, false], fakeModule({ bound: 0 }));
     const st = await fwd.ensure();
     expect(st.state).toBe("failed");
     expect(st.detail).toMatch(/could not bind/);
@@ -96,6 +97,19 @@ describe("MemoryForward", () => {
     // The handle is released even though it never served: leaking half-bound
     // servers across a retry is worse than a no-op close.
     expect(f.closed()).toBe(1);
+  });
+
+  it("adopts instead of failing when the port was claimed between probe and bind", async () => {
+    // The hot-reload handover is exactly this window: our probe saw nothing,
+    // the outgoing TUI's replacement bound first, our bind lost. Re-probing
+    // heals it; without that, memory stays dead until someone presses `r`.
+    const { fwd, f } = build([false, true], fakeModule({ bound: 0 }));
+    const st = await fwd.ensure();
+    expect(st.state).toBe("adopted");
+    expect(fwd.up).toBe(true);
+    // Adopted means not ours: stop() must leave the winner running.
+    fwd.stop();
+    expect(f.closed()).toBe(1); // only the half-bound handle we already released
   });
 
   it("reports failure when the forwarder throws instead of listening", async () => {
@@ -181,5 +195,24 @@ describe("the real forward script satisfies the ForwardModule contract", () => {
     expect(typeof handle.listen).toBe("function");
     expect(typeof handle.close).toBe("function");
     handle.close();
+  });
+});
+
+describe("the hot-reload handover releases the port before spawning the new build", () => {
+  // `realReexec` runs its teardown and then spawnSync's the new TUI in the
+  // SAME synchronous frame. `app.quit()` only resolves a promise, so the
+  // cleanup after `await running` is a microtask that cannot run until
+  // spawnSync returns — i.e. not until the child exits. If the forward is
+  // stopped only there, the outgoing process sits inside spawnSync holding
+  // :1933 with a frozen event loop and the incoming TUI can never bind.
+  it("stops the forward inside the reexec teardown, not only in the quit path", async () => {
+    const { readFileSync } = await import("node:fs");
+    const index = readFileSync("src/tui/index.ts", "utf8");
+    const teardown = /realReexec\(file, \(\) => \{([\s\S]*?)\}\)/.exec(index)?.[1] ?? "";
+    expect(teardown, "reexec teardown must exist as a block").not.toBe("");
+    expect(teardown).toContain("memForward.stop()");
+    expect(teardown).toContain("app.quit()");
+    // Order matters: release the port, then let the run loop finish.
+    expect(teardown.indexOf("memForward.stop()")).toBeLessThan(teardown.indexOf("app.quit()"));
   });
 });

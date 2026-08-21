@@ -578,7 +578,19 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
           detailFull: app.view.detailFull,
           saved_at: "",
         }),
-        reexec: (file) => realReexec(file, () => app.quit()),
+        // The forward MUST be released here, not in the cleanup after
+        // `await running`. `realReexec` calls this teardown and then
+        // spawnSync's the new build synchronously — `app.quit()` merely
+        // resolves a promise, so that cleanup is a microtask which cannot run
+        // until spawnSync returns, i.e. not until the child has exited. Left
+        // to it, the old process would sit inside spawnSync holding :1933
+        // with a FROZEN event loop: the new TUI finds the port taken, cannot
+        // bind, and memory is dead for the rest of the session.
+        reexec: (file) =>
+          realReexec(file, () => {
+            memForward.stop();
+            app.quit();
+          }),
       })
     : undefined;
   reloader?.start();
