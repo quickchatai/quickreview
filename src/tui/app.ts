@@ -12,7 +12,7 @@ import { visiblePrs } from "./filters.js";
 import { formatEvent, moveSelection, reselect, type EventLine } from "./model.js";
 import { TripleCtrlC } from "./chord.js";
 import { MOUSE_OFF, MOUSE_ON, extractMouseEvents, hitTest, type MouseEvent, type Zone } from "./mouse.js";
-import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR, Frame, composeColumn, fit, spliceDisplay, stripAnsi } from "./paint.js";
+import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR, Frame, composeColumn, fit, sliceDisplay, spliceDisplay } from "./paint.js";
 import { RESET, SELECTION } from "./design.js";
 import { ClipboardSink } from "./clipboard.js";
 import { PANE_ESCAPE, PiMirror, keysToTmux } from "./pipane.js";
@@ -1140,10 +1140,10 @@ export class App {
     for (let y = sel.y1; y <= sel.y2; y++) {
       const line = frame.lines[y - 1];
       if (line === undefined) continue;
-      // Frame rows are full of SGR runs; slice the PLAIN text by display cell
-      // so the copied string carries no escapes and no half-sequences.
-      const plain = stripAnsi(line);
-      rows.push(plain.slice(sel.x1 - 1, sel.x2).replace(/\s+$/, ""));
+      // BY DISPLAY CELL, not code unit: what is copied must be what was
+      // highlighted, and a single wide glyph earlier in the row would put
+      // those two out of step.
+      rows.push(sliceDisplay(line, sel.x1 - 1, sel.x2).replace(/\s+$/, ""));
     }
     while (rows.length > 0 && rows[rows.length - 1] === "") rows.pop();
     return rows.join("\n");
@@ -1180,7 +1180,7 @@ export class App {
       if (line === undefined) continue;
       const x1 = Math.max(1, Math.min(sel.x1, cols));
       const x2 = Math.max(1, Math.min(sel.x2, cols));
-      const span = stripAnsi(line).slice(x1 - 1, x2);
+      const span = sliceDisplay(line, x1 - 1, x2);
       if (span.length === 0) continue;
       frame.set(y - 1, spliceDisplay(line, x1 - 1, `${SELECTION}${span}${RESET}`));
     }

@@ -2,7 +2,7 @@
 // the right edge of any tab's frame. Row-width discipline is the whole point —
 // a ragged row shreds the border and rehomes the cursor.
 import { describe, expect, it } from "vitest";
-import { composeColumn, displayWidth, fit, Frame, SGR, spliceDisplay, stripAnsi } from "../src/tui/paint.js";
+import { composeColumn, displayWidth, fit, Frame, SGR, sliceDisplay, spliceDisplay, stripAnsi } from "../src/tui/paint.js";
 
 const COLS = 20;
 const ROWS = 4;
@@ -168,5 +168,67 @@ describe("spliceDisplay", () => {
 
   it("pads when the overlay starts past the end of the line", () => {
     expect(stripAnsi(spliceDisplay("ab", 5, "X"))).toBe("ab   X");
+  });
+});
+
+describe("width safety under selection", () => {
+  // The 2026-08-21 screenshot: dragging a selection shredded the layout. Row
+  // width was the cause — a row wider than the frame WRAPS, and every row
+  // below it shifts. These walk every boundary rather than sampling, because
+  // the break only happened where an edge landed inside a wide glyph.
+  const LINES = [
+    "| ab日本語 cd efgh |",
+    `| ${SGR.red}styled${SGR.reset} 日本 tail |`,
+    "| plain ascii only, nothing exotic |",
+    "|日本語日本語|",
+  ];
+
+  it("spliceDisplay never changes a row's width, at ANY offset or length", () => {
+    for (const line of LINES) {
+      const base = displayWidth(line);
+      for (let at = 0; at <= base; at++) {
+        for (const len of [1, 2, 3, 5, 8, 13]) {
+          const to = Math.min(base, at + len);
+          if (to <= at) continue;
+          const span = sliceDisplay(line, at, to);
+          const out = spliceDisplay(line, at, `${SGR.inverse}${span}${SGR.reset}`);
+          expect(displayWidth(out), `at=${at} to=${to} on ${JSON.stringify(line)}`).toBe(base);
+        }
+      }
+    }
+  });
+
+  it("sliceDisplay returns exactly the cells asked for, wide glyphs included", () => {
+    for (const line of LINES) {
+      const base = displayWidth(line);
+      for (let from = 0; from < base; from++) {
+        for (const len of [1, 2, 4, 7]) {
+          const to = Math.min(base, from + len);
+          expect(displayWidth(sliceDisplay(line, from, to)), `${from}..${to}`).toBe(to - from);
+        }
+      }
+    }
+  });
+
+  it("indexes by COLUMN, not code unit — the wrong-text bug", () => {
+    // "日本語" is 3 characters but 6 columns. Asking for columns 8..12 must
+    // return what is painted there, not the 8th..12th characters.
+    // "|"=col0, " "=col1, 日本語=cols2..7 (three chars, six columns),
+    // " "=col8, then "abcdef" from col9.
+    const line = "| 日本語 abcdef |";
+    expect(sliceDisplay(line, 9, 13)).toBe("abcd");
+    // The old code-unit slice lands four characters early — that is exactly
+    // how the highlight ended up over text the operator never pointed at.
+    expect(stripAnsi(line).slice(9, 13)).not.toBe("abcd");
+  });
+
+  it("splits a straddling wide glyph into spaces on both sides", () => {
+    // Half a glyph cannot be painted, so the visible half becomes a space —
+    // what terminals do with their own selections. Anything else changes the
+    // cell count.
+    const line = "ab日cd";
+    const out = spliceDisplay(line, 3, `${SGR.inverse}X${SGR.reset}`); // cuts 日 in half
+    expect(displayWidth(out)).toBe(displayWidth(line));
+    expect(stripAnsi(out)).toBe("ab Xcd"); // left sliver becomes a space
   });
 });

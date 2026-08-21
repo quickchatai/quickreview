@@ -243,6 +243,28 @@ export function composeColumn(inner: Frame, column: string[], width: number, joi
  *
  * The result has the same display width as `line` when the overlay fits.
  */
+/**
+ * The PLAIN text occupying display columns `[from, to)` of `line`.
+ *
+ * Not `stripAnsi(line).slice(from, to)`: that indexes by code unit, and one
+ * double-width character makes every later index disagree with the column the
+ * operator actually pointed at — you highlight, and copy, text from somewhere
+ * else on the row. A straddling glyph becomes spaces for the cells that fall
+ * inside the range, so the result is always exactly `to - from` cells wide
+ * (or shorter, when the row ends first).
+ */
+export function sliceDisplay(line: string, from: number, to: number): string {
+  let out = "";
+  let col = 0;
+  for (const ch of stripAnsi(line)) {
+    const w = charWidth(ch.codePointAt(0) ?? 0);
+    if (col >= to) break;
+    if (col + w > from) out += col < from || col + w > to ? " ".repeat(Math.min(to, col + w) - Math.max(from, col)) : ch;
+    col += w;
+  }
+  return out;
+}
+
 export function spliceDisplay(line: string, at: number, overlay: string): string {
   const width = displayWidth(overlay);
   const end = at + width;
@@ -256,10 +278,21 @@ export function spliceDisplay(line: string, at: number, overlay: string): string
   let i = 0;
   let placed = false;
   let restored = false;
+  /** Cells of a wide character left visible on the far side of the span. */
+  let tailSliver = 0;
   const place = (): void => {
     if (placed) return;
     out += `${ESC}0m${overlay}`;
     placed = true;
+  };
+  const restore = (): void => {
+    if (restored) return;
+    if (tailSliver > 0) {
+      out += " ".repeat(tailSliver);
+      tailSliver = 0;
+    }
+    out += sgrSoFar;
+    restored = true;
   };
   while (i < line.length) {
     const seq = /^\x1b\[[0-9;:?]*[A-Za-z]/.exec(line.slice(i))?.[0];
@@ -271,12 +304,22 @@ export function spliceDisplay(line: string, at: number, overlay: string): string
     }
     const ch = String.fromCodePoint(line.codePointAt(i)!);
     const w = displayWidth(ch);
-    if (col >= at && !placed) place();
-    if (col >= end && !restored) {
-      out += sgrSoFar;
-      restored = true;
+    // A DOUBLE-WIDTH character can straddle either edge of the span: half of
+    // it covered, half still visible. Emitting the whole glyph would make the
+    // row one cell wider than it was — and a row wider than the frame WRAPS,
+    // which pushes every row below it sideways and shreds the layout (the
+    // 2026-08-21 screenshot). Replace each straddling glyph with spaces for
+    // exactly the cells that remain visible, which is what terminals do with
+    // their own selections.
+    const overlaps = col < end && col + w > at;
+    if (overlaps) {
+      if (col < at) out += " ".repeat(at - col); // left sliver stays visible
+      place();
+      if (col + w > end) tailSliver += col + w - end; // right sliver, after the span
+    } else {
+      if (col >= end) restore();
+      out += ch;
     }
-    if (col < at || col >= end) out += ch;
     col += w;
     i += ch.length;
   }
@@ -284,7 +327,7 @@ export function spliceDisplay(line: string, at: number, overlay: string): string
     out += " ".repeat(Math.max(0, at - col));
     place();
   }
-  if (!restored) out += sgrSoFar;
+  restore();
   return out;
 }
 
