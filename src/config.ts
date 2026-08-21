@@ -409,12 +409,19 @@ export interface MemoryConfig {
   /** Minimum minutes between degraded-memory overseer anomalies. The gap is
    * logged every round regardless; only the alert is cooled down. */
   alert_cooldown_min: number;
+  /** Which OpenViking scopes the round's context search may draw from, and how
+   * many items each may contribute. Keys must be server quota buckets;
+   * `src/openviking/client.ts` drops unknown ones with a gap. An EMPTY map
+   * means "no quotas" — the server's own balance across every scope it has,
+   * which is not what a review round wants (see the comment in config.toml). */
+  context_quotas: Record<string, number>;
 }
 
 export const MEMORY_DEFAULTS: MemoryConfig = {
   context_tokens: 2000,
   context_timeout_ms: 3000,
   alert_cooldown_min: 60,
+  context_quotas: { experiences: 24, resources: 8 },
 };
 
 export const OPENVIKING_DEFAULTS: OpenVikingConfig = {

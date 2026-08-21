@@ -542,6 +542,11 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       memoryAssembler = openVikingContextAssembler({
         client: memoryClient,
         store: memory,
+        // WITHOUT quotas the server balances the block across every scope it
+        // holds and a round gets ~one memory entry beside two built-in scope
+        // blurbs (measured 2026-08-21). The quotas name the corpus;
+        // `context_tokens` stays the budget. See [memory] in config.toml.
+        quotas: cfg.memory.context_quotas,
         searchTimeoutMs: cfg.openviking.search_timeout_ms,
         log,
       });
