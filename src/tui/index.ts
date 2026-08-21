@@ -413,6 +413,17 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
   const policyStatePath = join(companionStateDir, "alert-policy.json");
   const startCompanion = async (): Promise<void> => {
     try {
+      // BEFORE the container, never after: the companion's pi extension picks
+      // the user namespace it writes into by listing `viking://user/`, and
+      // caches that choice for the life of the process. A namespace whose
+      // directory does not exist yet is invisible to it, so it falls back to
+      // `user/default` and every write is refused — the whole of 2026-08-21,
+      // reported only as "access denied". Needs the forward up, so await it
+      // rather than riding the eager `ensure()` above.
+      const fwd = await memForward.ensure();
+      if (fwd.state === "adopted" || fwd.state === "owned") {
+        for (const note of await memStore.ensureNamespaces()) app.notice(`memory: ${note}`);
+      }
       await companion.ensureUp((line) => app.notice(`companion: ${line}`));
       // daily rollover — strictly between "container is up" and
       // "pi is spawned": on the first start of a new Warsaw day it archives

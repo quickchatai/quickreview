@@ -62,6 +62,9 @@ function err(status: number, code: string, message: string): Promise<HttpRespons
 class FakeOpenViking {
   files = new Map<string, string>();
   tags = new Map<string, string[]>();
+  /** Directories created through `fs/mkdir` — a namespace root can exist and
+   * hold nothing, which is exactly what `ensureNamespaces` produces. */
+  dirs = new Set<string>();
   /** Users whose requests should fail as if the server were unreachable. */
   down = new Set<string>();
 
@@ -91,6 +94,13 @@ class FakeOpenViking {
       return content === undefined ? err(404, "NOT_FOUND", "no such file") : json(200, { status: "ok", result: content });
     }
     if (path === "/api/v1/content/batch-write") return this.batchWrite(body as BatchBody);
+    if (path === "/api/v1/fs/mkdir") {
+      // 0.4.15 is NOT idempotent here — an existing directory 409s.
+      const target = String((body as { uri: unknown }).uri).replace(/\/+$/, "");
+      if (this.dirs.has(target)) return err(409, "CONFLICT", `already exists: ${target}`);
+      this.dirs.add(target);
+      return json(200, { status: "ok", result: { uri: target } });
+    }
     if (path === "/api/v1/fs/attrs/set_tags") {
       const req = body as { uri: string; tags: string[] };
       this.tags.set(req.uri, req.tags);
@@ -325,6 +335,52 @@ describe("TuiMemoryStore — unreachable is not empty", () => {
     expect(res.ok).toBe(false);
     expect(res.message).toMatch(/memory write failed/);
     expect(store.health().ok).toBe(false);
+  });
+});
+
+// follow-up, 2026-08-21 — the companion wrote nothing for a day
+// because `viking://user/companion` did not exist as a DIRECTORY, so the pi
+// extension's namespace resolver could not see the namespace and fell back to
+// `user/default`. The TUI is where this gets fixed: it is the one surface
+// holding both user keys, and it starts the companion container itself.
+describe("TuiMemoryStore — materializing both namespaces", () => {
+  let server: FakeOpenViking;
+  beforeEach(() => {
+    server = new FakeOpenViking();
+  });
+
+  it("creates the memory root for EVERY namespace, not just the one it writes to", async () => {
+    const store = wire(server);
+    expect(await store.ensureNamespaces()).toEqual([]);
+    // The companion's is the one that was missing in the live incident; the
+    // reviewer's has to be covered too, or a fresh server strands the daemon.
+    for (const user of MEMORY_USERS) {
+      expect(server.dirs.has(`${rootOf(user)}/experiences`)).toBe(true);
+    }
+  });
+
+  it("is safe to call again — an existing root is not an error", async () => {
+    const store = wire(server);
+    await store.ensureNamespaces();
+    expect(await wire(server).ensureNamespaces()).toEqual([]);
+  });
+
+  it("names the namespace it could not prepare, and never throws", async () => {
+    const server2 = new FakeOpenViking();
+    server2.down.add("companion");
+    const notes = await wire(server2).ensureNamespaces();
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toMatch(/^companion: /);
+    // The reviewer half still got done — one dead namespace is not both.
+    expect(server2.dirs.has(`${rootOf("reviewer")}/experiences`)).toBe(true);
+  });
+
+  it("reports the namespace whose key is missing rather than silently skipping it", async () => {
+    // No companion key: the server refuses, and the operator must be told
+    // which namespace is unprepared — this is the state the machine was in.
+    const store = wire(server, { OPENVIKING_REVIEWER_KEY: KEYS.reviewer });
+    const notes = await store.ensureNamespaces();
+    expect(notes.join(" ")).toMatch(/companion/);
   });
 });
 

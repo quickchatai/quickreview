@@ -198,6 +198,30 @@ describe("the real forward script satisfies the ForwardModule contract", () => {
   });
 });
 
+describe("the companion's namespace is materialized before the container starts", () => {
+  // Ordering is the whole fix. The companion's pi extension resolves which
+  // user namespace to write into ONCE and caches it; a namespace whose
+  // directory appears afterwards is not picked up until the process restarts.
+  // So `ensureNamespaces()` must run before `companion.ensureUp`, and it needs
+  // the forward, so the eager `void memForward.ensure()` at boot is not enough
+  // to lean on — it has to be awaited here.
+  it("awaits the forward, then ensureNamespaces, then ensureUp", async () => {
+    const { readFileSync } = await import("node:fs");
+    const index = readFileSync("src/tui/index.ts", "utf8");
+    const start = index.indexOf("const startCompanion");
+    expect(start, "startCompanion must exist").toBeGreaterThan(-1);
+    const body = index.slice(start, start + 2500);
+    const fwd = body.indexOf("await memForward.ensure()");
+    const ensure = body.indexOf("ensureNamespaces()");
+    const up = body.indexOf("companion.ensureUp");
+    expect(fwd, "must await the forward inside startCompanion").toBeGreaterThan(-1);
+    expect(ensure, "must materialize the namespaces").toBeGreaterThan(-1);
+    expect(up, "must start the container").toBeGreaterThan(-1);
+    expect(fwd).toBeLessThan(ensure);
+    expect(ensure).toBeLessThan(up);
+  });
+});
+
 describe("the hot-reload handover releases the port before spawning the new build", () => {
   // `realReexec` runs its teardown and then spawnSync's the new TUI in the
   // SAME synchronous frame. `app.quit()` only resolves a promise, so the

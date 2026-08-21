@@ -59,6 +59,11 @@ class FakeOpenViking {
    * the "another writer got there between our read and our write" race. */
   raceNextWrite = false;
 
+  /** Directories created explicitly through `fs/mkdir`. Separate from `files`
+   * because a namespace's root can exist while holding nothing — which is
+   * exactly the state `ensureWritable` produces and the companion needs. */
+  dirs = new Set<string>();
+
   readonly fetch: HttpFetch = async (url, init) => {
     const u = new URL(url);
     const path = u.pathname;
@@ -69,6 +74,7 @@ class FakeOpenViking {
     if (path === "/api/v1/content/batch-write") return this.batchWrite(body as BatchBody);
     if (path === "/api/v1/content/read") return this.read(u.searchParams.get("uri") ?? "");
     if (path === "/api/v1/fs/ls") return this.ls(u.searchParams.get("uri") ?? "");
+    if (path === "/api/v1/fs/mkdir") return this.mkdir(body as { uri: string; parents?: boolean });
     if (path === "/api/v1/fs" && init.method === "DELETE") {
       this.files.delete(u.searchParams.get("uri") ?? "");
       return json(200, { status: "ok", result: {} });
@@ -121,6 +127,19 @@ class FakeOpenViking {
     return json(200, { status: "ok", result: { root_uri: req.root_uri, created, updated, unchanged: [] } });
   }
 
+  /** `fs/mkdir` as 0.4.15 really behaves: NOT idempotent — an existing
+   * directory comes back 409 CONFLICT, verified live 2026-08-21. That is the
+   * whole reason `client.mkdir` counts a conflict as success, so the fake has
+   * to reproduce it or the test would pin the opposite of the server. */
+  private mkdir(req: { uri: string; parents?: boolean }): Promise<HttpResponseLike> {
+    const uri = req.uri.replace(/\/+$/, "");
+    if (this.dirs.has(uri)) {
+      return json(409, { status: "error", result: null, error: { code: "CONFLICT", message: `already exists: ${uri}` } });
+    }
+    this.dirs.add(uri);
+    return json(200, { status: "ok", result: { uri } });
+  }
+
   private read(uri: string): Promise<HttpResponseLike> {
     const content = this.files.get(uri);
     if (content === undefined) return json(404, { status: "error", result: null, error: { code: "NOT_FOUND", message: uri } });
@@ -137,6 +156,14 @@ class FakeOpenViking {
       const cut = rest.indexOf("/");
       if (cut < 0) rows.push({ uri: key, name: rest, isDir: false, size: 1, modTime: "2026-08-20T15:30:00.000Z" });
       else dirs.add(rest.slice(0, cut));
+    }
+    // A directory made by `fs/mkdir` and still empty is listed too — the whole
+    // point of `ensureWritable` is that an empty-but-present namespace is
+    // VISIBLE to a writer that discovers namespaces by listing.
+    for (const dir of this.dirs) {
+      if (!dir.startsWith(prefix)) continue;
+      const rest = dir.slice(prefix.length);
+      if (rest !== "" && !rest.includes("/")) dirs.add(rest);
     }
     for (const dir of dirs) rows.push({ uri: `${prefix}${dir}`, name: dir, isDir: true, size: 0, modTime: "2026-08-20T15:30:00.000Z" });
     return json(200, { status: "ok", result: rows });
@@ -177,6 +204,79 @@ function wire(server: FakeOpenViking, log: string[] = []): { client: OpenVikingC
   const assembler = new OpenVikingContextAssembler({ client, store, log: (m) => log.push(m) });
   return { client, store, assembler, log };
 }
+
+// ---- namespace materialization ----------------------------------------------
+
+// follow-up, 2026-08-21. The companion could not write a single memory
+// for a day. Cause: its pi extension picks WHICH user namespace to write into
+// by listing `viking://user/` and choosing a directory that exists
+// (`resolveScopeSpace` in the vendored fork). Nothing had ever written to
+// `user/companion`, so the directory did not exist, so the resolver could not
+// see the namespace at all and silently fell back to `user/default` — whose
+// `memories/` tree does not exist either. Every write refused; the surfaced
+// error said "access denied" and named neither fact.
+//
+// `create()`'s existing self-heal does not cover this: it fires on a write
+// through THIS class, and the companion does not write through this class.
+describe("ensureWritable materializes the namespace before anyone writes", () => {
+  let server: FakeOpenViking;
+  beforeEach(() => {
+    server = new FakeOpenViking();
+  });
+
+  it("creates the category root, and makes the namespace visible to a lister", async () => {
+    const { store, client } = wire(server);
+    // Precondition: this is what the companion's resolver saw — nothing.
+    expect((await client.ls("viking://user/reviewer/memories")).result ?? []).toHaveLength(0);
+
+    const res = await store.ensureWritable();
+    expect(res.ok).toBe(true);
+    expect(server.dirs.has(`${ROOT}/experiences`)).toBe(true);
+
+    const listed = (await client.ls("viking://user/reviewer/memories")).result ?? [];
+    expect(listed.map((e) => e.name)).toContain("experiences");
+  });
+
+  it("treats an existing root as success — the server 409s and that is fine", async () => {
+    // `fs/mkdir` is not idempotent on 0.4.15. If a CONFLICT counted as failure,
+    // every start after the first would report the namespace as broken.
+    const { store } = wire(server);
+    expect((await store.ensureWritable()).ok).toBe(true);
+    const fresh = wire(server).store; // a new process, root already there
+    const again = await fresh.ensureWritable();
+    expect(again.ok).toBe(true);
+  });
+
+  it("does not re-request once it has succeeded in this process", async () => {
+    const { store } = wire(server);
+    await store.ensureWritable();
+    const before = server.calls.filter((c) => c.path === "/api/v1/fs/mkdir").length;
+    await store.ensureWritable();
+    expect(server.calls.filter((c) => c.path === "/api/v1/fs/mkdir").length).toBe(before);
+  });
+
+  it("resolves as a refusal when the server is dead — never throws", async () => {
+    const client = new OpenVikingClient({
+      baseUrl: BASE,
+      apiKey: KEY,
+      user: "reviewer",
+      fetchFn: () => Promise.reject(new Error("ECONNREFUSED")),
+    });
+    const store = new OpenVikingStore({ client, now: () => NOW, cacheTtlMs: 0 });
+    const res = await store.ensureWritable();
+    expect(res.ok).toBe(false);
+    expect(res.message).toMatch(/could not create the memory root/);
+  });
+
+  it("still lets the first write self-heal — the eager path is a belt, not a replacement", async () => {
+    // Nobody calls ensureWritable here: a write into a fresh namespace must
+    // keep working on its own, as it did before this change.
+    const { store } = wire(server);
+    const res = await store.apply({ op: "note", text: "self-healed" });
+    expect(res.ok).toBe(true);
+    expect((await store.read()).map((e) => e.text)).toContain("self-healed");
+  });
+});
 
 // ---- the round trip ---------------------------------------------------------
 

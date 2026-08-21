@@ -491,7 +491,11 @@ export class OpenVikingClient {
    */
   async mkdir(uri: string, parents = true): Promise<boolean> {
     const res = await this.request<unknown>("mkdir", "/api/v1/fs/mkdir", { method: "POST", body: { uri, parents } });
-    return res.ok;
+    // `fs/mkdir` is NOT idempotent: an existing directory comes back CONFLICT
+    // ("already exists"), verified live against 0.4.15. Every caller here wants
+    // `mkdir -p` semantics — the directory is there afterwards either way — so
+    // the conflict is a success, not a failure to report upward.
+    return res.ok || res.conflict;
   }
 
   async setTags(uri: string, tags: string[], mode: "append" | "replace" = "replace"): Promise<boolean> {

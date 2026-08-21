@@ -226,6 +226,38 @@ export class OpenVikingStore implements MemoryStore {
   }
 
   /**
+   * Materialize this namespace's category root, before anything writes to it.
+   *
+   * `create()` already self-heals a missing root, and for everything writing
+   * through THIS class that is enough. It is not enough for the companion,
+   * because the companion does not write through this class — it writes
+   * through the vendored pi extension, which chooses WHICH user namespace to
+   * write into by listing `viking://user/` and picking a directory that
+   * exists (`resolveScopeSpace`, extensions/vendor/openviking-pi/client.ts).
+   *
+   * To that resolver a namespace nobody has written to yet is not an empty
+   * namespace — it is an absent one. It silently falls back to `user/default`,
+   * whose `memories/` tree does not exist either, and every write is then
+   * refused. That is exactly what happened on 2026-08-21: the companion had
+   * been unable to write a single memory, and the error it surfaced ("access
+   * denied") named neither the namespace nor the missing directory.
+   *
+   * So the root is created EAGERLY for each namespace, before the companion
+   * container starts and its extension caches that resolution. Idempotent
+   * (`mkdir` treats "already exists" as success) and total, like every other
+   * method here: a dead server is a refusal, never a throw.
+   */
+  async ensureWritable(): Promise<MemoryWriteResult> {
+    const uri = `${this.root}/${this.category}`;
+    if (this.rootEnsured) return { ok: true, message: `${uri} ready` };
+    if (await this.client.mkdir(uri)) {
+      this.rootEnsured = true;
+      return { ok: true, message: `${uri} ready` };
+    }
+    return { ok: false, message: `could not create the memory root ${uri}` };
+  }
+
+  /**
    * Every entry the store holds, oldest first, retirements filtered out.
    *
    * Total by construction: a server that is down yields `[]`, and a single

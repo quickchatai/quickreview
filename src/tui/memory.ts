@@ -337,6 +337,35 @@ export class TuiMemoryStore implements HealthyMemoryStore {
     return out;
   }
 
+  /**
+   * Materialize EVERY namespace this store holds keys for, so each is visible
+   * to a writer that discovers namespaces by listing (the companion's pi
+   * extension does — see `OpenVikingStore.ensureWritable`).
+   *
+   * The TUI is the right caller: it is the one surface holding both user keys,
+   * and it starts the companion container itself, so it can guarantee the
+   * ordering the extension's cached namespace resolution depends on. Returns
+   * operator-facing notes for the namespaces that could NOT be prepared —
+   * never throws, and a failure is degraded memory, never a reason to hold the
+   * companion back.
+   */
+  async ensureNamespaces(): Promise<string[]> {
+    const notes: string[] = [];
+    await Promise.all(
+      this.ns.map(async (n) => {
+        const ensure = n.store.ensureWritable?.bind(n.store);
+        if (ensure === undefined) return;
+        try {
+          const res = await ensure();
+          if (!res.ok) notes.push(`${n.user}: ${res.message}`);
+        } catch (err) {
+          notes.push(`${n.user}: ${errText(err)}`);
+        }
+      }),
+    );
+    return notes;
+  }
+
   async search(query: string, opts?: MemorySearchOptions): Promise<MemoryEntry[]> {
     const hits = (await this.read()).filter((e) => matchesQuery(e, query, opts));
     const limit = opts?.limit;

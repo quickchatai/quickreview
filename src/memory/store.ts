@@ -117,6 +117,18 @@ export interface MemoryStore extends MemorySource {
   search(query: string, opts?: MemorySearchOptions): Promise<MemoryEntry[]>;
   /** Apply one mutation. Resolves with a refusal rather than throwing. */
   apply(op: MemoryOp): Promise<MemoryWriteResult>;
+  /**
+   * Make this store ready to be written into, before anything writes.
+   *
+   * OPTIONAL, and most implementations should omit it: a store that is always
+   * writable has nothing to do here. It exists for engines where a namespace
+   * has to be MATERIALIZED before it is addressable — see the OpenViking
+   * implementation, where a namespace nobody has written to yet is not merely
+   * empty but invisible, and a second writer silently retargets somewhere else.
+   *
+   * Resolves with a refusal rather than throwing, like `apply`.
+   */
+  ensureWritable?(): Promise<MemoryWriteResult>;
 }
 
 /** Normalize a tag for comparison: leading `#`s dropped, lowercased. */
