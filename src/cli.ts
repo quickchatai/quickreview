@@ -315,8 +315,22 @@ export async function cmdCompanion(sub: string | undefined): Promise<void> {
       );
       return;
     }
+    case "rebuild": {
+      // The image is otherwise built ONLY when it is missing, so an
+      // entrypoint or Dockerfile change never reaches a machine that already
+      // has one — it just keeps starting yesterday's image. This is the
+      // explicit "apply what I changed" path. The pihome volume is untouched,
+      // so OAuth and the conversation survive; only the container and image
+      // are replaced.
+      await lc.removeContainer();
+      await lc.buildImage((line) => console.log(line));
+      const outcome = await lc.ensureUp((line) => console.log(line));
+      const born = await lc.spawnPi();
+      console.log(`companion ${cfg.container_name}: image rebuilt, ${outcome}; pi session ${born ? "spawned" : "already running"}`);
+      return;
+    }
     default:
-      throw new Error("usage: qcr companion <up|down|status>");
+      throw new Error("usage: qcr companion <up|down|status|rebuild>");
   }
 }
 
@@ -401,7 +415,7 @@ export async function main(argv: string[]): Promise<void> {
     default:
       console.log(
         "usage: qcr <status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|tui [pr|overseer]|" +
-          "companion <up|down|status>|backfill [--dry-run] [--limit <n>]|checklist|compare <pr...>>",
+          "companion <up|down|status|rebuild>|backfill [--dry-run] [--limit <n>]|checklist|compare <pr...>>",
       );
       loadConfig(); // surface config errors early even on bad usage
   }

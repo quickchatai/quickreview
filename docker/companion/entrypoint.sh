@@ -72,6 +72,20 @@ if (!Array.isArray(cfg.extensions)) cfg.extensions = [];
 cfg.defaultProjectTrust = "always";
 fs.writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n");
 console.log("pi settings merged (extensions: " + (cfg.extensions.join(", ") || "none registered globally") + ")");
+
+// Braces to that belt (mirrors the VM entrypoint): pre-seed the trust store
+// for the workspace, so even a settings regression — or a pihome volume
+// carrying an older settings.json — cannot re-surface the modal. The third
+// layer is `--approve` on the spawn itself (src/tui/companion.ts piArgv).
+// /workspace, not /opt/quickreview: that is where the repo is mounted here.
+const trustFile = process.env.HOME + "/.pi/agent/trust.json";
+let trust = {};
+try { trust = JSON.parse(fs.readFileSync(trustFile, "utf8")); } catch {}
+if (trust["/workspace"] !== true) {
+  trust["/workspace"] = true;
+  fs.writeFileSync(trustFile, JSON.stringify(trust, null, 2) + "\n");
+}
+console.log("pi project trust: defaultProjectTrust=always, /workspace pre-trusted");
 PI_EXT_MERGE
 
 # OpenAI auth: the OAuth route (`/login` once inside a pi session) persists in

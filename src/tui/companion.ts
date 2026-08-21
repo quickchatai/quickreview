@@ -297,6 +297,13 @@ export class CompanionLifecycle {
     const openviking = this.fs.exists(this.hostVendorExtension()) ? ["--extension", MEMORY.extension] : [];
     return [
       "pi",
+      // --approve: pre-trust project-local .pi resources for this run. Without
+      // it a cwd carrying .pi/ hits pi's interactive "Trust project folder?"
+      // modal and the session stalls forever — the pr-5334 incident, whose
+      // three-layer fix (rule 7 / CLAUDE.md 2026-08-20) was applied to the
+      // reviewer sessions but never to the companion, which has been eating
+      // the modal on every start since. Same flag sessions.ts passes.
+      "--approve",
       ...openviking,
       "--extension",
       // wake channel: fs.watch on /feed/wake → sendUserMessage. The
@@ -415,6 +422,15 @@ export class CompanionLifecycle {
 
   /** Build the companion image from docker/companion (idempotent, cached).
    * Runs with the caller's uid so the host bind mounts stay writable. */
+  /** Remove the container, running or not. Volumes (pihome: OAuth, the
+   * conversation) survive — this replaces the container, never its memory. */
+  async removeContainer(): Promise<void> {
+    const st = await this.status();
+    if (!st.exists) return;
+    const res = await this.docker(["rm", "-f", this.cfg.container_name]);
+    if (!res.ok) throw new Error(`docker rm ${this.cfg.container_name} failed: ${errText(res)}`);
+  }
+
   async buildImage(onProgress?: (line: string) => void): Promise<void> {
     onProgress?.(`building ${this.cfg.image} image (first run — takes a few minutes)…`);
     const uid = typeof process.getuid === "function" ? process.getuid() : 1000;

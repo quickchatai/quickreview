@@ -148,6 +148,10 @@ describe("CompanionLifecycle argv", () => {
     const pi = argv.slice(argv.indexOf("pi"));
     expect(pi).toEqual([
       "pi",
+      // Rule 7 / pr-5334: the companion never blocks on pi's "Trust project
+      // folder?" modal either. This is the same flag sessions.ts passes, and
+      // its absence here is why the companion prompted on every start.
+      "--approve",
       // the wake extension ships with the mounted repo.
       "--extension",
       `${CONTAINER.workspace}/extensions/companion-wake.ts`,
@@ -418,6 +422,21 @@ describe("companion image", () => {
     // The one memory extension a companion pi loads is the vendored, patched
     // fork — passed per spawn from /workspace, never baked in.
     expect(dockerfile).toContain("openviking-pi");
+  });
+
+  // Rule 7: the reviewer never blocks on interactive pi input — and neither
+  // does the companion. All three layers, or the "Trust project folder?" modal
+  // comes back the moment one regresses. The companion shipped with only the
+  // settings layer and prompted on every start until 2026-08-21.
+  it("carries all three trust layers, and pre-trusts /workspace not /opt/quickreview", () => {
+    // ② the settings belt
+    expect(entrypoint).toContain('cfg.defaultProjectTrust = "always"');
+    // ③ the trust-store braces, at the path the repo is ACTUALLY mounted on
+    // here — seeding the VM's path would look right and fix nothing.
+    expect(entrypoint).toContain('trust["/workspace"] = true');
+    expect(entrypoint).not.toContain('trust["/opt/quickreview"]');
+    // ① the spawn flag
+    expect(new CompanionLifecycle(CFG, async () => OK, {}, { exists: () => false, read: () => undefined, mode: () => undefined }).piArgv()).toContain("--approve");
   });
 
   it("registers no memory extension in the entrypoint either", () => {
