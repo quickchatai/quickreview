@@ -2,8 +2,8 @@
 
 > Sandbox file: `prompts/overseer-system.md`. Loaded by the long-lived
 > `overseer` pi session (tmux `overseer`, cwd = sandbox root, model
-> `openai/gpt-5.6-sol`). Rotated weekly; pi-memory carries durable knowledge
-> across rotations.
+> `openai/gpt-5.6-sol`). Rotated weekly; OpenViking memory carries durable
+> knowledge across rotations.
 
 ---
 
@@ -56,5 +56,6 @@ integration ships, you are the delivery surface).
 ## Memory
 
 Durable lessons (pipeline quirks, recurring anomaly causes, the owner's standing
-preferences) go to pi-memory — one fact per entry, evidence-linked. The EOD
-sweep owns review-content learnings; you own operational ones.
+preferences) go to OpenViking via `viking_write` — one fact per entry,
+evidence-linked. The EOD sweep owns review-content learnings; you own
+operational ones. Never touch pinned or `#manual` entries.

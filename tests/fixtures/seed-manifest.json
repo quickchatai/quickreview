@@ -14,7 +14,7 @@
     "agents/pass-validate.md": "95b8a786c4cf5a81bf122fdfaddf628a29d2fbac9b81de6812da138bafc4eb96",
     "prompts/conversation-system.md": "aa23d3c488ed44aa9345827d76c1165b1f54b6aa402bd07e348e7fb681c3d3df",
     "prompts/eod-sweep.md": "02b181145ce4d76f746659e6cd92ab217ff19a372143df5953601f1016ca386e",
-    "prompts/overseer-system.md": "e69e8bc69fd7a5300416c2d3b967a29f1f31ebcd0ae3b1fdc9954b1d11533791",
+    "prompts/overseer-system.md": "061be20ff9ba3cda512c7495d9fbab5c24702bea1958a0911a2a83663f9ab37a",
     "prompts/pass-common.md": "251b224408953ae096366d3b9741ef87bc4dda8310d4cf9664a1bc97f6e10a5a"
   }
 }

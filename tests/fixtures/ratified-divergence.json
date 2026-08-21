@@ -6,7 +6,8 @@
       "2026-08-19 the owner: NEEDS_HUMAN retired — verdict always on the merits + 'For a human to double-check' section"
     ],
     "prompts/overseer-system.md": [
-      "2026-08-18 the owner: reseed removing the retired ESCALATE verdict + mark-escalation-worthy (rule 10 de-escalation)"
+      "2026-08-18 the owner: reseed removing the retired ESCALATE verdict + mark-escalation-worthy (rule 10 de-escalation)",
+      "2026-08-21 the owner: reseed pointing the overseer's memory at OpenViking (viking_write) instead of the retired pi-memory engine; pinned/#manual entries declared off-limits"
     ],
     "prompts/eod-sweep.md": [
       "2026-08-20 the owner: reseed — pinned/#manual/#bug memory discipline for the TUI management surface, and rubric proposals as state/rubric/<slug>/ dirs (PROPOSAL.md + changes.patch; the VM sandbox has no git, the branch instruction was unexecutable)",
