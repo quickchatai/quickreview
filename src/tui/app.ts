@@ -12,7 +12,7 @@ import { visiblePrs } from "./filters.js";
 import { formatEvent, moveSelection, reselect, type EventLine } from "./model.js";
 import { TripleCtrlC } from "./chord.js";
 import { MOUSE_OFF, MOUSE_ON, extractMouseEvents, hitTest, type MouseEvent, type Zone } from "./mouse.js";
-import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR, Frame, composeColumn } from "./paint.js";
+import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR, Frame, composeColumn, fit, spliceDisplay } from "./paint.js";
 import { PANE_ESCAPE, PiMirror, keysToTmux } from "./pipane.js";
 import { Poller } from "./poll.js";
 import { prUrl } from "./theme.js";
@@ -279,11 +279,61 @@ export class App {
     this.out.off("resize", this.onResize);
     if (this.input.isTTY) this.input.setRawMode(false);
     this.input.pause();
-    this.out.write(MOUSE_OFF + ALT_SCREEN_OFF);
+    // MOUSE_OFF, leave the alt screen, THEN clear. The clear lands
+    // on the normal screen and is what makes the exit look clean rather than
+    // dropping the operator back onto whatever the alt screen was hiding; it
+    // also wipes any half-line a crash left behind. Order matters: clearing
+    // before ALT_SCREEN_OFF would clear the screen we are about to discard.
+    this.out.write(MOUSE_OFF + ALT_SCREEN_OFF + CLEAR);
   }
 
   quit(): void {
     this.quitResolve?.();
+  }
+
+  /** Ctrl-C taps, for the two-tap exit (distinct from the three-tap kill). */
+  private ctrlCTaps: number[] = [];
+  private static readonly CTRL_C_EXIT_WINDOW_MS = 2_000;
+
+  /**
+   * Every route to "I want out", in one place.
+   *
+   * `q` asks first — quitting is cheap to redo but the confirmation is what
+   * stops a stray keystroke from dropping a board you were reading. Ctrl-C
+   * confirms by REPETITION instead: the second tap inside the window is the
+   * answer, so the reflex still works without a prompt in the way.
+   */
+  requestQuit(via: "key" | "ctrl-c"): void {
+    if (via === "ctrl-c") {
+      const t = this.now().getTime();
+      this.ctrlCTaps = [...this.ctrlCTaps.filter((x) => t - x <= App.CTRL_C_EXIT_WINDOW_MS), t];
+      if (this.ctrlCTaps.length >= 2) {
+        this.quit();
+        return;
+      }
+      this.notice("press Ctrl-C again to exit");
+      this.repaint();
+      return;
+    }
+    this.view.confirmQuit = true;
+    this.repaint();
+  }
+
+  /** A key while the quit prompt is up. Returns true when it consumed it. */
+  private handleConfirmQuit(buf: Buffer): boolean {
+    if (!this.view.confirmQuit) return false;
+    const raw = buf.toString("utf8");
+    // Only an explicit yes leaves. Anything else — including a second `q`,
+    // which is what a repeated keystroke looks like — cancels, because the
+    // prompt exists to catch exactly that.
+    if (raw === "y" || raw === "Y" || raw === "\r" || raw === "\n") {
+      this.view.confirmQuit = false;
+      this.quit();
+      return true;
+    }
+    this.view.confirmQuit = false;
+    this.repaint();
+    return true;
   }
 
   /** Injectable so tests never kill the runner. */
@@ -496,7 +546,7 @@ export class App {
         break;
       }
       case "quit":
-        this.quit();
+        this.requestQuit(buf.toString("utf8") === "\x03" ? "ctrl-c" : "key");
         return;
       default:
         return;
@@ -667,6 +717,9 @@ export class App {
       this.handleMessageBoxKey(buf);
       return;
     }
+    // The quit prompt outranks every surface, focused sidebar included: it is
+    // modal, and a keystroke meant for it must never reach a pi session.
+    if (this.handleConfirmQuit(buf)) return;
     const key = decodeKey(buf);
 
     if (this.view.help) {
@@ -738,7 +791,7 @@ export class App {
 
     switch (key.kind) {
       case "quit":
-        this.quit();
+        this.requestQuit(buf.toString("utf8") === "\x03" ? "ctrl-c" : "key");
         return;
       case "help":
         this.view.help = true;
@@ -918,7 +971,7 @@ export class App {
         break;
       }
       case "quit":
-        this.quit();
+        this.requestQuit(buf.toString("utf8") === "\x03" ? "ctrl-c" : "key");
         return;
       default:
         return;
@@ -944,6 +997,31 @@ export class App {
   // ---- paint -------------------------------------------------------------
 
   private lastFrame: Frame | undefined;
+
+  /**
+   * The quit prompt, painted over the finished frame.
+   *
+   * Over the COMPOSED frame, not inside a renderer: it must appear on every
+   * tab and over the companion column alike, and no tab should have to know
+   * it exists. Three rows in the middle, so it cannot be mistaken for the
+   * command bar's own `[q quit]` button.
+   */
+  private paintQuitPrompt(frame: Frame, cols: number, rows: number): void {
+    if (!this.view.confirmQuit) return;
+    const text = "  Quit qcr tui?  [y] yes   [any other key] no  ";
+    const w = Math.min(cols - 4, Math.max(text.length + 2, 24));
+    const x = Math.max(0, Math.floor((cols - w) / 2));
+    const y = Math.max(0, Math.floor(rows / 2) - 1);
+    const box = [`┌${"─".repeat(w - 2)}┐`, `│${fit(text, w - 2)}│`, `└${"─".repeat(w - 2)}┘`];
+    for (let i = 0; i < box.length; i++) {
+      const row = y + i;
+      if (row < 0 || row >= rows) continue;
+      const line = frame.lines[row] ?? "";
+      // Splice by DISPLAY cells: the underlying row is full of SGR runs, and
+      // slicing by code units would cut one in half and bleed colour.
+      frame.set(row, spliceDisplay(line, x, box[i]!));
+    }
+  }
 
   /** Width the companion column takes on THIS paint (0 = not shown). */
   sidebarWidth(cols: number): number {
@@ -986,6 +1064,7 @@ export class App {
         return;
       }
       const frame = this.withSidebar(screen, cols, rows);
+      this.paintQuitPrompt(frame, cols, rows);
       this.lastFrame = frame;
       this.out.write(frame.render());
     };

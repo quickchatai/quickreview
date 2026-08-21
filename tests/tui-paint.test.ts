@@ -2,7 +2,7 @@
 // the right edge of any tab's frame. Row-width discipline is the whole point —
 // a ragged row shreds the border and rehomes the cursor.
 import { describe, expect, it } from "vitest";
-import { composeColumn, displayWidth, fit, Frame, SGR, stripAnsi } from "../src/tui/paint.js";
+import { composeColumn, displayWidth, fit, Frame, SGR, spliceDisplay, stripAnsi } from "../src/tui/paint.js";
 
 const COLS = 20;
 const ROWS = 4;
@@ -137,5 +137,36 @@ describe("composeColumn", () => {
       inner.set(0, "ab│");
       expect(composeColumn(inner, ["│z"], 2).lines[0]).toBe("ab││z");
     });
+  });
+});
+
+describe("spliceDisplay", () => {
+  it("overlays at a display column and keeps the row's width", () => {
+    const line = "0123456789";
+    const out = spliceDisplay(line, 3, "XX");
+    expect(out).toContain("XX");
+    expect(stripAnsi(out)).toBe("012XX56789");
+    expect(displayWidth(stripAnsi(out))).toBe(10);
+  });
+
+  it("does not cut an SGR run in half — the tail keeps its colour", () => {
+    // The whole reason this exists: slicing by code units would land inside
+    // "\x1b[31m" and bleed a broken escape across the rest of the row.
+    const line = `${SGR.red}abcdefgh${SGR.reset}`;
+    const out = spliceDisplay(line, 2, "##");
+    expect(stripAnsi(out)).toBe("ab##efgh");
+    // The colour that was covered is replayed after the overlay, so "efgh" is
+    // still red rather than inheriting the overlay's reset.
+    expect(out.indexOf(SGR.red)).toBeLessThan(out.indexOf("##"));
+    expect(out.slice(out.indexOf("##"))).toContain(SGR.red);
+  });
+
+  it("survives wide characters on both sides", () => {
+    const out = spliceDisplay("日本語です", 2, "AB");
+    expect(displayWidth(stripAnsi(out))).toBe(10);
+  });
+
+  it("pads when the overlay starts past the end of the line", () => {
+    expect(stripAnsi(spliceDisplay("ab", 5, "X"))).toBe("ab   X");
   });
 });

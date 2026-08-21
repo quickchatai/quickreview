@@ -130,7 +130,11 @@ describe("App-level bar clicks", () => {
     expect(qx).toBeDefined();
     const running = app.run();
     (input as unknown as EventEmitter).emit("data", Buffer.from(`\x1b[<0;${qx};28M`));
-    await running; // resolves only because the click became a real `q`
+    // the click becomes a real `q`, and `q` now ASKS. The prompt is
+    // the proof the click was routed; `y` is what actually leaves.
+    expect(app.view.confirmQuit).toBe(true);
+    (input as unknown as EventEmitter).emit("data", Buffer.from("y"));
+    await running;
   });
 
   it("bar clicks are INERT while an input box is open (review P1: [enter] must not submit a draft)", async () => {
@@ -169,5 +173,76 @@ describe("App-level bar clicks", () => {
     expect(app.tab).toBe("board");
     app.quit();
     await running;
+  });
+});
+
+describe("clean exit", () => {
+  const ALT_OFF = "\x1b[?1049l";
+  const CLEARED = "\x1b[2J";
+
+  function streams(cols = 120, rows = 30) {
+    const out = new EventEmitter() as unknown as NodeJS.WriteStream;
+    let buf = "";
+    (out as unknown as { columns: number }).columns = cols;
+    (out as unknown as { rows: number }).rows = rows;
+    out.write = ((s: string) => ((buf += s), true)) as never;
+    const input = new EventEmitter() as unknown as NodeJS.ReadStream;
+    (input as unknown as { isTTY: boolean }).isTTY = false;
+    input.resume = (() => input) as never;
+    input.pause = (() => input) as never;
+    return { out, input, written: () => buf };
+  }
+
+  function harness() {
+    const { out, input, written } = streams();
+    const app = new App(TUI_DEFAULTS, async () => ({ ok: true, stdout: "", stderr: "", code: 0 }), out, input);
+    const type = (s: string) => (input as unknown as EventEmitter).emit("data", Buffer.from(s));
+    return { app, written, type, running: app.run() };
+  }
+
+  it("q asks before it quits, and any other key cancels", async () => {
+    const h = harness();
+    h.type("q");
+    expect(h.app.view.confirmQuit).toBe(true);
+    h.type("n"); // anything that is not yes
+    expect(h.app.view.confirmQuit).toBe(false);
+    // Still alive: a second q re-asks, and y leaves.
+    h.type("q");
+    expect(h.app.view.confirmQuit).toBe(true);
+    h.type("y");
+    await h.running;
+  });
+
+  it("a repeated q cancels rather than confirming — that is what the prompt is for", async () => {
+    const h = harness();
+    h.type("q");
+    h.type("q");
+    expect(h.app.view.confirmQuit).toBe(false);
+    h.type("q");
+    h.type("\r"); // ⏎ is the other yes
+    await h.running;
+  });
+
+  it("Ctrl-C twice exits; once only warns", async () => {
+    const h = harness();
+    h.type("\x03");
+    expect(h.app.view.confirmQuit).toBeFalsy(); // no modal — repetition IS the confirm
+    expect(h.app.view.noticeLine).toContain("Ctrl-C again");
+    h.type("\x03");
+    await h.running;
+  });
+
+  it("restores the terminal AND clears it, in that order", async () => {
+    const h = harness();
+    h.type("q");
+    h.type("y");
+    await h.running;
+    const written = h.written();
+    const off = written.lastIndexOf(ALT_OFF);
+    const cleared = written.lastIndexOf(CLEARED);
+    expect(off).toBeGreaterThan(-1);
+    // Clearing BEFORE leaving the alt screen would wipe the screen we are
+    // about to throw away and leave the operator's own screen untouched.
+    expect(cleared).toBeGreaterThan(off);
   });
 });

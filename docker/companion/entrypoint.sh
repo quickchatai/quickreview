@@ -128,6 +128,21 @@ fi
 # QCR_* vars ride the pi command line (see spawnPi in src/tui/companion.ts).
 tmux start-server
 
-# Stay alive. `docker stop` (the TUI's graceful quit path) delivers SIGTERM;
-# exec'ing sleep means PID 1 handles it without a signal-forwarding shim.
-exec sleep infinity
+# Stay alive, and DIE PROMPTLY when asked.
+#
+# This used to `exec sleep infinity`, on the theory that PID 1 would handle
+# SIGTERM without a forwarding shim. It does not: PID 1 has no default signal
+# dispositions, so a signal with no explicit handler is ignored outright.
+# `docker stop` therefore waited its full 10s timeout and then SIGKILLed —
+# measured at 10.1s, every single quit. The TUI runs that stop AFTER restoring
+# the terminal, so those 10 seconds were a dead terminal: the board gone, the
+# shell prompt not yet back, nothing responding.
+#
+# A trap gives PID 1 the handler it never had. `sleep &` + `wait` rather than
+# `exec`, because a foreground child would block the trap until it returned.
+term() {
+  exit 0
+}
+trap term TERM INT
+sleep infinity &
+wait $!

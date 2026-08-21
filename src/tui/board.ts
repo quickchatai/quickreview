@@ -37,6 +37,9 @@ export interface BoardView {
   eventsFocus: boolean;
   eventsScroll: number;
   help: boolean;
+  /**: the quit prompt is up. Painted by App over the composed frame,
+   * so it covers every tab without any renderer knowing about it. */
+  confirmQuit?: boolean;
   /** Live mirror of the selected PR's pi session (board's lower region). */
   pi?: PiPaneView;
   /** The PR the pane is showing. Defaults to the selection; while the pane is

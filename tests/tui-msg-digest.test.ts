@@ -156,6 +156,7 @@ describe("quick-message input box", () => {
     expect(app.view.inputBox).toBeUndefined();
     expect(app.view.noticeLine).toBe("✓ msg pr-5012 delivered");
     streams.type("q");
+    streams.type("y"); //: q asks before it quits
     await running;
   });
 
@@ -187,6 +188,7 @@ describe("quick-message input box", () => {
     expect(app.view.inputBox?.text).toBe("");
     streams.type(Buffer.from("\x1b"));
     streams.type("q");
+    streams.type("y"); //: q asks before it quits
     await running;
   });
 });
@@ -250,6 +252,7 @@ describe("digest tab", () => {
     expect(app.tab).toBe("board");
     expect(app.view.detailFull).toBe(true);
     streams.type("q");
+    streams.type("y"); //: q asks before it quits
     await running;
   });
 });

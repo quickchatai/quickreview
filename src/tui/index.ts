@@ -613,11 +613,24 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
 
   // Clean quit stops the container (conversation + auth survive on volumes).
   // A crash deliberately leaves it running — the next start adopts it.
+  //
+  // This runs AFTER the terminal is restored, so every millisecond it takes is
+  // a terminal that looks dead: board gone, prompt not back, nothing
+  // responding. It used to take 10.1s — `docker stop`'s full timeout, because
+  // the container's PID 1 ignored SIGTERM (fixed that in the
+  // entrypoint). Say what is happening regardless: a slow docker, or a
+  // container built before that fix, must not look like a hang.
   if (companionUp) {
+    process.stdout.write("qcr tui: stopping the companion container…\n");
     try {
       await companion.gracefulStop();
     } catch {
       /* leaving it running is harmless: the next start adopts */
     }
   }
+  // Exit explicitly. Anything still holding the event loop — a docker exec
+  // that never returned, an ssh master, a socket — would otherwise keep the
+  // process alive with the terminal already restored, which is exactly the
+  // "TUI is gone but the shell never comes back" state.
+  process.exit(0);
 }

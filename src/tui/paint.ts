@@ -232,6 +232,62 @@ export function composeColumn(inner: Frame, column: string[], width: number, joi
   return out;
 }
 
+/**
+ * Overlay `overlay` onto `line` starting at DISPLAY column `at`.
+ *
+ * Used for modals painted over a finished frame. Splicing by code units would
+ * cut an SGR run in half and bleed colour across the rest of the row (or worse,
+ * split a wide character), so this walks the line cell by cell: escapes inside
+ * the covered span are collected rather than emitted, and replayed immediately
+ * after it so the tail keeps the styling it was written with.
+ *
+ * The result has the same display width as `line` when the overlay fits.
+ */
+export function spliceDisplay(line: string, at: number, overlay: string): string {
+  const width = displayWidth(overlay);
+  const end = at + width;
+  let out = "";
+  // Every SGR seen so far, in order — the ones already emitted before the span
+  // AND the ones swallowed by it. The overlay writes a reset, so the tail must
+  // be handed the whole run back to end up in the state it was written for;
+  // SGR is cumulative, so replaying it reproduces that state exactly.
+  let sgrSoFar = "";
+  let col = 0;
+  let i = 0;
+  let placed = false;
+  let restored = false;
+  const place = (): void => {
+    if (placed) return;
+    out += `${ESC}0m${overlay}`;
+    placed = true;
+  };
+  while (i < line.length) {
+    const seq = /^\x1b\[[0-9;:?]*[A-Za-z]/.exec(line.slice(i))?.[0];
+    if (seq !== undefined) {
+      sgrSoFar += seq;
+      if (!(col >= at && col < end)) out += seq;
+      i += seq.length;
+      continue;
+    }
+    const ch = String.fromCodePoint(line.codePointAt(i)!);
+    const w = displayWidth(ch);
+    if (col >= at && !placed) place();
+    if (col >= end && !restored) {
+      out += sgrSoFar;
+      restored = true;
+    }
+    if (col < at || col >= end) out += ch;
+    col += w;
+    i += ch.length;
+  }
+  if (!placed) {
+    out += " ".repeat(Math.max(0, at - col));
+    place();
+  }
+  if (!restored) out += sgrSoFar;
+  return out;
+}
+
 export const ALT_SCREEN_ON = `${ESC}?1049h${ESC}?25l`;
 export const ALT_SCREEN_OFF = `${ESC}?25h${ESC}?1049l`;
 export const CLEAR = `${ESC}2J${ESC}H`;

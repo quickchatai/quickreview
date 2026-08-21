@@ -493,7 +493,22 @@ describe("companion image", () => {
   });
 
   it("keeps the container alive rather than owning pi as PID 1", () => {
-    expect(entrypoint.trimEnd().endsWith("exec sleep infinity")).toBe(true);
+    expect(entrypoint.trimEnd().endsWith("wait $!")).toBe(true);
     expect(entrypoint).not.toContain("exec pi");
+  });
+
+  // PID 1 has NO default signal dispositions, so `exec sleep infinity`
+  // ignored SIGTERM outright and every `docker stop` burned its full 10s
+  // timeout before SIGKILL — measured at 10.1s. The TUI runs that stop after
+  // restoring the terminal, so it read as a hung shell on every quit.
+  it("gives PID 1 a SIGTERM handler, so `docker stop` is immediate", () => {
+    expect(entrypoint).toMatch(/trap term TERM INT/);
+    expect(entrypoint).toMatch(/sleep infinity &/);
+    // `exec sleep` is the regression: it makes sleep PID 1, and sleep installs
+    // no handler, so the signal is ignored rather than defaulted. Mechanism,
+    // not mention — the comment explaining WHY it is gone names it, and must
+    // be allowed to; a command line reintroducing it must not.
+    const commands = entrypoint.split("\n").filter((l) => !/^\s*#/.test(l));
+    expect(commands.join("\n")).not.toContain("exec sleep");
   });
 });
