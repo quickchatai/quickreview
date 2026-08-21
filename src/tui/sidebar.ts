@@ -32,18 +32,17 @@ import { ACCENT, ACCENT_BG, BAD, MUTED, OK, RESET, SEP, WARN } from "./design.js
 import { displayWidth, fit } from "./paint.js";
 import { keysToTmux, SCROLL_STEP, splitCapture } from "./pipane.js";
 
-/** Content columns of the default expanded sidebar (border excluded). */
-export const SIDEBAR_COLS = 44;
-/** Below this many TOTAL terminal columns the default sidebar auto-collapses. */
-export const SIDEBAR_MIN_COLS = 110;
 /** Left divider + right border — the two cells the column adds beyond content. */
 export const SIDEBAR_BORDER = 2;
 /** Smallest useful expanded column, borders included. */
 export const SIDEBAR_MIN_WIDTH = 24;
-/** Width reserved for the tab beside an expanded sidebar. This preserves the
- * original 110 - 46 breakpoint while allowing a narrower panel on a narrower
- * terminal. */
-export const SIDEBAR_MIN_INNER_COLS = SIDEBAR_MIN_COLS - (SIDEBAR_COLS + SIDEBAR_BORDER);
+/** Width reserved for the tab beside an expanded sidebar. */
+export const SIDEBAR_MIN_INNER_COLS = 64;
+/** Below this many TOTAL terminal columns no expanded panel can fit. */
+export const SIDEBAR_MIN_COLS = SIDEBAR_MIN_INNER_COLS + SIDEBAR_MIN_WIDTH;
+/** The legacy fixed default. Hot reload used to serialize this as a user
+ * preference, so one reload could pin the narrow width forever. */
+export const LEGACY_SIDEBAR_WIDTH = 46;
 
 /** The collapsed spine: border + one glyph column. */
 export const SIDEBAR_SPINE = 3;
@@ -57,6 +56,18 @@ export function clampSidebarWidth(cols: number, requested: number): number {
   return Math.min(max, Math.max(SIDEBAR_MIN_WIDTH, Math.round(requested)));
 }
 
+/** The conversation is a first-class half of the screen, not a 44-column
+ * status rail. The clamp gives the tab its guaranteed 64 columns. */
+export function defaultSidebarWidth(cols: number): number {
+  return clampSidebarWidth(cols, Math.floor(cols / 2));
+}
+
+/** A width emitted by the old hot-reload snapshot was not a real operator
+ * choice. Drop it so the first reload after this fix adopts the new default. */
+export function restorePreferredSidebarWidth(width: number | undefined): number | undefined {
+  return width === LEGACY_SIDEBAR_WIDTH ? undefined : width;
+}
+
 /** Total width the column occupies, 0 when hidden. */
 export function sidebarWidth(
   cols: number,
@@ -64,9 +75,8 @@ export function sidebarWidth(
 ): number {
   if (!st.available) return 0;
   if (cols < SIDEBAR_HIDE_BELOW) return 0;
-  const preferred = Math.max(SIDEBAR_MIN_WIDTH, Math.round(st.preferredWidth ?? SIDEBAR_COLS + SIDEBAR_BORDER));
-  if (st.collapsed || cols < preferred + SIDEBAR_MIN_INNER_COLS) return SIDEBAR_SPINE;
-  return preferred;
+  if (st.collapsed || cols < SIDEBAR_MIN_COLS) return SIDEBAR_SPINE;
+  return clampSidebarWidth(cols, st.preferredWidth ?? defaultSidebarWidth(cols));
 }
 
 /** The expanded panel's left border is its resize handle. */
@@ -283,8 +293,9 @@ export class CompanionSidebar {
   lines: string[] = [];
   focused = false;
   collapsed = false;
-  /** Expanded width including both borders; survives collapse/expand. */
-  preferredWidth = SIDEBAR_COLS + SIDEBAR_BORDER;
+  /** Explicit expanded width including both borders. Undefined means the
+   * responsive half-screen default; only a real seam drag sets this. */
+  preferredWidth: number | undefined;
   offset = 0;
   alerts: SidebarView["alerts"] = [];
 

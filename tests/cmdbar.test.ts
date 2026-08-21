@@ -398,9 +398,9 @@ describe("drag-to-copy", () => {
 
   it("dragging the sidebar seam resizes instead of copying; other drags still copy", async () => {
     const h = harness(160, 20, true);
-    expect(h.app.sidebarWidth(160)).toBe(46);
-    h.mouse(0, 115, 5); // expanded sidebar's left seam
-    h.mouse(32, 101, 5); // drag left → 60 total columns
+    expect(h.app.sidebarWidth(160)).toBe(80);
+    h.mouse(0, 81, 5); // responsive sidebar's left seam
+    h.mouse(32, 101, 5); // drag right → 60 total columns
     h.mouse(0, 101, 5, false);
     await settle();
     expect(h.app.sidebar!.preferredWidth).toBe(60);

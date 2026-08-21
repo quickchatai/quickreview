@@ -4,9 +4,10 @@ import { displayWidth, stripAnsi } from "../src/tui/paint.js";
 import {
   clampSidebarWidth,
   CompanionSidebar,
+  defaultSidebarWidth,
   paintSidebar,
+  restorePreferredSidebarWidth,
   SIDEBAR_BORDER,
-  SIDEBAR_COLS,
   SIDEBAR_HIDE_BELOW,
   SIDEBAR_MIN_COLS,
   SIDEBAR_MIN_INNER_COLS,
@@ -47,16 +48,18 @@ const VIEW = (over: Partial<SidebarView> = {}): SidebarView => ({
   ...over,
 });
 
-const WIDE = SIDEBAR_COLS + SIDEBAR_BORDER;
+const WIDE = 80;
 
 describe("sidebarWidth", () => {
-  it("is the full column on a wide terminal and 0 when the companion is off", () => {
-    expect(sidebarWidth(200, { collapsed: false, available: true })).toBe(WIDE);
+  it("gives the conversation half of a wide terminal and 0 when the companion is off", () => {
+    expect(defaultSidebarWidth(200)).toBe(100);
+    expect(sidebarWidth(200, { collapsed: false, available: true })).toBe(100);
+    expect(sidebarWidth(160, { collapsed: false, available: true })).toBe(WIDE);
     expect(sidebarWidth(200, { collapsed: false, available: false })).toBe(0);
   });
 
-  it("auto-collapses to the spine below SIDEBAR_MIN_COLS and hides when tiny", () => {
-    expect(sidebarWidth(SIDEBAR_MIN_COLS, { collapsed: false, available: true })).toBe(WIDE);
+  it("auto-collapses only when no minimum-width panel fits and hides when tiny", () => {
+    expect(sidebarWidth(SIDEBAR_MIN_COLS, { collapsed: false, available: true })).toBe(SIDEBAR_MIN_WIDTH);
     expect(sidebarWidth(SIDEBAR_MIN_COLS - 1, { collapsed: false, available: true })).toBe(SIDEBAR_SPINE);
     expect(sidebarWidth(200, { collapsed: true, available: true })).toBe(SIDEBAR_SPINE);
     expect(sidebarWidth(SIDEBAR_HIDE_BELOW - 1, { collapsed: true, available: true })).toBe(0);
@@ -69,9 +72,15 @@ describe("sidebarWidth", () => {
     expect(sidebarWidth(80, { collapsed: false, available: true, preferredWidth: 60 })).toBe(SIDEBAR_SPINE);
   });
 
+  it("does not let the old hot-reload default pin the narrow layout", () => {
+    expect(restorePreferredSidebarWidth(46)).toBeUndefined();
+    expect(restorePreferredSidebarWidth(60)).toBe(60);
+    expect(restorePreferredSidebarWidth(undefined)).toBeUndefined();
+  });
+
   it("recognizes only the expanded column's left seam as a resize handle", () => {
-    expect(sidebarResizeHit(115, 160, WIDE)).toBe(true);
-    expect(sidebarResizeHit(116, 160, WIDE)).toBe(false);
+    expect(sidebarResizeHit(81, 160, WIDE)).toBe(true);
+    expect(sidebarResizeHit(82, 160, WIDE)).toBe(false);
     expect(sidebarResizeHit(158, 160, SIDEBAR_SPINE)).toBe(false);
   });
 });
@@ -116,8 +125,8 @@ describe("paintSidebar geometry", () => {
 
   it("carries the junction glyphs that continue the inner frame", () => {
     const out = paintSidebar(VIEW(), WIDE, 12);
-    expect(out[0]).toBe(`┬${"─".repeat(SIDEBAR_COLS)}┐`);
-    expect(out[11]).toBe(`┴${"─".repeat(SIDEBAR_COLS)}┘`);
+    expect(out[0]).toBe(`┬${"─".repeat(WIDE - SIDEBAR_BORDER)}┐`);
+    expect(out[11]).toBe(`┴${"─".repeat(WIDE - SIDEBAR_BORDER)}┘`);
     for (const line of out.slice(1, 11)) {
       expect(line.startsWith("│")).toBe(true);
       expect(line.endsWith("│")).toBe(true);

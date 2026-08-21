@@ -17,16 +17,16 @@ simply concatenate.
 cols = inner.cols + sidebarWidth(cols, state)
 ```
 
-- expanded default: `SIDEBAR_COLS = 44` content, plus its border → `46`
+- expanded default: half the terminal, clamped to leave `64` columns for the tab
 - expanded resized: drag the column's left border; minimum `24`, maximum leaves
   `64` columns for the tab
 - collapsed: a `3`-wide spine (border + one glyph column)
 - hidden (companion off, or terminal too narrow): `0`
 
-Auto-collapse is dynamic: the tab must retain `SIDEBAR_MIN_INNER_COLS = 64`.
-At the default 46-column width this preserves the original
-`SIDEBAR_MIN_COLS = 110` breakpoint. The preferred expanded width survives
-collapse/expand and TUI hot reload.
+Auto-collapse happens only below `SIDEBAR_MIN_COLS = 88`, where the minimum
+24-column panel cannot coexist with the tab's guaranteed 64 columns. An
+explicitly resized width survives collapse/expand and TUI hot reload; the old
+fixed 46-column default is migrated away rather than restored as a preference.
 
 **Row contract**: the sidebar column supplies **exactly `rows` strings**, each
 of display width exactly `sidebarWidth`. Row `0` and row `rows-1` must carry
@@ -39,8 +39,7 @@ corners, the compositor never patches them.
 ### `src/tui/sidebar.ts` — the widget (agent A)
 
 ```ts
-export const SIDEBAR_COLS = 44;
-export const SIDEBAR_MIN_COLS = 110;
+export const SIDEBAR_MIN_COLS = 88;
 export const SIDEBAR_BORDER = 2;          // left divider + right border
 
 /** Total width the column occupies, 0 when hidden. */
@@ -92,7 +91,7 @@ export class CompanionSidebar {
   toggleCollapse(): void;
   resizeFromPointer(cols: number, x: number): number;
   collapsed: boolean;
-  preferredWidth: number;
+  preferredWidth: number | undefined; // undefined = responsive half-screen default
   scroll(notches: number): void;
   stop(): void;
 }

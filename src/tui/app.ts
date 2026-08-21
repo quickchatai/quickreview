@@ -611,7 +611,7 @@ export class App {
     }
     if (this.sidebarResizeActive && ev.kind === "release") {
       this.sidebarResizeActive = false;
-      this.notice(`sidebar ${this.sidebar?.preferredWidth ?? 0} cols`);
+      this.notice(`sidebar ${this.sidebarWidth(cols)} cols`);
       return;
     }
 
@@ -1124,7 +1124,7 @@ export class App {
   // detail next to the companion — and a linear selection across a row would
   // splice text from panes the user never pointed at. A block keeps a drag
   // inside the pane it started in, which is what "select this bit of pi's
-  // output" means when pi is a 44-column column.
+  // output" means beside the companion conversation.
   private sidebarResizeActive = false;
   private selAnchor: { x: number; y: number } | undefined;
   private selection: { x1: number; y1: number; x2: number; y2: number } | undefined;

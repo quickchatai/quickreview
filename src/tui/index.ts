@@ -458,7 +458,7 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
   // it opened are both retired). Mirror + send go through the same local
   // docker seam the lifecycle uses; refresh piggybacks the app poll (the
   // sidebar's own 500ms timer only runs focused/after-send).
-  const { CompanionSidebar } = await import("./sidebar.js");
+  const { CompanionSidebar, restorePreferredSidebarWidth } = await import("./sidebar.js");
   app.sidebar = new CompanionSidebar(full.companion, realDockerRunner, {
     available: () => companionUp,
     onUpdate: () => app.repaint(),
@@ -562,7 +562,9 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
     app.view.eventsScroll = resumed.eventsScroll;
     app.view.eventsFocus = resumed.eventsFocus;
     app.view.detailFull = resumed.detailFull;
-    if (app.sidebar && resumed.sidebarWidth !== undefined) app.sidebar.preferredWidth = resumed.sidebarWidth;
+    if (app.sidebar && resumed.sidebarWidth !== undefined) {
+      app.sidebar.preferredWidth = restorePreferredSidebarWidth(resumed.sidebarWidth);
+    }
   }
 
   // Hot-reload: watch our own dist/ and re-exec when a new build lands.
