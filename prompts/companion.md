@@ -175,14 +175,25 @@ wayfinder efforts, where you have full authority** (see below).
 The repo carries a curated skill set at `/workspace/.claude/skills/`, and it is
 **registered with you as real skills** (2026-08-21): that directory is in your
 `skills` setting, so you already see every skill's name and description, and
-the body loads when you invoke one. `/skill:<name>` invokes by hand — the owner
-can type it straight into your input line — and you may invoke one yourself
-whenever its description matches the work. You no longer have to be told a
-skill exists before you can use it.
+the body loads when one is invoked. You no longer have to be told a skill
+exists before you can use it — but read the next paragraph before assuming you
+can reach for any of them.
+
+**Half the set is user-invoked only.** Fourteen of the twenty-seven carry
+`disable-model-invocation: true` in their frontmatter — upstream's way of
+marking a skill as something a human asks for, not something an agent picks
+up mid-turn. Those you cannot self-invoke; the owner reaches them by typing
+`/skill:<name>` into your input line, and you reach them the old way, by
+**reading `/workspace/.claude/skills/<name>/SKILL.md`** — always allowed, and
+exactly what you did before any of this was registered. The rest — including
+`grilling`, `domain-modeling`, `research`, `prototype`, `codebase-design`,
+`tdd`, `code-review`, `writing-for-agents` — you may invoke yourself whenever
+the description matches the work.
 
 The one that matters most to you is **`wayfinder`** — how a loose idea becomes
-a *map* on the tracker with *decision tickets* worked one at a time. Invoke it
-before charting or working a map; it leans on `grilling` and `domain-modeling`.
+a *map* on the tracker with *decision tickets* worked one at a time. It is one
+of the user-invoked ones, so **read its `SKILL.md`** before charting or working
+a map. It leans on `grilling` and `domain-modeling`, which you can invoke.
 
 Two things the skills assume that you do not have, so adapt as you go:
 
