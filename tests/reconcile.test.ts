@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
 import type { PrRef, StalePr } from "../src/github.js";
 import { roundTypeFor } from "../src/dispatch.js";
+import { recheckPromptMarker } from "../src/types.js";
 import { reconcileOnce, reconcileOrphanedRounds, type ReconcileAdapter, type ReconcileSearchItem } from "../src/reconcile.js";
 import { applyEvent } from "../src/statemachine.js";
 import { StateStore, type PrLifecycleState } from "../src/state.js";
@@ -580,5 +581,120 @@ describe("stale-trigger residue sweep", () => {
     expect(row.state).toBe("queued"); // the trigger was real — honored, not swept
     expect(row.trigger_ts).toBe("2026-08-14T10:00:00Z");
     expect(corrections(store).filter((c) => c.what === "stale-trigger-residue-cleared")).toHaveLength(0);
+  });
+});
+
+describe("undelivered recheck-claim sweep (#5362 W2)", () => {
+  // The worst of the wedge family, because nothing bounded it. `claimRecheck`
+  // is written BEFORE the nudge goes out and released only on a synchronous
+  // throw — which a bridge-level drop is not — and `rechecks` has no deadline,
+  // no sweep and no expiry. A dropped nudge therefore left a claim that
+  // suppressed the push-backstop FOREVER: a delta on an APPROVED PR silently
+  // never audited, and the approval standing over code nobody read.
+  const fp = "fp-push-deadbeef";
+
+  function hooksWithReceipt(landed: boolean | null): SessionHooks & { asked: string[] } {
+    const asked: string[] = [];
+    const h = recordingHooks().hooks as SessionHooks & { asked: string[] };
+    h.asked = asked;
+    h.wakeReceiptPresent = async (pr, marker) => {
+      asked.push(`${pr}:${marker}`);
+      return landed;
+    };
+    h.injectPending = async () => false;
+    return h;
+  }
+
+  /** A claim older than the grace window, as a dropped nudge leaves one. */
+  function staleClaim(pr: number): void {
+    store.claimRecheck(pr, fp, { head_sha: "head1", trigger: "push", reason: "delta" });
+    store.db
+      .prepare("UPDATE rechecks SET created_at = ? WHERE pr = ? AND fingerprint = ?")
+      .run("2026-08-14T09:00:00.000Z", pr, fp);
+  }
+
+  it("releases a claim whose nudge provably never reached the session", async () => {
+    gh.open = [ref(600)];
+    seed(600, "tracked");
+    staleClaim(600);
+    const hooks = hooksWithReceipt(false);
+
+    await reconcileOnce({ cfg, store, adapter: gh, hooks, now: () => new Date("2026-08-14T12:00:00Z") });
+
+    expect(hooks.asked).toEqual([`600:${recheckPromptMarker(600, fp)}`]);
+    // Released, so the reconcile push-backstop can ask the question again.
+    expect(store.hasRecheck(600, fp)).toBe(false);
+    expect(corrections(store).filter((c) => c.what === "recheck-claim-released-undelivered")).toHaveLength(1);
+  });
+
+  it("keeps a claim whose nudge DID land, and one with no evidence either way", async () => {
+    gh.open = [ref(601), ref(602)];
+    seed(601, "tracked");
+    seed(602, "tracked");
+    staleClaim(601);
+    staleClaim(602);
+
+    await reconcileOnce({
+      cfg,
+      store,
+      adapter: gh,
+      hooks: hooksWithReceipt(true),
+      now: () => new Date("2026-08-14T12:00:00Z"),
+    });
+    expect(store.hasRecheck(601, fp)).toBe(true);
+
+    await reconcileOnce({
+      cfg,
+      store,
+      adapter: gh,
+      hooks: hooksWithReceipt(null),
+      now: () => new Date("2026-08-14T12:00:00Z"),
+    });
+    expect(store.hasRecheck(602, fp)).toBe(true);
+    expect(corrections(store).filter((c) => c.what === "recheck-claim-released-undelivered")).toHaveLength(0);
+  });
+
+  it("never releases a claim that is merely HELD — a round in flight, or a wake still queued", async () => {
+    // wakeOrHold holds a mid-round nudge in `pending_wakes` by design (S4).
+    // It has not been delivered and has no receipt, but it is not lost either.
+    gh.open = [ref(603), ref(604)];
+    seed(603, "reviewing");
+    seed(604, "tracked");
+    staleClaim(603);
+    staleClaim(604);
+    store.startRound(603, "re-review", ["pass-baseline"], 75);
+    store.holdWake(604, "the nudge", "recheck:push");
+
+    await reconcileOnce({
+      cfg,
+      store,
+      adapter: gh,
+      hooks: hooksWithReceipt(false),
+      now: () => new Date("2026-08-14T12:00:00Z"),
+    });
+
+    expect(store.hasRecheck(603, fp)).toBe(true);
+    expect(store.hasRecheck(604, fp)).toBe(true);
+  });
+
+  it("waits out the grace window, and does nothing at all without the receipt hook", async () => {
+    gh.open = [ref(605)];
+    seed(605, "tracked");
+    store.claimRecheck(605, fp, { head_sha: "head1", trigger: "push", reason: "delta" });
+
+    // Fresh claim: inside the grace window.
+    await reconcileOnce({ cfg, store, adapter: gh, hooks: hooksWithReceipt(false) });
+    expect(store.hasRecheck(605, fp)).toBe(true);
+
+    // Stale claim, but a stub with no receipt hook — no sweep, exactly as before.
+    staleClaim(605);
+    await reconcileOnce({
+      cfg,
+      store,
+      adapter: gh,
+      hooks: recordingHooks().hooks,
+      now: () => new Date("2026-08-14T12:00:00Z"),
+    });
+    expect(store.hasRecheck(605, fp)).toBe(true);
   });
 });

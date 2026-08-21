@@ -546,9 +546,17 @@ export class PiSessionManager implements SessionHooks {
    * be in an older one, and that keeps the scan bounded on long conversations.
    */
   async roundPromptAccepted(pr: number, roundNo: number, startedAtMs: number): Promise<boolean | null> {
+    return this.wakeReceiptPresent(pr, roundPromptMarker(pr, roundNo), startedAtMs);
+  }
+
+  /** SessionHooks: the general receipt read — did a wake carrying `marker`
+   * reach the session? `roundPromptAccepted` is the round-shaped wrapper; the
+   * recheck sweep uses this directly, because a recheck has no round row and
+   * (unlike a round) no deadline underneath it to catch a silent loss. */
+  async wakeReceiptPresent(pr: number, marker: string, sinceMs: number): Promise<boolean | null> {
     const root = this.sessionDir(prSessionName(pr));
     if (!existsSync(root)) return null;
-    const marker = roundPromptMarker(pr, roundNo);
+    const startedAtMs = sinceMs;
     // A file is in scope if it could contain a write made after the round
     // started. The slack absorbs coarse mtimes and small clock differences;
     // being generous here costs a few extra reads, being tight would report a

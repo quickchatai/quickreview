@@ -577,9 +577,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         async rerunRound(pr) {
           const row = d.store.getPr(pr);
           if (!row) return { ok: false, reason: `unknown PR #${pr}` };
+          const cancelled = d.store.cancelRunningRounds(pr, "rerun-round");
           d.store.upsertPr({ ...row, state: "queued", trigger_ts: new Date().toISOString() });
           await d.pump();
-          return { ok: true, requeued: pr };
+          return { ok: true, requeued: pr, ...(cancelled.length > 0 ? { cancelled_rounds: cancelled } : {}) };
         },
         async restartSession(target) {
           if (target === "overseer") {
@@ -589,11 +590,13 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           // Kill the tmux session; the next dispatched round rebirths it fresh.
           await sessions.tmux.killSession(`pr-${target}`).catch(() => {});
           const row = d.store.getPr(target);
+          let cancelled: number[] = [];
           if (row && row.state !== "closed") {
+            cancelled = d.store.cancelRunningRounds(target, "restart-session");
             d.store.upsertPr({ ...row, state: "queued", trigger_ts: new Date().toISOString() });
             await d.pump();
           }
-          return { ok: true, restarted: `pr-${target}` };
+          return { ok: true, restarted: `pr-${target}`, ...(cancelled.length > 0 ? { cancelled_rounds: cancelled } : {}) };
         },
         pausePr(pr, reason) {
           const row = d.store.getPr(pr);

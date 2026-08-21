@@ -717,6 +717,38 @@ export class VerdictWatcher {
     return true;
   }
 
+  /**
+   * Deliver wakes that are held with no round left to flush them (#5362 W3).
+   *
+   * `flushWakes` runs from exactly two places — a verdict landing and the
+   * anomaly path — on the assumption that every round ends through one of
+   * them. Three cancellations do not: `superseded`, a startup orphan that is
+   * NOT requeued (the requeue needs `state === "reviewing"` and no later
+   * round), and a self-requeue whose successor is cancelled the same way. The
+   * wakes held while such a round was in flight — author replies included —
+   * then sit in `pending_wakes` with nothing to flush them, and that table has
+   * no expiry.
+   *
+   * A PR holding wakes with no round running is unambiguous: the reason to
+   * hold is gone, so deliver. Runs on the deadline tick, which is already the
+   * daemon's "is anything stuck?" sweep.
+   */
+  private async flushStrandedWakes(): Promise<void> {
+    const { store } = this.deps;
+    for (const pr of store.prsWithStrandedWakes()) {
+      if (store.getPr(pr)?.state === "closed") {
+        // The session is archived — there is nothing to wake. Drop them rather
+        // than leave rows nothing will ever read.
+        const dropped = store.takeHeldWakes(pr).length;
+        if (dropped > 0) store.logEvent("wakes_dropped_closed", pr, { dropped });
+        continue;
+      }
+      store.logEvent("wakes_stranded", pr, { held: store.heldWakes(pr).length });
+      this.log(`verdicts: #${pr} held wakes with no round running — flushing`);
+      await this.flushWakes(pr);
+    }
+  }
+
   /** Deliver the wakes held while this PR's round was in flight (S4). */
   private async flushWakes(pr: number): Promise<void> {
     await this.safe(
@@ -968,6 +1000,7 @@ export class VerdictWatcher {
     const overdue: number[] = [];
     const nowMs = this.now().getTime();
     const { store } = this.deps;
+    await this.flushStrandedWakes();
     for (const round of store.runningRounds()) {
       if (Date.parse(round.deadline_at) > nowMs) {
         // lost-prompt net, well before the deadline: the round's

@@ -745,7 +745,17 @@ export class StateStore {
   }
 
   markRoundOverdue(id: number): void {
-    this.db.prepare("UPDATE rounds SET status = 'overdue' WHERE id = ?").run(id);
+    // Stamp `finished_at` (#5362 W8). An overdue round is terminal — nothing
+    // reruns it, `expireOverdueRounds` only reaches it once the PR has closed
+    // or verdicted on a later round, and a PR whose ONLY round blew its
+    // deadline satisfies neither. Leaving `finished_at` NULL therefore left a
+    // row whose "duration" grew forever: #4662 round 2 read as a 10,197-minute
+    // round, seven days after it was judged. The status is deliberately NOT
+    // changed to `expired` here — that would drop the round from spend and
+    // every other aggregate, hiding tokens this round really burned.
+    this.db
+      .prepare("UPDATE rounds SET status = 'overdue', finished_at = COALESCE(finished_at, ?) WHERE id = ?")
+      .run(this.ts(), id);
   }
 
   /** Administrative close of a round that will never produce a verdict —
@@ -770,6 +780,33 @@ export class StateStore {
    * ambiguous signal) — silence must be observed on consecutive sweeps. */
   clearRoundSilent(id: number): void {
     this.db.prepare("UPDATE rounds SET silent_since = NULL WHERE id = ?").run(id);
+  }
+
+  /**
+   * Cancel every running round on a PR and return their ids (#5362 W4).
+   *
+   * The operator's two unwedge levers — `rerun-round` and `restart-session` —
+   * both set the PR back to `queued` and pump, but the pump skips a PR whose
+   * round is still `running` ("one PR = one worktree = at most one round"), so
+   * neither could clear a phantom round: the state flipped, nothing
+   * dispatched, and the PR sat queued behind a round that would never end.
+   * The anomaly message told the overseer to run `rerun-round` for exactly the
+   * case `rerun-round` could not fix.
+   *
+   * Cancelling is the missing half. It never touches GitHub and never posts:
+   * the round keeps a NULL verdict, so `priorRoundCount`/review_no do not age
+   * (a failed round must not age the PR), which is the same discipline the
+   * self-requeue path follows.
+   */
+  cancelRunningRounds(pr: number, reason: string): number[] {
+    const rows = this.db
+      .prepare("SELECT id, round_no FROM rounds WHERE pr = ? AND status = 'running'")
+      .all(pr) as Array<{ id: number; round_no: number }>;
+    for (const r of rows) {
+      this.markRoundCancelled(r.id, `cancelled by ${reason}`);
+      this.logEvent("round_cancelled_by_operator", pr, { round_id: r.id, round_no: r.round_no, reason });
+    }
+    return rows.map((r) => r.id);
   }
 
   /** Push a running round's deadline out from NOW (#5362). Used only when the
@@ -1123,6 +1160,16 @@ export class StateStore {
    * inject failure burned the head's only recheck, 2026-08-19). */
   releaseRecheck(pr: number, fingerprint: string): void {
     this.db.prepare("DELETE FROM rechecks WHERE pr = ? AND fingerprint = ?").run(pr, fingerprint);
+  }
+
+  /** Recheck claims older than `olderThanIso`, across every PR (#5362 W2). The
+   * undelivered-nudge sweep reads this: a claim whose nudge never landed
+   * suppresses the reconcile push-backstop forever, and unlike a round there
+   * is no deadline underneath a recheck to catch that. */
+  recheckClaimsBefore(olderThanIso: string): Array<{ pr: number; fingerprint: string; head_sha: string; trigger: string; created_at: string }> {
+    return this.db
+      .prepare("SELECT pr, fingerprint, head_sha, trigger, created_at FROM rechecks WHERE created_at < ? ORDER BY created_at")
+      .all(olderThanIso) as Array<{ pr: number; fingerprint: string; head_sha: string; trigger: string; created_at: string }>;
   }
 
   /** Every recheck nudge sent for a PR, oldest first (TUI/audit). */

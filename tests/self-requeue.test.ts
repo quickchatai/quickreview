@@ -889,3 +889,90 @@ describe("head_moved outcome — a guard-5 refusal lands cheaply, session surviv
     expect(events("round_self_requeued")).toHaveLength(1);
   });
 });
+
+// ---- #5362 W3: held wakes with no round left to flush them -----------------
+
+describe("stranded held wakes (#5362 W3)", () => {
+  // `flushWakes` runs from exactly two places: a verdict landing and the
+  // anomaly path. Three cancellations reach neither — `superseded`, a startup
+  // orphan that is NOT requeued, and a self-requeue whose successor is
+  // cancelled the same way — so the wakes held while that round was in flight,
+  // author replies included, sat in `pending_wakes` forever. That table has no
+  // expiry and nothing swept it.
+  it("flushes wakes held behind a round that was cancelled without a verdict", async () => {
+    const roundId = reviewingRound(700);
+    store.holdWake(700, "the author replied", "author_reply");
+    // Cancelled as `superseded`/orphaned would: no verdict, no anomaly.
+    store.markRoundCancelled(roundId, "superseded");
+    store.setPrState(700, "awaiting_author");
+    const { hooks, injects } = hooksWith(true);
+
+    await watcher(hooks).checkDeadlines();
+
+    expect(injects).toEqual(["700:the author replied"]);
+    expect(store.heldWakes(700)).toHaveLength(0);
+    expect(events("wakes_stranded")).toHaveLength(1);
+  });
+
+  it("never flushes while the round is still running — that hold is the point (S4)", async () => {
+    reviewingRound(701);
+    store.holdWake(701, "mid-round reply", "author_reply");
+    const { hooks, injects } = hooksWith(true);
+
+    await watcher(hooks).checkDeadlines();
+
+    expect(injects).toHaveLength(0);
+    expect(store.heldWakes(701)).toHaveLength(1);
+  });
+
+  it("drops wakes on a closed PR rather than waking an archived session", async () => {
+    const roundId = reviewingRound(702);
+    store.holdWake(702, "too late", "author_reply");
+    store.markRoundCancelled(roundId, "superseded");
+    store.setPrState(702, "closed");
+    const { hooks, injects } = hooksWith(true);
+
+    await watcher(hooks).checkDeadlines();
+
+    expect(injects).toHaveLength(0);
+    expect(store.heldWakes(702)).toHaveLength(0);
+    expect(events("wakes_dropped_closed")[0]!.payload).toMatchObject({ dropped: 1 });
+  });
+});
+
+// ---- #5362 W4: the operator's unwedge levers actually clear the round ------
+
+describe("cancelRunningRounds — the missing half of rerun-round (#5362 W4)", () => {
+  it("cancels the phantom round so a requeued PR can actually dispatch", async () => {
+    // Both `rerun-round` and `restart-session` set the PR to `queued` and
+    // pump — but the pump skips a PR whose round is still `running`, so
+    // neither could clear a phantom round. The state flipped, nothing
+    // dispatched, and the PR sat queued behind a round that would never end.
+    // The anomaly message told the overseer to run `rerun-round` for exactly
+    // the case `rerun-round` could not fix.
+    const roundId = reviewingRound(710);
+    expect(store.runningRounds().map((r) => r.id)).toContain(roundId);
+
+    const cancelled = store.cancelRunningRounds(710, "rerun-round");
+
+    expect(cancelled).toEqual([roundId]);
+    expect(roundStatus(roundId)).toBe("cancelled");
+    expect(store.runningRounds().map((r) => r.id)).not.toContain(roundId);
+    expect(events("round_cancelled_by_operator")[0]!.payload).toMatchObject({
+      round_id: roundId,
+      reason: "rerun-round",
+    });
+  });
+
+  it("leaves no verdict, so a cancelled round never ages the PR", () => {
+    const roundId = reviewingRound(711);
+    store.cancelRunningRounds(711, "restart-session");
+    const round = store.roundsFor(711).find((r) => r.id === roundId)!;
+    expect(round.verdict).toBeNull();
+    expect(store.priorRoundCount(711)).toBe(0);
+  });
+
+  it("is a no-op on a PR with nothing running", () => {
+    expect(store.cancelRunningRounds(712, "rerun-round")).toEqual([]);
+  });
+});

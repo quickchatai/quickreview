@@ -48,11 +48,33 @@ export function roundPromptMarker(pr: number, roundNo: number): string {
   return `<!-- qcr-round: pr-${pr} round-${roundNo} -->`;
 }
 
-/** Append the receipt token to a rendered round prompt. Appended, not
- * prepended: the round templates open with the instruction that sets the
- * session's frame, and nothing should come before it. */
+/**
+ * The per-nudge receipt token for a post-approval recheck (#5362 W2).
+ *
+ * A recheck needs a receipt MORE than a round does, not less: a round has a
+ * deadline underneath it, but `rechecks` is an append-only claim table with no
+ * deadline, no sweep and no expiry. A nudge dropped in delivery therefore left
+ * a claim that suppressed the reconcile push-backstop forever, so a delta on
+ * an APPROVED PR was silently never audited and the approval stood over code
+ * nobody read.
+ *
+ * Keyed on the recheck fingerprint, which is exactly what the claim is keyed
+ * on — so the sweep can ask "did the nudge I claimed actually land?".
+ */
+export function recheckPromptMarker(pr: number, fingerprint: string): string {
+  return `<!-- qcr-recheck: pr-${pr} ${fingerprint} -->`;
+}
+
+/** Append a receipt token to a rendered prompt. Appended, not prepended: the
+ * templates open with the instruction that sets the session's frame, and
+ * nothing should come before it. */
+export function stampPrompt(renderedPrompt: string, marker: string): string {
+  return `${renderedPrompt.replace(/\s+$/, "")}\n\n${marker}\n`;
+}
+
+/** The round-shaped wrapper around `stampPrompt`. */
 export function stampRoundPrompt(renderedPrompt: string, pr: number, roundNo: number): string {
-  return `${renderedPrompt.replace(/\s+$/, "")}\n\n${roundPromptMarker(pr, roundNo)}\n`;
+  return stampPrompt(renderedPrompt, roundPromptMarker(pr, roundNo));
 }
 
 /** Pass model tiers, ascending by capability/cost. */
@@ -269,6 +291,14 @@ export interface SessionHooks {
    * Optional: absent ⇒ no receipt check, exactly the pre-#5362 behaviour.
    */
   roundPromptAccepted?(pr: number, roundNo: number, startedAtMs: number): Promise<boolean | null>;
+  /**
+   * The general form of the same receipt read (#5362 W2): did a wake carrying
+   * `marker` reach the session? Used by the undelivered-recheck sweep, which
+   * has no round row to hang `roundPromptAccepted` off — and needs it more,
+   * because a recheck claim has no deadline underneath it.
+   * `null` = cannot tell. Optional: absent ⇒ no sweep.
+   */
+  wakeReceiptPresent?(pr: number, marker: string, sinceMs: number): Promise<boolean | null>;
   /**
    * Re-deliver a round prompt whose receipt never appeared (#5362) — the same
    * round, session and conversation, with the exact dispatched bytes written

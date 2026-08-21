@@ -6,8 +6,8 @@
 // signal the operator watches.
 import { retryWithheldApproval, type CheckSummary } from "./cigate.js";
 import { recheckFingerprint } from "./recheck.js";
-import { normalizeVerdict } from "./types.js";
-import type { Config } from "./config.js";
+import { normalizeVerdict, recheckPromptMarker } from "./types.js";
+import { DEFAULT_ROUND_STALL_GRACE_MIN, type Config } from "./config.js";
 import type { PrRef } from "./github.js";
 import { applyEvent, isBotAuthor } from "./statemachine.js";
 import type { StateStore } from "./state.js";
@@ -241,6 +241,48 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
   // it jump the FIFO on the ancient timestamp. Swept HERE, after the
   // triggered-set step, so a PR GitHub still lists as triggered has already
   // been re-queued and is never touched.
+  // ---- 2d. undelivered recheck-claim sweep (#5362 W2) ---------------------
+  // The worst of the wedge family, because nothing bounded it. `claimRecheck`
+  // is written BEFORE the nudge goes out, `releaseRecheck` fires only on a
+  // synchronous throw (which a bridge-level drop is not), and `rechecks` has
+  // no deadline, no sweep and no expiry. So a dropped nudge left a claim that
+  // suppressed the push-backstop below (`!store.hasRecheck(...)`) forever: a
+  // delta on an APPROVED PR was never audited, nothing anywhere said so, and
+  // the approval stood over code nobody read.
+  //
+  // The receipt makes it recoverable. A claim past the grace window whose
+  // marker never reached the session is released, and the backstop re-asks on
+  // the next pass. Every ambiguity is a no-op: only a provable absence counts.
+  await step("undelivered-rechecks", async () => {
+    const receipt = deps.hooks.wakeReceiptPresent;
+    if (!receipt) return;
+    const graceMs = (cfg.daemon.round_stall_grace_min ?? DEFAULT_ROUND_STALL_GRACE_MIN) * 60_000;
+    const cutoff = new Date(now().getTime() - graceMs).toISOString();
+    for (const claim of store.recheckClaimsBefore(cutoff)) {
+      // A held or still-pending nudge is not a lost one.
+      if (store.hasRunningRound(claim.pr)) continue;
+      if (store.heldWakes(claim.pr).length > 0) continue;
+      if (deps.hooks.injectPending && (await deps.hooks.injectPending(claim.pr))) continue;
+      const claimedMs = Date.parse(claim.created_at);
+      if (!Number.isFinite(claimedMs)) continue;
+      const landed = await receipt.call(
+        deps.hooks,
+        claim.pr,
+        recheckPromptMarker(claim.pr, claim.fingerprint),
+        claimedMs,
+      );
+      if (landed !== false) continue; // delivered, or no evidence — never guess
+      store.releaseRecheck(claim.pr, claim.fingerprint);
+      correction(
+        deps,
+        claim.pr,
+        "recheck-claim-released-undelivered",
+        { fingerprint: claim.fingerprint, head_sha: claim.head_sha, trigger: claim.trigger, claimed_at: claim.created_at },
+        report,
+      );
+    }
+  });
+
   await step("stale-trigger-residue", async () => {
     for (const local of store.allPrs()) {
       if (local.state !== "tracked" && local.state !== "awaiting_author") continue;

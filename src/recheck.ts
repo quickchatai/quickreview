@@ -47,7 +47,7 @@ import type { Config } from "./config.js";
 import type { PrFileEntry } from "./github.js";
 import { applyEvent } from "./statemachine.js";
 import type { StateStore } from "./state.js";
-import { normalizeVerdict } from "./types.js";
+import { normalizeVerdict, recheckPromptMarker, stampPrompt } from "./types.js";
 import { wakeOrHold } from "./wakes.js";
 
 /** What woke the recheck. `author_reply` is listed because it is a decided
@@ -600,7 +600,11 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
     delivered = await wakeOrHold(
       { store, inject: deps.inject, log },
       req.pr,
-      render(order),
+      // The receipt token (#5362 W2). A recheck claim is written BEFORE the
+      // nudge goes out and released only on a synchronous throw — which a
+      // bridge-level drop is not — so without a receipt an undelivered nudge
+      // left a claim that suppressed the reconcile backstop permanently.
+      stampPrompt(render(order), recheckPromptMarker(req.pr, fingerprint)),
       `recheck:${req.trigger}`,
     );
   } catch (err) {
