@@ -15,6 +15,7 @@ import {
   SIDEBAR_PLACEHOLDER,
   SIDEBAR_SPINE,
   sidebarHit,
+  sidebarPaneSize,
   sidebarResizeHit,
   sidebarWidth,
   type SidebarView,
@@ -261,6 +262,35 @@ describe("CompanionSidebar", () => {
     await sb.refresh();
     expect(sb.lines).toEqual(["alpha", "beta"]); // never blanked on a transient error
     expect(sb.view().header.piUp).toBe(false);
+    sb.stop();
+  });
+
+  it("resizes detached tmux to the painted mirror before capturing", async () => {
+    const { runner, calls } = fakeDocker(() => ({ ...OK, stdout: "wide\n" }));
+    const sb = new CompanionSidebar(CFG, runner);
+    sb.setViewport(100, 60);
+    expect(sidebarPaneSize(sb.view(), 100, 60)).toEqual({ cols: 97, rows: 54 });
+    await sb.refresh();
+    expect(calls[0]).toEqual([
+      "exec",
+      "qcr-companion",
+      "tmux",
+      "resize-window",
+      "-t",
+      "companion",
+      "-x",
+      "97",
+      "-y",
+      "54",
+      ";",
+      "capture-pane",
+      "-e",
+      "-p",
+      "-J",
+      "-t",
+      "companion",
+    ]);
+    expect(sb.lines).toEqual(["wide"]);
     sb.stop();
   });
 

@@ -1192,6 +1192,10 @@ export class App {
     // `withSidebar` drops the tab's last cell to join them (composeColumn's
     // joinSeam). Without the +1 every tab would lose a usable column.
     const sw = this.sidebarWidth(cols);
+    // The companion runs in a detached tmux window, whose implicit 80×24 size
+    // otherwise survives forever. Feed the exact painted rectangle back to
+    // the mirror; its next refresh atomically resizes then captures the pane.
+    this.sidebar?.setViewport(sw, rows);
     const inner = sw === 0 ? cols : cols - sw + 1;
     const paint = (screen: string | Frame | undefined, fallback: string): void => {
       if (screen === undefined) {

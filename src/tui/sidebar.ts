@@ -195,16 +195,19 @@ function paintSpine(view: SidebarView, width: number, rows: number): string[] {
  * alerts first, then the divider, then the second header row — so the mirror
  * and the input row are the last things to go.
  */
-export function paintSidebar(view: SidebarView, width: number, rows: number): string[] {
-  if (rows <= 0) return [];
-  if (width <= 0) return new Array<string>(rows).fill("");
-  const inner = width - SIDEBAR_BORDER;
-  if (view.collapsed || inner < 1) return paintSpine(view, width, rows);
-  if (rows === 1) return [`┬${"─".repeat(inner)}┐`];
+interface SidebarRowLayout {
+  inputRows: number;
+  head: number;
+  divider: number;
+  alertN: number;
+  mirrorRows: number;
+}
 
-  // Row budget: header and input are claimed first; the divider and the alerts
-  // block only take a row if a mirror row still survives underneath them.
-  let left = rows - 2;
+/** One source of truth for both painting and the tmux viewport. If these row
+ * budgets drift, pi lays itself out for a terminal different from the space in
+ * which its capture is rendered. */
+function sidebarRowLayout(view: SidebarView, rows: number): SidebarRowLayout {
+  let left = Math.max(0, rows - 2); // top + bottom borders
   const inputRows = Math.min(1, left);
   left -= inputRows;
   const head = Math.min(2, left);
@@ -216,7 +219,31 @@ export function paintSidebar(view: SidebarView, width: number, rows: number): st
     alertN = Math.min(MAX_ALERTS, view.alerts.length, left - 2);
     left -= alertN + 1; // + the alerts divider
   }
-  const mirrorRows = Math.max(0, left);
+  return { inputRows, head, divider, alertN, mirrorRows: Math.max(0, left) };
+}
+
+/** Exact terminal geometry pi gets inside tmux. The mirror adds one visual
+ * leading space inside the two sidebar borders, so that cell is not available
+ * to pi itself. */
+export function sidebarPaneSize(view: SidebarView, width: number, rows: number): { cols: number; rows: number } | undefined {
+  if (!view.available || view.collapsed || width <= SIDEBAR_SPINE || rows <= 0) return undefined;
+  const layout = sidebarRowLayout(view, rows);
+  return {
+    cols: Math.max(1, width - SIDEBAR_BORDER - 1),
+    rows: Math.max(1, layout.mirrorRows),
+  };
+}
+
+export function paintSidebar(view: SidebarView, width: number, rows: number): string[] {
+  if (rows <= 0) return [];
+  if (width <= 0) return new Array<string>(rows).fill("");
+  const inner = width - SIDEBAR_BORDER;
+  if (view.collapsed || inner < 1) return paintSpine(view, width, rows);
+  if (rows === 1) return [`┬${"─".repeat(inner)}┐`];
+
+  // Row budget is shared with sidebarPaneSize: tmux receives exactly the
+  // rectangle the capture occupies, not its detached-session 80×24 default.
+  const { inputRows, head, divider, alertN, mirrorRows } = sidebarRowLayout(view, rows);
 
   const out: string[] = [`┬${"─".repeat(inner)}┐`];
   const hdr = headerRows(view.header);
@@ -303,6 +330,9 @@ export class CompanionSidebar {
   private patch: Partial<SidebarHeader> = {};
   private timer: NodeJS.Timeout | undefined;
   private fastUntil = 0;
+  /** Set by App.repaint from the actual terminal geometry. Kept while the
+   * sidebar is collapsed so expanding restores the last useful tmux size. */
+  private paneSize: { cols: number; rows: number } | undefined;
 
   constructor(
     private readonly cfg: Pick<CompanionConfig, "container_name" | "session">,
@@ -343,10 +373,33 @@ export class CompanionSidebar {
     };
   }
 
-  /** Capture the pane WITH its colors (`-e`) and joined wrapped lines (`-J`). */
+  /** Receive the expanded sidebar's real painted geometry. This is pure state:
+   * refresh folds resize-window + capture-pane into one docker round trip. */
+  setViewport(width: number, rows: number): void {
+    const next = sidebarPaneSize(this.view(), width, rows);
+    if (next) this.paneSize = next;
+  }
+
+  /** Resize tmux to the mirror rectangle, then capture it WITH its colors (`-e`)
+   * and joined wrapped lines (`-J`). Detached tmux otherwise stays 80×24 no
+   * matter how large the sidebar becomes. Both commands share one invocation,
+   * so capture can never race an asynchronous resize. */
   async refresh(): Promise<void> {
     if (!this.available()) return;
-    const argv = ["exec", this.cfg.container_name, "tmux", "capture-pane", "-e", "-p", "-J"];
+    const argv = ["exec", this.cfg.container_name, "tmux"];
+    if (this.paneSize) {
+      argv.push(
+        "resize-window",
+        "-t",
+        this.cfg.session,
+        "-x",
+        String(this.paneSize.cols),
+        "-y",
+        String(this.paneSize.rows),
+        ";",
+      );
+    }
+    argv.push("capture-pane", "-e", "-p", "-J");
     // Parked in scrollback: ask for history above the window, as pipane does.
     if (this.offset > 0) argv.push("-S", `-${this.offset + SCROLL_PAD}`);
     argv.push("-t", this.cfg.session);

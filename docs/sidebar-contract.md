@@ -34,6 +34,12 @@ the junction glyphs that continue the inner frame's top and bottom borders
 (`┬`/`┴` at the seam, `┐`/`┘` at the right edge) — the sidebar owns its
 corners, the compositor never patches them.
 
+**Terminal contract**: the mirrored pi is not left at detached tmux's 80×24
+default. On every capture, `resize-window` first sets tmux to the exact mirror
+rectangle: sidebar inner width minus its one-cell visual inset, and the row
+budget left after borders/header/divider/hint/alerts. Resize and capture share
+one tmux invocation so terminal reflow cannot race the screenshot.
+
 ## Modules and ownership
 
 ### `src/tui/sidebar.ts` — the widget (agent A)
@@ -57,7 +63,6 @@ export interface SidebarView {
   header: SidebarHeader;
   /** Mirror lines, oldest first, SGR-styled (keepSgrOnly already applied). */
   lines: string[];
-  input: string;
   focused: boolean;
   collapsed: boolean;
   available: boolean;
@@ -81,8 +86,10 @@ export class CompanionSidebar {
     opts?: { available?: () => boolean; onUpdate?: () => void; now?: () => number },
   );
   view(): SidebarView;
+  /** Receives the currently painted sidebar geometry from App.repaint. */
+  setViewport(width: number, rows: number): void;
+  /** Atomically resizes the tmux window and captures the resulting pane. */
   refresh(): Promise<void>;
-  /** Draft text + Enter (the quick-send path). */
   send(text: string): Promise<void>;
   /** Raw stdin passthrough while focused (pipane's keysToTmux). */
   sendKeys(buf: Buffer): Promise<void>;
@@ -126,7 +133,7 @@ Key model (provisional — decides it properly):
 |---|---|
 | `/` | focus the sidebar |
 | printable on a tab with no binding | focus the sidebar, seeded with that char |
-| `Esc` | blur (drop the draft) |
+| `Esc` | forwarded to pi while focused |
 | `Ctrl-q` | release focus (same as the board's pi pane) |
 | `\` | toggle collapse |
 | `PgUp`/`PgDn` | scroll the sidebar while focused |
