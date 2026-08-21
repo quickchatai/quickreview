@@ -63,6 +63,10 @@ export class PiMirror {
   private readonly inFlight = new Set<number>();
   private readonly offsets = new Map<number, number>();
   private timer: NodeJS.Timeout | undefined;
+  /** The board's painted mirror rectangle, fed in by `App.repaint`. Undefined
+   * until the board has been painted once — the first capture then rides the
+   * session's own size, exactly as it did before, rather than guessing one. */
+  private paneSize: { cols: number; rows: number } | undefined;
 
   constructor(
     private readonly cfg: TuiConfig,
@@ -77,6 +81,19 @@ export class PiMirror {
     const lines = this.cache.get(pr);
     const missing = this.missing.has(pr);
     return { pr, lines: lines ?? [], missing, stale: missing && (lines?.length ?? 0) > 0, offset: this.offsetFor(pr) };
+  }
+
+  /**
+   * Receive the board's real painted mirror rectangle (`piPaneSize`).
+   *
+   * Pure state, deliberately: the next `fetch` folds `resize-window` into the
+   * capture it was going to make anyway, so a terminal resize costs no extra
+   * round trip and the two can never race. A degenerate rectangle (the pane
+   * squeezed to nothing) is ignored rather than sent — tmux would refuse it,
+   * and the last useful size is the better thing to keep.
+   */
+  setViewport(size: { cols: number; rows: number } | undefined): void {
+    if (size && size.cols > 0 && size.rows > 0) this.paneSize = size;
   }
 
   /** How far back in scrollback the pane for `pr` is parked (0 = live tail). */
@@ -127,7 +144,7 @@ export class PiMirror {
       // Live tail = the plain visible-pane capture; scrolled back = the same
       // capture with `-S -(offset + pad)` so there is history above the window.
       const range = offset > 0 ? { startBack: offset + SCROLL_PAD } : undefined;
-      const res = await this.ssh(this.cfg.ssh_host, captureArgv(this.cfg, `pr-${pr}`, range), { timeoutMs: 5_000 });
+      const res = await this.ssh(this.cfg.ssh_host, captureArgv(this.cfg, `pr-${pr}`, range, this.paneSize), { timeoutMs: 5_000 });
       if (!res.ok) {
         this.missing.add(pr);
       } else {

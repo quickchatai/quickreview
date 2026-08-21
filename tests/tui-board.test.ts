@@ -2,10 +2,11 @@ import { BAD_BG } from "../src/tui/design.js";
 import { describe, expect, it } from "vitest";
 import type { WhyPayload } from "../src/cli.js";
 import type { StatusSnapshot } from "../src/state.js";
-import { renderBoard, topBar, detailLines, type BoardView } from "../src/tui/board.js";
+import { piPaneSize, piRows, renderBoard, topBar, detailLines, type BoardView } from "../src/tui/board.js";
 import { decodeKey, decodeInputKey } from "../src/tui/keys.js";
 import { displayWidth, fit, rule, sanitizeText, stripAnsi, truncate, wrap } from "../src/tui/paint.js";
-import { statusArgv, whyArgv, eventsArgv, attachArgv } from "../src/tui/remote.js";
+import { captureArgv, statusArgv, whyArgv, eventsArgv, attachArgv, type SshRunner } from "../src/tui/remote.js";
+import { PiMirror } from "../src/tui/pipane.js";
 import { TUI_DEFAULTS } from "../src/config.js";
 
 const snapshot: StatusSnapshot = {
@@ -405,7 +406,67 @@ describe("remote argv builders", () => {
 
   it("builds the interactive attach argv with -tt and -it", () => {
     expect(attachArgv(TUI_DEFAULTS, "pr-5012")).toEqual([
-      "-tt", "my-vm", "sudo", "docker", "exec", "-it", "quickreview-sandbox", "tmux", "attach", "-t", "pr-5012",
+      "-tt", "my-vm", "sudo", "docker", "exec", "-it", "quickreview-sandbox", "tmux",
+      "set-window-option", "-t", "pr-5012", "window-size", "latest", ";",
+      "attach", "-t", "pr-5012",
     ]);
+  });
+
+  it("hands sizing back to the client before attaching, or attach inherits the mirror's rectangle", () => {
+    // The mirror's resize-window pins the session to the board pane and flips
+    // window-size to `manual` (verified on the VM). Attaching full-screen
+    // without undoing that opens a small window marooned in a big terminal.
+    const argv = attachArgv(TUI_DEFAULTS, "pr-5012");
+    expect(argv.indexOf("set-window-option")).toBeLessThan(argv.indexOf("attach"));
+    expect(argv).toContain("latest");
+  });
+});
+
+describe("the mirrored pi session gets the board's real geometry", () => {
+  // A tmux session the daemon created detached sits at 80×24 forever, so pi
+  // wrapped its output at 80 columns however wide the board painted the
+  // mirror: the text crowded into the left of the pane and a selection drawn
+  // over the empty remainder picked up nothing (reported 2026-08-21).
+  it("is the painted rectangle: two chrome rows off, borders and the leading space off the width", () => {
+    expect(piPaneSize(100, 24)).toEqual({ cols: 96, rows: piRows(24) - 2 });
+    expect(piPaneSize(200, 60)).toEqual({ cols: 196, rows: piRows(60) - 2 });
+  });
+
+  it("has no rectangle to offer when the pane is squeezed out of existence", () => {
+    expect(piPaneSize(100, 6)).toBeUndefined(); // piRows floors to 0 here
+    expect(piPaneSize(3, 40)).toBeUndefined();
+    expect(piPaneSize(0, 0)).toBeUndefined();
+  });
+
+  it("folds resize-window into the capture, ahead of it and in one invocation", () => {
+    // One invocation matters: a separate resize could land after the capture
+    // and the mirror would paint a frame laid out for the previous size.
+    const argv = captureArgv(TUI_DEFAULTS, "pr-5012", undefined, { cols: 96, rows: 8 });
+    expect(argv.indexOf("resize-window")).toBeLessThan(argv.indexOf("capture-pane"));
+    expect(argv.slice(argv.indexOf("resize-window"))).toEqual([
+      "resize-window", "-t", "pr-5012", "-x", "96", "-y", "8", ";",
+      "capture-pane", "-e", "-p", "-J", "-t", "pr-5012",
+    ]);
+  });
+
+  it("captures exactly as before when no rectangle is known yet", () => {
+    // First capture can precede the first paint; it must not invent a size.
+    expect(captureArgv(TUI_DEFAULTS, "pr-5012")).not.toContain("resize-window");
+  });
+
+  it("keeps the last usable rectangle rather than sending a degenerate one", () => {
+    const seen: string[][] = [];
+    const ssh: SshRunner = async (_h, argv) => {
+      seen.push(argv);
+      return { ok: true, stdout: "pane", stderr: "", code: 0 };
+    };
+    const mirror = new PiMirror(TUI_DEFAULTS, ssh);
+    mirror.setViewport({ cols: 96, rows: 8 });
+    mirror.setViewport(undefined); // board collapsed to nothing mid-resize
+    mirror.setViewport({ cols: 0, rows: 8 });
+    return mirror.fetch(5012).then(() => {
+      expect(seen[0]).toContain("resize-window");
+      expect(seen[0]?.slice(seen[0].indexOf("-x"), seen[0].indexOf("-x") + 4)).toEqual(["-x", "96", "-y", "8"]);
+    });
   });
 });

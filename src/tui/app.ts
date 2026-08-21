@@ -5,7 +5,7 @@
 import type { WhyPayload } from "../cli.js";
 import type { TuiConfig } from "../config.js";
 import type { AlertBadge } from "./alerts.js";
-import { renderBoard, type BoardAction, type BoardView } from "./board.js";
+import { piPaneSize, renderBoard, type BoardAction, type BoardView } from "./board.js";
 import { barHitKey, registeredKeys } from "./cmdbar.js";
 import { decodeInputKey, decodeKey } from "./keys.js";
 import { visiblePrs } from "./filters.js";
@@ -1231,6 +1231,10 @@ export class App {
       return;
     }
     this.view.now = this.now();
+    // Same reason as the sidebar above: the PR's pi runs in a detached tmux
+    // window stuck at 80×24, so without this it wraps at 80 columns however
+    // wide we paint the mirror. Fed here, applied by the next capture.
+    this.pi.setViewport(piPaneSize(inner, rows));
     paint(renderBoard(this.view, inner, rows), "");
   }
 }

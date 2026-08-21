@@ -100,6 +100,23 @@ export function piRows(rows: number): number {
   return Math.max(0, Math.min(Math.max(6, Math.floor(usable * 0.5)), usable - 3));
 }
 
+/**
+ * The exact terminal geometry the mirrored pi session should have — the
+ * rectangle `renderBoard` paints its capture into, and nothing more.
+ *
+ * ONE source of truth on purpose, shared with the paint below: if these numbers
+ * drift, pi lays itself out for a terminal of a different size than the one its
+ * output is rendered in, which is the bug this exists to stop. Two of the pane's
+ * rows are chrome (divider + header); of the width, two cells are the board's
+ * borders and one is the leading space each mirror row is painted with.
+ */
+export function piPaneSize(cols: number, rows: number): { cols: number; rows: number } | undefined {
+  const lines = piRows(rows) - 2;
+  const width = cols - 4;
+  if (lines <= 0 || width <= 0) return undefined;
+  return { cols: width, rows: lines };
+}
+
 /** Geometry of the floating EVENTS overlay: a centered band over the board,
  * bordered top and bottom, ~60% of the height. */
 export function eventsOverlayBand(rows: number): { top: number; height: number } {
@@ -414,7 +431,9 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
     for (let i = 4; i <= piLines; i++) frame.boxRow(piTop + i, [{ text: "", width: cols - 2 }]);
   } else if (pRows > 0) {
     frame.boxRow(piTop + 1, [{ text: ` ${piHeader(panePr, view.pi, piFocused)}${view.noticeLine ? `   ${view.noticeLine}` : ""}`, width: cols - 2 }]);
-    const body = piBody(panePr, view.pi, cols - 4, piLines);
+    // Width comes from piPaneSize so the rectangle tmux is resized to and the
+    // rectangle the capture is painted into cannot drift apart.
+    const body = piBody(panePr, view.pi, piPaneSize(cols, rows)?.cols ?? 0, piLines);
     for (let i = 0; i < piLines; i++) frame.boxRow(piTop + 2 + i, [{ text: ` ${body[i] ?? ""}`, width: cols - 2 }]);
     // Clicking anywhere in the region (divider, header or body) gives the pane
     // the keyboard — it does NOT open the full-screen attach any more. The

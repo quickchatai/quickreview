@@ -77,16 +77,31 @@ export interface CaptureRange {
   endBack?: number;
 }
 
-/** Non-interactive snapshot of a live pi session for the board's mirror pane:
+/**
+ * Non-interactive snapshot of a live pi session for the board's mirror pane:
  * `-e` keeps the pane's colors, `-p` writes to stdout, `-J` joins wrapped
- * lines. Reads only — writing into the pane is `sendKeysArgv`. */
-export function captureArgv(cfg: TuiConfig, session: string, range?: CaptureRange): string[] {
+ * lines. Reads only — writing into the pane is `sendKeysArgv`.
+ *
+ * `size` prepends a `resize-window`, in the SAME tmux invocation, so the
+ * capture can never race an asynchronous resize. A session the daemon created
+ * detached sits at tmux's 80×24 default forever (verified on the VM: a fresh
+ * detached session reports `80x24 window-size=latest`), so pi wraps its output
+ * at 80 columns however wide the board paints the mirror — the text crowds into
+ * the left of the pane and a selection drawn over the empty remainder picks up
+ * nothing. Handing tmux the painted rectangle makes pi lay itself out for the
+ * space its capture is rendered in.
+ *
+ * `resize-window -x/-y` flips the window's `window-size` option to `manual`,
+ * which is why `attachArgv` puts it back to `latest` — see there.
+ */
+export function captureArgv(cfg: TuiConfig, session: string, range?: CaptureRange, size?: { cols: number; rows: number }): string[] {
   const window: string[] = [];
   if (range && range.startBack > 0) {
     window.push("-S", `-${range.startBack}`);
     if (range.endBack !== undefined && range.endBack > 0) window.push("-E", `-${range.endBack}`);
   }
-  return [...dockerPrefix(cfg), cfg.container, "tmux", "capture-pane", "-e", "-p", "-J", ...window, "-t", session];
+  const resize: string[] = size ? ["resize-window", "-t", session, "-x", String(size.cols), "-y", String(size.rows), ";"] : [];
+  return [...dockerPrefix(cfg), cfg.container, "tmux", ...resize, "capture-pane", "-e", "-p", "-J", ...window, "-t", session];
 }
 
 /**
@@ -103,9 +118,35 @@ export function sendKeysArgv(cfg: TuiConfig, session: string, parts: string[]): 
   return [...dockerPrefix(cfg), cfg.container, "tmux", "send-keys", "-t", session, ...parts];
 }
 
-/** The interactive attach argv — the whole remote command after `ssh`. */
+/**
+ * The interactive attach argv — the whole remote command after `ssh`.
+ *
+ * `window-size latest` FIRST, in the same invocation: the mirror's
+ * `resize-window` (see `captureArgv`) leaves the window pinned to the board
+ * pane's rectangle in `manual` mode, and a full-screen attach would then open
+ * a small window marooned in a large terminal. `latest` is tmux's own default
+ * — verified on the VM — and hands sizing back to the attaching client, so
+ * taking a session over full-screen looks exactly as it did before the mirror
+ * ever resized it.
+ */
 export function attachArgv(cfg: TuiConfig, session: string): string[] {
-  return ["-tt", cfg.ssh_host, ...dockerPrefix(cfg), "-it", cfg.container, "tmux", "attach", "-t", session];
+  return [
+    "-tt",
+    cfg.ssh_host,
+    ...dockerPrefix(cfg),
+    "-it",
+    cfg.container,
+    "tmux",
+    "set-window-option",
+    "-t",
+    session,
+    "window-size",
+    "latest",
+    ";",
+    "attach",
+    "-t",
+    session,
+  ];
 }
 
 /**
