@@ -12,7 +12,6 @@ import { formatEvent, glyphFor, type EventLine, type SnapshotPr } from "./model.
 import { ACCENT, ACCENT_BG, HEADING, MUTED, OK, RESET as DRESET, STRONG, WARN, modeBadge, sectionTitle, selected as selectedLine } from "./design.js";
 import { Frame, displayWidth, fit, rule, sanitizeText, stripAnsi, truncate, wrap } from "./paint.js";
 import type { PiPaneView } from "./pipane.js";
-import { paintStrip, stripHeight, type StripView } from "./strip.js";
 import type { Health } from "./poll.js";
 import { FG, RESET, fmtAge, legendLine, osc8, prUrl, stateColor, verdictChip } from "./theme.js";
 
@@ -93,8 +92,8 @@ export function listWidth(prs: SnapshotPr[], cols: number, now: Date = new Date(
  * strip). Two rows are chrome (divider + header), the rest is session tail.
  * Floors at 6 rows and never squeezes the list/detail body below 3.
  */
-export function piRows(rows: number, stripRows = 0): number {
-  const usable = rows - 4 - stripRows; // top bar + strip + command bar (2 rows) + bottom border
+export function piRows(rows: number): number {
+  const usable = rows - 4; // top bar + command bar (2 rows) + bottom border
   return Math.max(0, Math.min(Math.max(6, Math.floor(usable * 0.5)), usable - 3));
 }
 
@@ -257,9 +256,9 @@ export const HELP_LINES = [
   "s              reconnect VM ssh (the one ssh key-passphrase prompt, shared 4h)",
   "Ctrl-c ×3      kill the TUI from anywhere (terminal restored) — the un-stuck hatch",
   "               an alert in the top bar: click it or ⏎ to open the companion",
-  "the companion strip above the command bar is on every tab:",
+  "the companion sidebar down the right edge is on every tab:",
   "               type any key no tab claims (or /) — it starts a message; ⏎ sends · Esc clears",
-  "               click its input row to type, click the mirror rows to open the companion full-screen",
+  "               click its input row to type · \\ collapses it to a spine",
   "j/k ↓/↑        select PR (mouse: click a row; click again to attach)",
   "⏎ / a          attach selected PR full-screen (the takeover; Ctrl-q back)",
   "click the PI pane below the list — it is a live terminal, not a picture:",
@@ -336,15 +335,14 @@ function renderEventsOverlay(frame: Frame, view: BoardView, cols: number, rows: 
 
 // ---- render ----------------------------------------------------------------
 
-export function renderBoard(view: BoardView, cols: number, rows: number, strip?: StripView): Frame {
+export function renderBoard(view: BoardView, cols: number, rows: number): Frame {
   const frame = new Frame(cols, rows);
   const now = view.now ?? new Date();
   frame.set(0, topBar(view, cols));
   const az = alertZone(view, cols);
   if (az) frame.zones.push({ x1: az.x1, y1: 1, x2: az.x2, y2: 1, action: { t: "companion" } satisfies BoardAction });
-  const stripRows = strip ? stripHeight(rows, strip.available) : 0;
-  const pRows = piRows(rows, stripRows);
-  const bodyRows = rows - 4 - stripRows - pRows; // top bar + strip + command bar (2 rows) + bottom border
+  const pRows = piRows(rows);
+  const bodyRows = rows - 4 - pRows; // top bar + command bar (2 rows) + bottom border
   const sorted = visiblePrs(view);
   const listW = listWidth(sorted, cols, now);
   const detailW = cols - 2 - listW - 1;
@@ -357,17 +355,15 @@ export function renderBoard(view: BoardView, cols: number, rows: number, strip?:
       if (2 + i < rows - 1) frame.boxRow(2 + i, [{ text: `   ${l}`, width: cols - 2 }]);
     });
     for (let r = 2 + HELP_LINES.length; r < rows - 1; r++) frame.boxRow(r, [{ text: "", width: cols - 2 }]);
-    if (strip) paintStrip(frame, strip, cols, rows);
     frame.set(rows - 1, rule(cols, "└", "┘", []));
     return frame;
   }
 
   if (view.detailFull) {
     const lines = detailLines(view.detail, selectedPr, cols - 4, now);
-    for (let r = 0; r < rows - 4 - stripRows; r++) {
+    for (let r = 0; r < rows - 4; r++) {
       frame.boxRow(1 + r, [{ text: ` ${lines[r] ?? ""}`, width: cols - 2 }]);
     }
-    if (strip) paintStrip(frame, strip, cols, rows);
     paintCmdBar(frame, "board", cols, rows);
     frame.set(rows - 1, rule(cols, "└", "┘", ["w back"]));
     return frame;
@@ -429,7 +425,6 @@ export function renderBoard(view: BoardView, cols: number, rows: number, strip?:
   if (view.eventsFocus) renderEventsOverlay(frame, view, cols, rows);
 
   // The shared two-row command bar replaces the board's own hint row.
-  if (strip) paintStrip(frame, strip, cols, rows);
   paintCmdBar(frame, "board", cols, rows);
   frame.set(rows - 1, rule(cols, "└", "┘", []));
   return frame;

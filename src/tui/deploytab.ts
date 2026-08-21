@@ -14,7 +14,6 @@ import { ACCENT, ACCENT_BG, BAD, HEADING, MUTED, OK, RESET as DRESET, STRONG, WA
 import { Frame, displayWidth, rule, stripAnsi, truncate } from "./paint.js";
 import type { RemoteResult, SshRunner } from "./remote.js";
 import { FG, RESET } from "./theme.js";
-import { paintStrip, stripHeight, type StripView } from "./strip.js";
 
 function dockerSh(cfg: TuiConfig, script: string): string[] {
   return [...(cfg.sudo_docker ? ["sudo"] : []), "docker", "exec", cfg.container, "sh", "-c", script];
@@ -221,7 +220,7 @@ export function deployLines(st: DeployState, width: number): string[] {
   return lines;
 }
 
-export function renderDeployTab(st: DeployState, dryRun: boolean, cols: number, rows: number, strip?: StripView): Frame {
+export function renderDeployTab(st: DeployState, dryRun: boolean, cols: number, rows: number): Frame {
   const frame = new Frame(cols, rows);
   frame.set(0, rule(cols, "┌", "┐", [`${HEADING}quickreview${DRESET}`, modeBadge(dryRun), "deploy"]));
 
@@ -278,8 +277,7 @@ export function renderDeployTab(st: DeployState, dryRun: boolean, cols: number, 
     st.powerZone = { x1: pX, y1: 2, x2: pX + displayWidth(stripAnsi(pLabel)) - 1, y2: 2 };
   }
 
-  const stripRows = strip ? stripHeight(rows, strip.available) : 0;
-  const bodyRows = rows - 5 - stripRows; // top bar + button row + strip + command bar (2 rows) + bottom border
+  const bodyRows = rows - 5; // top bar + button row + command bar (2 rows) + bottom border
   if (run) {
     // Live log view: tail-follow; st.scroll counts lines BACK from the tail.
     const all = run.partial ? [...run.lines, run.partial] : run.lines;
@@ -296,7 +294,6 @@ export function renderDeployTab(st: DeployState, dryRun: boolean, cols: number, 
       frame.boxRow(2 + r, [{ text: ` ${lines[st.scroll + r] ?? ""}`, width: cols - 2 }]);
     }
   }
-  if (strip) paintStrip(frame, strip, cols, rows);
   paintCmdBar(frame, "deploy", cols, rows);
   frame.set(rows - 1, rule(cols, "└", "┘", []));
   return frame;
@@ -322,7 +319,7 @@ export function installDeployHooks(app: App, fetcher?: DeployFetcher, now: () =>
 
   app.hooks.deployScreen = (theApp, cols, rows) => {
     if (!st.loaded && !st.loading) void load();
-    return renderDeployTab(st, theApp.view.dryRun, cols, rows, theApp.strip?.view()).render();
+    return renderDeployTab(st, theApp.view.dryRun, cols, rows);
   };
 
   // The kill handle of the run in flight (undefined once it exits).
@@ -449,7 +446,7 @@ export function installDeployHooks(app: App, fetcher?: DeployFetcher, now: () =>
         return true;
       default:
         // A key that just disarmed is CONSUMED — it must not also fall
-        // through and seed the companion strip (or act on the board).
+        // through and seed the companion column (or act on the board).
         return disarmed; // otherwise tabs/quit/help fall through to the app
     }
   };

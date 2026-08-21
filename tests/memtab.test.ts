@@ -17,8 +17,13 @@ import { legacyBlockHash as blockHash, parseLegacyMemory as parseMemory } from "
 import type { MemoryEntry, MemoryOp, MemoryStore } from "../src/memory/store.js";
 import type { MemoryHealth } from "../src/tui/memory.js";
 import { renderDigestTab } from "../src/tui/digesttab.js";
-import { displayWidth, stripAnsi } from "../src/tui/paint.js";
+import { Frame, displayWidth, stripAnsi } from "../src/tui/paint.js";
 import type { RemoteResult } from "../src/tui/remote.js";
+
+/** FT-0177: tab hooks hand back a Frame so the app can compose the companion
+ * column beside it. These tests read the tab alone, so they render it. */
+const renderScreen = (screen: string | Frame | undefined): string =>
+  screen === undefined ? "" : typeof screen === "string" ? screen : screen.render();
 
 const SAMPLE = `<!-- 2026-08-19 18:13:54 [01a01ab3] -->
 #false-positive #eod-learning lesson about merge bases.
@@ -112,6 +117,42 @@ describe("body-row width contract (review P2: rows were cols+1 wide)", () => {
       for (const line of memory.lines) expect(displayWidth(line)).toBe(cols);
     });
   }
+
+  it("both views paint the body down to rows-4 now the companion strip is retired (FT-0177)", () => {
+    // top bar (0) + body 1..rows-4 + command bar rows-3..rows-2 + border rows-1.
+    const rows = 40;
+    const content = Array.from({ length: 60 }, (_, i) => `digest line ${i}`).join("\n");
+    const digest = renderDigestTab(
+      { files: ["2026-08-19.md"], back: 0, content, scroll: 0, awaitingSelected: 0, loaded: true },
+      [],
+      true,
+      "2026-08-19",
+      120,
+      rows,
+    );
+    // bodyRows = rows - 4 = 36 lines painted from frame row 1, so the last
+    // body row carries the 36th digest line (index 35).
+    expect(stripAnsi(digest.lines[rows - 4]!)).toContain("digest line 35");
+    expect(stripAnsi(digest.lines[rows - 3]!)).toContain("1 board"); // the command bar
+
+    const st: MemTabState = {
+      view: "memory",
+      digest: { files: [], back: 0, scroll: 0, awaitingSelected: 0, loaded: true },
+      entries: parseMemory(SAMPLE),
+      memLoaded: true,
+      focus: "timeline",
+      sel: 0,
+      propSel: 0,
+      scroll: 0,
+      proposals: [],
+      improvements: [],
+      propLoaded: true,
+      filedTotal: 0,
+    };
+    const memory = renderMemoryView(st, false, undefined, 120, rows);
+    expect(memory.lines[rows - 4]!.startsWith("│")).toBe(true); // content, not chrome
+    expect(stripAnsi(memory.lines[rows - 3]!)).toContain("1 board");
+  });
 });
 
 describe("renderMemoryView", () => {
@@ -122,7 +163,7 @@ describe("renderMemoryView", () => {
     app.hooks.digestScreen!(app, 110, 30);
     await settle();
     st.view = "memory";
-    const screen = stripAnsi(app.hooks.digestScreen!(app, 110, 30));
+    const screen = stripAnsi(renderScreen(app.hooks.digestScreen!(app, 110, 30)));
     expect(screen).toContain("memory & learning");
     expect(screen).toContain("MEMORY (3)");
     expect(screen).toContain("RUBRIC PROPOSALS (1)");
@@ -292,7 +333,7 @@ describe("mouse operation (FT-0129 UX)", () => {
     app.hooks.digestScreen!(app, 140, 40); // paint captures zones
     // Row 1 of the list = frame row 2 = terminal y 3 (header above it).
     app.hooks.digestClick!(app, 4, 4);
-    const screen = stripAnsi(app.hooks.digestScreen!(app, 140, 40));
+    const screen = stripAnsi(renderScreen(app.hooks.digestScreen!(app, 140, 40)));
     expect(st.sel).toBe(1);
     expect(screen).toContain("ENTRY 2026-08-19 18:13:54");
     // The FULL selected text is readable in the pane (wrapped, not clipped).
@@ -308,12 +349,12 @@ describe("mouse operation (FT-0129 UX)", () => {
     app.hooks.digestScreen!(app, 140, 40);
     await settle();
     st.view = "memory";
-    const screen = stripAnsi(app.hooks.digestScreen!(app, 140, 40));
+    const screen = stripAnsi(renderScreen(app.hooks.digestScreen!(app, 140, 40)));
     const rowText = screen.split("\n")[2]!; // verbs row (terminal y 3)
     const x = rowText.indexOf("[x retire]") + 2;
     app.hooks.digestClick!(app, x, 3);
     expect(mem.applied).toHaveLength(0); // armed only
-    const rowText2 = stripAnsi(app.hooks.digestScreen!(app, 140, 40)).split("\n")[2]!;
+    const rowText2 = stripAnsi(renderScreen(app.hooks.digestScreen!(app, 140, 40))).split("\n")[2]!;
     expect(rowText2).toContain("[x CONFIRM retire]");
     const x2 = rowText2.indexOf("[x CONFIRM retire]") + 2;
     app.hooks.digestClick!(app, x2, 3);
@@ -328,7 +369,7 @@ describe("mouse operation (FT-0129 UX)", () => {
     app.hooks.digestScreen!(app, 140, 40);
     await settle();
     st.view = "memory";
-    const screen = stripAnsi(app.hooks.digestScreen!(app, 140, 40));
+    const screen = stripAnsi(renderScreen(app.hooks.digestScreen!(app, 140, 40)));
     const lines = screen.split("\n");
     const y = lines.findIndex((l) => l.includes("[accept]")) + 1;
     const x = lines[y - 1]!.indexOf("[accept]") + 2;
@@ -344,7 +385,7 @@ describe("mouse operation (FT-0129 UX)", () => {
     await settle();
     // The bar renders the button on row B; its hit range maps back to `v`,
     // which pressKey routes through the tab's own key handler.
-    const screen = stripAnsi(app.hooks.digestScreen!(app, 140, 40));
+    const screen = stripAnsi(renderScreen(app.hooks.digestScreen!(app, 140, 40)));
     const rowB = screen.split("\n")[38]!; // frame row rows-2
     const x = rowB.indexOf("[v view]") + 2; // 1-based terminal x of the `v`
     expect(x).toBeGreaterThan(2);
@@ -359,7 +400,7 @@ describe("mouse operation (FT-0129 UX)", () => {
     app.hooks.digestScreen!(app, 140, 40);
     await settle();
     st.view = "memory";
-    const screen = stripAnsi(app.hooks.digestScreen!(app, 140, 40));
+    const screen = stripAnsi(renderScreen(app.hooks.digestScreen!(app, 140, 40)));
     expect(screen).not.toMatch(/#bug #operations #bug #operations/);
   });
 });
@@ -370,7 +411,7 @@ describe("the [2] tab is VISIBLY Memory & learning (rename regression)", () => {
     install(app, new FakeMemory());
     app.hooks.digestScreen!(app, 110, 30);
     await settle();
-    const screen = stripAnsi(app.hooks.digestScreen!(app, 110, 30));
+    const screen = stripAnsi(renderScreen(app.hooks.digestScreen!(app, 110, 30)));
     expect(screen).toContain("memory & learning · digest");
     expect(screen).toContain("[v view]");
     expect(screen).toContain("[2 memory]");
@@ -444,7 +485,7 @@ describe("memory unreachable (FT-0164)", () => {
     app.hooks.digestScreen!(app, 110, 30);
     await settle();
     st.view = "memory";
-    const screen = stripAnsi(app.hooks.digestScreen!(app, 110, 30));
+    const screen = stripAnsi(renderScreen(app.hooks.digestScreen!(app, 110, 30)));
     expect(st.memError).toBe(DEAD);
     expect(screen).toContain("MEMORY UNREACHABLE");
     expect(screen).toContain("qcr-memory-forward");
@@ -457,7 +498,7 @@ describe("memory unreachable (FT-0164)", () => {
     app.hooks.digestScreen!(app, 110, 30);
     await settle();
     st.view = "memory";
-    const screen = stripAnsi(app.hooks.digestScreen!(app, 110, 30));
+    const screen = stripAnsi(renderScreen(app.hooks.digestScreen!(app, 110, 30)));
     expect(st.memError).toBeUndefined();
     expect(screen).toContain("none yet");
     expect(screen).not.toContain("UNREACHABLE");
@@ -471,7 +512,7 @@ describe("memory unreachable (FT-0164)", () => {
     app.hooks.digestScreen!(app, 110, 30);
     await settle();
     st.view = "memory";
-    const screen = stripAnsi(app.hooks.digestScreen!(app, 110, 30));
+    const screen = stripAnsi(renderScreen(app.hooks.digestScreen!(app, 110, 30)));
     expect(screen).toContain("MEMORY (3)");
     expect(screen).toContain("companion memory unreachable");
     expect(screen).toContain("memory degraded");
@@ -630,7 +671,7 @@ describe("memory forward on the tab", () => {
     expect(order).toContain("read");
   });
 
-  it("W is a registered digest-tab key — the companion strip must not swallow it", () => {
+  it("W is a registered digest-tab key — the companion sidebar must not swallow it", () => {
     expect(registeredKeys("digest").has("W")).toBe(true);
   });
 });

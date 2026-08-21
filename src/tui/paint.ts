@@ -189,6 +189,49 @@ export class Frame {
   }
 }
 
+/** Append a right-hand column to a frame (sidebar composition).
+ *
+ * Returns a NEW `Frame` of `inner.cols + width` columns and `inner.rows` rows;
+ * `inner` is not mutated. Row `r` is `inner.lines[r]` concatenated with
+ * `column[r]`. `zones` and `meta` are carried over unchanged: the column is
+ * appended to the RIGHT of existing content, so no existing coordinate moves
+ * (the inner tab must therefore have been rendered at the reduced width).
+ *
+ * Total by construction — a caller's bug can never break the frame's
+ * row-width discipline (a ragged row shreds the border and rehomes the
+ * cursor): a `column` shorter than `inner.rows` pads with blank cells, and an
+ * entry of any other display width is `fit()`ed to exactly `width`. */
+/** The box glyphs a bordered frame's rows END with. Only these are dropped at
+ * the seam — anything else means the row is not a bordered row and is left
+ * exactly as the renderer built it. */
+const SEAM_GLYPHS = new Set(["│", "┐", "┘", "┤"]);
+
+export function composeColumn(inner: Frame, column: string[], width: number, joinSeam = false): Frame {
+  const w = Math.max(0, Math.floor(width));
+  // Both halves draw a border at the seam, so a naive concatenation paints a
+  // doubled wall (`││`, and `┐┬` at the corners). Joining drops the inner
+  // frame's LAST cell and lets the column's own left border be the shared
+  // divider — which is why the column carries `┬`/`┴` corners.
+  const trim = (line: string): string =>
+    joinSeam && SEAM_GLYPHS.has(line.slice(-1)) ? line.slice(0, -1) : line;
+  const innerCols = joinSeam ? Math.max(0, inner.cols - 1) : inner.cols;
+  const out = new Frame(innerCols + w, inner.rows);
+  const blank = " ".repeat(w);
+  for (let r = 0; r < inner.rows; r++) {
+    const left = trim(inner.lines[r] ?? "");
+    if (w === 0) {
+      out.set(r, left);
+      continue;
+    }
+    const cell = column[r];
+    const right = cell === undefined ? blank : displayWidth(cell) === w ? cell : fit(cell, w);
+    out.set(r, left + right);
+  }
+  out.zones = inner.zones.map((z) => ({ ...z }));
+  out.meta = { ...inner.meta };
+  return out;
+}
+
 export const ALT_SCREEN_ON = `${ESC}?1049h${ESC}?25l`;
 export const ALT_SCREEN_OFF = `${ESC}?25h${ESC}?1049l`;
 export const CLEAR = `${ESC}2J${ESC}H`;

@@ -32,18 +32,19 @@ usage: qcr tui [<pr> | overseer | main] [--no-companion] [--no-reload]
   qcr tui overseer  deep-link into the overseer session
 
   --no-companion    skip the local companion entirely (container, ambient
-                    feed, alert pipeline; the companion strip shows "companion
-                    off")
+                    feed, alert pipeline; the companion column shows
+                    "companion off")
   --no-reload       do not re-exec when a new dist/ build lands
 
 keys: 1/2/3/4 tabs (2 = memory & learning — v toggles digest/memory view,
       x×2 retire · p pin · e edit · n new · A/R accept/reject a rubric proposal;
       3 = deploy — click ▶/■ buttons (D D deploy, S S stop/start);
       4 = metrics — 7/0/a window, # <pr> ⏎ for a PR timeline) ·
-      companion strip on every tab: type any unclaimed key (or /) to start a
-      message — ⏎ sends · Esc clears; click its mirror rows to go full-screen ·
-      j/k select · ⏎ attach ·
-      Ctrl-q detach (twice = literal) · Ctrl-c ×3 hard-kill the TUI ·
+      companion column on every tab: type any unclaimed key (or /) to talk to
+      it — ⏎ sends · Esc clears the draft · PgUp/PgDn walk its scrollback ·
+      \ collapses the column · click it to take the keyboard ·
+      j/k select · ⏎ focus the PR's pi pane ·
+      Ctrl-q release focus · Ctrl-c ×3 hard-kill the TUI ·
       s reconnect ssh (GCP passphrase, once) ·
       m quick-message · o overseer · M main · w detail · e events overlay · r refresh ·
       ? full key map · q quit
@@ -104,12 +105,12 @@ export function chainOnPoll(app: App, fn: (a: App) => void): void {
  */
 export function buildTuiDriver(app: App, memState: MemTabState, metricsView: MetricsView, deployState: DeployState): TuiDriver {
   // One keyboard owner at a time: an action must never type into a focused
-  // pi pane or companion strip (same rule the mouse/tab handlers follow).
+  // pi pane or companion column (same rule the mouse/tab handlers follow).
   // A busy App (operator input box open, attach suspended) is refused: a
   // synthesized keystroke would land in the operator's draft or nowhere.
   const prep = (): void => {
     if (app.piFocused()) app.blurPiPane();
-    app.strip?.blur();
+    app.sidebar?.blur();
     if (app.isBusy()) throw new Error("operator input open / attach active — action refused");
   };
   const driver: TuiDriver = {
@@ -442,40 +443,40 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
 
   // ambient feed + alert pipeline + companion tab. All of it hangs off
   // companionOn, so --no-companion really means "none of this runs".
+  // no pty spawner here any more — the companion is never opened
+  // full-screen, so the only thing left to install is the startup healing.
   const { installCompanionTabHooks } = await import("./companiontab.js");
-  const { spawn: spawnPty } = companionOn ? await import("node-pty") : { spawn: undefined };
   installCompanionTabHooks(app, {
     lifecycle: companion,
     available: () => companionUp,
     failure: () => companionError,
     retry: companionOn ? startCompanion : undefined,
-    spawner: (argv, cols, rows) => {
-      const p = spawnPty!("docker", argv, { name: "xterm-256color", cols, rows, env: process.env as Record<string, string> });
-      return {
-        write: (data) => p.write(data),
-        resize: (c, r) => p.resize(c, r),
-        kill: () => {
-          try {
-            p.kill();
-          } catch {
-            /* already dead */
-          }
-        },
-        onData: (cb) => p.onData(cb),
-        onExit: (cb) => p.onExit(cb),
-      };
-    },
   });
 
-  // the companion strip — chrome on every tab. Mirror + send go
-  // through the same local docker seam the lifecycle uses; refresh piggybacks
-  // the app poll (the strip's own 500ms timer only runs focused/after-send).
-  const { CompanionStrip } = await import("./strip.js");
-  app.strip = new CompanionStrip(full.companion, realDockerRunner, {
+  // the companion sidebar — a permanent right-hand column on every
+  // tab, and the ONLY companion surface (the strip and the full-screen attach
+  // it opened are both retired). Mirror + send go through the same local
+  // docker seam the lifecycle uses; refresh piggybacks the app poll (the
+  // sidebar's own 500ms timer only runs focused/after-send).
+  const { CompanionSidebar } = await import("./sidebar.js");
+  app.sidebar = new CompanionSidebar(full.companion, realDockerRunner, {
     available: () => companionUp,
     onUpdate: () => app.repaint(),
   });
-  chainOnPoll(app, (a) => void a.strip?.refresh());
+  chainOnPoll(app, (a) => void a.sidebar?.refresh());
+  // The header carries what the sidebar cannot know for itself: whose day it
+  // is (the companion rolls over on the Warsaw boundary, so a stale day in
+  // the header is the first visible sign a rollover was missed) and whether
+  // memory is actually reachable — a companion talking with no memory behind
+  // it looks identical to a healthy one until you ask it something.
+  const { todayDate } = await import("./rollover.js");
+  chainOnPoll(app, (a) => {
+    const fwd = memForward.view();
+    a.sidebar?.setHeader({
+      day: todayDate(new Date()),
+      memory: fwd.state === "failed" ? "degraded" : fwd.state === "off" ? "off" : "ok",
+    });
+  });
 
   let alerts: { stop(): void } | undefined;
   if (companionUp) {

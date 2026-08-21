@@ -32,7 +32,7 @@ const GLOBALS: BarButton[] = [
 /** Row B: the tab's own commands, fixed slot order per tab. */
 export const TAB_COMMANDS: Record<Tab, BarButton[]> = {
   board: [
-    { key: "\r", label: "⏎ attach" },
+    { key: "\r", label: "⏎ pi pane" },
     { key: "m", label: "m message" },
     { key: "w", label: "w detail" },
     { key: "g", label: "g github" },
@@ -70,7 +70,7 @@ const GLOBAL_KEYS = ["q", "r", "s", "?", "1", "2", "3", "4", "j", "k"];
 
 /** Printable keys a tab's own handler consumes BEYOND its row-B buttons. */
 const TAB_EXTRA_KEYS: Record<Tab, string[]> = {
-  board: ["a", "F"], // ⏎'s full-screen-attach twin; F clears the board filter
+  board: ["a", "F"], // ⏎'s pi-pane-focus twin; F clears the board filter
   // memory & learning row verbs; F clears the memory filter, W opens the
   // OpenViking Studio web UI through the memory forward.
   digest: ["a", "m", "w", "g", "o", "M", "F", "W"],

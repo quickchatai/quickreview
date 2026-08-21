@@ -11,7 +11,6 @@ import { awaitingRows, sortPrs, type SnapshotPr } from "./model.js";
 import { HEADING, MUTED, RESET, modeBadge, sectionTitle, selected } from "./design.js";
 import { Frame, rule, truncate } from "./paint.js";
 import type { SshRunner } from "./remote.js";
-import { paintStrip, stripHeight, type StripView } from "./strip.js";
 
 function dockerSh(cfg: TuiConfig, script: string): string[] {
   return [...(cfg.sudo_docker ? ["sudo"] : []), "docker", "exec", cfg.container, "sh", "-c", script];
@@ -86,7 +85,6 @@ export function renderDigestTab(
   today: string,
   cols: number,
   rows: number,
-  strip?: StripView,
 ): Frame {
   const frame = new Frame(cols, rows);
   const file = currentFile(st);
@@ -96,8 +94,7 @@ export function renderDigestTab(
 
   const leftW = Math.floor((cols - 3) * 0.55);
   const rightW = cols - 4 - leftW; // │ + (leftW+1) + │ + rightW + │ = cols
-  const stripRows = strip ? stripHeight(rows, strip.available) : 0;
-  const bodyRows = rows - 4 - stripRows; // top bar + strip + command bar (2 rows) + bottom border
+  const bodyRows = rows - 4; // top bar + command bar (2 rows) + bottom border
 
   const left: string[] = [];
   if (!st.loaded) left.push(`${MUTED}loading…${RESET}`);
@@ -123,7 +120,6 @@ export function renderDigestTab(
       { text: ` ${right[r] ?? ""}`, width: rightW },
     ]);
   }
-  if (strip) paintStrip(frame, strip, cols, rows);
   paintCmdBar(frame, "digest", cols, rows);
   frame.set(rows - 1, rule(cols, "└", "┘", []));
   return frame;
@@ -145,7 +141,9 @@ export function installDigestHooks(app: App, fetcher?: DigestFetcher): DigestSta
     if (!st.loaded) void load();
     const prs = theApp.view.snapshot ? sortPrs(theApp.view.snapshot.prs) : [];
     const today = new Date().toISOString().slice(0, 10);
-    return renderDigestTab(st, prs, theApp.view.dryRun, today, cols, rows, theApp.strip?.view()).render();
+    // The Frame, not its rendering: the app composes the companion column
+    // beside it and only then paints.
+    return renderDigestTab(st, prs, theApp.view.dryRun, today, cols, rows);
   };
 
   app.hooks.digestKey = (theApp, key: BoardKey): boolean => {

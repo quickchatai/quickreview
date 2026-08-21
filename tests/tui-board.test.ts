@@ -185,6 +185,20 @@ describe("adaptive layout", () => {
     expect(piRows(11)).toBe(4); // squeezed: body keeps 3 rows
   });
 
+  it("the body reaches the command bar now the companion strip is retired", () => {
+    // Frame geometry: top bar (0), body 1..rows-4, command bar rows-3..rows-2,
+    // bottom border rows-1. The 7 strip rows the board used to give up are the
+    // sidebar's problem now — it is a column, not a band.
+    for (const rows of [24, 40]) {
+      const frame = renderBoard(view({ pi: { pr: 5012, lines: ["pi output"], missing: false, stale: false, offset: 0 } }), 120, rows);
+      expect(frame.meta["bodyRows"]! + frame.meta["piRows"]!).toBe(rows - 4);
+      expect(frame.meta["piTop"]! + frame.meta["piRows"]! - 1).toBe(rows - 4); // last body row
+      expect(frame.lines[rows - 4]!.startsWith("│")).toBe(true); // still content, not chrome
+      expect(stripAnsi(frame.lines[rows - 3]!)).toContain("1 board"); // the command bar
+      for (const z of frame.zones) expect(z.y2).toBeLessThanOrEqual(rows - 3); // terminal rows are 1-based
+    }
+  });
+
   it("centers the events overlay band on the screen", async () => {
     const { eventsOverlayBand } = await import("../src/tui/board.js");
     expect(eventsOverlayBand(24)).toEqual({ top: 5, height: 14 });

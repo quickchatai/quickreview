@@ -12,11 +12,11 @@ import { visiblePrs } from "./filters.js";
 import { formatEvent, moveSelection, reselect, type EventLine } from "./model.js";
 import { TripleCtrlC } from "./chord.js";
 import { MOUSE_OFF, MOUSE_ON, extractMouseEvents, hitTest, type MouseEvent, type Zone } from "./mouse.js";
-import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR, Frame } from "./paint.js";
+import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR, Frame, composeColumn } from "./paint.js";
 import { PANE_ESCAPE, PiMirror, keysToTmux } from "./pipane.js";
 import { Poller } from "./poll.js";
 import { prUrl } from "./theme.js";
-import { CompanionStrip, stripHeight, stripHit, stripInputText } from "./strip.js";
+import { CompanionSidebar, paintSidebar, sidebarHit, sidebarInputText, sidebarWidth } from "./sidebar.js";
 import { eventsArgv, sendKeysArgv, whyArgv, type SshRunner } from "./remote.js";
 
 export interface AppHooks {
@@ -26,8 +26,10 @@ export interface AppHooks {
   message?: (session: string, app: App) => void;
   /**: deliver a submitted quick-message (inject write + confirmation). */
   sendMessage?: (session: string, text: string, app: App) => void;
-  /**: render the digest tab into a frame string; undefined = placeholder. */
-  digestScreen?: (app: App, cols: number, rows: number) => string;
+  /**: render the digest tab; undefined = placeholder.
+   * Returning a Frame lets the companion sidebar be composed beside it
+   *; a bare string is painted as-is, sidebar-less. */
+  digestScreen?: (app: App, cols: number, rows: number) => string | Frame;
   /**: digest tab key handling; returns true when it consumed the key. */
   digestKey?: (app: App, key: ReturnType<typeof decodeKey>) => boolean;
   /**: mouse click on the Memory & learning tab (1-based coords) —
@@ -44,14 +46,18 @@ export interface AppHooks {
    * feed writer hangs off this (daemon-owned cadence). */
   onPoll?: (app: App) => void;
   /**: attach the local companion container's tmux session
-   * full-screen (reached from the strip's mirror rows + alerts). */
+   * full-screen. retired it: the companion is a permanent column and
+   * is never opened full-screen. Replaced by `companionEnsure`. */
   companionAttach?: (app: App) => Promise<void>;
+  /**: the companion was asked for while its startup is down — re-run
+   * that startup (build/up/rollover/spawn) and focus the column on success. */
+  companionEnsure?: (app: App) => Promise<void>;
   /** Deploy tab: what would a deploy ship (read-only — never deploys). */
-  deployScreen?: (app: App, cols: number, rows: number) => string;
+  deployScreen?: (app: App, cols: number, rows: number) => string | Frame;
   /** Deploy tab key handling; returns true when it consumed the key. */
   deployKey?: (app: App, key: ReturnType<typeof decodeKey>) => boolean;
   /**: metrics dashboard / per-PR timeline screen. */
-  metricsScreen?: (app: App, cols: number, rows: number) => string;
+  metricsScreen?: (app: App, cols: number, rows: number) => string | Frame;
   /** Metrics tab key handling; returns true when it consumed the key. */
   metricsKey?: (app: App, key: ReturnType<typeof decodeKey>) => boolean;
   /** Metrics tab click routing (window switcher zones); true = consumed. */
@@ -97,9 +103,9 @@ export class App {
     help: false,
   };
   tab: Tab = "board";
-  /**: the companion strip above the command bar, on every tab.
-   * Wired by index.ts; absent in bare test harnesses (no strip painted). */
-  strip?: CompanionStrip;
+  /**: the companion sidebar — a right-hand column on every tab.
+   * Wired by index.ts; absent in bare test harnesses (no column painted). */
+  sidebar?: CompanionSidebar;
   readonly poller: Poller;
   /** Live mirror of the selected PR's pi session (board's lower region). */
   readonly pi: PiMirror;
@@ -151,7 +157,7 @@ export class App {
     if (this.view.piFocus && this.piFocusPr === pr) return;
     this.piFocusPr = pr;
     this.view.piFocus = true;
-    this.strip?.blur(); // one keyboard owner at a time
+    this.sidebar?.blur(); // one keyboard owner at a time
     this.syncPiPane();
     void this.pi.refresh(pr);
     if (!this.piTimer) {
@@ -266,7 +272,7 @@ export class App {
     this.stopped = true;
     this.poller.stop();
     this.pi.stop();
-    this.strip?.stop();
+    this.sidebar?.stop();
     if (this.piTimer) clearInterval(this.piTimer);
     this.piTimer = undefined;
     this.input.off("data", this.onData);
@@ -318,7 +324,7 @@ export class App {
   /** True while something other than the board owns the terminal or holds
    * unsaved user input — hot-reload defers on it. */
   isBusy(): boolean {
-    return this.suspended || this.view.inputBox !== undefined || this.view.piFocus === true || this.strip?.focused === true;
+    return this.suspended || this.view.inputBox !== undefined || this.view.piFocus === true || this.sidebar?.focused === true;
   }
 
   /** The PR the board is pointing at (survives a hot-reload). */
@@ -371,7 +377,7 @@ export class App {
       }
       this.repaint();
     } catch {
-      /* keep the previous strip on parse failure */
+      /* keep the previous sidebar on parse failure */
     }
   }
 
@@ -531,30 +537,33 @@ export class App {
           this.blurPiPane();
           this.repaint();
         }
-        // So would a focused strip — and [⏎] would SUBMIT the draft. Blur
+        // So would a focused sidebar — and [⏎] would SUBMIT the draft. Blur
         // first (same rule as the pane): a bar click IS that keypress.
-        if (this.strip?.focused) {
-          this.strip.blur();
+        if (this.sidebar?.focused) {
+          this.sidebar.blur();
           this.repaint();
         }
         this.pressKey(k);
         return;
       }
-      // The companion strip is fixed chrome too: the input row focuses it,
-      // the mirror rows open the full-screen companion attach.
-      if (this.strip) {
-        const avail = this.strip.available();
-        const hit = stripHit(ev.x, ev.y, cols, rows, stripHeight(rows, avail));
-        if (hit === "input") {
-          if (avail) {
-            if (this.view.piFocus) this.blurPiPane();
-            this.strip.focus();
-            this.repaint();
-          }
+      // The companion column is fixed chrome on every tab: clicking anywhere
+      // in it takes the keyboard (its mirror IS the companion now — there is
+      // no full-screen view left to open), and the collapsed spine toggles
+      // back open.
+      if (this.sidebar) {
+        const width = this.sidebarWidth(cols);
+        const hit = width === 0 ? undefined : sidebarHit(ev.x, ev.y, cols, rows, width);
+        if (hit === "collapse") {
+          this.sidebar.toggleCollapse();
+          this.repaint();
           return;
         }
-        if (hit === "mirror") {
-          this.openCompanion();
+        if (hit !== undefined) {
+          if (this.sidebar.available()) {
+            if (this.view.piFocus) this.blurPiPane();
+            this.sidebar.focus();
+            this.repaint();
+          }
           return;
         }
       }
@@ -686,15 +695,25 @@ export class App {
       this.sendKeysToPane(buf);
       return;
     }
-    // smart routing: a focused strip input owns every printable.
-    if (this.strip?.focused) {
-      this.handleStripKey(buf);
+    // A focused sidebar owns the keyboard, exactly as the pi pane does above:
+    // the companion is a live terminal, so j/k/1-5/? are just text to it.
+    // Ctrl-q releases — the same chord, so there is ONE way out of every
+    // embedded surface — and Esc drops the draft.
+    if (this.sidebar?.focused) {
+      this.handleSidebarKey(buf);
       return;
     }
-    // `/` always focuses the strip input, on every tab.
     const raw = buf.toString("utf8");
-    if (raw === "/" && this.strip?.available()) {
-      this.strip.focus();
+    // `/` always focuses the companion, on every tab.
+    if (raw === "/" && this.sidebar?.available()) {
+      this.sidebar.focus();
+      this.repaint();
+      return;
+    }
+    // `\` collapses the column to its spine and back — the one key that is
+    // about the panel rather than about the companion.
+    if (raw === "\\" && this.sidebar) {
+      this.sidebar.toggleCollapse();
       this.repaint();
       return;
     }
@@ -702,9 +721,9 @@ export class App {
     if (this.tab === "deploy" && this.hooks.deployKey?.(this, key)) return;
     if (this.tab === "metrics" && this.hooks.metricsKey?.(this, key)) return;
     // An unregistered printable is a message to the companion, not a dead
-    // key: focus the strip input seeded with it (paste seeds whole).
+    // key: focus the sidebar seeded with it (paste seeds whole).
     if (
-      this.strip?.available() &&
+      this.sidebar?.available() &&
       raw.length > 0 &&
       !raw.includes("\x1b") &&
       raw >= " " &&
@@ -712,7 +731,7 @@ export class App {
       raw !== "\b" &&
       !(raw.length === 1 && registeredKeys(this.tab).has(raw))
     ) {
-      this.strip.focus(raw);
+      this.sidebar.focus(raw);
       this.repaint();
       return;
     }
@@ -780,6 +799,16 @@ export class App {
           this.openCompanion();
           return;
         }
+        // ⏎ on a PR row focuses the board's EMBEDDED pane — it no
+        // longer opens the full-screen attach. Nothing may take the whole TUI
+        // (the owner, 2026-08-21: "I dont EVER WANT IT to go into full screen
+        // mode … same goes for the PI on the board view"). The pane is the
+        // same live terminal the attach was, just bounded.
+        if (this.selectedPr !== undefined) {
+          this.focusPiPane();
+          this.repaint();
+          return;
+        }
         const session = this.selectedSession();
         if (!session) break;
         this.startAttach(session);
@@ -814,39 +843,77 @@ export class App {
     this.repaint();
   }
 
-  /** Open the companion full-screen (the strip's mirror rows, the
-   * alert badge, an alert-armed ⏎). Following an alert clears its focus —
-   * it has been acted on. */
+  /**
+   * Go to the companion (the sidebar's rows, the alert badge, an alert-armed
+   * ⏎). Following an alert clears its focus — it has been acted on.
+   *
+   * retired the full-screen path this used to take: the companion is
+   * always on screen now, so "open" means take the keyboard, and expand the
+   * column first if it was collapsed. Nothing in the TUI covers the whole
+   * terminal any more (the owner, 2026-08-21: never full-screen, ever).
+   */
   openCompanion(): void {
     this.view.alertFocus = false;
-    if (!this.hooks.companionAttach) {
-      this.notice("companion unavailable (started with --no-companion?)");
+    if (this.sidebar?.available()) {
+      this.focusCompanion();
       return;
     }
-    void this.hooks.companionAttach(this);
+    // Down, but a failed startup can heal: hand it to the ensure hook, which
+    // re-runs the startup and focuses on success (companiontab.ts).
+    if (this.hooks.companionEnsure) {
+      void this.hooks.companionEnsure(this);
+      return;
+    }
+    this.notice("companion unavailable (started with --no-companion?)");
   }
 
-  /** Strip input mode: printables + backspace edit, ⏎ sends+clears+blurs,
-   * Esc clears+blurs. Everything routes through decodeInputKey, so verb
-   * chars are text while the input owns the keyboard. */
-  private handleStripKey(buf: Buffer): void {
-    const strip = this.strip!;
+  /** Expand the column if it was collapsed, and give it the keyboard. */
+  focusCompanion(): void {
+    if (!this.sidebar) return;
+    if (this.sidebar.collapsed) this.sidebar.toggleCollapse();
+    this.sidebar.focus();
+    this.repaint();
+  }
+
+  /**
+   * Keys while the companion column has focus.
+   *
+   * Two modes in one surface: the draft line is a quick-send box (type, ⏎
+   * sends), but Ctrl-q releases and PgUp/PgDn walk the mirror's scrollback,
+   * so reading back through the conversation never means losing the draft.
+   */
+  private handleSidebarKey(buf: Buffer): void {
+    const sidebar = this.sidebar!;
+    // Ctrl-q is the one byte that never reaches the companion — the same
+    // release chord the board's pi pane uses, so there is one way out of
+    // every embedded surface.
+    if (buf.length === 1 && buf[0] === PANE_ESCAPE) {
+      sidebar.blur();
+      this.repaint();
+      return;
+    }
+    const raw = buf.toString("utf8");
+    if (raw === "\x1b[5~" || raw === "\x1b[6~") {
+      sidebar.scroll(raw === "\x1b[5~" ? 1 : -1);
+      this.repaint();
+      return;
+    }
     const key = decodeInputKey(buf);
     switch (key.kind) {
       case "char":
-        strip.input += stripInputText(key.ch); // a multi-line paste must not corrupt the frame
+        sidebar.input += sidebarInputText(key.ch); // a multi-line paste must not corrupt the frame
         break;
       case "backspace":
-        strip.input = strip.input.slice(0, -1);
+        sidebar.input = sidebar.input.slice(0, -1);
         break;
       case "escape":
-        strip.blur();
+        sidebar.blur();
         break;
       case "enter": {
-        const text = strip.input.trim();
-        strip.blur();
+        const text = sidebar.input.trim();
+        sidebar.blur();
         if (text.length > 0) {
-          void strip.send(text).catch((err: unknown) => this.notice(`✖ ${String(err instanceof Error ? err.message : err)}`));
+          void sidebar.send(text).catch((err: unknown) => this.notice(`✖ ${String(err instanceof Error ? err.message : err)}`));
         }
         break;
       }
@@ -878,31 +945,63 @@ export class App {
 
   private lastFrame: Frame | undefined;
 
+  /** Width the companion column takes on THIS paint (0 = not shown). */
+  sidebarWidth(cols: number): number {
+    if (!this.sidebar) return 0;
+    return sidebarWidth(cols, { collapsed: this.sidebar.collapsed, available: this.sidebar.available() });
+  }
+
+  /** Compose the companion column onto a tab's frame. The tab was rendered at
+   * the REDUCED width, so this only ever appends — no coordinate inside the
+   * frame moves, and the tab renderers stay ignorant of the sidebar. */
+  private withSidebar(inner: Frame, cols: number, rows: number): Frame {
+    const width = this.sidebarWidth(cols);
+    if (width === 0 || !this.sidebar) return inner;
+    // joinSeam: the tab's right border and the column's left border are the
+    // same wall, so the inner frame gives up its last cell — which is why the
+    // tab is rendered one column WIDER than `cols - width` (see repaint).
+    return composeColumn(inner, paintSidebar(this.sidebar.view(), width, rows), width, true);
+  }
+
   repaint(): void {
     if (this.suspended || this.stopped) return;
     const cols = this.out.columns ?? 80;
     const rows = this.out.rows ?? 24;
+    // +1 when a column is shown: the tab and the column share one border, and
+    // `withSidebar` drops the tab's last cell to join them (composeColumn's
+    // joinSeam). Without the +1 every tab would lose a usable column.
+    const sw = this.sidebarWidth(cols);
+    const inner = sw === 0 ? cols : cols - sw + 1;
+    const paint = (screen: string | Frame | undefined, fallback: string): void => {
+      if (screen === undefined) {
+        this.lastFrame = undefined;
+        this.out.write(`${CLEAR}${fallback}`);
+        return;
+      }
+      // A tab still returning a bare string predates the sidebar and simply
+      // paints full-width without one, rather than being wrongly composed.
+      if (typeof screen === "string") {
+        this.lastFrame = undefined;
+        this.out.write(screen);
+        return;
+      }
+      const frame = this.withSidebar(screen, cols, rows);
+      this.lastFrame = frame;
+      this.out.write(frame.render());
+    };
     if (this.tab === "digest") {
-      const screen = this.hooks.digestScreen?.(this, cols, rows);
-      this.lastFrame = undefined;
-      this.out.write(screen ?? `${CLEAR}digest tab lands in — [1] back to board`);
+      paint(this.hooks.digestScreen?.(this, inner, rows), "digest tab lands in — [1] back to board");
       return;
     }
     if (this.tab === "deploy") {
-      const screen = this.hooks.deployScreen?.(this, cols, rows);
-      this.lastFrame = undefined;
-      this.out.write(screen ?? `${CLEAR}deploy tab not wired — [1] back to board`);
+      paint(this.hooks.deployScreen?.(this, inner, rows), "deploy tab not wired — [1] back to board");
       return;
     }
     if (this.tab === "metrics") {
-      const screen = this.hooks.metricsScreen?.(this, cols, rows);
-      this.lastFrame = undefined;
-      this.out.write(screen ?? `${CLEAR}metrics tab not wired — [1] back to board`);
+      paint(this.hooks.metricsScreen?.(this, inner, rows), "metrics tab not wired — [1] back to board");
       return;
     }
     this.view.now = this.now();
-    const frame = renderBoard(this.view, cols, rows, this.strip?.view());
-    this.lastFrame = frame;
-    this.out.write(frame.render());
+    paint(renderBoard(this.view, inner, rows), "");
   }
 }

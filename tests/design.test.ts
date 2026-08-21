@@ -27,7 +27,6 @@ import { renderDigestTab, type DigestState } from "../src/tui/digesttab.js";
 import { renderMemoryView, type MemTabState } from "../src/tui/memtab.js";
 import { renderMetrics, type MetricsView } from "../src/tui/metricstab.js";
 import { displayWidth, stripAnsi, Frame } from "../src/tui/paint.js";
-import { paintStrip, type StripView } from "../src/tui/strip.js";
 import { osc8 } from "../src/tui/theme.js";
 import type { StatusSnapshot } from "../src/state.js";
 
@@ -174,8 +173,6 @@ const boardView: BoardView = {
   piFocus: true,
 };
 
-const stripView: StripView = { mirror: ["companion says hi"], input: "draft", focused: true, available: true };
-
 const memState: MemTabState = {
   view: "memory",
   digest: { files: ["2026-08-19.md"], back: 0, scroll: 0, awaitingSelected: 0, loaded: true, content: "# Digest\n- fine" },
@@ -213,16 +210,13 @@ const deployState: DeployState = {
 const metricsView: MetricsView = { window: "d7", loading: true, scroll: 0, dryRun: false };
 
 function frames(): Array<[string, Frame]> {
-  const stripFrame = new Frame(120, 40);
-  paintStrip(stripFrame, stripView, 120, 40);
   return [
-    ["board", renderBoard(boardView, 120, 40, stripView)],
-    ["board-help", renderBoard({ ...boardView, help: true, eventsFocus: false }, 120, 40, stripView)],
-    ["memory", renderMemoryView(memState, false, "2026-08-19", 120, 40, "example-org/example-app", stripView)],
-    ["digest", renderDigestTab(memState.digest, [], false, "2026-08-20", 120, 40, stripView)],
-    ["deploy", renderDeployTab(deployState, false, 120, 40, stripView)],
-    ["metrics", renderMetrics(metricsView, 120, 40, stripView)],
-    ["strip", stripFrame],
+    ["board", renderBoard(boardView, 120, 40)],
+    ["board-help", renderBoard({ ...boardView, help: true, eventsFocus: false }, 120, 40)],
+    ["memory", renderMemoryView(memState, false, "2026-08-19", 120, 40, "example-org/example-app")],
+    ["digest", renderDigestTab(memState.digest, [], false, "2026-08-20", 120, 40)],
+    ["deploy", renderDeployTab(deployState, false, 120, 40)],
+    ["metrics", renderMetrics(metricsView, 120, 40)],
   ];
 }
 
@@ -242,7 +236,7 @@ describe("sweep: the old ad-hoc styling is gone from every tab", () => {
   });
 
   it("board selection styling IS design.selected (one selection style everywhere)", () => {
-    const frame = renderBoard(boardView, 120, 40, stripView);
+    const frame = renderBoard(boardView, 120, 40);
     const row = frame.lines.find((l) => l.includes(ACCENT_BG) && stripAnsi(l).includes("#5265"));
     expect(row).toBeDefined();
     // the selected row is a single accent-background bar: flattened inner SGR
@@ -251,8 +245,7 @@ describe("sweep: the old ad-hoc styling is gone from every tab", () => {
   });
 
   it("every tab's top bar shares the mode chip", () => {
-    for (const [name, frame] of frames()) {
-      if (name === "strip") continue;
+    for (const [, frame] of frames()) {
       expect(frame.lines[0]!).toContain(badge("live", "LIVE"));
     }
   });

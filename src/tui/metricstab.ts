@@ -25,7 +25,6 @@ import { ACCENT, ACCENT_BG, BAD, HEADING, MUTED, OK, RESET as DRESET, SEP, STRON
 import { Frame, displayWidth, fit, rule, sanitizeText, truncate } from "./paint.js";
 import { metricsArgv, metricsPrArgv, type SshRunner } from "./remote.js";
 import { FG, RESET, fmtAge, stateColor, verdictColor } from "./theme.js";
-import { paintStrip, stripHeight, type StripView } from "./strip.js";
 
 // ---- chart primitives -------------------------------------------------------
 
@@ -645,9 +644,8 @@ export function timelineLines(tl: TimelinePayload, width: number, now: Date): st
 
 // ---- render -----------------------------------------------------------------
 
-export function renderMetrics(view: MetricsView, cols: number, rows: number, strip?: StripView): Frame {
+export function renderMetrics(view: MetricsView, cols: number, rows: number): Frame {
   const frame = new Frame(cols, rows);
-  const stripRows = strip ? stripHeight(rows, strip.available) : 0;
   const now = view.now ?? new Date();
   const drill = view.drill;
   frame.set(
@@ -664,8 +662,7 @@ export function renderMetrics(view: MetricsView, cols: number, rows: number, str
     const lines = drill.payload
       ? timelineLines(drill.payload, cols - 4, now)
       : [drill.error ? `${FG.dim}metrics unavailable: ${drill.error}${RESET}` : `${FG.dim}loading timeline for #${drill.pr}…${RESET}`];
-    for (let r = 0; r < rows - 4 - stripRows; r++) frame.boxRow(1 + r, [{ text: ` ${lines[view.scroll + r] ?? ""}`, width: cols - 2 }]);
-    if (strip) paintStrip(frame, strip, cols, rows);
+    for (let r = 0; r < rows - 4; r++) frame.boxRow(1 + r, [{ text: ` ${lines[view.scroll + r] ?? ""}`, width: cols - 2 }]);
     paintCmdBar(frame, "metrics", cols, rows);
     frame.set(rows - 1, rule(cols, "└", "┘", []));
     return frame;
@@ -680,11 +677,10 @@ export function renderMetrics(view: MetricsView, cols: number, rows: number, str
     frame.zones.push({ x1: z.x1, y1: 2, x2: z.x2, y2: 2, action: { t: "window", window: z.window } satisfies MetricsAction });
   }
 
-  const bodyRows = rows - 6 - stripRows; // top bar + switcher + stat strip + strip + command bar (2 rows) + bottom
+  const bodyRows = rows - 6; // top bar + switcher + stat strip + command bar (2 rows) + bottom
   if (!view.payload) {
     const msg = view.error ? `${FG.dim}metrics unavailable: ${view.error}${RESET}` : `${FG.dim}loading metrics…${RESET}`;
-    for (let r = 2; r <= rows - 4 - stripRows; r++) frame.boxRow(r, [{ text: r === 2 ? ` ${msg}` : "", width: cols - 2 }]);
-    if (strip) paintStrip(frame, strip, cols, rows);
+    for (let r = 2; r <= rows - 4; r++) frame.boxRow(r, [{ text: r === 2 ? ` ${msg}` : "", width: cols - 2 }]);
     paintCmdBar(frame, "metrics", cols, rows);
     frame.set(rows - 1, rule(cols, "└", "┘", []));
     return frame;
@@ -708,7 +704,6 @@ export function renderMetrics(view: MetricsView, cols: number, rows: number, str
       widths.map((w, i) => ({ text: ` ${columns[i]?.[view.scroll + r] ?? ""}`, width: w })),
     );
   }
-  if (strip) paintStrip(frame, strip, cols, rows);
   paintCmdBar(frame, "metrics", cols, rows);
   frame.set(rows - 1, rule(cols, "└", "┘", []));
   return frame;
@@ -841,9 +836,9 @@ export function installMetricsHooks(app: App, fetcher?: MetricsFetcher, probe?: 
   app.hooks.metricsScreen = (theApp, cols, rows) => {
     view.dryRun = theApp.view.dryRun;
     void load(); // TTL-gated: a repaint inside the window costs nothing
-    const frame = renderMetrics(view, cols, rows, theApp.strip?.view());
+    const frame = renderMetrics(view, cols, rows);
     lastFrame = frame;
-    return frame.render();
+    return frame;
   };
 
   app.hooks.metricsClick = (theApp, x, y) => {

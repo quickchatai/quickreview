@@ -24,7 +24,7 @@ import { CompanionLifecycle, type DockerRunner } from "../src/tui/companion.js";
 import { installCompanionTabHooks } from "../src/tui/companiontab.js";
 import { FeedWriter, eventKey, type FeedEvent } from "../src/tui/feed.js";
 import { stripAnsi } from "../src/tui/paint.js";
-import type { PtyLike } from "../src/tui/attach.js";
+import { CompanionSidebar } from "../src/tui/sidebar.js";
 import { WAKE_THROTTLE_MS, parseWake, resolveFeedDir, shouldWake, wakeMessage } from "../extensions/companion-wake.js";
 
 let dir = "";
@@ -395,31 +395,39 @@ describe("companion tab", () => {
     const s = fakeStreams();
     const app = new App(TUI_DEFAULTS, async () => ({ ok: false, stdout: "", stderr: "", code: 1 }), s.out, s.input);
     const lifecycle = new CompanionLifecycle(CFG, noDocker, {});
-    const spawned: string[][] = [];
-    const pty: PtyLike = { write: () => {}, resize: () => {}, kill: () => {}, onData: () => {}, onExit: () => {} };
+    // the companion IS the sidebar column — there is no pty to spawn
+    // and no screen to take over, so the harness wires the column instead.
+    app.sidebar = new CompanionSidebar(CFG, noDocker, { available: () => available });
     installCompanionTabHooks(app, {
       lifecycle,
       available: () => available,
       failure: () => (available ? undefined : "docker build qcr-companion failed: boom"),
-      out: s.out,
-      input: s.input,
-      spawner: (argv) => {
-        spawned.push(argv);
-        return pty;
-      },
     });
     // run() installs the input listener; the poller's ssh always fails here.
     const running = app.run();
-    return { app, s, spawned, close: () => (app.quit(), running) };
+    return { app, s, close: () => (app.quit(), running) };
   }
 
-  it("attaches the LOCAL container argv — docker exec -it, no ssh — and never leaves the tab", async () => {
+  it("takes the keyboard in the column — never full-screen, never a tab change", async () => {
     const h = harness();
     h.app.openCompanion();
     await Promise.resolve();
     expect(h.app.tab).toBe("board"); //: the companion is not a tab
-    expect(h.spawned).toEqual([["exec", "-it", "qcr-companion", "tmux", "attach", "-t", "companion"]]);
-    expect(h.spawned[0]).not.toContain("ssh");
+    // nor is it a screen. Asking for the companion focuses the
+    // column that is already painted; nothing is spawned, nothing suspends.
+    expect(h.app.sidebar?.focused).toBe(true);
+    expect(h.app.isBusy()).toBe(true); // focused input owns the keyboard
+    await h.close();
+  });
+
+  it("expands a collapsed column rather than focusing something invisible", async () => {
+    const h = harness();
+    h.app.sidebar!.toggleCollapse();
+    expect(h.app.sidebar?.collapsed).toBe(true);
+    h.app.openCompanion();
+    await Promise.resolve();
+    expect(h.app.sidebar?.collapsed).toBe(false);
+    expect(h.app.sidebar?.focused).toBe(true);
     await h.close();
   });
 
@@ -430,7 +438,11 @@ describe("companion tab", () => {
     h.s.type("1");
     h.s.type("c");
     expect(h.app.tab).toBe("board");
-    expect(h.spawned).toEqual([]);
+    // `c` opens no tab — it is an unregistered printable, so it starts a
+    // message to the companion, seeded with the character typed (the strip's
+    // old fallback, inherited by the column).
+    expect(h.app.sidebar?.focused).toBe(true);
+    expect(h.app.sidebar?.input).toBe("c");
     await h.close();
   });
 
@@ -443,7 +455,7 @@ describe("companion tab", () => {
     h.app.setAlertBadge({ count: 2, folds: 0, latest: { tier: "alert", title: "t", cause: "c", pr: 5012, ts: "x" } });
     h.s.type("\r");
     await Promise.resolve();
-    expect(h.spawned.length).toBe(1); // ⏎ followed the alert into the companion
+    expect(h.app.sidebar?.focused).toBe(true); // ⏎ followed the alert into the companion
     expect(h.app.view.alertFocus).toBe(false);
     await h.close();
   });
@@ -459,26 +471,18 @@ describe("companion tab", () => {
     const h = harness(false);
     h.app.openCompanion();
     await Promise.resolve();
-    expect(h.spawned).toEqual([]);
+    expect(h.app.sidebar?.focused).toBe(false);
     expect(h.app.view.noticeLine).toContain("not running: docker build qcr-companion failed: boom");
     expect(h.app.view.noticeLine).not.toContain("disabled (--no-companion)");
     await h.close();
   });
 
-  it("⏎ on a failed companion runs retry and attaches once it heals", async () => {
+  it("⏎ on a failed companion runs retry and focuses the column once it heals", async () => {
     const s = fakeStreams();
     const app = new App(TUI_DEFAULTS, async () => ({ ok: false, stdout: "", stderr: "", code: 1 }), s.out, s.input);
     const lifecycle = new CompanionLifecycle(CFG, noDocker, {});
-    const spawned: string[][] = [];
-    const pty: PtyLike = { write: () => {}, resize: () => {}, kill: () => {}, onData: () => {}, onExit: () => {} };
     let up = false;
-    let fireExit: ((e: { exitCode: number }) => void) | undefined;
-    const exitingPty: PtyLike = {
-      ...pty,
-      onExit: (cb) => {
-        fireExit = cb;
-      },
-    };
+    app.sidebar = new CompanionSidebar(CFG, noDocker, { available: () => up });
     installCompanionTabHooks(app, {
       lifecycle,
       available: () => up,
@@ -486,19 +490,12 @@ describe("companion tab", () => {
       retry: async () => {
         up = true; // the retry path healed the startup
       },
-      out: s.out,
-      input: s.input,
-      spawner: (argv) => {
-        spawned.push(argv);
-        return exitingPty;
-      },
     });
     const running = app.run();
     app.openCompanion();
-    for (let i = 0; i < 100 && spawned.length === 0; i++) await new Promise((r) => setTimeout(r, 5));
+    for (let i = 0; i < 100 && !app.sidebar.focused; i++) await new Promise((r) => setTimeout(r, 5));
     expect(up).toBe(true);
-    expect(spawned.length).toBe(1); // healed, then attached
-    fireExit?.({ exitCode: 0 });
+    expect(app.sidebar.focused).toBe(true); // healed, then focused
     app.quit();
     await running;
   });

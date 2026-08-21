@@ -340,14 +340,25 @@ describe("App ↔ pi mirror", () => {
     await running;
   });
 
-  it("⏎ from the list still opens the full-screen attach", async () => {
+  it("⏎ and 'a' focus the EMBEDDED pane — never the full-screen attach", async () => {
+    // the owner, 2026-08-21: "I dont EVER WANT IT to go into full screen mode …
+    // same goes for the PI on the board view". The pane is the same live
+    // terminal the attach was, bounded to its region — so the full-screen
+    // hook must not fire for a PR row at all.
     const { app, streams, running } = appWith();
     const attached: string[] = [];
     app.hooks.attach = async (session) => void attached.push(session);
     app.repaint();
     streams.type("\r");
+    expect(attached).toEqual([]);
+    expect(app.piFocused()).toBe(true);
+    expect(app.view.piPr).toBe(5012);
+    // Ctrl-q releases, and 'a' (the attach verb) does the same thing as ⏎.
+    streams.type("\x11");
+    expect(app.piFocused()).toBe(false);
     streams.type("a");
-    expect(attached).toEqual(["pr-5012", "pr-5012"]);
+    expect(attached).toEqual([]);
+    expect(app.piFocused()).toBe(true);
     app.quit();
     await running;
   });

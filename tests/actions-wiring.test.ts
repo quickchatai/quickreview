@@ -18,14 +18,19 @@ import type { DigestFetcher } from "../src/tui/digesttab.js";
 import { applyMemoryFilter } from "../src/tui/filters.js";
 import { FeedWriter } from "../src/tui/feed.js";
 import { buildTuiDriver, chainOnPoll } from "../src/tui/index.js";
-import type { CompanionStrip } from "../src/tui/strip.js";
+import type { CompanionSidebar } from "../src/tui/sidebar.js";
 import { decodeKey } from "../src/tui/keys.js";
 import { installMemoryLearningHooks, type MemTabState } from "../src/tui/memtab.js";
 import { timelineOrder } from "../src/tui/memory.js";
 import { legacyBlockHash as blockHash, parseLegacyMemory as parseMemory } from "../src/memory/legacy-file.js";
 import type { MemoryEntry, MemoryOp, MemoryStore } from "../src/memory/store.js";
 import { installMetricsHooks, type MetricsFetcher } from "../src/tui/metricstab.js";
-import { stripAnsi } from "../src/tui/paint.js";
+import { Frame, stripAnsi } from "../src/tui/paint.js";
+
+/**: tab hooks hand back a Frame so the app can compose the companion
+ * column beside it. These tests read the tab alone, so they render it. */
+const renderScreen = (screen: string | Frame | undefined): string =>
+  screen === undefined ? "" : typeof screen === "string" ? screen : screen.render();
 import type { RemoteResult } from "../src/tui/remote.js";
 
 // ---- harness (the memtab.test.ts pattern) ----------------------------------
@@ -223,7 +228,7 @@ describe("actions wiring: the watcher on a real App", () => {
     await processTuiActions(dir, driver);
     expect(memState.memFilter).toBe("false-positive");
     expect(memState.view).toBe("memory");
-    const screen = stripAnsi(app.hooks.digestScreen!(app, 110, 30));
+    const screen = stripAnsi(renderScreen(app.hooks.digestScreen!(app, 110, 30)));
     expect(screen).toContain("MEMORY (1)");
     expect(screen).toContain("⛉ #false-positive — F clears");
     expect(screen).not.toContain("stale recheck flag");
@@ -268,7 +273,7 @@ describe("actions wiring: the watcher on a real App", () => {
     driver.setMemoryFilter("bug");
     expect(app.hooks.digestKey!(app, decodeKey(Buffer.from("F")))).toBe(true);
     expect(memState.memFilter).toBeNull();
-    const screen = stripAnsi(app.hooks.digestScreen!(app, 110, 30));
+    const screen = stripAnsi(renderScreen(app.hooks.digestScreen!(app, 110, 30)));
     expect(screen).toContain("MEMORY (3)");
   });
 
@@ -359,12 +364,12 @@ describe("actions wiring: the watcher on a real App", () => {
     expect(app.currentPr()).not.toBe(5049);
   });
 
-  it("runTui's onPoll composition: installing the FeedWriter wrapper must not kill the strip-refresh wrapper", () => {
+  it("runTui's onPoll composition: installing the FeedWriter wrapper must not kill the sidebar-refresh wrapper", () => {
     const { app } = makeRig();
     let refreshes = 0;
-    app.strip = { refresh: () => ((refreshes += 1), Promise.resolve()) } as unknown as CompanionStrip;
-    // The exact chain runTui builds, in order: strip refresh first, feed next.
-    chainOnPoll(app, (a) => void a.strip?.refresh());
+    app.sidebar = { refresh: () => ((refreshes += 1), Promise.resolve()) } as unknown as CompanionSidebar;
+    // The exact chain runTui builds, in order: sidebar refresh first, feed next.
+    chainOnPoll(app, (a) => void a.sidebar?.refresh());
     const root = mkdtempSync(join(tmpdir(), "qcr-feed-"));
     tmps.push(root);
     const feedDir = join(root, "feed");
@@ -375,7 +380,7 @@ describe("actions wiring: the watcher on a real App", () => {
       feed.write(snap, a.rawEvents, a.view.health.kind);
     });
     app.hooks.onPoll!(app);
-    expect(refreshes).toBe(1); // the strip mirror still refreshes…
+    expect(refreshes).toBe(1); // the sidebar mirror still refreshes…
     expect(readdirSync(feedDir)).toContain("snapshot.json"); // …and the feed wrote
   });
 });

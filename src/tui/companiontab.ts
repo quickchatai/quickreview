@@ -1,67 +1,53 @@
-// Companion attach (slice C2; retired the companion TAB).
-// The full-screen conversation with the local companion: the same
-// AttachScreen the PR sessions use, with the local `docker exec -it … tmux
-// attach` argv from CompanionLifecycle instead of the ssh one. Reached from
-// the strip's mirror rows and the alert badge — never from a tab. Detaching
-// (Ctrl-q) drops straight back to whatever tab was up.
-import { AttachScreen, type PtySpawner } from "./attach.js";
+// Companion startup healing (slice C2; retired the
+// companion TAB; retired the full-screen attach behind it).
+//
+// What is left is the part that was never about full-screen: the companion's
+// startup can FAIL and later HEAL, so asking for it while it is down must
+// re-run the startup rather than shrug. The conversation itself now lives in
+// the permanent sidebar column (src/tui/sidebar.ts), so once the retry
+// succeeds there is nothing to open — the column is already on screen and the
+// only thing left to do is give it the keyboard.
 import type { App } from "./app.js";
 import type { CompanionLifecycle } from "./companion.js";
 
 export interface CompanionTabDeps {
   lifecycle: CompanionLifecycle;
-  spawner: PtySpawner;
   /** Live view of the companion's state — startup may fail and later heal. */
   available: () => boolean;
   /** The real startup error when unavailable (never a mislabel). */
   failure?: () => string | undefined;
   /** Re-runs the full startup (build image if missing, up, rollover, spawn). */
   retry?: () => Promise<void>;
-  /** Terminal the attach takes over; injectable so tests own their streams. */
-  out?: NodeJS.WriteStream;
-  input?: NodeJS.ReadStream;
 }
 
 export function installCompanionTabHooks(app: App, deps: CompanionTabDeps): void {
-  let attached = false;
   let retrying = false;
 
-  app.hooks.companionAttach = async (theApp) => {
-    if (attached) return;
-    if (!deps.available()) {
-      if (retrying || !deps.retry) {
-        theApp.notice(`companion not running: ${deps.failure?.() ?? "not started"}`);
-        return;
-      }
-      retrying = true;
-      theApp.notice("companion starting…");
-      theApp.repaint();
-      try {
-        await deps.retry();
-      } finally {
-        retrying = false;
-      }
-      theApp.repaint();
-      if (!deps.available()) {
-        theApp.notice(`companion not running: ${deps.failure?.() ?? "not started"}`);
-        return;
-      }
+  app.hooks.companionEnsure = async (theApp) => {
+    if (deps.available()) {
+      theApp.focusCompanion();
+      return;
     }
-    attached = true;
+    // No retry wired, or one already in flight: say what is actually wrong.
+    // "not started" is the last resort — a mislabel here sent the owner looking
+    // for a --no-companion flag he had not passed.
+    if (retrying || !deps.retry) {
+      theApp.notice(`companion not running: ${deps.failure?.() ?? "not started"}`);
+      return;
+    }
+    retrying = true;
+    theApp.notice("companion starting…");
+    theApp.repaint();
     try {
-      // The session name is only a label here — the argv already points at the
-      // local container's tmux session.
-      await new AttachScreen(
-        deps.lifecycle.cfg.session,
-        theApp,
-        deps.spawner,
-        deps.out ?? process.stdout,
-        deps.input ?? process.stdin,
-        deps.lifecycle.attachArgv(),
-      ).run();
+      await deps.retry();
     } finally {
-      attached = false;
-      theApp.repaint();
+      retrying = false;
     }
+    theApp.repaint();
+    if (!deps.available()) {
+      theApp.notice(`companion not running: ${deps.failure?.() ?? "not started"}`);
+      return;
+    }
+    theApp.focusCompanion();
   };
 }
