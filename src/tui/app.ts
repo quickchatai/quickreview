@@ -16,7 +16,7 @@ import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR, Frame, composeColumn, fit, splice
 import { PANE_ESCAPE, PiMirror, keysToTmux } from "./pipane.js";
 import { Poller } from "./poll.js";
 import { prUrl } from "./theme.js";
-import { CompanionSidebar, paintSidebar, sidebarHit, sidebarInputText, sidebarWidth } from "./sidebar.js";
+import { CompanionSidebar, paintSidebar, sidebarHit, sidebarWidth } from "./sidebar.js";
 import { eventsArgv, sendKeysArgv, whyArgv, type SshRunner } from "./remote.js";
 
 export interface AppHooks {
@@ -772,9 +772,13 @@ export class App {
       return;
     }
     const raw = buf.toString("utf8");
-    // `/` always focuses the companion, on every tab.
+    // `/` always focuses the companion, on every tab — and TRAVELS.
+    // It is the key that opens pi's command menu, so swallowing it as a pure
+    // focus key is the worst possible choice: you press `/`, the column takes
+    // the keyboard, and the menu you actually wanted never opens. Seeding it
+    // makes `/` behave like every other printable — focus, then reach pi.
     if (raw === "/" && this.sidebar?.available()) {
-      this.sidebar.focus();
+      this.sidebar.focus(raw);
       this.repaint();
       return;
     }
@@ -950,48 +954,40 @@ export class App {
    * sends), but Ctrl-q releases and PgUp/PgDn walk the mirror's scrollback,
    * so reading back through the conversation never means losing the draft.
    */
+  /**
+   * Keys while the companion column has focus: RAW PASSTHROUGH to pi.
+   *
+   * The column is an embedded terminal, exactly like the board's pi pane, and
+   * that is the whole point of running pi in tmux — `/` commands, the
+   * completion menu, history, multi-line editing, Ctrl-C to interrupt a turn
+   * are all pi's, and they only work if pi actually receives the bytes.
+   *
+   * DO NOT reintroduce a TUI-side draft line here. It was built once
+   * and it broke exactly this: a second, worse input box in front of
+   * the real one, with no `/` commands and nothing clickable. The rule is in
+   * root CLAUDE.md; `tests/tui-sidebar.test.ts` pins it.
+   *
+   * Ctrl-q is the ONE byte that never travels — the same release chord the pi
+   * pane uses, so there is one way out of every embedded surface. Everything
+   * else, including Esc and Ctrl-C, belongs to pi.
+   */
   private handleSidebarKey(buf: Buffer): void {
     const sidebar = this.sidebar!;
-    // Ctrl-q is the one byte that never reaches the companion — the same
-    // release chord the board's pi pane uses, so there is one way out of
-    // every embedded surface.
     if (buf.length === 1 && buf[0] === PANE_ESCAPE) {
       sidebar.blur();
       this.repaint();
       return;
     }
+    // Scrollback is the MIRROR's, not pi's: pi cannot scroll a pane it does
+    // not know is being mirrored. Only while parked, so an unparked PgUp still
+    // reaches pi (its own pager uses it).
     const raw = buf.toString("utf8");
-    if (raw === "\x1b[5~" || raw === "\x1b[6~") {
+    if ((raw === "\x1b[5~" || raw === "\x1b[6~") && (raw === "\x1b[5~" || sidebar.offset > 0)) {
       sidebar.scroll(raw === "\x1b[5~" ? 1 : -1);
       this.repaint();
       return;
     }
-    const key = decodeInputKey(buf);
-    switch (key.kind) {
-      case "char":
-        sidebar.input += sidebarInputText(key.ch); // a multi-line paste must not corrupt the frame
-        break;
-      case "backspace":
-        sidebar.input = sidebar.input.slice(0, -1);
-        break;
-      case "escape":
-        sidebar.blur();
-        break;
-      case "enter": {
-        const text = sidebar.input.trim();
-        sidebar.blur();
-        if (text.length > 0) {
-          void sidebar.send(text).catch((err: unknown) => this.notice(`✖ ${String(err instanceof Error ? err.message : err)}`));
-        }
-        break;
-      }
-      case "quit":
-        this.requestQuit(buf.toString("utf8") === "\x03" ? "ctrl-c" : "key");
-        return;
-      default:
-        return;
-    }
-    this.repaint();
+    void sidebar.sendKeys(buf).catch((err: unknown) => this.notice(`✖ ${String(err instanceof Error ? err.message : err)}`));
   }
 
   /** Alert consumer → top bar. `alert` tier also grabs ⏎ (see handleInput). */

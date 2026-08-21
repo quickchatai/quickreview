@@ -13,6 +13,19 @@
 // Capture is `-e` (SGR kept — the whole point of the restyle: the mirror shows
 // pi's own colors) and `-J`, through the same local DockerRunner seam the
 // lifecycle uses. Input goes back as `tmux send-keys`, never a shell string.
+//
+// THE COLUMN IS A TERMINAL (root CLAUDE.md). While focused, EVERY
+// byte goes to pi — `/` commands and their menu, completion, history,
+// multi-line editing, Ctrl-C to interrupt a turn are all pi's, and running it
+// under tmux is pointless if the bytes stop here. `Ctrl-q` is the only
+// reserved one; it releases focus.
+//
+// There is deliberately NO draft/input field on this class or its view. One
+// shipped in and it was the bug: a second, worse input box in front of
+// the real one, which the mirror was already showing. If you are about to add
+// `input: string` back, you are re-introducing it — the quick-message box
+// (msg.ts) is the thing you actually want, and it is for sessions you are NOT
+// focused on.
 import type { CompanionConfig } from "../config.js";
 import type { DockerRunner } from "./companion.js";
 import { ACCENT, ACCENT_BG, BAD, MUTED, OK, RESET, SEP, WARN } from "./design.js";
@@ -53,7 +66,6 @@ export interface SidebarView {
   header: SidebarHeader;
   /** Mirror lines, oldest first, SGR-styled (keepSgrOnly already applied). */
   lines: string[];
-  input: string;
   focused: boolean;
   collapsed: boolean;
   available: boolean;
@@ -99,11 +111,20 @@ function dividerRow(label: string, inner: number): string {
   return bodyRow(`${lead}${MUTED}${"─".repeat(fill)}${RESET}`, inner);
 }
 
-function inputContent(view: SidebarView): string {
+/**
+ * The bottom row is a HINT, never an editor.
+ *
+ * pi's own input line — with its `/` commands, its completion menu, its
+ * history — is already on screen: it is part of the mirror. A second input
+ * box in the TUI would be a strictly worse copy of it, which is exactly the
+ * regression this row's shape prevents. Focused, the row says where the keys
+ * are going; unfocused, it says how to get there. Its height never changes,
+ * so taking focus cannot shift the layout.
+ */
+function hintContent(view: SidebarView): string {
   if (!view.available) return ` ${MUTED}${SIDEBAR_OFF}${RESET}`;
-  if (!view.focused && view.input.length === 0) return ` ${MUTED}❯ ${SIDEBAR_PLACEHOLDER}${RESET}`;
-  const cursor = view.focused ? `${ACCENT_BG} ${RESET}` : "";
-  return ` ${ACCENT}❯ ${RESET}${view.input}${cursor}`;
+  if (view.focused) return ` ${ACCENT}▶${RESET} ${MUTED}keys go to pi · Ctrl-q releases${RESET}`;
+  return ` ${MUTED}❯ ${SIDEBAR_PLACEHOLDER}${RESET}`;
 }
 
 function alertContent(a: SidebarView["alerts"][number]): string {
@@ -190,7 +211,7 @@ export function paintSidebar(view: SidebarView, width: number, rows: number): st
     out.push(dividerRow(`${MUTED}alerts${RESET}`, inner));
     for (const a of view.alerts.slice(-alertN)) out.push(bodyRow(alertContent(a), inner));
   }
-  if (inputRows === 1) out.push(bodyRow(inputContent(view), inner));
+  if (inputRows === 1) out.push(bodyRow(hintContent(view), inner));
   out.push(`┴${"─".repeat(inner)}┘`);
   return out.slice(0, rows);
 }
@@ -240,7 +261,6 @@ const SCROLL_PAD = 200;
  */
 export class CompanionSidebar {
   lines: string[] = [];
-  input = "";
   focused = false;
   collapsed = false;
   offset = 0;
@@ -282,7 +302,6 @@ export class CompanionSidebar {
         memory: this.patch.memory ?? "off",
       },
       lines: this.lines,
-      input: this.input,
       focused: this.focused,
       collapsed: this.collapsed,
       available,
@@ -333,15 +352,17 @@ export class CompanionSidebar {
   focus(seed = ""): void {
     if (!this.available()) return;
     this.focused = true;
-    this.input += sidebarInputText(seed);
+    // A seed is the character that focused us from elsewhere on the board. It
+    // goes STRAIGHT to pi, so it lands in pi's own input line rather than in a
+    // TUI-side buffer that pi knows nothing about.
+    if (seed.length > 0) void this.sendKeys(Buffer.from(seed, "utf8"));
     void this.refresh();
     this.ensureTimer();
   }
 
-  /** Drop focus and the draft (Esc, or a send). */
+  /** Hand the keyboard back to the board. */
   blur(): void {
     this.focused = false;
-    this.input = "";
   }
 
   toggleCollapse(): void {

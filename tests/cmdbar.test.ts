@@ -9,6 +9,8 @@ import { TUI_DEFAULTS } from "../src/config.js";
 import { App, type Tab } from "../src/tui/app.js";
 import { barHitKey, paintCmdBar, TAB_COMMANDS } from "../src/tui/cmdbar.js";
 import { Frame, stripAnsi } from "../src/tui/paint.js";
+import { CompanionSidebar } from "../src/tui/sidebar.js";
+import type { DockerRunner } from "../src/tui/companion.js";
 
 const TABS: Tab[] = ["board", "digest", "deploy", "metrics"];
 const NAV: Array<[string, string]> = [
@@ -244,5 +246,113 @@ describe("clean exit", () => {
     // Clearing BEFORE leaving the alt screen would wipe the screen we are
     // about to throw away and leave the operator's own screen untouched.
     expect(cleared).toBeGreaterThan(off);
+  });
+});
+
+describe("the focused companion column is a TERMINAL, not a text box", () => {
+  // The regression this exists to prevent: gave the column a TUI-side
+  // draft line, so pi never saw the keys — no `/` commands, no completion
+  // menu, nothing clickable. Running pi under tmux is pointless if the bytes
+  // stop at the TUI. Root CLAUDE.md carries the rule.
+  function harness() {
+    const out = new EventEmitter() as unknown as NodeJS.WriteStream;
+    (out as unknown as { columns: number }).columns = 140;
+    (out as unknown as { rows: number }).rows = 40;
+    out.write = (() => true) as never;
+    const input = new EventEmitter() as unknown as NodeJS.ReadStream;
+    (input as unknown as { isTTY: boolean }).isTTY = false;
+    input.resume = (() => input) as never;
+    input.pause = (() => input) as never;
+    const app = new App(TUI_DEFAULTS, async () => ({ ok: true, stdout: "", stderr: "", code: 0 }), out, input);
+    const sent: string[][] = [];
+    const docker: DockerRunner = async (argv) => {
+      if (argv.includes("send-keys")) sent.push(argv);
+      return { ok: true, stdout: "", stderr: "", code: 0 };
+    };
+    app.sidebar = new CompanionSidebar(
+      { container_name: "qcr-companion", session: "companion" },
+      docker,
+      { available: () => true },
+    );
+    const type = (t: string) => (input as unknown as EventEmitter).emit("data", Buffer.from(t));
+    return { app, sent, type, running: app.run() };
+  }
+  const settle = () => new Promise((r) => setTimeout(r, 10));
+  const literals = (sent: string[][]) => sent.filter((a) => a.includes("-l")).map((a) => a[a.length - 1]);
+
+  it("forwards every printable — including `/`, which opens pi's command menu", async () => {
+    const h = harness();
+    h.app.sidebar!.focus();
+    h.type("/");
+    h.type("help");
+    await settle();
+    expect(literals(h.sent).join("")).toContain("/help");
+    h.app.quit();
+    await h.running;
+  });
+
+  it("forwards ⏎, Esc and Backspace — pi owns its own editing", async () => {
+    const h = harness();
+    h.app.sidebar!.focus();
+    h.type("\r");
+    h.type("\x1b");
+    h.type("\x7f");
+    await settle();
+    const names = h.sent.flat();
+    expect(names).toContain("Enter");
+    expect(names).toContain("Escape");
+    expect(names).toContain("BSpace");
+    h.app.quit();
+    await h.running;
+  });
+
+  it("forwards Ctrl-C — interrupting a turn is pi's, not a TUI quit", async () => {
+    const h = harness();
+    h.app.sidebar!.focus();
+    h.type("\x03");
+    await settle();
+    expect(h.sent.flat()).toContain("C-c");
+    expect(h.app.view.confirmQuit).toBeFalsy();
+    h.app.sidebar!.blur();
+    h.app.quit();
+    await h.running;
+  });
+
+  it("Ctrl-q is the ONE byte that never travels — it releases focus", async () => {
+    const h = harness();
+    h.app.sidebar!.focus();
+    h.type("\x11");
+    await settle();
+    expect(h.sent).toEqual([]);
+    expect(h.app.sidebar!.focused).toBe(false);
+    h.app.quit();
+    await h.running;
+  });
+
+  it("the `/` that focuses the column also REACHES pi (it opens pi's menu)", async () => {
+    // Caught live: `/` was consumed as a pure focus key, so pressing it took
+    // the keyboard and pi never saw the slash — the command menu you were
+    // reaching for never opened. Of all keys, this is the one that must
+    // travel.
+    const h = harness();
+    expect(h.app.sidebar!.focused).toBe(false);
+    h.type("/");
+    await settle();
+    expect(h.app.sidebar!.focused).toBe(true);
+    expect(literals(h.sent)).toContain("/");
+    h.app.sidebar!.blur();
+    h.app.quit();
+    await h.running;
+  });
+
+  it("typing an unclaimed key on the board sends it to pi, not to a draft", async () => {
+    const h = harness();
+    h.type("h"); // unregistered printable → focuses the column
+    await settle();
+    expect(h.app.sidebar!.focused).toBe(true);
+    expect(literals(h.sent)).toContain("h");
+    h.app.sidebar!.blur();
+    h.app.quit();
+    await h.running;
   });
 });

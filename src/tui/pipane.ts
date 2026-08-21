@@ -194,6 +194,12 @@ const SEQUENCES: Array<[string, string]> = [
  */
 export const PANE_ESCAPE = 0x11;
 
+// The rule both embedded surfaces share (root CLAUDE.md): while
+// focused, a pi pane forwards EVERY byte except this one. `/` commands,
+// completion, history and Ctrl-C are pi's — a TUI-side input box in front of
+// them is the regression, not the feature. Same chord in `sidebar.ts`, so
+// there is one way out of every embedded surface.
+
 /**
  * One raw stdin chunk → the `tmux send-keys` argument groups that reproduce it
  * inside the session.

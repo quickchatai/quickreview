@@ -313,17 +313,31 @@ describe("CompanionSidebar", () => {
     sb.stop();
   });
 
-  it("focus seeds the draft, blur drops it, and collapse toggles", () => {
-    const { runner } = fakeDocker();
+  it("focus forwards its seed straight to pi — there is NO draft to seed", async () => {
+    // The seed is the character that focused the column from the board. It
+    // must land in pi's OWN input line; a TUI-side buffer would be invisible
+    // to pi and would need a second, worse editor to manage it.
+    const { runner, calls } = fakeDocker();
     const sb = new CompanionSidebar(CFG, runner);
     sb.focus("h");
-    sb.input += "i";
-    expect(sb.view().input).toBe("hi");
+    await new Promise((r) => setTimeout(r, 5));
     expect(sb.view().focused).toBe(true);
+    const sent = calls.filter((c) => c.includes("send-keys"));
+    expect(sent.length).toBe(1);
+    expect(sent[0]).toEqual(expect.arrayContaining(["-l", "h"]));
     sb.toggleCollapse();
     expect(sb.view().collapsed).toBe(true);
     sb.blur();
-    expect(sb.view()).toMatchObject({ input: "", focused: false });
+    expect(sb.view().focused).toBe(false);
+    sb.stop();
+  });
+
+  it("has no draft state at all (the regression this prevents)", () => {
+    const { runner } = fakeDocker();
+    const sb = new CompanionSidebar(CFG, runner);
+    // Structural, not prompted: if a draft field comes back, this fails.
+    expect("input" in (sb as unknown as Record<string, unknown>)).toBe(false);
+    expect("input" in (sb.view() as unknown as Record<string, unknown>)).toBe(false);
     sb.stop();
   });
 

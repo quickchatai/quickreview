@@ -438,11 +438,11 @@ describe("companion tab", () => {
     h.s.type("1");
     h.s.type("c");
     expect(h.app.tab).toBe("board");
-    // `c` opens no tab — it is an unregistered printable, so it starts a
-    // message to the companion, seeded with the character typed (the strip's
-    // old fallback, inherited by the column).
+    // `c` opens no tab — it is an unregistered printable, so it hands the
+    // keyboard to the companion column and the character goes to PI (:
+    // there is no TUI-side draft for it to land in).
     expect(h.app.sidebar?.focused).toBe(true);
-    expect(h.app.sidebar?.input).toBe("c");
+    expect("input" in (h.app.sidebar as unknown as Record<string, unknown>)).toBe(false);
     await h.close();
   });
 
