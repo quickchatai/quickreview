@@ -439,6 +439,29 @@ describe("companion image", () => {
     expect(new CompanionLifecycle(CFG, async () => OK, {}, { exists: () => false, read: () => undefined, mode: () => undefined }).piArgv()).toContain("--approve");
   });
 
+  // the image's HOME and the code's mount destination are ONE fact
+  // split across two files. They drifted for a week — `USER companion` resolved
+  // through uid 1000 back to node:22's own user, so $HOME was /home/node while
+  // the volume was mounted at /home/companion/.pi, and pi's OAuth token lived
+  // on the writable layer where a recreate destroyed it.
+  it("mounts the pihome volume at the HOME pi actually uses", () => {
+    // The explicit ENV is the whole fix — without it docker picks the wrong
+    // passwd entry for the duplicated uid.
+    expect(dockerfile).toMatch(/^ENV HOME=\/home\/companion$/m);
+    expect(CONTAINER.home).toBe("/home/companion");
+    // …and the volume must sit INSIDE that home, or auth.json misses it again.
+    expect(CONTAINER.piHome.startsWith(`${CONTAINER.home}/`)).toBe(true);
+    expect(dockerfile).toContain(`VOLUME ["${CONTAINER.piHome}"]`);
+    // The session dir the spawn names must be on the volume too — that is the
+    // only reason the conversation survived when the token did not.
+    const pi = new CompanionLifecycle(CFG, async () => OK, {}, { exists: () => false, read: () => undefined, mode: () => undefined }).piArgv();
+    const sessionDir = pi[pi.indexOf("--session-dir") + 1]!;
+    expect(sessionDir.startsWith(`${CONTAINER.piHome}/`)).toBe(true);
+    // And the entrypoint says so out loud when it is not a mount point.
+    expect(entrypoint).toContain("/proc/mounts");
+    expect(entrypoint).toContain("NOT a mount point");
+  });
+
   it("registers no memory extension in the entrypoint either", () => {
     expect(entrypoint).not.toMatch(/require\.resolve\("pi-memory"/);
     expect(entrypoint).not.toMatch(/extensions\.push/);

@@ -9,6 +9,25 @@ set -euo pipefail
 PI_HOME_DIR="${HOME}/.pi"
 mkdir -p "$PI_HOME_DIR/agent" /workspace /tracker /feed /alerts 2>/dev/null || true
 
+# Durability guard. pi writes its OAuth token, settings and trust
+# store under $HOME/.pi. If that is NOT the mounted volume, every one of them
+# lives on the container's writable layer and dies with the next recreate — the
+# login silently stops persisting, and nobody finds out until they are asked to
+# log in again. That is exactly what a uid collision did here for a week.
+# Loud, never fatal: a companion that starts is worth more than one that is
+# right, and the operator can see this line.
+# /proc/mounts, not `mountpoint`: util-linux is not guaranteed in the base
+# image, and a guard that reports a false alarm when its own tool is missing
+# teaches you to ignore it.
+if ! awk -v d="$PI_HOME_DIR" '$2 == d { found = 1 } END { exit !found }' /proc/mounts; then
+  echo "!! $PI_HOME_DIR is NOT a mount point — pi's OAuth token and settings will"
+  echo "!! NOT survive a container recreate. Expected the companion-pihome volume"
+  echo "!! here. HOME=$HOME; check the Dockerfile's ENV HOME against"
+  echo "!! CONTAINER.piHome in src/tui/companion.ts."
+else
+  echo "pi home on the volume: $PI_HOME_DIR (OAuth + conversation are durable)"
+fi
+
 # csi-u extended keys must be configured BEFORE the server starts, or modified
 # Enter (Shift/Alt/Ctrl) collapses to plain Enter before reaching pi and the
 # TUI's steer/queue keys die. Requires tmux ≥3.5 (built from source in the

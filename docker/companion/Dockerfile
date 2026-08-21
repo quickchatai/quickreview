@@ -84,6 +84,18 @@ RUN chmod 0755 /usr/local/bin/entrypoint.sh && chmod 0644 /usr/local/lib/qcr/mem
 VOLUME ["/home/companion/.pi"]
 
 USER companion
+# HOME must be set EXPLICITLY. `useradd --non-unique --uid 1000
+# companion` leaves two passwd entries at uid 1000, and docker resolves `USER
+# companion` back through the uid to the FIRST of them — node:22's own `node`
+# user — so HOME silently became /home/node while the pihome volume stayed
+# mounted on /home/companion/.pi. Everything pi writes to $HOME/.pi went to the
+# container's writable layer instead of the volume: settings, trust, and
+# `auth.json`, which is why the OAuth login did not survive a recreate. The
+# conversation did survive, only because --session-dir names the volume path
+# outright. Do not remove this line, and do not "simplify" it by dropping the
+# companion user: uid 1000 is required to write /workspace and /tracker as the
+# host user, so the collision cannot be avoided — only overridden.
+ENV HOME=/home/companion
 WORKDIR /workspace
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
