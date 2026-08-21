@@ -331,6 +331,9 @@ export interface ThreadDecisionDeps extends ReplyDeps {
   onHumanRequested?: (decision: ThreadDecision) => void | Promise<void>;
   now?: () => Date;
   log?: (message: string, extra?: unknown) => void;
+  /** A session writes JSON in place, so fs.watch can fire before its final
+   * byte. An unchanged invalid body is only condemned after this delay. */
+  malformedSettleMs?: number;
 }
 
 /** Reliable session→daemon handoff for ping-pong judgments. Session output is
@@ -339,6 +342,8 @@ export interface ThreadDecisionDeps extends ReplyDeps {
 export class ThreadDecisionWatcher {
   private watcher: FSWatcher | null = null;
   private readonly inFlight = new Set<string>();
+  private readonly invalidReads = new Map<string, string>();
+  private readonly retryTimers = new Map<string, NodeJS.Timeout>();
   private readonly processedDir: string;
 
   constructor(private readonly deps: ThreadDecisionDeps) {
@@ -357,6 +362,8 @@ export class ThreadDecisionWatcher {
   stop(): void {
     this.watcher?.close();
     this.watcher = null;
+    for (const timer of this.retryTimers.values()) clearTimeout(timer);
+    this.retryTimers.clear();
   }
 
   async sweep(): Promise<string[]> {
@@ -368,7 +375,24 @@ export class ThreadDecisionWatcher {
     return done;
   }
 
+  private retryAfterSettle(name: string): void {
+    if (this.retryTimers.has(name)) return;
+    const timer = setTimeout(() => {
+      this.retryTimers.delete(name);
+      void this.handleFile(name);
+    }, this.deps.malformedSettleMs ?? 250);
+    this.retryTimers.set(name, timer);
+  }
+
+  private clearInvalid(name: string): void {
+    this.invalidReads.delete(name);
+    const timer = this.retryTimers.get(name);
+    if (timer) clearTimeout(timer);
+    this.retryTimers.delete(name);
+  }
+
   private archive(name: string): void {
+    this.clearInvalid(name);
     mkdirSync(this.processedDir, { recursive: true });
     const ts = (this.deps.now ?? (() => new Date()))().toISOString().replace(/[:.]/g, "-");
     try {
@@ -385,17 +409,36 @@ export class ThreadDecisionWatcher {
     try {
       const path = join(this.deps.verdictDir, name);
       if (!existsSync(path)) return false;
-      let parsed: ReturnType<typeof validateThreadDecision>;
+      const body = readFileSync(path, "utf8");
+      let decoded: unknown;
       try {
-        parsed = validateThreadDecision(JSON.parse(readFileSync(path, "utf8")));
+        decoded = JSON.parse(body);
       } catch (err) {
-        parsed = { ok: false, error: `unparseable: ${String(err)}` };
+        // fs.watch commonly reports creation before a writer has flushed the
+        // body. One invalid read is provisional; only an unchanged second read
+        // after the settle window is a genuinely malformed decision.
+        if (this.invalidReads.get(name) !== body) {
+          this.invalidReads.set(name, body);
+          this.retryAfterSettle(name);
+          return false;
+        }
+        const error = `unparseable: ${String(err)}`;
+        this.deps.store.logEvent("pingpong_decision_malformed", Number(match[1]), { file: name, error });
+        this.archive(name);
+        return true;
       }
+      const parsed = validateThreadDecision(decoded);
       if (!parsed.ok) {
+        if (this.invalidReads.get(name) !== body) {
+          this.invalidReads.set(name, body);
+          this.retryAfterSettle(name);
+          return false;
+        }
         this.deps.store.logEvent("pingpong_decision_malformed", Number(match[1]), { file: name, error: parsed.error });
         this.archive(name);
         return true;
       }
+      this.clearInvalid(name);
       const d = parsed.value;
       if (d.pr !== Number(match[1]) || d.thread_id !== Number(match[2]) || d.comment_id !== Number(match[3]) ||
           !this.deps.ledger.hasClaim(d.pr, d.thread_id, d.comment_id)) {

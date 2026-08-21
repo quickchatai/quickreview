@@ -180,6 +180,37 @@ describe("structured thread decision", () => {
     return { watcher, createReviewCommentReply, resolveOwnReviewThread, store };
   };
 
+  it("waits through a partial in-place write instead of archiving it malformed", async () => {
+    ledger.claimAuthorMessage(event);
+    const h = harness();
+    const name = "pr-77-thread-4000-comment-5001.json";
+    const path = join(root, name);
+    writeFileSync(path, '{"pr":77');
+
+    expect(await h.watcher.handleFile(name)).toBe(false);
+    expect(h.store.logEvent).not.toHaveBeenCalledWith("pingpong_decision_malformed", 77, expect.anything());
+    writeFileSync(path, JSON.stringify({
+      pr: 77, thread_id: 4000, comment_id: 5001, resolution: "resolve", reply: "Addressed.",
+    }));
+    expect(await h.watcher.handleFile(name)).toBe(true);
+    expect(h.createReviewCommentReply).toHaveBeenCalledTimes(1);
+    expect(h.resolveOwnReviewThread).toHaveBeenCalledTimes(1);
+  });
+
+  it("archives a genuinely malformed body after an unchanged settled read", async () => {
+    const h = harness();
+    const name = "pr-77-thread-4000-comment-5001.json";
+    writeFileSync(join(root, name), '{"pr":77');
+
+    expect(await h.watcher.handleFile(name)).toBe(false);
+    expect(await h.watcher.handleFile(name)).toBe(true);
+    expect(h.store.logEvent).toHaveBeenCalledWith(
+      "pingpong_decision_malformed",
+      77,
+      expect.objectContaining({ file: name }),
+    );
+  });
+
   it("posts the checked response and resolves the claimed bot thread", async () => {
     ledger.claimAuthorMessage(event);
     const h = harness();
