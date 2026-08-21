@@ -173,16 +173,20 @@ function listDir(dir: string): string[] {
 }
 
 /** ⑤ An author reply in a bot thread must wake the session — visible as a new
- * inject file. (The three-exchange cap is the session's own business.) */
+ * inject file. (The three-exchange cap is the session's own business.)
+ * The wake lands in the per-session subdir (`inject/pr-<n>/`), so diff there
+ * when the fixture PR is known — diffing only the top level passes solely on
+ * the run that first creates the subdir. */
 export async function probePingPong(deps: PingPongProbeDeps): Promise<ProbeResult> {
   const item = "⑤";
   const name = "ping-pong reply";
-  const before = new Set(listDir(deps.injectDir));
+  const watchDir = deps.pr === undefined ? deps.injectDir : join(deps.injectDir, `pr-${deps.pr}`);
+  const before = new Set(listDir(watchDir));
   await deps.interpret(deps.event);
-  const added = listDir(deps.injectDir).filter((f) => !before.has(f));
+  const added = listDir(watchDir).filter((f) => !before.has(f));
   const detail = added.length
     ? `inject file(s) appeared: ${added.join(", ")}`
-    : `no new inject file in ${deps.injectDir} after the author-reply event`;
+    : `no new inject file in ${watchDir} after the author-reply event`;
   return added.length > 0 ? ok(item, name, detail) : bad(item, name, detail);
 }
 
