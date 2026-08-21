@@ -354,8 +354,15 @@ export class CompanionSidebar {
     this.focused = true;
     // A seed is the character that focused us from elsewhere on the board. It
     // goes STRAIGHT to pi, so it lands in pi's own input line rather than in a
-    // TUI-side buffer that pi knows nothing about.
-    if (seed.length > 0) void this.sendKeys(Buffer.from(seed, "utf8"));
+    // TUI-side buffer that pi knows nothing about. Focus is synchronous, so a
+    // failed fire-and-forget send must be absorbed here rather than becoming
+    // an unhandled rejection; the simultaneous refresh marks the pane down.
+    if (seed.length > 0) {
+      void this.sendKeys(Buffer.from(seed, "utf8")).catch(() => {
+        this.captureOk = false;
+        this.opts.onUpdate?.();
+      });
+    }
     void this.refresh();
     this.ensureTimer();
   }
