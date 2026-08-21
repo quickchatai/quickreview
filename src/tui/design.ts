@@ -46,6 +46,12 @@ export const BAD_BG = `${bg256(124)}${fg256(231)}`;
 export const WARN_BG = `${bg256(179)}${INK_ON_FILL}`;
 export const RESET = SGR.reset;
 
+/** Mouse-selection highlight. Inverse rather than a palette fill:
+ * the selected span may be ANY content — a board row, a diff line, pi's own
+ * coloured output — and inverse is the one treatment that stays legible over
+ * all of it, which is also why terminals use it for their own selection. */
+export const SELECTION = SGR.inverse;
+
 /** The uniform " · " separator for status lines (muted, ink restored). */
 export const SEP = `${MUTED} · ${RESET}`;
 

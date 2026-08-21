@@ -1,11 +1,18 @@
 // SGR mouse support (grill decision 2026-08-14: full pointer navigation).
 // The terminal reports \x1b[<b;x;yM (press) / m (release); we decode presses,
 // wheel steps, and hit-test them against the zones the renderer declared.
-export const MOUSE_ON = "\x1b[?1000h\x1b[?1006h";
-export const MOUSE_OFF = "\x1b[?1006l\x1b[?1000l";
+// ?1002h is BUTTON-EVENT tracking: motion reports while a button is held.
+// Without it the terminal reports presses only, so there is no drag to follow
+// — and an app that turns mouse reporting on has TAKEN the terminal's own
+// selection away. Offering nothing in its place is what made text
+// unselectable everywhere in the TUI.
+export const MOUSE_ON = "\x1b[?1000h\x1b[?1002h\x1b[?1006h";
+export const MOUSE_OFF = "\x1b[?1006l\x1b[?1002l\x1b[?1000l";
 
 export type MouseEvent =
   | { kind: "click"; x: number; y: number } // 1-based cells
+  | { kind: "drag"; x: number; y: number } // motion with the left button held
+  | { kind: "release"; x: number; y: number }
   | { kind: "wheel-up"; x: number; y: number }
   | { kind: "wheel-down"; x: number; y: number };
 
@@ -24,7 +31,11 @@ export function extractMouseEvents(buf: Buffer): { events: MouseEvent[]; rest: B
     const press = m[4] === "M";
     if (b === 64) events.push({ kind: "wheel-up", x, y });
     else if (b === 65) events.push({ kind: "wheel-down", x, y });
+    // Motion carries bit 32; `32` is left-button-held motion, i.e. a drag.
+    // Checked BEFORE the click case, which requires b < 32.
+    else if (press && (b & 32) !== 0 && (b & 3) === 0) events.push({ kind: "drag", x, y });
     else if (press && (b & 3) === 0 && b < 32) events.push({ kind: "click", x, y }); // left press only
+    else if (!press) events.push({ kind: "release", x, y });
   }
   const rest = Buffer.from(s.replace(SGR_MOUSE_RE, ""), "utf8");
   return { events, rest };

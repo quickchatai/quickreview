@@ -12,7 +12,9 @@ import { visiblePrs } from "./filters.js";
 import { formatEvent, moveSelection, reselect, type EventLine } from "./model.js";
 import { TripleCtrlC } from "./chord.js";
 import { MOUSE_OFF, MOUSE_ON, extractMouseEvents, hitTest, type MouseEvent, type Zone } from "./mouse.js";
-import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR, Frame, composeColumn, fit, spliceDisplay } from "./paint.js";
+import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR, Frame, composeColumn, fit, spliceDisplay, stripAnsi } from "./paint.js";
+import { RESET, SELECTION } from "./design.js";
+import { ClipboardSink } from "./clipboard.js";
 import { PANE_ESCAPE, PiMirror, keysToTmux } from "./pipane.js";
 import { Poller } from "./poll.js";
 import { prUrl } from "./theme.js";
@@ -588,6 +590,36 @@ export class App {
   }
 
   private handleMouse(ev: MouseEvent): void {
+    // Selection owns drag and release outright. A drag is never a
+    // click, so nothing below sees it and no row is selected, no button is
+    // fired, by dragging across them.
+    if (ev.kind === "drag") {
+      const anchor = this.selAnchor;
+      if (!anchor) return;
+      this.selection = {
+        x1: Math.min(anchor.x, ev.x),
+        y1: Math.min(anchor.y, ev.y),
+        x2: Math.max(anchor.x, ev.x),
+        y2: Math.max(anchor.y, ev.y),
+      };
+      this.repaint();
+      return;
+    }
+    if (ev.kind === "release") {
+      // A press with no drag is a plain click and has already been handled;
+      // there is nothing to copy and the anchor just goes away.
+      if (this.selection) this.copySelection();
+      else this.selAnchor = undefined;
+      return;
+    }
+    // A new press starts a possible selection and clears the last highlight.
+    if (ev.kind === "click") {
+      this.selAnchor = { x: ev.x, y: ev.y };
+      if (this.selection) {
+        this.selection = undefined;
+        this.repaint();
+      }
+    }
     // The command bar answers first, on every tab: a click on one of its
     // buttons IS that keypress, wherever it lands. EXCEPT while an input box
     // is open — a synthesized key would be typed into the box, and [⏎]
@@ -1055,6 +1087,77 @@ export class App {
   /** Set by run(): the TUI owns the screen and may paint. */
   private started = false;
 
+  // ---- mouse selection → clipboard --------------------------------
+  //
+  // Turning mouse reporting on takes the terminal's own selection away, so the
+  // TUI owes one back. the owner, 2026-08-21: "99% I select something to copy
+  // it" — so there is no copy key and no copy mode. Release IS the copy.
+  //
+  // RECTANGULAR, not linear. The screen is columns side by side — list next to
+  // detail next to the companion — and a linear selection across a row would
+  // splice text from panes the user never pointed at. A block keeps a drag
+  // inside the pane it started in, which is what "select this bit of pi's
+  // output" means when pi is a 44-column column.
+  private selAnchor: { x: number; y: number } | undefined;
+  private selection: { x1: number; y1: number; x2: number; y2: number } | undefined;
+  /** Injectable so tests never touch the real clipboard. */
+  clipboard: { write(text: string): Promise<boolean> } = new ClipboardSink();
+
+  /** The selected block as plain text, exactly as it appears on screen. */
+  selectedText(): string {
+    const sel = this.selection;
+    const frame = this.lastFrame;
+    if (!sel || !frame) return "";
+    const rows: string[] = [];
+    for (let y = sel.y1; y <= sel.y2; y++) {
+      const line = frame.lines[y - 1];
+      if (line === undefined) continue;
+      // Frame rows are full of SGR runs; slice the PLAIN text by display cell
+      // so the copied string carries no escapes and no half-sequences.
+      const plain = stripAnsi(line);
+      rows.push(plain.slice(sel.x1 - 1, sel.x2).replace(/\s+$/, ""));
+    }
+    while (rows.length > 0 && rows[rows.length - 1] === "") rows.pop();
+    return rows.join("\n");
+  }
+
+  private copySelection(): void {
+    const text = this.selectedText();
+    this.selAnchor = undefined;
+    if (text.length === 0) {
+      this.selection = undefined;
+      this.repaint();
+      return;
+    }
+    void this.clipboard
+      .write(text)
+      .then((ok) => {
+        const lines = text.split("\n").length;
+        this.notice(ok ? `✓ copied ${text.length} chars${lines > 1 ? ` · ${lines} lines` : ""}` : "✖ no clipboard tool (wl-copy / xclip / klipper)");
+      })
+      .catch(() => this.notice("✖ clipboard write failed"));
+    // The highlight stays until the next click, so it is visible at the moment
+    // the confirmation appears — proof of WHAT was copied, not just that
+    // something was.
+    this.repaint();
+  }
+
+  /** Paint the selection highlight over the finished frame. */
+  private paintSelection(frame: Frame, cols: number, rows: number): void {
+    const sel = this.selection;
+    if (!sel) return;
+    for (let y = sel.y1; y <= sel.y2; y++) {
+      if (y < 1 || y > rows) continue;
+      const line = frame.lines[y - 1];
+      if (line === undefined) continue;
+      const x1 = Math.max(1, Math.min(sel.x1, cols));
+      const x2 = Math.max(1, Math.min(sel.x2, cols));
+      const span = stripAnsi(line).slice(x1 - 1, x2);
+      if (span.length === 0) continue;
+      frame.set(y - 1, spliceDisplay(line, x1 - 1, `${SELECTION}${span}${RESET}`));
+    }
+  }
+
   repaint(): void {
     if (!this.started || this.suspended || this.stopped) return;
     const cols = this.out.columns ?? 80;
@@ -1078,6 +1181,9 @@ export class App {
         return;
       }
       const frame = this.withSidebar(screen, cols, rows);
+      // Selection first, prompt second: the modal must sit ON TOP of a
+      // highlight, never under it.
+      this.paintSelection(frame, cols, rows);
       this.paintQuitPrompt(frame, cols, rows);
       this.lastFrame = frame;
       this.out.write(frame.render());

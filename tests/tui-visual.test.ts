@@ -104,8 +104,20 @@ describe("mouse decode", () => {
     expect(events).toEqual([
       { kind: "click", x: 12, y: 5 },
       { kind: "wheel-up", x: 3, y: 4 },
+      // release is reported now — it is what ends a selection and
+      // triggers the copy. It used to be parsed and thrown away.
+      { kind: "release", x: 12, y: 5 },
     ]);
     expect(rest.toString()).toBe("abcd");
+  });
+
+  it("decodes a drag (motion with the left button held) — bit 32", () => {
+    // Without ?1002h there is no drag report at all, and with it the motion
+    // events carry bit 32. `32` = left button held while moving.
+    const { events } = extractMouseEvents(Buffer.from("\x1b[<32;7;9M"));
+    expect(events).toEqual([{ kind: "drag", x: 7, y: 9 }]);
+    // A drag is NOT a click: it must never fire a button or select a row.
+    expect(events[0]!.kind).not.toBe("click");
   });
 
   it("passes non-mouse input through untouched", () => {

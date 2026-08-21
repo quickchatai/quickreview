@@ -356,3 +356,105 @@ describe("the focused companion column is a TERMINAL, not a text box", () => {
     await h.running;
   });
 });
+
+describe("drag-to-copy", () => {
+  // Turning mouse reporting on takes the terminal's own selection away, so the
+  // TUI owes one back. the owner: "99% I select something to copy it" — release
+  // IS the copy; there is no copy key and no copy mode.
+  function harness(cols = 60, rows = 12) {
+    const out = new EventEmitter() as unknown as NodeJS.WriteStream;
+    (out as unknown as { columns: number }).columns = cols;
+    (out as unknown as { rows: number }).rows = rows;
+    out.write = (() => true) as never;
+    const input = new EventEmitter() as unknown as NodeJS.ReadStream;
+    (input as unknown as { isTTY: boolean }).isTTY = false;
+    input.resume = (() => input) as never;
+    input.pause = (() => input) as never;
+    const app = new App(TUI_DEFAULTS, async () => ({ ok: true, stdout: "", stderr: "", code: 0 }), out, input);
+    const copied: string[] = [];
+    app.clipboard = { write: async (t: string) => (copied.push(t), true) };
+    const mouse = (b: number, x: number, y: number, press = true) =>
+      (input as unknown as EventEmitter).emit("data", Buffer.from(`\x1b[<${b};${x};${y}${press ? "M" : "m"}`));
+    /** The plain-text block the operator can SEE at those cells — computed
+     * independently of the app, so the assertion is a real check of the
+     * extraction and not a restatement of it. */
+    const onScreen = (x1: number, y1: number, x2: number, y2: number) => {
+      const f = (app as unknown as { lastFrame?: Frame }).lastFrame!;
+      const out: string[] = [];
+      for (let y = y1; y <= y2; y++) out.push(stripAnsi(f.lines[y - 1] ?? "").slice(x1 - 1, x2).replace(/\s+$/, ""));
+      while (out.length > 0 && out[out.length - 1] === "") out.pop();
+      return out.join("\n");
+    };
+    return { app, copied, mouse, onScreen, running: app.run() };
+  }
+  const settle = () => new Promise((r) => setTimeout(r, 10));
+
+  it("press → drag → release copies the block, and says what it copied", async () => {
+    const h = harness();
+    // Row 1 is the title bar — always painted, whatever the board holds.
+    h.mouse(0, 3, 1); // press
+    h.mouse(32, 20, 1); // drag right with the button held
+    h.mouse(0, 20, 1, false); // release
+    await settle();
+    const want = h.onScreen(3, 1, 20, 1);
+    expect(want.length).toBeGreaterThan(0); // the board painted something there
+    expect(h.copied).toEqual([want]);
+    expect(h.app.view.noticeLine).toContain(`copied ${want.length} chars`);
+    h.app.quit();
+    await h.running;
+  });
+
+  it("selects a BLOCK, so a drag stays inside the pane it started in", async () => {
+    // Linear selection would splice the board and the companion column
+    // together on every row. A block is what makes "copy this bit of pi's
+    // output" mean the pi output and nothing else.
+    const h = harness();
+    h.mouse(0, 30, 3);
+    h.mouse(32, 40, 5);
+    h.mouse(0, 40, 5, false);
+    await settle();
+    expect(h.copied).toEqual([h.onScreen(30, 3, 40, 5)]);
+    // Every copied line came from columns 30..40 ONLY — a block, not a run of
+    // whole rows spliced across panes.
+    for (const line of h.copied[0]!.split("\n")) expect(line.length).toBeLessThanOrEqual(11);
+    h.app.quit();
+    await h.running;
+  });
+
+  it("a plain click copies nothing — only a drag selects", async () => {
+    const h = harness();
+    h.mouse(0, 5, 4);
+    h.mouse(0, 5, 4, false);
+    await settle();
+    expect(h.copied).toEqual([]);
+    h.app.quit();
+    await h.running;
+  });
+
+  it("says so when there is no clipboard tool, instead of failing silently", async () => {
+    const h = harness();
+    h.app.clipboard = { write: async () => false };
+    h.mouse(0, 3, 4);
+    h.mouse(32, 6, 4);
+    h.mouse(0, 6, 4, false);
+    await settle();
+    expect(h.app.view.noticeLine).toContain("no clipboard tool");
+    h.app.quit();
+    await h.running;
+  });
+
+  it("copies PLAIN text — no escape sequences out of a styled frame", async () => {
+    // The board's own rows are full of SGR runs (the title bar, badges, the
+    // selected-row fill), so this drags across real styled content.
+    const h = harness();
+    h.mouse(0, 2, 1);
+    h.mouse(32, 40, 3);
+    h.mouse(0, 40, 3, false);
+    await settle();
+    expect(h.copied[0]).toBe(h.onScreen(2, 1, 40, 3));
+    expect(h.copied[0]).not.toContain("\x1b");
+    expect(h.copied[0]!.length).toBeGreaterThan(0);
+    h.app.quit();
+    await h.running;
+  });
+});
