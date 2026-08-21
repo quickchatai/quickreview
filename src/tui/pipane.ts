@@ -9,6 +9,7 @@
 // `tmux send-keys` (see `keysToTmux` + `sendKeysArgv`). The full-screen
 // AttachScreen still exists — it is just no longer the only way to type.
 import type { TuiConfig } from "../config.js";
+import { closeSgr } from "./paint.js";
 import { captureArgv, type SshRunner } from "./remote.js";
 
 /**
@@ -22,10 +23,18 @@ import { captureArgv, type SshRunner } from "./remote.js";
  */
 export function keepSgrOnly(line: string): string {
   const SEQ = /\x1b\[[0-9;:?<>!$"' ]*[A-Za-z@`{|}~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[ #%()*+][0-9A-Za-z]|\x1b[@-Z\\-_]/g;
-  return line
+  const kept = line
     .replace(SEQ, (m) => (/^\x1b\[[0-9;:]*m$/.test(m) ? m : ""))
     .replace(/\t/g, "  ")
     .replace(/[\x00-\x08\x0b-\x1a\x1c-\x1f\x7f-\x9f]/g, ""); // C0/C1 minus ESC (0x1b)
+  // Close the row. A tmux pane row has no reason to end reset — 7 of 23 rows
+  // of the live pr-5312 mirror ended with a background or foreground still
+  // set — and an open attribute does not stop at the mirror's edge: it paints
+  // the pane's padding, the board's right border and the companion column
+  // beside it. That is the mirror "escaping" its box and colouring the sidebar
+  // (reported 2026-08-21). `truncate` already closes the lines it CUTS; this
+  // covers every line that fits, which is most of them.
+  return closeSgr(kept);
 }
 
 /** What the board paints for one PR's session. */

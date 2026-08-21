@@ -2,7 +2,7 @@
 // the right edge of any tab's frame. Row-width discipline is the whole point —
 // a ragged row shreds the border and rehomes the cursor.
 import { describe, expect, it } from "vitest";
-import { composeColumn, displayWidth, fit, Frame, SGR, sliceDisplay, spliceDisplay, stripAnsi } from "../src/tui/paint.js";
+import { closeSgr, composeColumn, displayWidth, fit, Frame, SGR, sgrOpenAtEnd, sliceDisplay, spliceDisplay, stripAnsi } from "../src/tui/paint.js";
 
 const COLS = 20;
 const ROWS = 4;
@@ -25,6 +25,46 @@ function column(width: number, rows = ROWS): string[] {
   out.push(`┴${"─".repeat(width - 2)}┘`);
   return out;
 }
+
+// Reported 2026-08-21: the board's embedded pi mirror "escaped its container"
+// and coloured the companion sidebar. `Frame.render` resets at each row's END,
+// so styling never leaks DOWNWARD — but nothing stopped it leaking RIGHTWARD
+// across the row into the column composed beside it.
+describe("styling never crosses a surface boundary", () => {
+  it("sees through the ESC[39m trap — it restores the FOREGROUND only", () => {
+    // The exact shape measured on the live mirror: a background is set, then
+    // the row ends on `39`, which looks like a reset and closes nothing of it.
+    expect(sgrOpenAtEnd("\x1b[41mred bg\x1b[39m   ")).toBe(true);
+    expect(sgrOpenAtEnd("\x1b[31mred fg\x1b[39m   ")).toBe(false);
+  });
+
+  it("knows a genuinely closed row from an open one", () => {
+    expect(sgrOpenAtEnd("plain text, no escapes")).toBe(false);
+    expect(sgrOpenAtEnd("\x1b[36mcyan\x1b[0m")).toBe(false);
+    expect(sgrOpenAtEnd("\x1b[1mbold then \x1b[22mnot")).toBe(false); // 22 clears bold AND dim
+    expect(sgrOpenAtEnd("\x1b[7mreverse video")).toBe(true);
+    expect(sgrOpenAtEnd("\x1b[38;5;103mextended fg")).toBe(true);
+    expect(sgrOpenAtEnd("\x1b[48;2;10;20;30mtruecolor bg")).toBe(true);
+  });
+
+  it("leaves a clean row byte-identical — the frame gains no escapes it needs", () => {
+    const clean = "\x1b[36mcyan\x1b[0m";
+    expect(closeSgr(clean)).toBe(clean);
+    expect(closeSgr("plain")).toBe("plain");
+    expect(closeSgr("\x1b[41mopen")).toBe("\x1b[41mopen\x1b[0m");
+  });
+
+  it("stops a mid-style row from colouring the column beside it", () => {
+    const inner = new Frame(10, 1);
+    inner.set(0, "\x1b[41mleaky bg"); // ends with the background still on
+    const out = composeColumn(inner, ["COL"], 3);
+    // The column's own text must start from default, not inherit the red.
+    const row = out.lines[0]!;
+    expect(row.indexOf("\x1b[0m")).toBeGreaterThan(-1);
+    expect(row.indexOf("\x1b[0m")).toBeLessThan(row.indexOf("COL"));
+    expect(sgrOpenAtEnd(row.slice(0, row.indexOf("COL")))).toBe(false);
+  });
+});
 
 describe("composeColumn", () => {
   it("returns a new frame of inner.cols + width, every row exactly that wide", () => {

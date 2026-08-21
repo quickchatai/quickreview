@@ -127,6 +127,37 @@ describe("keepSgrOnly", () => {
   it("never eats the ESC of a sequence it keeps", () => {
     expect(keepSgrOnly("\x1b[32mok\x1b[0m")).toContain("\x1b[32m");
   });
+
+  // Reported 2026-08-21: the mirror "escaped its container" and coloured the
+  // companion sidebar. A tmux pane row has no reason to end reset — 7 of 23
+  // rows captured from the live pr-5312 session ended with a background or a
+  // foreground still set — and the row does not END at the mirror's edge: the
+  // pane's padding, the board's right border and the column beside it all
+  // follow on the same physical line.
+  it("closes a row that ends mid-style, so nothing paints past the mirror", () => {
+    // The real shape: a background set, then `39` — foreground-only, which
+    // looks like a reset and closes nothing of the background.
+    expect(keepSgrOnly("\x1b[48;5;236mstatus bar\x1b[39m   ")).toBe("\x1b[48;5;236mstatus bar\x1b[39m   \x1b[0m");
+    expect(keepSgrOnly("\x1b[7mreverse")).toBe("\x1b[7mreverse\x1b[0m");
+  });
+
+  it("adds nothing to rows that are already clean", () => {
+    // Byte-identity matters: the mirror is repainted several times a second.
+    expect(keepSgrOnly("plain output line")).toBe("plain output line");
+    expect(keepSgrOnly("\x1b[32mok\x1b[0m")).toBe("\x1b[32mok\x1b[0m");
+    expect(keepSgrOnly("\x1b[38;5;103mfg\x1b[39m")).toBe("\x1b[38;5;103mfg\x1b[39m");
+  });
+
+  it("survives the whole capture path — every mirrored line is self-contained", async () => {
+    const { sgrOpenAtEnd } = await import("../src/tui/paint.js");
+    const captured = [
+      "\x1b[38;5;188mCompacted from 95,862 tokens\x1b[39m          ",
+      "\x1b[7m\x1b[39m \x1b[0m",
+      "\x1b[48;5;236m\x1b[38;5;103m────────\x1b[39m",
+      "plain",
+    ].join("\n");
+    for (const line of splitCapture(captured)) expect(sgrOpenAtEnd(line)).toBe(false);
+  });
 });
 
 describe("splitCapture", () => {

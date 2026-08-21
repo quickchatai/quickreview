@@ -2,6 +2,68 @@
 // lines of cursor-addressed painting). Pure string builders throughout; the
 // only side effect lives in flush().
 export const ESC = "\x1b[";
+/** Close every attribute. Zero display width, so it is safe to splice anywhere
+ * a surface boundary needs to start from a known state. */
+export const SGR_RESET = `${ESC}0m`;
+
+/**
+ * Does `line` end with any styling still switched on?
+ *
+ * Needed because a line that ends mid-style keeps painting: `Frame.render`
+ * closes each row at its END, which stops styling leaking DOWNWARD, but
+ * nothing stops it leaking RIGHTWARD — the row's padding, its border, and any
+ * column composed beside it all inherit the open attribute.
+ *
+ * Foreign terminal output is where this bites. A tmux pane row has no reason to
+ * end reset; measured on the live pr-5312 mirror, 7 of 23 captured rows ended
+ * with a background or foreground still set. `ESC[39m` is the trap — it looks
+ * like a reset and only restores the default FOREGROUND.
+ *
+ * Tracked rather than pattern-matched, so a row that legitimately ends clean
+ * stays BYTE-IDENTICAL and the frame gains no escapes it does not need.
+ * Ambiguity resolves toward "open": a redundant reset is invisible, a missing
+ * one colours the neighbouring pane.
+ */
+export function sgrOpenAtEnd(line: string): boolean {
+  const sgr = /\x1b\[([0-9;:]*)m/g;
+  let fg = false;
+  let bg = false;
+  let attrs = 0;
+  for (let m = sgr.exec(line); m !== null; m = sgr.exec(line)) {
+    const body = m[1] ?? "";
+    const codes = body === "" ? ["0"] : body.split(";");
+    for (let i = 0; i < codes.length; i++) {
+      const raw = codes[i] ?? "";
+      const n = Number((raw === "" ? "0" : raw).split(":")[0]);
+      if (!Number.isInteger(n)) continue;
+      if (n === 0) {
+        fg = false;
+        bg = false;
+        attrs = 0;
+      } else if (n === 38 || n === 48) {
+        // Extended colour: the remaining codes in THIS sequence are its
+        // arguments, not attributes. Stopping here can leave a trailing `39`
+        // unread, which only ever over-estimates "open" — the safe direction.
+        if (n === 38) fg = true;
+        else bg = true;
+        break;
+      } else if ((n >= 30 && n <= 37) || (n >= 90 && n <= 97)) fg = true;
+      else if (n === 39) fg = false;
+      else if ((n >= 40 && n <= 47) || (n >= 100 && n <= 107)) bg = true;
+      else if (n === 49) bg = false;
+      else if (n >= 1 && n <= 9) attrs |= 1 << n;
+      else if (n === 22) attrs &= ~((1 << 1) | (1 << 2)); // clears bold AND dim
+      else if (n >= 21 && n <= 29) attrs &= ~(1 << (n - 20));
+    }
+  }
+  return fg || bg || attrs !== 0;
+}
+
+/** `line`, guaranteed to leave nothing switched on behind it. Byte-identical
+ * when it already ends clean. */
+export function closeSgr(line: string): string {
+  return sgrOpenAtEnd(line) ? `${line}${SGR_RESET}` : line;
+}
 export const SGR = {
   reset: `${ESC}0m`,
   bold: `${ESC}1m`,
@@ -225,7 +287,11 @@ export function composeColumn(inner: Frame, column: string[], width: number, joi
     }
     const cell = column[r];
     const right = cell === undefined ? blank : displayWidth(cell) === w ? cell : fit(cell, w);
-    out.set(r, left + right);
+    // Close the left half at the SEAM. The column is a different surface and
+    // starts from default, always — otherwise a row that ends mid-style (an
+    // embedded pi mirror does) paints the whole column in it. `closeSgr` is a
+    // no-op on the rows that already end clean, which is nearly all of them.
+    out.set(r, closeSgr(left) + right);
   }
   out.zones = inner.zones.map((z) => ({ ...z }));
   out.meta = { ...inner.meta };
