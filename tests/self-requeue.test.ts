@@ -15,6 +15,7 @@ import type { GateResult } from "../src/gate.js";
 import type { PrFileEntry } from "../src/github.js";
 import { reconcileOrphanedRounds } from "../src/reconcile.js";
 import { StateStore } from "../src/state.js";
+import { roundPromptMarker } from "../src/types.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
 import { AnomalyWakePolicy } from "../src/anomalies.js";
 import { VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
@@ -75,7 +76,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-function reviewingRound(pr: number, head = "abc123"): number {
+function reviewingRound(pr: number, head = "abc123", opts: { stampMarker?: boolean } = {}): number {
   store.upsertPr({
     number: pr,
     state: "reviewing",
@@ -86,7 +87,11 @@ function reviewingRound(pr: number, head = "abc123"): number {
     stale_recheck: 0,
     migration_gate: 0,
   });
-  return store.startRound(pr, "first", ["pass-baseline", "pass-validate"], baseCfg.daemon.round_deadline_min);
+  const id = store.startRound(pr, "first", ["pass-baseline", "pass-validate"], baseCfg.daemon.round_deadline_min);
+  // Dispatch stamps the receipt token (#5362); a round without one was
+  // dispatched by an older build and is deliberately unjudgeable.
+  if (opts.stampMarker !== false) store.stampPromptMarker(id, roundPromptMarker(pr, store.roundsFor(pr).length));
+  return id;
 }
 
 function watcher(hooks: SessionHooks, cfg: Config = baseCfg): VerdictWatcher {
@@ -508,195 +513,300 @@ describe("NEEDS_HUMAN requires a finished review", () => {
   });
 });
 
-// ----: the lost-prompt net (pre-deadline) ----------------------------
+// ---- / #5362: the lost-prompt net, rebuilt on a receipt ------------
+//
+// The original net inferred loss from a session-JSONL mtime and fired ZERO
+// times in the eight days it was live. Two independent reasons, the second
+// structural: it refused to act once the head had spent a self-requeue (and a
+// `head_moved` requeue spends one four seconds before dispatching the round
+// most likely to be lost), and it required "no activity since the round
+// started" — but a prompt is dropped precisely BECAUSE the agent is busy, and
+// a busy agent always has activity after round start.
+//
+// `roundPromptAccepted` replaces the inference with a fact: the dispatched
+// receipt token is echoed into the session JSONL only when pi accepted the
+// message. false = provably never arrived, true = the session owns it, null =
+// no evidence. And because a missing prompt is a DELIVERY fault, recovery is
+// cheap first: re-deliver the same order to the same session, and escalate to
+// a cancelled round only when redelivery is spent or impossible.
 
-describe("lost-prompt net — consumed prompt, silent session", () => {
+describe("lost-prompt net (#5362) — a round with no prompt receipt", () => {
   const GRACE_MIN = baseCfg.daemon.round_stall_grace_min ?? 10;
 
-  /** hooksWith + the two observation hooks. */
-  function netHooks(opts: { pending: boolean; activity: number | null }): ReturnType<typeof hooksWith> {
+  /** hooksWith + the observation hooks, with redelivery ALWAYS failing so the
+   * escalation half can be exercised on its own. `accepted` mirrors what
+   * `roundPromptAccepted` reports. */
+  function netHooks(opts: { pending: boolean; accepted: boolean | null }): ReturnType<typeof hooksWith> & {
+    redelivered: number[];
+  } {
     const h = hooksWith(true);
+    const redelivered: number[] = [];
     h.hooks.injectPending = async () => opts.pending;
-    h.hooks.sessionActivityAt = async () => opts.activity;
-    return h;
+    h.hooks.roundPromptAccepted = async () => opts.accepted;
+    h.hooks.redeliverRound = async (pr) => {
+      redelivered.push(pr);
+      return false; // no saved prompt — the caller must escalate
+    };
+    return { ...h, redelivered };
+  }
+
+  /** The same, but redelivery succeeds — the cheap recovery. */
+  function netHooksDelivering(opts: { accepted: boolean | null }): ReturnType<typeof hooksWith> & {
+    redelivered: Array<{ pr: number; round: number }>;
+  } {
+    const h = hooksWith(true);
+    const redelivered: Array<{ pr: number; round: number }> = [];
+    h.hooks.injectPending = async () => false;
+    h.hooks.roundPromptAccepted = async () => opts.accepted;
+    h.hooks.redeliverRound = async (pr, roundNo) => {
+      redelivered.push({ pr, round: roundNo });
+      return true;
+    };
+    return { ...h, redelivered };
   }
 
   function pastGrace(): void {
     clock = new Date(clock.getTime() + (GRACE_MIN + 5) * 60_000); // grace blown, deadline not
   }
 
-  it("requeues a round whose prompt was consumed but never became a turn — on the SECOND consecutive silent sweep", async () => {
-    const startedMs = clock.getTime();
+  it("RE-DELIVERS on the second sweep — the round, the session and the conversation all survive", async () => {
     const roundId = reviewingRound(310);
     pastGrace();
-    const { hooks, overseer } = netHooks({ pending: false, activity: startedMs - 60_000 });
+    const { hooks, redelivered } = netHooksDelivering({ accepted: false });
     const w = watcher(hooks);
 
-    // Sweep 1: silence observed — the mark is stamped, nothing fires yet.
-    expect(await w.checkDeadlines()).toEqual([]); // no anomaly
+    // Sweep 1: no receipt — the mark is stamped, nothing acts yet.
+    expect(await w.checkDeadlines()).toEqual([]);
     expect(roundStatus(roundId)).toBe("running");
     expect(silentSince(roundId)).not.toBeNull();
-    expect(events("round_self_requeued")).toHaveLength(0);
+    expect(redelivered).toHaveLength(0);
 
-    // Sweep 2: still silent — now it fires.
+    // Sweep 2: still no receipt — the order goes out again.
     clock = new Date(clock.getTime() + 60_000);
     expect(await w.checkDeadlines()).toEqual([]);
-    expect(roundStatus(roundId)).toBe("cancelled");
-    expect(store.getPr(310)!.state).toBe("queued");
+    expect(redelivered).toEqual([{ pr: 310, round: 1 }]);
     expect(events("round_prompt_lost")).toHaveLength(1);
-    const requeued = events("round_self_requeued");
-    expect(requeued).toHaveLength(1);
-    expect(requeued[0]!.payload).toMatchObject({ mode: "lost_prompt" });
-    expect(String(requeued[0]!.payload.reason)).toContain("prompt was consumed");
-    expect(overseer.some((m) => m.startsWith("SELF-REQUEUE (recovery) — PR #310"))).toBe(true);
+    expect(events("round_prompt_redelivered")[0]!.payload).toMatchObject({ attempt: 1, round_no: 1 });
+
+    // THE POINT: this is a delivery fault, so nothing expensive happened.
+    expect(roundStatus(roundId)).toBe("running");
+    expect(store.getPr(310)!.state).toBe("reviewing");
+    expect(events("round_self_requeued")).toHaveLength(0);
+    // …and the window resets, so the next escalation must be re-earned.
+    expect(silentSince(roundId)).toBeNull();
+  });
+
+  it("escalates to a self-requeue only once redelivery is exhausted", async () => {
+    const roundId = reviewingRound(320);
+    pastGrace();
+    const { hooks } = netHooksDelivering({ accepted: false });
+    const w = watcher(hooks);
+    const cap = baseCfg.daemon.max_prompt_redeliveries ?? 2;
+
+    for (let attempt = 1; attempt <= cap; attempt++) {
+      await w.checkDeadlines(); // marks
+      clock = new Date(clock.getTime() + 60_000);
+      await w.checkDeadlines(); // redelivers
+      clock = new Date(clock.getTime() + 60_000);
+    }
+    expect(events("round_prompt_redelivered")).toHaveLength(cap);
+    expect(events("round_self_requeued")).toHaveLength(0);
+
+    // The budget is spent: the next confirmed loss is a real failure.
+    await w.checkDeadlines();
+    clock = new Date(clock.getTime() + 60_000);
+    await w.checkDeadlines();
+    expect(roundStatus(roundId)).toBe("cancelled");
+    expect(store.getPr(320)!.state).toBe("queued");
+    expect(events("round_self_requeued")[0]!.payload).toMatchObject({ mode: "lost_prompt" });
+  });
+
+  it("escalates immediately when there is no saved prompt to re-deliver", async () => {
+    const roundId = reviewingRound(321);
+    pastGrace();
+    const { hooks, redelivered } = netHooks({ pending: false, accepted: false });
+    const w = watcher(hooks);
+
+    await w.checkDeadlines();
+    clock = new Date(clock.getTime() + 60_000);
+    await w.checkDeadlines();
+
+    expect(redelivered).toEqual([321]);
+    expect(roundStatus(roundId)).toBe("cancelled");
+    expect(events("round_self_requeued")).toHaveLength(1);
+  });
+
+  it("a HEAD_MOVED requeue no longer disarms the net — the #5362 regression", async () => {
+    // This is the interaction that wedged #5362 for its full deadline. The old
+    // net gave up once the head had spent a self-requeue, and `head_moved`
+    // spends one FOUR SECONDS before dispatching the round whose delivery
+    // races the session's still-running turn. The most loss-prone dispatch in
+    // the system was the one dispatch the net refused to watch.
+    const pr = 322;
+    const first = reviewingRound(pr);
+    store.markRoundCancelled(first, "self-requeue 1/2 — head_moved");
+    // The head_moved requeue, exactly as verdicts.ts records it — this is the
+    // event the old net read as "budget spent, stand down".
+    store.logEvent("round_self_requeued", pr, { head_sha: "abc123", mode: "head_moved", attempt: 1 });
+    const second = reviewingRound(pr); // the redispatch, whose prompt is lost
+    pastGrace();
+    const { hooks, redelivered } = netHooksDelivering({ accepted: false });
+    const w = watcher(hooks);
+
+    await w.checkDeadlines();
+    clock = new Date(clock.getTime() + 60_000);
+    await w.checkDeadlines();
+
+    expect(redelivered).toEqual([{ pr, round: 2 }]);
+    expect(roundStatus(second)).toBe("running"); // recovered without cancelling
+  });
+
+  it("does nothing while the inject file is still pending — the bridge is retrying, not losing", async () => {
+    const roundId = reviewingRound(311);
+    pastGrace();
+    const { hooks, redelivered } = netHooks({ pending: true, accepted: false });
+
+    await watcher(hooks).checkDeadlines();
+    expect(roundStatus(roundId)).toBe("running");
+    expect(redelivered).toHaveLength(0);
+    expect(silentSince(roundId)).toBeNull();
+  });
+
+  it("does nothing when the receipt IS there — a busy session is not a lost prompt", async () => {
+    // The case the old net could not express. #5362's session had activity
+    // after round start (it was finishing the previous turn), which the mtime
+    // inference read as "alive, so not lost". The receipt separates the two:
+    // activity is irrelevant, presence of the token is the whole question.
+    const roundId = reviewingRound(312);
+    pastGrace();
+    const { hooks, redelivered } = netHooksDelivering({ accepted: true });
+
+    await watcher(hooks).checkDeadlines();
+    expect(roundStatus(roundId)).toBe("running");
+    expect(redelivered).toHaveLength(0);
+    expect(silentSince(roundId)).toBeNull();
+  });
+
+  it("does nothing when the receipt is UNKNOWN, or when the hooks are absent (stubs)", async () => {
+    const roundIdA = reviewingRound(313);
+    pastGrace();
+    const unknown = netHooks({ pending: false, accepted: null });
+    await watcher(unknown.hooks).checkDeadlines();
+    expect(roundStatus(roundIdA)).toBe("running");
+    expect(unknown.redelivered).toHaveLength(0);
+
+    const roundIdB = reviewingRound(314);
+    const { hooks } = hooksWith(true); // no roundPromptAccepted / injectPending
+    await watcher(hooks).checkDeadlines();
+    expect(roundStatus(roundIdB)).toBe("running");
+    expect(events("round_self_requeued")).toHaveLength(0);
+  });
+
+  it("never acts on a round dispatched before receipts existed (NULL marker)", async () => {
+    // A round with no stamped marker cannot be judged: its prompt carried no
+    // token, so absence proves nothing. Every reader must fall back rather
+    // than conclude loss — otherwise the first deploy would recover every
+    // in-flight round at once.
+    const roundId = reviewingRound(324, "abc123", { stampMarker: false });
+    pastGrace();
+    const { hooks, redelivered } = netHooksDelivering({ accepted: false });
+    const w = watcher(hooks);
+
+    await w.checkDeadlines();
+    clock = new Date(clock.getTime() + 60_000);
+    await w.checkDeadlines();
+
+    expect(roundStatus(roundId)).toBe("running");
+    expect(redelivered).toHaveLength(0);
+    expect(events("round_self_requeued")).toHaveLength(0);
+  });
+
+  it("a receipt appearing between two sweeps clears the mark — the loss must be consecutive", async () => {
+    const roundId = reviewingRound(323);
+    pastGrace();
+    let accepted: boolean | null = false;
+    const h = hooksWith(true);
+    const redelivered: number[] = [];
+    h.hooks.injectPending = async () => false;
+    h.hooks.roundPromptAccepted = async () => accepted;
+    h.hooks.redeliverRound = async (pr) => {
+      redelivered.push(pr);
+      return true;
+    };
+    const w = watcher(h.hooks);
+
+    await w.checkDeadlines(); // sweep 1: no receipt — marked
+    expect(silentSince(roundId)).not.toBeNull();
+
+    accepted = true; // the prompt landed after all (a slow JSONL flush)
+    clock = new Date(clock.getTime() + 60_000);
+    await w.checkDeadlines(); // sweep 2: receipt present — mark cleared
+    expect(silentSince(roundId)).toBeNull();
+    expect(redelivered).toHaveLength(0);
+
+    accepted = false; // gone again: the count restarts at one
+    clock = new Date(clock.getTime() + 60_000);
+    await w.checkDeadlines(); // sweep 3: re-marked only
+    expect(silentSince(roundId)).not.toBeNull();
+    expect(redelivered).toHaveLength(0);
+
+    clock = new Date(clock.getTime() + 60_000);
+    await w.checkDeadlines(); // sweep 4: second consecutive loss — acts
+    expect(redelivered).toEqual([323]);
   });
 
   it("never fires when the session is dead — the deadline path owns dead sessions", async () => {
-    const startedMs = clock.getTime();
     const roundId = reviewingRound(318);
     pastGrace();
-    const h = netHooks({ pending: false, activity: startedMs - 60_000 });
+    const h = netHooksDelivering({ accepted: false });
     h.hooks.sessionAlive = async () => false;
     const w = watcher(h.hooks);
 
     await w.checkDeadlines();
     clock = new Date(clock.getTime() + 60_000);
     await w.checkDeadlines();
+    // A dead session cannot be recovered by re-sending a file: the deadline
+    // path rebirths it. (The receipt says "not delivered" either way, so this
+    // guard has to be explicit.)
     expect(roundStatus(roundId)).toBe("running");
-    expect(silentSince(roundId)).toBeNull();
     expect(events("round_self_requeued")).toHaveLength(0);
   });
 
-  it("never fires when sessionAlive is absent (stub hooks) even with both net signals present", async () => {
-    const startedMs = clock.getTime();
+  it("never fires when sessionAlive is absent (stub hooks) even with both signals present", async () => {
     const roundId = reviewingRound(319);
     pastGrace();
     const h = hooksWith(undefined); // no sessionAlive at all
     h.hooks.injectPending = async () => false;
-    h.hooks.sessionActivityAt = async () => startedMs - 60_000;
+    h.hooks.roundPromptAccepted = async () => false;
     const w = watcher(h.hooks);
 
     await w.checkDeadlines();
     clock = new Date(clock.getTime() + 60_000);
     await w.checkDeadlines();
     expect(roundStatus(roundId)).toBe("running");
-    expect(events("round_self_requeued")).toHaveLength(0);
-  });
-
-  it("a sign of life between two silent sweeps clears the mark — silence must be consecutive", async () => {
-    const startedMs = clock.getTime();
-    const roundId = reviewingRound(323);
-    pastGrace();
-    let activity = startedMs - 60_000;
-    const h = hooksWith(true);
-    h.hooks.injectPending = async () => false;
-    h.hooks.sessionActivityAt = async () => activity;
-    const w = watcher(h.hooks);
-
-    await w.checkDeadlines(); // sweep 1: silent — marked
-    expect(silentSince(roundId)).not.toBeNull();
-
-    activity = startedMs + 30_000; // the session moved (e.g. a late turn start)
-    clock = new Date(clock.getTime() + 60_000);
-    await w.checkDeadlines(); // sweep 2: alive — mark cleared, nothing fires
-    expect(silentSince(roundId)).toBeNull();
-    expect(events("round_self_requeued")).toHaveLength(0);
-
-    activity = startedMs - 60_000; // silent again: the count restarts at one
-    clock = new Date(clock.getTime() + 60_000);
-    await w.checkDeadlines(); // sweep 3: silent — re-marked only
-    expect(roundStatus(roundId)).toBe("running");
-    expect(silentSince(roundId)).not.toBeNull();
-    expect(events("round_self_requeued")).toHaveLength(0);
-
-    clock = new Date(clock.getTime() + 60_000);
-    await w.checkDeadlines(); // sweep 4: second consecutive silence — fires
-    expect(roundStatus(roundId)).toBe("cancelled");
-    expect(events("round_self_requeued")).toHaveLength(1);
-  });
-
-  it("does nothing while the inject file is still pending — the bridge is retrying, not losing", async () => {
-    const startedMs = clock.getTime();
-    const roundId = reviewingRound(311);
-    pastGrace();
-    const { hooks } = netHooks({ pending: true, activity: startedMs - 60_000 });
-
-    await watcher(hooks).checkDeadlines();
-    expect(roundStatus(roundId)).toBe("running");
-    expect(events("round_self_requeued")).toHaveLength(0);
-  });
-
-  it("does nothing when the session has been active since the round started (mid-recheck overlap)", async () => {
-    const startedMs = clock.getTime();
-    const roundId = reviewingRound(312);
-    pastGrace();
-    const { hooks } = netHooks({ pending: false, activity: startedMs + 30_000 });
-
-    await watcher(hooks).checkDeadlines();
-    expect(roundStatus(roundId)).toBe("running");
-    expect(events("round_self_requeued")).toHaveLength(0);
-  });
-
-  it("does nothing when activity is unknown, or when the hooks are absent (stubs)", async () => {
-    const roundIdA = reviewingRound(313);
-    pastGrace();
-    const unknown = netHooks({ pending: false, activity: null });
-    await watcher(unknown.hooks).checkDeadlines();
-    expect(roundStatus(roundIdA)).toBe("running");
-
-    const roundIdB = reviewingRound(314);
-    const { hooks } = hooksWith(true); // no sessionActivityAt / injectPending
-    await watcher(hooks).checkDeadlines();
-    expect(roundStatus(roundIdB)).toBe("running");
     expect(events("round_self_requeued")).toHaveLength(0);
   });
 
   it("waits out the grace window before judging", async () => {
-    const startedMs = clock.getTime();
     const roundId = reviewingRound(315);
     clock = new Date(clock.getTime() + 2 * 60_000); // inside the grace window
-    const { hooks } = netHooks({ pending: false, activity: startedMs - 60_000 });
+    const { hooks, redelivered } = netHooksDelivering({ accepted: false });
 
     await watcher(hooks).checkDeadlines();
     expect(roundStatus(roundId)).toBe("running");
-    expect(events("round_self_requeued")).toHaveLength(0);
+    expect(redelivered).toHaveLength(0);
+    expect(silentSince(roundId)).toBeNull();
   });
 
   it("a pending verdict file always wins over the net", async () => {
-    const startedMs = clock.getTime();
     const roundId = reviewingRound(316);
     pastGrace();
     writeFileSync(join(dir, "pr-316-round-1.json"), "{}");
-    const { hooks } = netHooks({ pending: false, activity: startedMs - 60_000 });
+    const { hooks, redelivered } = netHooksDelivering({ accepted: false });
 
     await watcher(hooks).checkDeadlines();
     expect(roundStatus(roundId)).toBe("running");
-    expect(events("round_self_requeued")).toHaveLength(0);
-  });
-
-  it("fires at most once per head — the deadline path owns further recovery", async () => {
-    const startedMs = clock.getTime();
-    reviewingRound(317);
-    pastGrace();
-    const { hooks } = netHooks({ pending: false, activity: startedMs - 60_000 });
-    const w = watcher(hooks);
-    await w.checkDeadlines(); // sweep 1: marks
-    clock = new Date(clock.getTime() + 60_000);
-    await w.checkDeadlines(); // sweep 2: fires
-    expect(events("round_self_requeued")).toHaveLength(1);
-
-    // The redispatched round loses its prompt AGAIN at the same head.
-    const secondStart = clock.getTime();
-    const secondId = reviewingRound(317);
-    clock = new Date(clock.getTime() + (GRACE_MIN + 5) * 60_000);
-    const again = netHooks({ pending: false, activity: secondStart - 60_000 });
-    const w2 = watcher(again.hooks);
-    await w2.checkDeadlines();
-    clock = new Date(clock.getTime() + 60_000);
-    await w2.checkDeadlines();
-
-    expect(roundStatus(secondId)).toBe("running"); // the net stays its hand
-    expect(events("round_self_requeued")).toHaveLength(1);
+    expect(redelivered).toHaveLength(0);
   });
 });
 

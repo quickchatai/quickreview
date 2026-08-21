@@ -38,7 +38,7 @@ import { isFirstPartyDirectivePath } from "./severity.js";
 import type { DispatchAnnouncer } from "./slack/announce.js";
 import { applyEvent, setPrGates } from "./statemachine.js";
 import type { PrStateRow, ReviewedHeadRow, StateStore } from "./state.js";
-import { higherTier, normalizeVerdict, PASS_TIER_ORDER } from "./types.js";
+import { higherTier, normalizeVerdict, PASS_TIER_ORDER, roundPromptMarker } from "./types.js";
 import type { PassPlanEntry, PassTier, RoundOrder, RoundType, SessionHooks } from "./types.js";
 
 /** The slice of GitHubAdapter dispatch needs — all mutations are gated inside
@@ -921,6 +921,12 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // completes. Publishing reviewing/running state earlier created orphan
       // rounds whenever worktree preparation failed.
       await deps.hooks.dispatchRound(order, render(order, memory));
+      // Record the receipt token this round's prompt carries (#5362), so the
+      // recovery paths can tell "delivered" from "never arrived" instead of
+      // inferring it. Stamped only AFTER dispatchRound resolved: the marker
+      // asserts that a prompt bearing it was written, and a dispatch that
+      // threw wrote nothing.
+      store.stampPromptMarker(roundId, roundPromptMarker(row.number, roundNo));
 
       setPrGates(store, row.number, gate);
       applyEvent(store, row.number, { type: "dispatched" }, {}, { botLogin: cfg.github.bot_login, now });

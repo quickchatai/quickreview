@@ -94,6 +94,16 @@ export interface RoundRow {
    * restart cannot forget it — but round-scoped, so it lives on the round
    * row rather than in a per-PR table. Null = never seen silent. */
   silent_since: string | null;
+  /** The receipt token stamped into this round's wake file (#5362), echoed
+   * back by pi into the session JSONL when — and only when — the prompt is
+   * ACCEPTED. Null means the round was dispatched by a build that stamped no
+   * marker, so its delivery is UNKNOWABLE rather than unconfirmed: readers
+   * must fall back to the older inference instead of concluding "lost". */
+  prompt_marker: string | null;
+  /** How many times this round's prompt has been re-delivered (#5362). Cheap
+   * recovery (rewrite the wake file, same round and session), bounded on its
+   * own rather than out of the `max_self_requeues` budget. */
+  redeliveries: number;
 }
 
 /** PR lifecycle facts for PRs the daemon never tracked (M2 backfill fills it).
@@ -501,6 +511,16 @@ export class StateStore {
       // hardening: first-seen-silent mark for the lost-prompt net —
       // nullable, additive.
       "ALTER TABLE rounds ADD COLUMN silent_since TEXT",
+      // The prompt receipt token stamped into this round's wake file (#5362) —
+      // nullable, additive. NULL means the round was dispatched by a build
+      // that did not stamp one, so its delivery CANNOT be verified and every
+      // reader must fall back to the older inference. Never backfill it: a
+      // fabricated token would assert a receipt nobody ever saw.
+      "ALTER TABLE rounds ADD COLUMN prompt_marker TEXT",
+      // How many times this round's prompt has been re-delivered (#5362).
+      // Redelivery is cheap and does NOT spend the self-requeue budget, so it
+      // needs its own bound.
+      "ALTER TABLE rounds ADD COLUMN redeliveries INTEGER NOT NULL DEFAULT 0",
     ]) {
       try {
         this.db.exec(ddl);
@@ -750,6 +770,50 @@ export class StateStore {
    * ambiguous signal) — silence must be observed on consecutive sweeps. */
   clearRoundSilent(id: number): void {
     this.db.prepare("UPDATE rounds SET silent_since = NULL WHERE id = ?").run(id);
+  }
+
+  /** Push a running round's deadline out from NOW (#5362). Used only when the
+   * round has not started — its prompt never reached the session — so none of
+   * the elapsed time was review time and the full window is owed again. */
+  extendRoundDeadline(id: number, minutes: number): void {
+    const deadline = new Date(this.now().getTime() + minutes * 60_000).toISOString();
+    this.db.prepare("UPDATE rounds SET deadline_at = ? WHERE id = ? AND status = 'running'").run(deadline, id);
+  }
+
+  /** Record the receipt token stamped into this round's wake file (#5362).
+   * Written at dispatch, read by the prompt-receipt check. A round with a NULL
+   * marker was dispatched by a build that stamped none — its delivery cannot
+   * be verified, and readers must say "unknown" rather than "not delivered". */
+  stampPromptMarker(id: number, marker: string): void {
+    this.db.prepare("UPDATE rounds SET prompt_marker = ? WHERE id = ?").run(marker, id);
+  }
+
+  /** Count one re-delivery of a round's prompt and return the new total
+   * (#5362). Redelivery is the cheap recovery — rewrite the wake file, same
+   * round, same session, same conversation — so it is bounded separately from
+   * `max_self_requeues`, which is the expensive one (a fresh round, and for a
+   * live-but-wedged session a kill). */
+  countRedelivery(id: number): number {
+    this.db.prepare("UPDATE rounds SET redeliveries = redeliveries + 1 WHERE id = ?").run(id);
+    const row = this.db.prepare("SELECT redeliveries FROM rounds WHERE id = ?").get(id) as
+      | { redeliveries: number }
+      | undefined;
+    return row?.redeliveries ?? 0;
+  }
+
+  /** PRs holding wakes with no round running (#5362 W3). `flushHeldWakes` is
+   * driven only by the verdict and anomaly paths, so a round cancelled as
+   * superseded, orphaned-without-requeue, or self-requeued into a chain that
+   * never verdicts leaves its held wakes — author replies included — in this
+   * table with nothing left to flush them. The reconcile sweep reads this. */
+  prsWithStrandedWakes(): number[] {
+    const rows = this.db
+      .prepare(
+        `SELECT DISTINCT w.pr AS pr FROM pending_wakes w
+          WHERE NOT EXISTS (SELECT 1 FROM rounds r WHERE r.pr = w.pr AND r.status = 'running')`,
+      )
+      .all() as Array<{ pr: number }>;
+    return rows.map((r) => r.pr);
   }
 
   /** True when a newer round exists for the PR (any status) — the given round

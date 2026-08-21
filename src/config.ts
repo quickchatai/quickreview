@@ -488,11 +488,17 @@ export interface Config {
      * so hand-rolled test configs keep compiling; readers default to
      * DEFAULT_MAX_SELF_REQUEUES. */
     max_self_requeues?: number;
-    /**: minutes after dispatch before a running round whose prompt
-     * was consumed but whose session shows no activity counts as
-     * lost-prompt and is re-queued (once per head, inside the cap).
-     * Optional; readers default to DEFAULT_ROUND_STALL_GRACE_MIN. */
+    /**: minutes after dispatch before a running round with no prompt
+     * receipt (#5362) counts as lost and is recovered. Optional; readers
+     * default to DEFAULT_ROUND_STALL_GRACE_MIN. */
     round_stall_grace_min?: number;
+    /** #5362: how many times a round's prompt may be RE-DELIVERED before the
+     * expensive recovery takes over. Separate from `max_self_requeues` on
+     * purpose — redelivery costs one file write and keeps the round, the
+     * session and the conversation, where a self-requeue burns a round and
+     * (for a live session) kills it. Optional; readers default to
+     * DEFAULT_MAX_PROMPT_REDELIVERIES. */
+    max_prompt_redeliveries?: number;
     /** Zombie-round expiry horizon: a round stuck `overdue` for
      * longer than this — and whose PR has since verdicted or closed, so a
      * rerun would never touch it — moves to terminal `expired`.
@@ -588,6 +594,12 @@ export const DEFAULT_ROUND_STALL_GRACE_MIN = 10;
 /** Default self-requeue budget per PR head when [daemon] carries no
  * `max_self_requeues` — the brief's recommended N=2. */
 export const DEFAULT_MAX_SELF_REQUEUES = 2;
+
+/** Default prompt-redelivery budget per round (#5362). Two is enough to cover
+ * a delivery that raced a busy session and one that raced a session restart;
+ * a third failure is no longer a delivery problem, so escalating beats
+ * re-sending the same file forever. */
+export const DEFAULT_MAX_PROMPT_REDELIVERIES = 2;
 
 export function sandboxRoot(): string {
   // Robust under both dist/src (built) and src (vitest): walk up to package.json.

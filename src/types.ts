@@ -32,6 +32,29 @@ export function normalizeVerdict(raw: unknown): Verdict | null {
   return (VERDICTS as readonly string[]).includes(v) ? (v as Verdict) : null;
 }
 
+/**
+ * The per-round prompt receipt token (#5362).
+ *
+ * Deliberately plain ASCII with no JSON metacharacters, so it survives the
+ * session JSONL's string encoding byte-for-byte and a raw substring search
+ * over the file is exact. Deliberately an HTML comment, so it is inert to the
+ * model reading the prompt.
+ *
+ * Keyed on (pr, round_no) rather than round_id: round_no is what the session
+ * writes into its verdict file and its ledger, so a human reading a JSONL can
+ * match the token to the round without opening the database.
+ */
+export function roundPromptMarker(pr: number, roundNo: number): string {
+  return `<!-- qcr-round: pr-${pr} round-${roundNo} -->`;
+}
+
+/** Append the receipt token to a rendered round prompt. Appended, not
+ * prepended: the round templates open with the instruction that sets the
+ * session's frame, and nothing should come before it. */
+export function stampRoundPrompt(renderedPrompt: string, pr: number, roundNo: number): string {
+  return `${renderedPrompt.replace(/\s+$/, "")}\n\n${roundPromptMarker(pr, roundNo)}\n`;
+}
+
 /** Pass model tiers, ascending by capability/cost. */
 export type PassTier = "terra-med" | "sol-med" | "sol-high";
 
@@ -232,4 +255,30 @@ export interface SessionHooks {
    * dir? Read by the same net — a pending file means the bridge is still
    * retrying delivery, which is patience, not loss. Optional as above. */
   injectPending?(pr: number): Promise<boolean>;
+  /**
+   * Did this round's prompt actually reach the session? (#5362.)
+   *
+   * The ONE positive delivery fact in the system. `dispatchRound` stamps a
+   * receipt token into the wake file; pi writes the user message it accepted
+   * — token and all — into the session JSONL. Present ⇒ delivered. Absent ⇒
+   * never delivered, which is a fact the older mtime inference could not
+   * express: a prompt is dropped BECAUSE the agent is busy, and a busy agent
+   * always bumps the mtime after the round started.
+   *
+   * `null` means "cannot tell" and must never be read as loss.
+   * Optional: absent ⇒ no receipt check, exactly the pre-#5362 behaviour.
+   */
+  roundPromptAccepted?(pr: number, roundNo: number, startedAtMs: number): Promise<boolean | null>;
+  /**
+   * Re-deliver a round prompt whose receipt never appeared (#5362) — the same
+   * round, session and conversation, with the exact dispatched bytes written
+   * to the inject dir again. The CHEAP recovery, deliberately distinct from
+   * `selfRequeue`: no round is cancelled, no session is killed, no GitHub
+   * state is touched, and the self-requeue budget is not spent.
+   *
+   * False when the dispatched prompt is no longer on disk — the caller then
+   * falls through to the expensive recovery rather than inventing an order.
+   * Optional: absent ⇒ the expensive path only, exactly as before.
+   */
+  redeliverRound?(pr: number, roundNo: number): Promise<boolean>;
 }

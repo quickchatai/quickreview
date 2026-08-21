@@ -37,6 +37,7 @@ import {
 } from "./memory/ovsession.js";
 import { Tmux } from "./tmux.js";
 import type { ExecFn } from "./tmux.js";
+import { roundPromptMarker, stampRoundPrompt } from "./types.js";
 import type { RoundOrder, SessionHooks } from "./types.js";
 import { renderConversationSystemPrompt, renderOverseerSystemPrompt } from "./templates.js";
 import { WorktreeManager } from "./worktrees.js";
@@ -498,7 +499,122 @@ export class PiSessionManager implements SessionHooks {
       await this.worktrees.ensureWorktree(order.pr, { baseRef: order.base_ref });
     }
     await this.ensurePrSession(order.pr, order.title, order.worktree);
-    this.injectFile(prSessionName(order.pr), renderedPrompt);
+    const stamped = stampRoundPrompt(renderedPrompt, order.pr, order.round_no);
+    // Keep the exact bytes that were dispatched. Redelivery must send the SAME
+    // prompt — re-rendering later would quietly change the order (a different
+    // head, a different memory block, a different nit-scope note), so what the
+    // session eventually reads would not be the round the daemon recorded.
+    this.saveRoundPrompt(order.pr, order.round_no, stamped);
+    this.injectFile(prSessionName(order.pr), stamped);
+  }
+
+  private roundPromptPath(pr: number, roundNo: number): string {
+    return join(this.root, "state", "round-prompts", `pr-${pr}-round-${roundNo}.md`);
+  }
+
+  private saveRoundPrompt(pr: number, roundNo: number, stamped: string): void {
+    try {
+      const path = this.roundPromptPath(pr, roundNo);
+      mkdirSync(dirname(path), { recursive: true });
+      this.writeAtomic(path, stamped);
+    } catch (err) {
+      // Best-effort by contract: losing the copy costs the cheap recovery for
+      // this round, never the dispatch itself.
+      console.log(`[quickreviewd] sessions: could not save the round prompt for #${pr} round ${roundNo}: ${String(err)}`);
+    }
+  }
+
+  /** SessionHooks: has this round's prompt actually been ACCEPTED into the
+   * session? (#5362.)
+   *
+   * The daemon had no positive evidence of delivery at all — every net
+   * inferred it from a JSONL mtime, which cannot distinguish "the prompt
+   * arrived" from "the session was busy doing something else". That is the
+   * inference that made the net structurally blind: a prompt is
+   * dropped precisely BECAUSE the agent is busy, and a busy agent always
+   * bumps the mtime after the round started.
+   *
+   * The receipt is a fact instead of a guess: `dispatchRound` stamps a token
+   * into the wake file, and pi writes the user message it accepted — token
+   * included — into the session JSONL. Present ⇒ delivered. Absent ⇒ never
+   * delivered. Verified live on #5362, whose JSONL holds round 1's prompt and
+   * two hand-typed messages but no trace whatsoever of round 2's.
+   *
+   * Returns null for "cannot tell": no session dir, nothing readable. The
+   * caller must treat null as "no evidence either way" and never as loss.
+   * Only files touched at/after the round started are read — the prompt cannot
+   * be in an older one, and that keeps the scan bounded on long conversations.
+   */
+  async roundPromptAccepted(pr: number, roundNo: number, startedAtMs: number): Promise<boolean | null> {
+    const root = this.sessionDir(prSessionName(pr));
+    if (!existsSync(root)) return null;
+    const marker = roundPromptMarker(pr, roundNo);
+    // A file is in scope if it could contain a write made after the round
+    // started. The slack absorbs coarse mtimes and small clock differences;
+    // being generous here costs a few extra reads, being tight would report a
+    // delivered round as lost.
+    const floor = startedAtMs - 60_000;
+    let sawCandidate = false;
+    const walk = (dir: string): boolean => {
+      let entries;
+      try {
+        entries = readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return false;
+      }
+      for (const e of entries) {
+        const full = join(dir, e.name);
+        if (e.isDirectory()) {
+          if (walk(full)) return true;
+          continue;
+        }
+        if (!e.name.endsWith(".jsonl")) continue;
+        try {
+          if (statSync(full).mtimeMs < floor) continue;
+          sawCandidate = true;
+          // The marker is deliberately plain ASCII, so it survives JSON string
+          // encoding byte-for-byte and a substring search over the raw file is
+          // exact — no per-line parsing, no partial-write hazard.
+          if (readFileSync(full, "utf8").includes(marker)) return true;
+        } catch {
+          // An unreadable file is not evidence of absence.
+          return false;
+        }
+      }
+      return false;
+    };
+    if (walk(root)) return true;
+    // Nothing to read at all (a session that has not written since the round
+    // started) is genuinely ambiguous on a slow first tool call — but the
+    // caller only asks after the stall grace, by which point a session that
+    // received its prompt has certainly written. Report the absence.
+    return sawCandidate ? false : null;
+  }
+
+  /** SessionHooks: re-deliver a round prompt whose receipt never appeared
+   * (#5362). The cheap recovery: the same round, the same session, the same
+   * conversation — just the wake file written again, byte-identical to what
+   * was dispatched. No round is cancelled, no session is killed, no GitHub
+   * state is touched, and the self-requeue budget is untouched.
+   *
+   * False when the saved prompt is gone (a round dispatched before this
+   * existed, or a wiped state dir): the caller then falls through to the
+   * expensive recovery rather than inventing a prompt. */
+  async redeliverRound(pr: number, roundNo: number): Promise<boolean> {
+    const path = this.roundPromptPath(pr, roundNo);
+    let stamped: string;
+    try {
+      stamped = readFileSync(path, "utf8");
+    } catch {
+      return false;
+    }
+    if (stamped.trim().length === 0) return false;
+    // The session may have died since dispatch; the bridge only delivers to a
+    // live one. Rebirth it exactly as `inject` does, so a redelivery into a
+    // dead session is not silently swallowed.
+    await this.ensureSessionForWake(pr);
+    this.injectFile(prSessionName(pr), stamped);
+    return true;
   }
 
   /** Late-bound title lookup for respawning a dead sticky session (the store
@@ -519,23 +635,31 @@ export class PiSessionManager implements SessionHooks {
    * re-ensured best-effort (the wake message cites it). Only when no title is
    * known (PR never tracked) does the original error stand. */
   async inject(pr: number, message: string): Promise<void> {
+    await this.ensureSessionForWake(pr);
+    this.injectFile(prSessionName(pr), message);
+  }
+
+  /** Rebirth a dead sticky session so a wake has somewhere to land. Shared by
+   * `inject` and `redeliverRound` — a redelivery into a dead session would be
+   * written to an inject dir nobody is watching, which is the same silent loss
+   * the receipt exists to catch. Throws only when the PR was never tracked, so
+   * no title is known. */
+  private async ensureSessionForWake(pr: number): Promise<void> {
     const session = prSessionName(pr);
-    if (!(await this.tmux.hasSession(session))) {
-      const title = this.titleResolver?.(pr);
-      if (title === undefined) {
-        throw new Error(`no live session ${session} — dispatch a round to birth it first`);
-      }
-      const worktree = this.worktrees.worktreePath(pr);
-      try {
-        await this.worktrees.ensureWorktree(pr);
-      } catch {
-        // Best-effort: an unfetchable worktree must not lose the wake — the
-        // session can re-derive state from the message + GitHub reads.
-      }
-      await this.ensurePrSession(pr, title, worktree);
-      console.log(`[quickreviewd] sessions: respawned dead ${session} for an out-of-round wake`);
+    if (await this.tmux.hasSession(session)) return;
+    const title = this.titleResolver?.(pr);
+    if (title === undefined) {
+      throw new Error(`no live session ${session} — dispatch a round to birth it first`);
     }
-    this.injectFile(session, message);
+    const worktree = this.worktrees.worktreePath(pr);
+    try {
+      await this.worktrees.ensureWorktree(pr);
+    } catch {
+      // Best-effort: an unfetchable worktree must not lose the wake — the
+      // session can re-derive state from the message + GitHub reads.
+    }
+    await this.ensurePrSession(pr, title, worktree);
+    console.log(`[quickreviewd] sessions: respawned dead ${session} for an out-of-round wake`);
   }
 
   /**

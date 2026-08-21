@@ -13,7 +13,13 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, watch, ty
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { classifyCi, type CheckSummary } from "./cigate.js";
-import { DEFAULT_MAX_SELF_REQUEUES, DEFAULT_ROUND_STALL_GRACE_MIN, sandboxRoot, type Config } from "./config.js";
+import {
+  DEFAULT_MAX_PROMPT_REDELIVERIES,
+  DEFAULT_MAX_SELF_REQUEUES,
+  DEFAULT_ROUND_STALL_GRACE_MIN,
+  sandboxRoot,
+  type Config,
+} from "./config.js";
 import { auditExecViolations, collectWindowLines, estimateUsd, measureRoundUsage, type ModelPricing, type UsageFs } from "./usage.js";
 import type { GateResult } from "./gate.js";
 import { applyEvent } from "./statemachine.js";
@@ -668,6 +674,49 @@ export class VerdictWatcher {
     this.log(`verdicts: anomaly (${kind}) on #${pr}`, message);
   }
 
+  /**
+   * Deadline-time recovery for a round whose prompt provably never arrived
+   * (#5362): re-deliver the order and give the round a fresh deadline.
+   *
+   * The extension is what makes this a recovery rather than a formality — a
+   * round already past its deadline would otherwise be re-judged on the very
+   * next tick, before the session could possibly have finished. The clock is
+   * reset from now, because the review has not started yet: none of the
+   * elapsed time was spent reviewing.
+   *
+   * False ⇒ nothing was delivered (budget spent, or no saved prompt), and the
+   * caller escalates.
+   */
+  private async recoverNeverDelivered(round: RoundRow): Promise<boolean> {
+    const { cfg, store } = this.deps;
+    const hooks = this.deps.hooks;
+    const cap = cfg.daemon.max_prompt_redeliveries ?? DEFAULT_MAX_PROMPT_REDELIVERIES;
+    if (!hooks.redeliverRound || round.redeliveries >= cap) return false;
+    const attempt = store.countRedelivery(round.id);
+    let redelivered = false;
+    try {
+      redelivered = await hooks.redeliverRound.call(hooks, round.pr, round.round_no);
+    } catch (err) {
+      this.log(`verdicts: #${round.pr} round ${round.round_no} deadline redelivery failed`, err);
+      return false;
+    }
+    if (!redelivered) return false;
+    store.extendRoundDeadline(round.id, cfg.daemon.round_deadline_min);
+    store.clearRoundSilent(round.id);
+    store.logEvent("round_prompt_redelivered", round.pr, {
+      round_id: round.id,
+      round_no: round.round_no,
+      attempt,
+      cap,
+      at: "deadline",
+      deadline_extended_min: cfg.daemon.round_deadline_min,
+    });
+    this.log(
+      `verdicts: REDELIVER (deadline) #${round.pr} round ${round.round_no} attempt ${attempt}/${cap} — the session was alive and idle because the order never arrived; nothing cancelled, nothing killed`,
+    );
+    return true;
+  }
+
   /** Deliver the wakes held while this PR's round was in flight (S4). */
   private async flushWakes(pr: number): Promise<void> {
     await this.safe(
@@ -692,7 +741,9 @@ export class VerdictWatcher {
    *   anomaly may race a real verdict (the restart-orphan/self-requeue
    *   idempotency hinges on never double-owning a round that already decided).
    */
-  private async stuckDisposition(round: RoundRow): Promise<"not_stuck" | "verdict_pending" | "dead" | "alive_stuck"> {
+  private async stuckDisposition(
+    round: RoundRow,
+  ): Promise<"not_stuck" | "verdict_pending" | "dead" | "alive_stuck" | "never_delivered"> {
     const alive = this.deps.hooks.sessionAlive;
     if (!alive) return "not_stuck";
     let dead: boolean;
@@ -703,6 +754,23 @@ export class VerdictWatcher {
     }
     if (existsSync(join(this.deps.verdictDir, `pr-${round.pr}-round-${round.round_no}.json`))) return "verdict_pending";
     if (dead) return "dead";
+    // A LIVE session that never received the order is not wedged — it is idle,
+    // waiting for work that was thrown away in transit (#5362, where the
+    // session sat at "I'm ready to finish once the daemon dispatches the fresh
+    // review round" for the whole deadline). Killing it destroys a healthy
+    // conversation to fix a file that failed to arrive, so the receipt is
+    // checked BEFORE `alive_stuck` is concluded.
+    if (round.prompt_marker && this.deps.hooks.roundPromptAccepted) {
+      try {
+        const startedMs = Date.parse(round.started_at);
+        const accepted = Number.isFinite(startedMs)
+          ? await this.deps.hooks.roundPromptAccepted.call(this.deps.hooks, round.pr, round.round_no, startedMs)
+          : null;
+        if (accepted === false) return "never_delivered";
+      } catch {
+        // Unreadable evidence falls through to the pre-existing judgement.
+      }
+    }
     // Live but past the deadline with nothing on disk (2026-08-19, the owner:
     // recover, don't park): the session is killed and the round requeued
     // through the same capped path. Without a kill hook the pre-existing park
@@ -785,59 +853,71 @@ export class VerdictWatcher {
     return true;
   }
 
-  /**: requeue a round whose prompt was consumed but never produced a
-   * turn. Every signal is optional and every ambiguity is a no-op — this net
-   * only ever fires on the unambiguous case: consumed + session ALIVE +
-   * silent since before the round started + past the grace window, observed
-   * on TWO consecutive sweeps (the first stamps `rounds.silent_since`; any
-   * sign of life or ambiguity clears it).
-   * VERIFY-ON-PIN (rule 7): the whole inference rests on two unconfirmed pi
-   * facts — pi appends to the session JSONL promptly when a prompt is
-   * ACCEPTED, and writes NOTHING for a prompt dropped mid-turn; the full
-   * statements live on sessions.ts sessionActivityAt/injectPending. Until
-   * both hold with live evidence on the pinned 0.84.1, this net stays
-   * deliberately over-guarded rather than trigger-happy. */
+  /**
+   * Recover a round whose prompt never reached its session (rebuilt
+   * around a receipt after #5362).
+   *
+   * The original net inferred loss from a JSONL mtime and fired ZERO times in
+   * the eight days it was live, for two independent reasons:
+   *   - it refused to act once the head had spent a self-requeue, and a
+   *     `head_moved` requeue spends one FOUR SECONDS before dispatching the
+   *     round most likely to be lost;
+   *   - it required "no activity since the round started" — but a prompt is
+   *     dropped precisely BECAUSE the agent is busy, and a busy agent always
+   *     has activity after round start. The net was blind to its own case.
+   *
+   * Both are gone. `roundPromptAccepted` is a FACT (the dispatched receipt
+   * token, echoed into the session JSONL only when pi accepted the message),
+   * so no budget-based guessing is needed to keep it honest: `false` means the
+   * prompt is not there.
+   *
+   * Recovery is cheap first. A missing prompt is a DELIVERY fault, so the
+   * remedy is to deliver it again — same round, same session, same
+   * conversation — and only a redelivery that also fails to land escalates to
+   * the expensive path (a cancelled round, and for a live session a kill).
+   * Killing a healthy session because a file did not arrive was the old
+   * behaviour and cost four live conversations.
+   */
   private async maybeRequeueLostPrompt(round: RoundRow, nowMs: number): Promise<void> {
     const { cfg, store } = this.deps;
     const hooks = this.deps.hooks;
-    if (!hooks.sessionActivityAt || !hooks.injectPending || !hooks.sessionAlive) return;
+    if (!hooks.roundPromptAccepted || !hooks.injectPending || !hooks.sessionAlive) return;
+    // A round dispatched before receipts existed carries no marker, so its
+    // delivery is unknowable — never guess at it.
+    if (!round.prompt_marker) return;
     const graceMs = (cfg.daemon.round_stall_grace_min ?? DEFAULT_ROUND_STALL_GRACE_MIN) * 60_000;
     const startedMs = Date.parse(round.started_at);
     if (!Number.isFinite(startedMs) || nowMs - startedMs < graceMs) return;
     if (store.hasLaterRound(round.pr, round.round_no)) return; // superseded — the deadline sweep owns that case
     if (existsSync(join(this.deps.verdictDir, `pr-${round.pr}-round-${round.round_no}.json`))) return;
-    // Once per head from this net: further recovery belongs to the deadline
-    // path, which sees dead/wedged sessions rather than inferring from mtimes.
-    const head = store.getPr(round.pr)?.head_sha ?? "";
-    if (store.selfRequeueCount(round.pr, head) > 0) return;
     const clearSilent = (): void => {
       if (round.silent_since) store.clearRoundSilent(round.id);
     };
     try {
-      if ((await hooks.sessionAlive.call(hooks, round.pr)) !== true) {
-        // A dead session is the DEADLINE path's case (kill/rebirth semantics
-        // live there); this net acts only on a live-and-silent one.
-        clearSilent();
-        return;
-      }
       if (await hooks.injectPending.call(hooks, round.pr)) {
-        clearSilent(); // bridge still retrying — patience, not loss
+        clearSilent(); // bridge still holding/retrying — patience, not loss
         return;
       }
-      const activity = await hooks.sessionActivityAt.call(hooks, round.pr);
-      if (activity === null || activity >= startedMs) {
-        clearSilent(); // unknown or alive-since — never guess
+      const accepted = await hooks.roundPromptAccepted.call(hooks, round.pr, round.round_no, startedMs);
+      if (accepted !== false) {
+        // true = delivered and the session owns it; null = no evidence either
+        // way. Neither is loss.
+        clearSilent();
         return;
       }
     } catch {
       clearSilent(); // an unreadable signal is not evidence
       return;
     }
-    // Two consecutive silent sweeps before firing: the first observation only
-    // stamps the mark; only a round STILL silent on a later sweep requeues.
+    // Two consecutive observations before acting. The receipt is a fact, but
+    // the WINDOW around it is not: a prompt delivered a moment ago may not yet
+    // be flushed to the JSONL, and re-sending a round the session has already
+    // started is worse than waiting one more tick.
     if (!round.silent_since) {
       store.markRoundSilent(round.id);
-      this.log(`verdicts: #${round.pr} round ${round.round_no} looks silent (prompt consumed, no activity) — marked; requeue on the next silent sweep`);
+      this.log(
+        `verdicts: #${round.pr} round ${round.round_no} shows no prompt receipt — marked; recovering on the next sweep if it is still missing`,
+      );
       return;
     }
     store.logEvent("round_prompt_lost", round.pr, {
@@ -845,7 +925,35 @@ export class VerdictWatcher {
       round_no: round.round_no,
       started_at: round.started_at,
       silent_since: round.silent_since,
+      redeliveries: round.redeliveries,
     });
+    // ---- cheap recovery first: deliver the same order again ----------------
+    const cap = cfg.daemon.max_prompt_redeliveries ?? DEFAULT_MAX_PROMPT_REDELIVERIES;
+    if (hooks.redeliverRound && round.redeliveries < cap) {
+      const attempt = store.countRedelivery(round.id);
+      let redelivered = false;
+      try {
+        redelivered = await hooks.redeliverRound.call(hooks, round.pr, round.round_no);
+      } catch (err) {
+        this.log(`verdicts: #${round.pr} round ${round.round_no} redelivery failed`, err);
+      }
+      if (redelivered) {
+        // A fresh window: the mark must be re-earned before the next escalation.
+        store.clearRoundSilent(round.id);
+        store.logEvent("round_prompt_redelivered", round.pr, {
+          round_id: round.id,
+          round_no: round.round_no,
+          attempt,
+          cap,
+        });
+        this.log(
+          `verdicts: REDELIVER #${round.pr} round ${round.round_no} attempt ${attempt}/${cap} — the prompt never reached the session; same round, same session, nothing cancelled`,
+        );
+        return;
+      }
+      this.log(`verdicts: #${round.pr} round ${round.round_no} has no saved prompt to redeliver — escalating`);
+    }
+    // ---- redelivery is spent or impossible: the expensive path -------------
     await this.selfRequeue(round, "lost_prompt");
   }
 
@@ -897,13 +1005,18 @@ export class VerdictWatcher {
         this.log(`verdicts: #${round.pr} round ${round.round_no} overdue but its verdict file is pending — leaving it to the sweep`);
         continue;
       }
-      if ((stuck === "dead" || stuck === "alive_stuck") && (await this.selfRequeue(round, stuck))) continue;
+      // A live session that provably never got the order: deliver it again
+      // rather than kill a healthy conversation (#5362). Only when redelivery
+      // is spent or impossible does this fall through to the expensive path.
+      if (stuck === "never_delivered" && (await this.recoverNeverDelivered(round))) continue;
+      const expensive = stuck === "dead" || stuck === "alive_stuck" || stuck === "never_delivered";
+      if (expensive && (await this.selfRequeue(round, stuck === "never_delivered" ? "lost_prompt" : stuck))) continue;
       overdue.push(round.pr);
       await this.handleAnomaly(
         round.pr,
         round.round_no,
         `round ${round.round_no} passed its deadline (${round.deadline_at}); started ${round.started_at}` +
-          (stuck === "dead" || stuck === "alive_stuck" ? " — the self-requeue cap is exhausted; parking" : ""),
+          (expensive ? " — the self-requeue cap is exhausted; parking" : ""),
         "overdue",
       );
     }

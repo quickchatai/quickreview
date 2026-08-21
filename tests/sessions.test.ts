@@ -1,7 +1,7 @@
 // Session manager tests. Every process invocation goes through a fake exec
 // that records commands — no tmux, no pi, no git is ever spawned. Filesystem
 // work happens inside a temp sandbox root.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -9,6 +9,7 @@ import type { Config } from "../src/config.js";
 import { PiSessionManager, OVERSEER_SESSION, buildPiCommand, isSandboxSession, prOfSession, prSessionName } from "../src/sessions.js";
 import { Tmux } from "../src/tmux.js";
 import type { ExecFn } from "../src/tmux.js";
+import { roundPromptMarker } from "../src/types.js";
 import type { RoundOrder } from "../src/types.js";
 import { WorktreeManager } from "../src/worktrees.js";
 
@@ -371,7 +372,78 @@ describe("injection", () => {
     const dir = m.injectDir("pr-42");
     const files = readdirSync(dir).filter((f) => f.endsWith(".md"));
     expect(files).toHaveLength(1);
-    expect(readFileSync(join(dir, files[0]!), "utf8")).toBe("ROUND PROMPT BODY\n");
+    // The body, plus the receipt token the recovery paths look for (#5362).
+    expect(readFileSync(join(dir, files[0]!), "utf8")).toBe(
+      `ROUND PROMPT BODY\n\n${roundPromptMarker(42, order.round_no)}\n`,
+    );
+  });
+
+  it("reads the receipt out of the session JSONL — present, absent, unknowable (#5362)", async () => {
+    const m = manager();
+    await m.dispatchRound(order, "ROUND PROMPT BODY");
+    const started = Date.parse("2026-08-13T10:00:00Z");
+    const jsonlDir = m.sessionDir("pr-42");
+    mkdirSync(jsonlDir, { recursive: true });
+    const jsonl = join(jsonlDir, "2026-08-13T10-00-00-000Z_abc.jsonl");
+
+    // Nothing written since the round started: no evidence either way.
+    expect(await m.roundPromptAccepted(42, 1, started)).toBeNull();
+
+    // The session wrote, but the prompt is not among what it accepted. This is
+    // #5362 exactly: round 1's prompt and two hand-typed messages were in the
+    // JSONL, round 2's order was simply not there.
+    writeFileSync(
+      jsonl,
+      `${JSON.stringify({ message: { role: "user", content: [{ type: "text", text: "wake up finish the review" }] } })}\n`,
+    );
+    expect(await m.roundPromptAccepted(42, 1, started)).toBe(false);
+
+    // pi accepted it: the token comes back verbatim through JSON encoding.
+    writeFileSync(
+      jsonl,
+      `${JSON.stringify({
+        message: { role: "user", content: [{ type: "text", text: `ROUND PROMPT BODY\n\n${roundPromptMarker(42, 1)}\n` }] },
+      })}\n`,
+    );
+    expect(await m.roundPromptAccepted(42, 1, started)).toBe(true);
+    // A different round's token is not this round's receipt.
+    expect(await m.roundPromptAccepted(42, 2, started)).toBe(false);
+  });
+
+  it("ignores JSONL files that predate the round — the prompt cannot be in one", async () => {
+    const m = manager();
+    await m.dispatchRound(order, "BODY");
+    const jsonlDir = m.sessionDir("pr-42");
+    mkdirSync(jsonlDir, { recursive: true });
+    const stale = join(jsonlDir, "old.jsonl");
+    writeFileSync(stale, `${JSON.stringify({ text: roundPromptMarker(42, 1) })}\n`);
+    const old = new Date("2026-08-13T08:00:00Z");
+    utimesSync(stale, old, old);
+
+    // Two hours after that file was last touched: it is out of scope, and it
+    // is the only file — so the answer is "cannot tell", never "delivered".
+    expect(await m.roundPromptAccepted(42, 1, Date.parse("2026-08-13T10:00:00Z"))).toBeNull();
+  });
+
+  it("redelivers the EXACT dispatched bytes, and reports false when there is nothing saved", async () => {
+    const m = manager();
+    await m.dispatchRound(order, "ROUND PROMPT BODY");
+    const dir = m.injectDir("pr-42");
+    const first = readdirSync(dir).filter((f) => f.endsWith(".md"));
+    const original = readFileSync(join(dir, first[0]!), "utf8");
+
+    expect(await m.redeliverRound(42, 1)).toBe(true);
+    const after = readdirSync(dir).filter((f) => f.endsWith(".md"));
+    expect(after).toHaveLength(2);
+    // Byte-identical: re-rendering later would quietly change the order (a
+    // different head, a different memory block), so the session would read a
+    // round the daemon never recorded.
+    const fresh = after.find((f) => f !== first[0]!)!;
+    expect(readFileSync(join(dir, fresh), "utf8")).toBe(original);
+
+    // A round whose saved prompt is gone cannot be redelivered — the caller
+    // must escalate rather than invent an order.
+    expect(await m.redeliverRound(42, 99)).toBe(false);
   });
 
   it("never uses tmux send-keys to wake a session", async () => {
