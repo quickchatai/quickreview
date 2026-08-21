@@ -582,6 +582,23 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
       theApp.repaint();
       return true;
     }
+    // W opens OpenViking's Studio web UI. Tab-wide, beside F and v,
+    // NOT inside the memory view's own switch: `registeredKeys("digest")`
+    // claims W for the whole tab, so handling it in one view only would make
+    // it a dead key in the other — registered, swallowed, doing nothing.
+    // Same target the [W studio] zone clicks, so mouse and key cannot drift.
+    if (key.kind === "char" && key.ch === "W") {
+      const fwd = st.forward;
+      if (!fwd || (fwd.state !== "adopted" && fwd.state !== "owned")) {
+        st.status = `no web UI — memory forward is ${fwd?.state ?? "starting"}: ${fwd?.detail ?? ""}`.trim();
+        theApp.notice(st.status);
+        theApp.repaint();
+        return true;
+      }
+      theApp.hooks.openUrl?.(fwd.studioUrl);
+      theApp.notice(`opened ${fwd.studioUrl}`);
+      return true;
+    }
     if (st.view === "digest") return digestViewKey(theApp, key);
     return memoryViewKey(theApp, key);
   };
@@ -714,19 +731,6 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
               verb(memory.apply({ op: "add", text }));
             });
             return true;
-          case "W": {
-            // Same target the [W studio] zone clicks — one path, so the mouse
-            // and the key cannot drift apart.
-            const fwd = st.forward;
-            if (!fwd || (fwd.state !== "adopted" && fwd.state !== "owned")) {
-              st.status = `no web UI — memory forward is ${fwd?.state ?? "starting"}: ${fwd?.detail ?? ""}`.trim();
-              theApp.repaint();
-              return true;
-            }
-            theApp.hooks.openUrl?.(fwd.studioUrl);
-            theApp.notice(`opened ${fwd.studioUrl}`);
-            return true;
-          }
           case "A": {
             if (!proposal) return true;
             st.status = `accepting '${proposal.slug}'…`;

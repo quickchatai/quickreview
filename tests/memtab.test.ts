@@ -634,3 +634,25 @@ describe("memory forward on the tab", () => {
     expect(registeredKeys("digest").has("W")).toBe(true);
   });
 });
+
+// W is claimed for the whole [2] tab by registeredKeys, so it must work in
+// BOTH of its views — a key that is registered and then swallowed unhandled is
+// worse than one that was never claimed.
+describe("W works on the digest view too, not just the memory view", () => {
+  it("opens the studio URL without switching views first", async () => {
+    const { app } = makeApp();
+    const opened: string[] = [];
+    app.hooks.openUrl = (url) => opened.push(url);
+    const st = install(app, new FakeMemory(), {
+      forward: {
+        view: () => ({ state: "owned" as const, detail: "d", baseUrl: "http://127.0.0.1:1933", studioUrl: "http://127.0.0.1:1933/studio" }),
+        ensure: () => Promise.resolve({ state: "owned" as const, detail: "d", baseUrl: "http://127.0.0.1:1933", studioUrl: "http://127.0.0.1:1933/studio" }),
+      },
+    });
+    app.hooks.digestScreen!(app, 110, 30);
+    await settle();
+    expect(st.view).toBe("digest");
+    app.hooks.digestKey!(app, { kind: "char", ch: "W" });
+    expect(opened).toEqual(["http://127.0.0.1:1933/studio"]);
+  });
+});
