@@ -41,9 +41,6 @@ export interface AppHooks {
   openUrl?: (url: string) => void;
   /** First-launch marker (read, write). Default: state/tui-help-shown. */
   helpSeen?: { get(): boolean; set(): void };
-  /**: the board is back in charge (attach closed) — a hot-reload that
-   * was deferred while attached can go through now. */
-  onResume?: () => void;
   /**: called after every poll and every events refresh — the ambient
    * feed writer hangs off this (daemon-owned cadence). */
   onPoll?: (app: App) => void;
@@ -376,11 +373,12 @@ export class App {
     void this.refreshDetail();
     void this.pi.refresh(this.panePr()); // the mirror caught up while attached
     this.repaint();
-    this.hooks.onResume?.();
   }
 
   /** True while something other than the board owns the terminal or holds
-   * unsaved user input — hot-reload defers on it. */
+   * unsaved user input. Used to REFUSE a remote-driven action (index.ts), so
+   * it never fights the operator for the keyboard. The hot reload deliberately
+   * does NOT consult it — every build reloads (see reload.ts). */
   isBusy(): boolean {
     return this.suspended || this.view.inputBox !== undefined || this.view.piFocus === true || this.sidebar?.focused === true;
   }

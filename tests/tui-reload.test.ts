@@ -7,6 +7,7 @@ import {
   parseResumeArg,
   readResumeState,
   reexecArgv,
+  type ReloaderOptions,
   type ReloadState,
   type WatchFn,
 } from "../src/tui/reload.js";
@@ -39,7 +40,6 @@ function build(over: Partial<Parameters<typeof makeOpts>[0]> = {}) {
 }
 
 function makeOpts(over: {
-  isBusy?: () => boolean;
   writes?: Array<[string, string]>;
   reexecs?: string[];
   watch?: WatchFn;
@@ -52,7 +52,6 @@ function makeOpts(over: {
     stateFile: "/sandbox/state/tui-resume.json",
     snapshot: () => ({ ...SNAP }),
     reexec: (f) => reexecs.push(f),
-    isBusy: over.isBusy,
     watch: w.watch,
     writeState: (p, b) => writes.push([p, b]),
     now: () => new Date("2026-08-14T12:00:00Z"),
@@ -97,28 +96,31 @@ describe("HotReloader", () => {
     expect(reexecs).toHaveLength(1);
   });
 
-  it("defers while attached and fires once the attach ends", () => {
-    let busy = true;
-    const { reloader, reexecs, w } = build({ isBusy: () => busy });
-    reloader.start();
-    w.fire();
-    vi.advanceTimersByTime(5_000);
-    expect(reexecs).toHaveLength(0); // attach screen owns the terminal
-    busy = false;
-    reloader.poke();
-    expect(reexecs).toHaveLength(1);
-  });
-
-  it("a deferred reload also fires on its own retry timer", () => {
-    let busy = true;
-    const { reloader, reexecs, w } = build({ isBusy: () => busy });
+  //. The reloader used to defer on an `isBusy()` predicate, which the
+  // TUI wired to App.isBusy() — true while the companion column has focus. So
+  // a build landed, the reload was held, and the change you had just asked the
+  // companion for silently never appeared. the owner: "any change made is
+  // reload, I prefer broken in between than not knowing why nothing changed."
+  // There is no condition left to assert, so these pin the ABSENCE of one.
+  it("never defers — a reload fires even while a surface owns the keyboard", () => {
+    const { reloader, reexecs, w } = build();
     reloader.start();
     w.fire();
     vi.advanceTimersByTime(500);
-    expect(reexecs).toHaveLength(0);
-    busy = false;
-    vi.advanceTimersByTime(600);
     expect(reexecs).toHaveLength(1);
+  });
+
+  it("takes no busy predicate at all, so one cannot be wired back in", () => {
+    // A structural pin: if someone re-adds the option, this stops compiling
+    // rather than silently restoring the deferral.
+    const opts: ReloaderOptions = {
+      distDir: "/sandbox/dist",
+      stateFile: "/sandbox/state/tui-resume.json",
+      snapshot: () => ({ ...SNAP }),
+      reexec: () => {},
+    };
+    expect(Object.keys(opts)).not.toContain("isBusy");
+    expect(new HotReloader(opts)).toBeInstanceOf(HotReloader);
   });
 
   it("re-execs at most once and stops watching", () => {
@@ -141,10 +143,10 @@ describe("HotReloader", () => {
     reloader.stop();
   });
 
-  it("poke() before any change does nothing", () => {
+  it("does not re-exec until a build actually lands", () => {
     const { reloader, reexecs } = build();
     reloader.start();
-    reloader.poke();
+    vi.advanceTimersByTime(5_000);
     expect(reexecs).toHaveLength(0);
   });
 });

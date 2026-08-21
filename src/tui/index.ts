@@ -573,7 +573,6 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
     ? new HotReloader({
         distDir: join(sandboxRoot(), "dist"),
         stateFile: reloadState,
-        isBusy: () => app.isBusy(),
         snapshot: () => ({
           tab: app.tab,
           pr: app.currentPr(),
@@ -599,7 +598,6 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
       })
     : undefined;
   reloader?.start();
-  app.hooks.onResume = () => reloader?.poke();
 
   // Deep link: run() completes its synchronous setup (terminal modes, poller)
   // before awaiting quit, so the attach can start right after — the board

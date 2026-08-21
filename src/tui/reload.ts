@@ -4,9 +4,18 @@
 //
 // Why this is safe: a failed `tsc` emits nothing, so a broken edit produces no
 // mtime change and the running TUI is untouched — the reload path can only be
-// entered by a build that compiled. Reload is deferred while an attach screen
-// owns the terminal (re-execing mid-attach would drop the user's pty), and
-// fires as soon as they detach.
+// entered by a build that compiled.
+//
+// EVERY build reloads, unconditionally — there is no busy/defer check and one
+// must never come back (the owner, 2026-08-21,: "any change made is
+// reload, I prefer broken in between than not knowing why nothing changed").
+// The deferral existed to protect a focused surface from a re-exec, but it
+// keyed on `App.isBusy()`, which counts a focused companion column as busy —
+// so a reload was held exactly while the companion was editing the TUI you
+// were watching, and the change silently never appeared. A reload at an
+// awkward moment is visible and recoverable; a reload that never happens is
+// neither. If a surface cannot survive a re-exec, fix that surface — do not
+// re-add a condition here.
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, watch as fsWatch, writeFileSync, type FSWatcher } from "node:fs";
 import { dirname } from "node:path";
@@ -34,33 +43,25 @@ export interface ReloaderOptions {
   snapshot: () => ReloadState;
   /** Perform the re-exec; receives the path the state was persisted to. */
   reexec: (stateFile: string) => void;
-  /** True while a reload must wait (attach screen up, input box open, …). */
-  isBusy?: () => boolean;
   debounceMs?: number;
-  /** How often a deferred reload re-checks isBusy(). */
-  retryMs?: number;
   watch?: WatchFn;
   writeState?: (path: string, body: string) => void;
   now?: () => Date;
 }
 
 const DEBOUNCE_MS = 400;
-const RETRY_MS = 500;
 
 /** Watches dist/ and re-execs the process when a new build lands. */
 export class HotReloader {
   private watcher: FSWatcher | undefined;
   private debounce: NodeJS.Timeout | undefined;
-  private retry: NodeJS.Timeout | undefined;
   private fired = false;
-  private readonly opts: Required<Omit<ReloaderOptions, "isBusy">> & { isBusy: () => boolean };
+  private readonly opts: Required<ReloaderOptions>;
 
   constructor(opts: ReloaderOptions) {
     this.opts = {
       ...opts,
-      isBusy: opts.isBusy ?? (() => false),
       debounceMs: opts.debounceMs ?? DEBOUNCE_MS,
-      retryMs: opts.retryMs ?? RETRY_MS,
       watch: opts.watch ?? (fsWatch as unknown as WatchFn),
       writeState:
         opts.writeState ??
@@ -87,15 +88,7 @@ export class HotReloader {
     this.watcher?.close();
     this.watcher = undefined;
     if (this.debounce) clearTimeout(this.debounce);
-    if (this.retry) clearTimeout(this.retry);
     this.debounce = undefined;
-    this.retry = undefined;
-  }
-
-  /** Called by the app when an attach screen closes — a deferred reload that
-   * was waiting on isBusy() goes through immediately. */
-  poke(): void {
-    if (this.retry) this.attempt();
   }
 
   private onChange(): void {
@@ -109,18 +102,6 @@ export class HotReloader {
 
   private attempt(): void {
     if (this.fired) return;
-    if (this.opts.isBusy()) {
-      if (this.retry) clearTimeout(this.retry);
-      this.retry = setTimeout(() => {
-        this.retry = undefined;
-        this.attempt();
-      }, this.opts.retryMs);
-      return;
-    }
-    if (this.retry) {
-      clearTimeout(this.retry);
-      this.retry = undefined;
-    }
     this.fired = true;
     this.stop();
     const state: ReloadState = { ...this.opts.snapshot(), saved_at: this.opts.now().toISOString() };
