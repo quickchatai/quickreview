@@ -329,6 +329,8 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
   await installAttachHooks(app);
   const { installMessageHooks } = await import("./msg.js");
   installMessageHooks(app);
+  const { installUnwedgeHooks } = await import("./unwedge.js");
+  installUnwedgeHooks(app);
   // the [2] tab is Memory & learning — digest view + memory
   // management. Accept-verdict git actions run against THIS working copy
   // (the canonical repo); the tracker path feeds the defect auto-filer.

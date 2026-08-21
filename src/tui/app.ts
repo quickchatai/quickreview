@@ -28,6 +28,10 @@ export interface AppHooks {
   message?: (session: string, app: App) => void;
   /**: deliver a submitted quick-message (inject write + confirmation). */
   sendMessage?: (session: string, text: string, app: App) => void;
+  /** #5362: cancel the PR's running round and re-queue it, via the daemon's
+   * `commands/` dir. The board's one write action beyond wakes — see
+   * src/tui/unwedge.ts for why it exists and what bounds it. */
+  unwedge?: (pr: number, app: App) => void;
   /**: render the digest tab; undefined = placeholder.
    * Returning a Frame lets the companion sidebar be composed beside it
    *; a bare string is painted as-is, sidebar-less. */
@@ -484,9 +488,8 @@ export class App {
   }
 
   selectedSession(): string | undefined {
-    const sorted = visiblePrs(this.view);
-    const pr = sorted[this.view.selected];
-    return pr ? `pr-${pr.number}` : undefined;
+    const pr = this.selectedPrNumber();
+    return pr === undefined ? undefined : `pr-${pr}`;
   }
 
   notice(text: string): void {
@@ -576,7 +579,9 @@ export class App {
     this.notice(`opened #${n} on GitHub`);
   }
 
-  private selectedPrNumber(): number | undefined {
+  /** The selected row's PR number. Public because `selectedSession()` is the
+   * session-name view of the same thing and callers want either. */
+  selectedPrNumber(): number | undefined {
     const sorted = visiblePrs(this.view);
     return sorted[this.view.selected]?.number;
   }
@@ -953,6 +958,20 @@ export class App {
         if (!session) break;
         if (this.hooks.message) this.hooks.message(session, this);
         else this.openMessageBox(session);
+        break;
+      }
+      case "unwedge": {
+        // #5362: cancel the selected PR's running round and re-queue it. Safe
+        // and recoverable by construction — the round re-dispatches through
+        // the normal pump, nothing is posted and no GitHub state is touched —
+        // so it acts immediately and reports through the events strip, the
+        // same shape `m` uses. The harsher `restart-session` (which also kills
+        // the conversation) is deliberately NOT bound to a key: it stays an
+        // overseer command, where the extra deliberation is the point.
+        const pr = this.selectedPrNumber();
+        if (pr === undefined) break;
+        if (this.hooks.unwedge) this.hooks.unwedge(pr, this);
+        else this.notice("unwedge: not wired (no remote runner)");
         break;
       }
       case "char":

@@ -17,6 +17,7 @@ export type BoardKey =
   | { kind: "help" }
   | { kind: "detail" }
   | { kind: "message" }
+  | { kind: "unwedge" }
   | { kind: "github" }
   | { kind: "overseer" }
   | { kind: "main-session" }
@@ -49,6 +50,7 @@ export function decodeKey(buf: Buffer): BoardKey {
   if (s === "?") return { kind: "help" };
   if (s === "w") return { kind: "detail" };
   if (s === "m") return { kind: "message" };
+  if (s === "u") return { kind: "unwedge" };
   if (s === "g") return { kind: "github" };
   if (s === "o") return { kind: "overseer" };
   if (s === "M") return { kind: "main-session" };

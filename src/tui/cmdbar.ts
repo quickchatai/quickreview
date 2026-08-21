@@ -39,6 +39,7 @@ export const TAB_COMMANDS: Record<Tab, BarButton[]> = {
     { key: "o", label: "o overseer" },
     { key: "M", label: "M main" },
     { key: "e", label: "e events" },
+    { key: "u", label: "u unwedge" },
   ],
   digest: [
     { key: "v", label: "v view" },
