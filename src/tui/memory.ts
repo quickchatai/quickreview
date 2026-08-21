@@ -9,15 +9,17 @@
 //
 // HOW THE TAB REACHES THE VM'S OPENVIKING. It does not ssh, and it does not
 // invent a transport: it speaks plain HTTP to the loopback listener of the
-// companion memory forward (`scripts/companion-memory-forward.mjs`, a systemd
-// --user service; `docs/companion-memory-access.md`). That process binds BOTH
-// the `qcr-memory` bridge gateway (for the companion container) and
-// `127.0.0.1` (for anything on the PC — us), and relays each connection over
-// ssh into `docker exec … node` inside the quickreview container, whose stdio is
-// piped to OpenViking's own loopback :1933. So the daemon's port is still
-// published nowhere, and the TUI holds no second copy of the ssh/docker
-// knowledge. If the forward is not running the tab is UNREACHABLE, loudly —
-// see `MemoryHealth` below.
+// companion memory forward (`scripts/companion-memory-forward.mjs` — run by
+// the TUI itself, or by the systemd --user unit when one is
+// installed, which the TUI then adopts; `docs/companion-memory-access.md`).
+// That process binds BOTH the `qcr-memory` bridge gateway (for the companion
+// container) and `127.0.0.1` (for anything on the PC — us), and relays each
+// connection over ssh into `docker exec … node` inside the quickreview
+// container, whose stdio is piped to OpenViking's own loopback :1933. So the
+// daemon's port is still published nowhere, and the TUI holds no second copy
+// of the ssh/docker knowledge. If the forward is not running the tab is
+// UNREACHABLE, loudly — see `MemoryHealth` below, and the MEMORY STORE row
+// the tab paints (`src/tui/memforward.ts`).
 //
 // BOTH KEYS, NEVER AN ADMIN KEY. the owner's surfaces hold two OpenViking USER
 // keys — `reviewer` (what the daemon and every review session hold; the server
@@ -402,7 +404,10 @@ export class TuiMemoryStore implements HealthyMemoryStore {
       return `no ${USER_KEY_ENV[user][0]} in ${this.keysFile} (see docs/companion-memory-access.md)`;
     }
     if (gap.code === "transport" || gap.status === 0) {
-      return `cannot reach OpenViking at ${this.baseUrl} (${gap.message}) — check: systemctl --user status qcr-memory-forward`;
+      // The TUI runs its own forward, so the first thing to look at
+      // is the MEMORY STORE row on this tab — `r` re-probes and restarts it.
+      // The unit is the other possibility, and only when one is installed.
+      return `cannot reach OpenViking at ${this.baseUrl} (${gap.message}) — see the MEMORY STORE row (r retries), or: systemctl --user status qcr-memory-forward`;
     }
     return `${user} memory refused the read: ${gap.status} ${gap.code} — ${gap.message}`;
   }

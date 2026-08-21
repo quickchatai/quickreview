@@ -346,10 +346,25 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
   // reached over the memory forward's loopback listener, holding BOTH user
   // keys. Every memory surface in the TUI shares this instance — a second one
   // would mean a second sweep and a second health opinion.
-  const { tuiMemoryStore } = await import("./memory.js");
+  const { tuiMemoryStore, tuiMemoryBaseUrl } = await import("./memory.js");
   const memStore = tuiMemoryStore();
+  // the TUI brings the memory forward up itself, so the Memory tab
+  // works without the operator installing the systemd unit first. It ADOPTS a
+  // forward that is already listening (the unit, or another qcr tui) and stops
+  // only one it started — see memforward.ts for why that split matters.
+  const { MemoryForward } = await import("./memforward.js");
+  const memForward = new MemoryForward({
+    baseUrl: tuiMemoryBaseUrl(),
+    repoRoot: sandboxRoot(),
+    log: (line) => app.notice(line),
+  });
+  // Eagerly, not on first visit to the tab: the companion container reaches
+  // memory over the same forward's docker-bridge bind, and it starts below
+  // regardless of which tab the operator is looking at.
+  void memForward.ensure();
   const memState = installMemoryLearningHooks(app, {
     memory: memStore,
+    forward: memForward,
     gitRun,
     repoRoot: sandboxRoot(),
     tracker: full.companion.tracker_dir
@@ -579,6 +594,9 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
   await running;
   reloader?.stop();
   alerts?.stop();
+  // Closes only a forward THIS process bound; an adopted one (systemd unit,
+  // another qcr tui) is left running on purpose — see memforward.ts.
+  memForward.stop();
 
   // Clean quit stops the container (conversation + auth survive on volumes).
   // A crash deliberately leaves it running — the next start adopts it.

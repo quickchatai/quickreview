@@ -71,7 +71,9 @@ const GLOBAL_KEYS = ["q", "r", "s", "?", "1", "2", "3", "4", "j", "k"];
 /** Printable keys a tab's own handler consumes BEYOND its row-B buttons. */
 const TAB_EXTRA_KEYS: Record<Tab, string[]> = {
   board: ["a", "F"], // ⏎'s full-screen-attach twin; F clears the board filter
-  digest: ["a", "m", "w", "g", "o", "M", "F"], // memory & learning row verbs; F clears the memory filter
+  // memory & learning row verbs; F clears the memory filter, W opens the
+  // OpenViking Studio web UI through the memory forward.
+  digest: ["a", "m", "w", "g", "o", "M", "F", "W"],
   deploy: [],
   metrics: [],
 };

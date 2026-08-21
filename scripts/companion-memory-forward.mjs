@@ -141,6 +141,13 @@ export function createForwarder(cfg, opts = {}) {
   const spawnRelay = opts.spawnRelay ?? realRelaySpawner(cfg);
   const servers = [];
   let live = 0;
+  // Every in-flight socket↔child pair. Tracked so close() can tear them down:
+  // `server.close()` only stops ACCEPTING, and each relay is an ssh + a remote
+  // docker exec, so a caller that stops the forwarder and keeps running would
+  // strand one process trio per open connection. That caller now exists — the
+  // TUI owns a forward for as long as it is up (src/tui/memforward.ts) — where
+  // before only systemd did, and a process exiting cleaned up for free.
+  const pairs = new Set();
 
   const onConnection = (socket) => {
     const id = ++live;
@@ -152,7 +159,10 @@ export function createForwarder(cfg, opts = {}) {
       socket.destroy();
       return;
     }
+    const pair = { socket, child };
+    pairs.add(pair);
     const done = () => {
+      pairs.delete(pair);
       socket.destroy();
       try {
         child.kill();
@@ -193,9 +203,23 @@ export function createForwarder(cfg, opts = {}) {
       }
       return servers.filter((s) => s.address() !== null).length;
     },
+    /** Stop accepting AND tear down what is still in flight. Both halves are
+     * required: without the second, a still-running caller leaks one ssh +
+     * remote node per open connection. */
     close() {
       for (const s of servers) s.close();
+      for (const { socket, child } of [...pairs]) {
+        try {
+          child.kill();
+        } catch {
+          /* already gone */
+        }
+        socket.destroy();
+      }
+      pairs.clear();
     },
+    /** In-flight relay count — the test's handle on the teardown above. */
+    liveRelays: () => pairs.size,
     /** Bound ports (the test asks for the ephemeral one). */
     addresses: () => servers.map((s) => s.address()).filter(Boolean),
   };

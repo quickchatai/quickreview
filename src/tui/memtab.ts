@@ -35,6 +35,7 @@ import { currentFile, renderDigestTab, SshDigestFetcher, type DigestAction, type
 import { applyMemoryFilter, memoryFilterLabel } from "./filters.js";
 import { awaitingRows, sortPrs } from "./model.js";
 import { defectEntries, refOf, storeHealth, timelineOrder, tuiMemoryStore, type MemoryEntry, type MemoryStore } from "./memory.js";
+import type { ForwardStatus } from "./memforward.js";
 import { ACCENT, HEADING, MUTED, RESET, STRONG, WARN, button, modeBadge, sectionTitle, selected as selectedLine } from "./design.js";
 import { Frame, displayWidth, rule, sanitizeText, stripAnsi, truncate, wrap } from "./paint.js";
 import {
@@ -78,6 +79,10 @@ export interface MemTabState {
   /**: active timeline tag filter (companion `memory_filter` verb;
    * F clears). Render AND verbs derive ordering through it — one list. */
   memFilter?: string | null;
+  /**: where the memory forward stands. The tab paints it because the
+   * forward is the ONE reason an otherwise healthy store reads as
+   * unreachable — and because the Studio link is only live while it is up. */
+  forward?: ForwardStatus;
 }
 
 export function entryKey(e: MemoryEntry): string {
@@ -103,7 +108,7 @@ export type MemAction =
   | { t: "prop-reject"; i: number }
   | { t: "url"; url: string };
 
-interface RowChunk {
+export interface RowChunk {
   text: string;
   action?: MemAction;
   dim?: boolean;
@@ -138,6 +143,28 @@ function zonedRow(chunks: RowChunk[], gap = "  "): ZonedRow {
 export function pinnedBudget(entries: MemoryEntry[]): { chars: number; over: boolean } {
   const chars = entries.filter((e) => e.pinned).reduce((n, e) => n + e.text.length + 2, 0);
   return { chars, over: chars > 1900 };
+}
+
+/**
+ * The two forward rows: state, then the Studio link (clickable) or the reason
+ * there is nothing to click. Exported so the render test can read them without
+ * reconstructing a whole frame.
+ *
+ * The link is only offered when the forward is UP. Handing the operator a URL
+ * that cannot connect — and a browser tab that fails — is worse than saying
+ * plainly that the forward is down and how to bring it back.
+ */
+export function forwardRows(fwd: ForwardStatus | undefined, width: number): RowChunk[][] {
+  if (!fwd) return [[{ text: `${sectionTitle("MEMORY STORE")} ${MUTED}forward: starting…${RESET}` }], [{ text: "" }]];
+  const dot = fwd.state === "failed" ? `${WARN}✖${RESET}` : fwd.state === "off" ? `${MUTED}○${RESET}` : `${ACCENT}●${RESET}`;
+  const head: RowChunk[] = [{ text: `${sectionTitle("MEMORY STORE")} ${dot} ${fwd.state}` }, { text: truncate(fwd.detail, Math.max(10, width - 26)), dim: true }];
+  const link: RowChunk[] = fwd.state === "adopted" || fwd.state === "owned"
+    ? [
+        { text: button("W studio"), action: { t: "url", url: fwd.studioUrl } },
+        { text: truncate(fwd.studioUrl, Math.max(10, width - 16)), action: { t: "url", url: fwd.studioUrl }, dim: true },
+      ]
+    : [{ text: truncate("no web UI while the forward is down — r retries, or install the systemd unit", width - 2), dim: true }];
+  return [head, link];
 }
 
 export function renderMemoryView(
@@ -222,7 +249,8 @@ export function renderMemoryView(
       { text: button("n new"), action: { t: "key", key: "n" } },
       { text: button("r refresh"), action: { t: "key", key: "r" } },
     ]);
-    const detailCap = Math.max(5, bodyRows - 10 - st.proposals.length * 2 - Math.min(4, st.improvements.length));
+    // -13, not -10: the blank + two forward rows at the foot share this pane.
+    const detailCap = Math.max(5, bodyRows - 13 - st.proposals.length * 2 - Math.min(4, st.improvements.length));
     const wrapped = wrap(sanitizeText(selected.text), rightW - 3);
     for (const l of wrapped.slice(0, detailCap)) row([{ text: l }]);
     if (wrapped.length > detailCap) row([{ text: `… ${wrapped.length - detailCap} more lines`, dim: true }]);
@@ -259,6 +287,11 @@ export function renderMemoryView(
     const i = ordered.findIndex((e) => entryKey(e) === entryKey(d));
     row([{ text: truncate(`⚑ ${d.ts.slice(5, 10)} ${d.links[0] ?? d.text.slice(0, 30)}`, rightW - 2), action: i >= 0 ? { t: "mem", i } : undefined }]);
   }
+  // The transport, last: it is chrome, and the ENTRY block with its verb
+  // buttons owns the top of this pane. Two fixed rows (`detailCap` reserves
+  // them) so the Studio link does not move between repaints.
+  row([{ text: "" }]);
+  for (const chunks of forwardRows(st.forward, rightW)) row(chunks);
   if (st.status) {
     row([{ text: "" }]);
     row([{ text: truncate(st.status, rightW - 2) }]);
@@ -293,6 +326,11 @@ export interface MemTabDeps {
   /** The canonical repo root the accept path applies/ratifies/commits in —
    * NOT process.cwd(): `qcr` runs from anywhere. */
   repoRoot?: string;
+  /**: the TUI-owned memory forward. Structural on purpose — tests
+   * hand in a stub and never spawn ssh. Absent = the tab paints "starting…"
+   * and offers no Studio link, which is the honest state for a TUI that was
+   * built without one. */
+  forward?: { view(): ForwardStatus; ensure(): Promise<ForwardStatus> };
   now?: () => Date;
 }
 
@@ -313,6 +351,7 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
     improvements: [],
     propLoaded: false,
     filedTotal: 0,
+    ...(deps.forward ? { forward: deps.forward.view() } : {}),
   };
 
   /** THE timeline ordering — render (renderMemoryView computes the same
@@ -394,9 +433,27 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
     app.repaint();
   };
 
+  /** Re-probe the forward and repaint. Runs BEFORE the memory read on every
+   * refresh, so `r` on a tab showing MEMORY UNREACHABLE first tries to bring
+   * the transport back and only then blames the store — the previous ordering
+   * would have reported the same failure twice. */
+  const loadForward = async (): Promise<void> => {
+    if (!deps.forward) return;
+    st.forward = await deps.forward.ensure();
+    app.repaint();
+  };
+
+  /** The memory part of a load: transport first, then the store. Every path
+   * that reads memory goes through THIS, not `loadMemory` — a read that skips
+   * the forward reports "unreachable" for a transport nobody tried to start. */
+  const loadMemoryPart = async (): Promise<void> => {
+    await loadForward();
+    await loadMemory();
+  };
+
   const loadAll = (): void => {
     guard("digest", loadDigest);
-    guard("memory", loadMemory);
+    guard("memory", loadMemoryPart);
     guard("proposals", loadProposals);
   };
 
@@ -450,7 +507,7 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
 
   app.hooks.digestScreen = (theApp, cols, rows) => {
     if (!st.digest.loaded) guard("digest", loadDigest);
-    if (!st.memLoaded) guard("memory", loadMemory);
+    if (!st.memLoaded) guard("memory", loadMemoryPart);
     if (!st.propLoaded) guard("proposals", loadProposals);
     const today = now().toISOString().slice(0, 10);
     if (st.view === "digest") {
@@ -657,6 +714,19 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
               verb(memory.apply({ op: "add", text }));
             });
             return true;
+          case "W": {
+            // Same target the [W studio] zone clicks — one path, so the mouse
+            // and the key cannot drift apart.
+            const fwd = st.forward;
+            if (!fwd || (fwd.state !== "adopted" && fwd.state !== "owned")) {
+              st.status = `no web UI — memory forward is ${fwd?.state ?? "starting"}: ${fwd?.detail ?? ""}`.trim();
+              theApp.repaint();
+              return true;
+            }
+            theApp.hooks.openUrl?.(fwd.studioUrl);
+            theApp.notice(`opened ${fwd.studioUrl}`);
+            return true;
+          }
           case "A": {
             if (!proposal) return true;
             st.status = `accepting '${proposal.slug}'…`;

@@ -294,6 +294,24 @@ describe("the memory forward", () => {
     expect(relay.killed).toBe(true);
     fwd.close();
   });
+
+  it("close() kills relays still in flight — a live caller must not strand ssh children", async () => {
+    // `server.close()` only stops accepting. The TUI now owns a forward while
+    // it runs, so a close that left the pairs alive would leak one
+    // ssh + remote docker exec per open connection on every quit.
+    const relay = { stdin: new PassThrough(), stdout: new PassThrough(), killed: false, kill(): void { this.killed = true; }, on(): void {}, stderr: undefined };
+    const fwd = forward.createForwarder({ ...cfg, binds: ["127.0.0.1"], port: 0 }, { spawnRelay: () => relay, log: () => {} });
+    await fwd.listen();
+    const port = (fwd.addresses() as Array<{ port: number }>)[0]!.port;
+    const client: Socket = connect(port, "127.0.0.1");
+    await new Promise((r) => client.once("connect", r));
+    expect(fwd.liveRelays()).toBe(1);
+    // The client is still connected — exactly the case that used to leak.
+    fwd.close();
+    expect(relay.killed).toBe(true);
+    expect(fwd.liveRelays()).toBe(0);
+    client.destroy();
+  });
 });
 
 // ---- the two-key confinement proof -----------------------------------------

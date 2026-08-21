@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { TUI_DEFAULTS } from "../src/config.js";
 import { App } from "../src/tui/app.js";
-import { barHitKey } from "../src/tui/cmdbar.js";
+import { barHitKey, registeredKeys } from "../src/tui/cmdbar.js";
 import type { DigestFetcher } from "../src/tui/digesttab.js";
 import { installMemoryLearningHooks, pinnedBudget, renderMemoryView, type MemTabState } from "../src/tui/memtab.js";
 import { legacyBlockHash as blockHash, parseLegacyMemory as parseMemory } from "../src/memory/legacy-file.js";
@@ -511,5 +511,126 @@ describe("memory unreachable (FT-0164)", () => {
     await settle();
     expect(readdirSync(join(root, "efforts/review-sandbox/tickets"))).toHaveLength(0);
     rmSync(root, { recursive: true, force: true });
+  });
+});
+
+// FT-0170 — the memory forward runs in the TUI process, and the tab is where
+// its state is visible and its web UI is reachable.
+describe("memory forward on the tab", () => {
+  const UP = { state: "owned" as const, detail: "started by this TUI — closes on quit", baseUrl: "http://127.0.0.1:1933", studioUrl: "http://127.0.0.1:1933/studio" };
+  const DOWN = { state: "failed" as const, detail: "could not bind 127.0.0.1:1933", baseUrl: "http://127.0.0.1:1933", studioUrl: "http://127.0.0.1:1933/studio" };
+
+  const stubForward = (status: typeof UP | typeof DOWN) => ({
+    view: () => status,
+    ensure: () => Promise.resolve(status),
+  });
+
+  const memoryState = (forward?: typeof UP | typeof DOWN): MemTabState => ({
+    view: "memory",
+    digest: { files: [], back: 0, scroll: 0, awaitingSelected: 0, loaded: true },
+    entries: parseMemory(SAMPLE),
+    memLoaded: true,
+    focus: "timeline",
+    sel: 0,
+    propSel: 0,
+    scroll: 0,
+    proposals: [],
+    improvements: [],
+    propLoaded: true,
+    filedTotal: 0,
+    ...(forward ? { forward } : {}),
+  });
+
+  it("shows the studio URL when the forward is up", () => {
+    const screen = stripAnsi(renderMemoryView(memoryState(UP), false, undefined, 110, 30).render());
+    expect(screen).toContain("MEMORY STORE");
+    expect(screen).toContain("owned");
+    expect(screen).toContain("http://127.0.0.1:1933/studio");
+    expect(screen).toContain("W studio");
+  });
+
+  it("offers no URL when the forward is down — a dead link is worse than none", () => {
+    const screen = stripAnsi(renderMemoryView(memoryState(DOWN), false, undefined, 110, 30).render());
+    expect(screen).toContain("failed");
+    expect(screen).not.toContain("/studio");
+    expect(screen).toContain("no web UI while the forward is down");
+  });
+
+  it("keeps every row exactly cols wide with the forward rows present", () => {
+    for (const cols of [100, 111]) {
+      for (const st of [memoryState(UP), memoryState(DOWN), memoryState()]) {
+        for (const line of renderMemoryView(st, false, undefined, cols, 28).lines) expect(displayWidth(line)).toBe(cols);
+      }
+    }
+  });
+
+  it("W opens the studio URL through the app's browser hook", async () => {
+    const { app } = makeApp();
+    const opened: string[] = [];
+    app.hooks.openUrl = (url) => opened.push(url);
+    const st = install(app, new FakeMemory(), { forward: stubForward(UP) });
+    app.hooks.digestScreen!(app, 110, 30);
+    await settle();
+    st.view = "memory";
+    app.hooks.digestKey!(app, { kind: "char", ch: "W" });
+    expect(opened).toEqual(["http://127.0.0.1:1933/studio"]);
+  });
+
+  it("W with the forward down opens nothing and says why", async () => {
+    const { app } = makeApp();
+    const opened: string[] = [];
+    app.hooks.openUrl = (url) => opened.push(url);
+    const st = install(app, new FakeMemory(), { forward: stubForward(DOWN) });
+    app.hooks.digestScreen!(app, 110, 30);
+    await settle();
+    st.view = "memory";
+    app.hooks.digestKey!(app, { kind: "char", ch: "W" });
+    expect(opened).toEqual([]);
+    expect(st.status).toContain("no web UI");
+  });
+
+  it("clicking the studio row opens the same URL the key does", async () => {
+    const { app } = makeApp();
+    const opened: string[] = [];
+    app.hooks.openUrl = (url) => opened.push(url);
+    const st = install(app, new FakeMemory(), { forward: stubForward(UP) });
+    app.hooks.digestScreen!(app, 110, 30);
+    await settle();
+    st.view = "memory";
+    const frame = renderMemoryView(st, false, undefined, 110, 30);
+    // Paint through the hook so the tab records the zones the click hit-tests.
+    app.hooks.digestScreen!(app, 110, 30);
+    const zone = frame.zones.find((z) => (z.action as { t: string; url?: string }).t === "url" && (z.action as { url?: string }).url?.includes("/studio"));
+    expect(zone, "the studio row must be a click target, not just a key").toBeDefined();
+    app.hooks.digestClick!(app, zone!.x1, zone!.y1);
+    expect(opened).toEqual(["http://127.0.0.1:1933/studio"]);
+  });
+
+  it("the forward is brought up BEFORE memory is read, so a refresh can fix the transport", async () => {
+    const { app } = makeApp();
+    const order: string[] = [];
+    const mem = new FakeMemory();
+    const read = mem.read.bind(mem);
+    mem.read = () => {
+      order.push("read");
+      return read();
+    };
+    install(app, mem, {
+      forward: {
+        view: () => UP,
+        ensure: () => {
+          order.push("ensure");
+          return Promise.resolve(UP);
+        },
+      },
+    });
+    app.hooks.digestScreen!(app, 110, 30);
+    await settle();
+    expect(order[0]).toBe("ensure");
+    expect(order).toContain("read");
+  });
+
+  it("W is a registered digest-tab key — the companion strip must not swallow it", () => {
+    expect(registeredKeys("digest").has("W")).toBe(true);
   });
 });
