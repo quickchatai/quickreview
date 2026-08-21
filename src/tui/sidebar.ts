@@ -32,13 +32,18 @@ import { ACCENT, ACCENT_BG, BAD, MUTED, OK, RESET, SEP, WARN } from "./design.js
 import { displayWidth, fit } from "./paint.js";
 import { keysToTmux, SCROLL_STEP, splitCapture } from "./pipane.js";
 
-/** Content columns of the expanded sidebar (border excluded). */
+/** Content columns of the default expanded sidebar (border excluded). */
 export const SIDEBAR_COLS = 44;
-/** Below this many TOTAL terminal columns the sidebar auto-collapses: the
- * board's list/detail split stops being legible before the sidebar does. */
+/** Below this many TOTAL terminal columns the default sidebar auto-collapses. */
 export const SIDEBAR_MIN_COLS = 110;
 /** Left divider + right border — the two cells the column adds beyond content. */
 export const SIDEBAR_BORDER = 2;
+/** Smallest useful expanded column, borders included. */
+export const SIDEBAR_MIN_WIDTH = 24;
+/** Width reserved for the tab beside an expanded sidebar. This preserves the
+ * original 110 - 46 breakpoint while allowing a narrower panel on a narrower
+ * terminal. */
+export const SIDEBAR_MIN_INNER_COLS = SIDEBAR_MIN_COLS - (SIDEBAR_COLS + SIDEBAR_BORDER);
 
 /** The collapsed spine: border + one glyph column. */
 export const SIDEBAR_SPINE = 3;
@@ -46,12 +51,27 @@ export const SIDEBAR_SPINE = 3;
  * and three stolen columns are three columns the list cannot spare. */
 export const SIDEBAR_HIDE_BELOW = 40;
 
+/** Clamp a drag request while guaranteeing usable space for the tab. */
+export function clampSidebarWidth(cols: number, requested: number): number {
+  const max = Math.max(SIDEBAR_MIN_WIDTH, cols - SIDEBAR_MIN_INNER_COLS);
+  return Math.min(max, Math.max(SIDEBAR_MIN_WIDTH, Math.round(requested)));
+}
+
 /** Total width the column occupies, 0 when hidden. */
-export function sidebarWidth(cols: number, st: { collapsed: boolean; available: boolean }): number {
+export function sidebarWidth(
+  cols: number,
+  st: { collapsed: boolean; available: boolean; preferredWidth?: number },
+): number {
   if (!st.available) return 0;
   if (cols < SIDEBAR_HIDE_BELOW) return 0;
-  if (st.collapsed || cols < SIDEBAR_MIN_COLS) return SIDEBAR_SPINE;
-  return SIDEBAR_COLS + SIDEBAR_BORDER;
+  const preferred = Math.max(SIDEBAR_MIN_WIDTH, Math.round(st.preferredWidth ?? SIDEBAR_COLS + SIDEBAR_BORDER));
+  if (st.collapsed || cols < preferred + SIDEBAR_MIN_INNER_COLS) return SIDEBAR_SPINE;
+  return preferred;
+}
+
+/** The expanded panel's left border is its resize handle. */
+export function sidebarResizeHit(x: number, cols: number, width: number): boolean {
+  return width > SIDEBAR_SPINE && x === cols - width + 1;
 }
 
 export interface SidebarHeader {
@@ -124,7 +144,7 @@ function dividerRow(label: string, inner: number): string {
 function hintContent(view: SidebarView): string {
   if (!view.available) return ` ${MUTED}${SIDEBAR_OFF}${RESET}`;
   if (view.focused) return ` ${ACCENT}▶${RESET} ${MUTED}keys go to pi · Ctrl-q releases${RESET}`;
-  return ` ${MUTED}❯ ${SIDEBAR_PLACEHOLDER}${RESET}`;
+  return ` ${MUTED}❯ ${SIDEBAR_PLACEHOLDER} · drag left edge${RESET}`;
 }
 
 function alertContent(a: SidebarView["alerts"][number]): string {
@@ -263,6 +283,8 @@ export class CompanionSidebar {
   lines: string[] = [];
   focused = false;
   collapsed = false;
+  /** Expanded width including both borders; survives collapse/expand. */
+  preferredWidth = SIDEBAR_COLS + SIDEBAR_BORDER;
   offset = 0;
   alerts: SidebarView["alerts"] = [];
 
@@ -374,6 +396,14 @@ export class CompanionSidebar {
 
   toggleCollapse(): void {
     this.collapsed = !this.collapsed;
+  }
+
+  /** Resize from the seam's 1-based terminal x coordinate. */
+  resizeFromPointer(cols: number, x: number): number {
+    this.preferredWidth = clampSidebarWidth(cols, cols - x + 1);
+    this.collapsed = false;
+    this.opts.onUpdate?.();
+    return this.preferredWidth;
   }
 
   /** Wheel: move the scrollback window by `notches × SCROLL_STEP` lines.

@@ -17,6 +17,7 @@ const SNAP: ReloadState = {
   eventsScroll: 3,
   eventsFocus: true,
   detailFull: false,
+  sidebarWidth: 52,
   saved_at: "",
 };
 
@@ -157,7 +158,7 @@ describe("resume state", () => {
     const p = join(dir, "tui-resume.json");
     writeFileSync(p, JSON.stringify({ ...SNAP, tab: "digest", saved_at: "2026-08-14T12:00:00.000Z" }));
     const restored = readResumeState(p);
-    expect(restored).toMatchObject({ tab: "digest", pr: 5012, eventsScroll: 3 });
+    expect(restored).toMatchObject({ tab: "digest", pr: 5012, eventsScroll: 3, sidebarWidth: 52 });
     expect(readResumeState(p)).toBeUndefined(); // consumed
   });
 

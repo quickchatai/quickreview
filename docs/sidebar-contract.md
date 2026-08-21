@@ -17,12 +17,16 @@ simply concatenate.
 cols = inner.cols + sidebarWidth(cols, state)
 ```
 
-- expanded: `SIDEBAR_COLS = 44` content, plus its border → `46`
+- expanded default: `SIDEBAR_COLS = 44` content, plus its border → `46`
+- expanded resized: drag the column's left border; minimum `24`, maximum leaves
+  `64` columns for the tab
 - collapsed: a `3`-wide spine (border + one glyph column)
 - hidden (companion off, or terminal too narrow): `0`
 
-Auto-collapse below `SIDEBAR_MIN_COLS = 110` total columns: the board's
-list/detail split stops being legible before the sidebar does.
+Auto-collapse is dynamic: the tab must retain `SIDEBAR_MIN_INNER_COLS = 64`.
+At the default 46-column width this preserves the original
+`SIDEBAR_MIN_COLS = 110` breakpoint. The preferred expanded width survives
+collapse/expand and TUI hot reload.
 
 **Row contract**: the sidebar column supplies **exactly `rows` strings**, each
 of display width exactly `sidebarWidth`. Row `0` and row `rows-1` must carry
@@ -40,7 +44,7 @@ export const SIDEBAR_MIN_COLS = 110;
 export const SIDEBAR_BORDER = 2;          // left divider + right border
 
 /** Total width the column occupies, 0 when hidden. */
-export function sidebarWidth(cols: number, st: { collapsed: boolean; available: boolean }): number;
+export function sidebarWidth(cols: number, st: { collapsed: boolean; available: boolean; preferredWidth?: number }): number;
 
 export interface SidebarHeader {
   up: boolean;            // container running
@@ -86,7 +90,9 @@ export class CompanionSidebar {
   focus(seed?: string): void;
   blur(): void;
   toggleCollapse(): void;
+  resizeFromPointer(cols: number, x: number): number;
   collapsed: boolean;
+  preferredWidth: number;
   scroll(notches: number): void;
   stop(): void;
 }

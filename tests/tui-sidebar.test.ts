@@ -2,15 +2,19 @@ import { describe, expect, it } from "vitest";
 import type { DockerResult, DockerRunner } from "../src/tui/companion.js";
 import { displayWidth, stripAnsi } from "../src/tui/paint.js";
 import {
+  clampSidebarWidth,
   CompanionSidebar,
   paintSidebar,
   SIDEBAR_BORDER,
   SIDEBAR_COLS,
   SIDEBAR_HIDE_BELOW,
   SIDEBAR_MIN_COLS,
+  SIDEBAR_MIN_INNER_COLS,
+  SIDEBAR_MIN_WIDTH,
   SIDEBAR_PLACEHOLDER,
   SIDEBAR_SPINE,
   sidebarHit,
+  sidebarResizeHit,
   sidebarWidth,
   type SidebarView,
 } from "../src/tui/sidebar.js";
@@ -56,6 +60,19 @@ describe("sidebarWidth", () => {
     expect(sidebarWidth(SIDEBAR_MIN_COLS - 1, { collapsed: false, available: true })).toBe(SIDEBAR_SPINE);
     expect(sidebarWidth(200, { collapsed: true, available: true })).toBe(SIDEBAR_SPINE);
     expect(sidebarWidth(SIDEBAR_HIDE_BELOW - 1, { collapsed: true, available: true })).toBe(0);
+  });
+
+  it("uses a resized preference and preserves a usable tab beside it", () => {
+    expect(sidebarWidth(160, { collapsed: false, available: true, preferredWidth: 60 })).toBe(60);
+    expect(clampSidebarWidth(160, 500)).toBe(160 - SIDEBAR_MIN_INNER_COLS);
+    expect(clampSidebarWidth(160, 2)).toBe(SIDEBAR_MIN_WIDTH);
+    expect(sidebarWidth(80, { collapsed: false, available: true, preferredWidth: 60 })).toBe(SIDEBAR_SPINE);
+  });
+
+  it("recognizes only the expanded column's left seam as a resize handle", () => {
+    expect(sidebarResizeHit(115, 160, WIDE)).toBe(true);
+    expect(sidebarResizeHit(116, 160, WIDE)).toBe(false);
+    expect(sidebarResizeHit(158, 160, SIDEBAR_SPINE)).toBe(false);
   });
 });
 
@@ -346,6 +363,20 @@ describe("CompanionSidebar", () => {
     const sb = new CompanionSidebar(CFG, runner, { available: () => false });
     sb.focus("h");
     expect(sb.view().focused).toBe(false);
+    sb.stop();
+  });
+
+  it("resizes from the seam, clamps both ends, and remembers the width across collapse", () => {
+    const { runner } = fakeDocker();
+    const sb = new CompanionSidebar(CFG, runner);
+    expect(sb.resizeFromPointer(160, 101)).toBe(60);
+    expect(sb.preferredWidth).toBe(60);
+    sb.toggleCollapse();
+    expect(sidebarWidth(160, { collapsed: sb.collapsed, available: true, preferredWidth: sb.preferredWidth })).toBe(SIDEBAR_SPINE);
+    sb.toggleCollapse();
+    expect(sidebarWidth(160, { collapsed: sb.collapsed, available: true, preferredWidth: sb.preferredWidth })).toBe(60);
+    expect(sb.resizeFromPointer(160, 159)).toBe(SIDEBAR_MIN_WIDTH);
+    expect(sb.resizeFromPointer(160, 1)).toBe(160 - SIDEBAR_MIN_INNER_COLS);
     sb.stop();
   });
 

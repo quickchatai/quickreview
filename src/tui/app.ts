@@ -18,7 +18,7 @@ import { ClipboardSink } from "./clipboard.js";
 import { PANE_ESCAPE, PiMirror, keysToTmux } from "./pipane.js";
 import { Poller } from "./poll.js";
 import { prUrl } from "./theme.js";
-import { CompanionSidebar, paintSidebar, sidebarHit, sidebarWidth } from "./sidebar.js";
+import { CompanionSidebar, paintSidebar, sidebarHit, sidebarResizeHit, sidebarWidth } from "./sidebar.js";
 import { eventsArgv, sendKeysArgv, whyArgv, type SshRunner } from "./remote.js";
 
 export interface AppHooks {
@@ -590,9 +590,33 @@ export class App {
   }
 
   private handleMouse(ev: MouseEvent): void {
-    // Selection owns drag and release outright. A drag is never a
-    // click, so nothing below sees it and no row is selected, no button is
-    // fired, by dragging across them.
+    const cols = this.out.columns ?? 80;
+    // The sidebar's left seam is the ONE drag surface that is chrome rather
+    // than selectable content. Everywhere else still owns drag and
+    // release for rectangular copy.
+    if (this.sidebar && ev.kind === "click") {
+      const width = this.sidebarWidth(cols);
+      if (sidebarResizeHit(ev.x, cols, width)) {
+        this.sidebarResizeActive = true;
+        this.selAnchor = undefined;
+        this.selection = undefined;
+        this.repaint();
+        return;
+      }
+    }
+    if (this.sidebarResizeActive && ev.kind === "drag") {
+      this.sidebar?.resizeFromPointer(cols, ev.x);
+      this.repaint();
+      return;
+    }
+    if (this.sidebarResizeActive && ev.kind === "release") {
+      this.sidebarResizeActive = false;
+      this.notice(`sidebar ${this.sidebar?.preferredWidth ?? 0} cols`);
+      return;
+    }
+
+    // Selection owns every other drag and release. A drag is never
+    // a click, so nothing below sees it and no row is selected or button fired.
     if (ev.kind === "drag") {
       const anchor = this.selAnchor;
       if (!anchor) return;
@@ -625,7 +649,6 @@ export class App {
     // is open — a synthesized key would be typed into the box, and [⏎]
     // would SUBMIT the draft (a live memory edit or quick-message).
     if (ev.kind === "click" && !this.view.inputBox) {
-      const cols = this.out.columns ?? 80;
       const rows = this.out.rows ?? 24;
       const k = barHitKey(this.tab, ev.x, ev.y, cols, rows);
       if (k !== undefined) {
@@ -1069,7 +1092,11 @@ export class App {
   /** Width the companion column takes on THIS paint (0 = not shown). */
   sidebarWidth(cols: number): number {
     if (!this.sidebar) return 0;
-    return sidebarWidth(cols, { collapsed: this.sidebar.collapsed, available: this.sidebar.available() });
+    return sidebarWidth(cols, {
+      collapsed: this.sidebar.collapsed,
+      available: this.sidebar.available(),
+      preferredWidth: this.sidebar.preferredWidth,
+    });
   }
 
   /** Compose the companion column onto a tab's frame. The tab was rendered at
@@ -1098,6 +1125,7 @@ export class App {
   // splice text from panes the user never pointed at. A block keeps a drag
   // inside the pane it started in, which is what "select this bit of pi's
   // output" means when pi is a 44-column column.
+  private sidebarResizeActive = false;
   private selAnchor: { x: number; y: number } | undefined;
   private selection: { x1: number; y1: number; x2: number; y2: number } | undefined;
   /** Injectable so tests never touch the real clipboard. */

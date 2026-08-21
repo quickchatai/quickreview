@@ -361,7 +361,7 @@ describe("drag-to-copy", () => {
   // Turning mouse reporting on takes the terminal's own selection away, so the
   // TUI owes one back. the owner: "99% I select something to copy it" — release
   // IS the copy; there is no copy key and no copy mode.
-  function harness(cols = 60, rows = 12) {
+  function harness(cols = 60, rows = 12, withSidebar = false) {
     const out = new EventEmitter() as unknown as NodeJS.WriteStream;
     (out as unknown as { columns: number }).columns = cols;
     (out as unknown as { rows: number }).rows = rows;
@@ -371,6 +371,13 @@ describe("drag-to-copy", () => {
     input.resume = (() => input) as never;
     input.pause = (() => input) as never;
     const app = new App(TUI_DEFAULTS, async () => ({ ok: true, stdout: "", stderr: "", code: 0 }), out, input);
+    if (withSidebar) {
+      app.sidebar = new CompanionSidebar(
+        { container_name: "qcr-companion", session: "companion" },
+        async () => ({ ok: true, stdout: "", stderr: "", code: 0 }),
+        { available: () => true },
+      );
+    }
     const copied: string[] = [];
     app.clipboard = { write: async (t: string) => (copied.push(t), true) };
     const mouse = (b: number, x: number, y: number, press = true) =>
@@ -388,6 +395,28 @@ describe("drag-to-copy", () => {
     return { app, copied, mouse, onScreen, running: app.run() };
   }
   const settle = () => new Promise((r) => setTimeout(r, 10));
+
+  it("dragging the sidebar seam resizes instead of copying; other drags still copy", async () => {
+    const h = harness(160, 20, true);
+    expect(h.app.sidebarWidth(160)).toBe(46);
+    h.mouse(0, 115, 5); // expanded sidebar's left seam
+    h.mouse(32, 101, 5); // drag left → 60 total columns
+    h.mouse(0, 101, 5, false);
+    await settle();
+    expect(h.app.sidebar!.preferredWidth).toBe(60);
+    expect(h.app.sidebarWidth(160)).toBe(60);
+    expect(h.copied).toEqual([]);
+    expect(h.app.view.noticeLine).toContain("sidebar 60 cols");
+
+    // A drag one cell inside the resized panel is content selection, unchanged.
+    h.mouse(0, 103, 2);
+    h.mouse(32, 120, 3);
+    h.mouse(0, 120, 3, false);
+    await settle();
+    expect(h.copied).toHaveLength(1);
+    h.app.quit();
+    await h.running;
+  });
 
   it("press → drag → release copies the block, and says what it copied", async () => {
     const h = harness();

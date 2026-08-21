@@ -562,6 +562,7 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
     app.view.eventsScroll = resumed.eventsScroll;
     app.view.eventsFocus = resumed.eventsFocus;
     app.view.detailFull = resumed.detailFull;
+    if (app.sidebar && resumed.sidebarWidth !== undefined) app.sidebar.preferredWidth = resumed.sidebarWidth;
   }
 
   // Hot-reload: watch our own dist/ and re-exec when a new build lands.
@@ -577,6 +578,7 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
           eventsScroll: app.view.eventsScroll,
           eventsFocus: app.view.eventsFocus,
           detailFull: app.view.detailFull,
+          sidebarWidth: app.sidebar?.preferredWidth,
           saved_at: "",
         }),
         // The forward MUST be released here, not in the cleanup after
