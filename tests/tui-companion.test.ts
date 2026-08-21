@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -491,6 +491,51 @@ describe("companion image", () => {
     // And the entrypoint says so out loud when it is not a mount point.
     expect(entrypoint).toContain("/proc/mounts");
     expect(entrypoint).toContain("NOT a mount point");
+  });
+
+  // 2026-08-21: the vendored mattpocock set is REGISTERED, not just readable.
+  // `.claude/skills` is not one of pi's own lookup paths, so without the
+  // settings `skills` array the 25 skills were plain files the system prompt
+  // had to name one at a time — no descriptions in context, no invocation,
+  // no progressive disclosure.
+  it("registers the vendored skill set with pi, guarded on the dir existing", () => {
+    expect(entrypoint).toContain('const skillsDir = "/workspace/.claude/skills"');
+    expect(entrypoint).toMatch(/if \(!Array\.isArray\(cfg\.skills\)\) cfg\.skills = \[\]/);
+    // Degrade, never wedge: an unmounted /workspace leaves the companion
+    // under-equipped, not unable to start.
+    expect(entrypoint).toMatch(/fs\.existsSync\(skillsDir\)/);
+    // Dedupe — the volume carries settings.json across every restart.
+    expect(entrypoint).toMatch(/cfg\.skills\.includes\(skillsDir\)/);
+    // `/skill:<name>` from pi's own input line: the companion column is a
+    // terminal, so the owner's `/` commands land in pi. Unconditional, because
+    // seed-only-if-absent is how keys stopped landing once pi wrote settings.
+    expect(entrypoint).toContain("cfg.enableSkillCommands = true");
+    const guard = entrypoint.indexOf("const skillsDir");
+    expect(guard).toBeGreaterThan(0);
+    expect(entrypoint.indexOf("fs.writeFileSync(path,")).toBeGreaterThan(guard);
+  });
+
+  // A registration pointing at nothing is worse than none: it reads as done.
+  it("points at a directory that really carries SKILL.md folders", () => {
+    const dir = resolve(root, ".claude/skills");
+    expect(existsSync(dir)).toBe(true);
+    const skills = readdirSync(dir, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .filter((e) => existsSync(resolve(dir, e.name, "SKILL.md")));
+    expect(skills.length).toBeGreaterThan(20);
+    expect(skills.map((e) => e.name)).toContain("wayfinder");
+    // The two wayfinder leans on, named in prompts/companion.md.
+    expect(skills.map((e) => e.name)).toEqual(expect.arrayContaining(["grilling", "domain-modeling"]));
+  });
+
+  // Rule 9: lens passes are leaves. A charting/planning skill set is nothing a
+  // reviewer session should be able to reach for mid-round, so the VM image
+  // deliberately does NOT get this registration.
+  it("keeps the skill set off the VM image — reviewer passes are leaves", () => {
+    const vmEntrypoint = readFileSync(resolve(root, "deploy/ansible/templates/entrypoint.sh.j2"), "utf8");
+    expect(vmEntrypoint).not.toMatch(/settings\.skills/);
+    expect(vmEntrypoint).not.toMatch(/enableSkillCommands/);
+    expect(vmEntrypoint).not.toMatch(/\.claude\/skills/);
   });
 
   it("registers no memory extension in the entrypoint either", () => {

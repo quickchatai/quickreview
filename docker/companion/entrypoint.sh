@@ -95,8 +95,46 @@ if (!Array.isArray(cfg.extensions)) cfg.extensions = [];
 // Never block on pi's interactive "Trust project folder?" modal (mirrors the
 // VM entrypoint; the owner, 2026-08-20 — pr-5334 stall).
 cfg.defaultProjectTrust = "always";
+
+// Skills (2026-08-21). The repo carries the vendored mattpocock set at
+// /workspace/.claude/skills/ — wayfinder, grilling, domain-modeling and 22
+// more. pi supports SKILL.md natively, but `.claude/skills` is NOT one of the
+// paths it looks in on its own (~/.pi/agent/skills, ~/.agents/skills,
+// .pi/skills and .agents/skills in cwd+ancestors, package skills/ dirs). Until
+// this registration they were plain files the system prompt had to name by
+// hand, one at a time, with no progressive disclosure: the companion could
+// only use a skill it had already been told existed.
+//
+// The settings `skills` array is pi's documented interop hook for exactly this
+// — the docs' own example is ["~/.claude/skills", "~/.codex/skills"]
+//. VERIFY-ON-PIN: array-of-directories form, and that a
+// registered dir is scanned one level deep for <name>/SKILL.md.
+//
+// COMPANION ONLY — deliberately not mirrored into the VM entrypoint. Reviewer
+// lens passes are leaves (rule 9) and a charting/planning skill set is nothing
+// a lens should be able to reach for mid-round.
+//
+// Registered only when the dir is really there: an unmounted /workspace must
+// leave the companion under-equipped, never unable to start. Same degrade
+// discipline as the vendored OpenViking extension in piArgv.
+const skillsDir = "/workspace/.claude/skills";
+if (!Array.isArray(cfg.skills)) cfg.skills = [];
+const skillsPresent = fs.existsSync(skillsDir);
+if (skillsPresent && !cfg.skills.includes(skillsDir)) cfg.skills.push(skillsDir);
+// `/skill:<name>` from pi's own input line. The embedded companion column is a
+// TERMINAL (rule: every byte goes to pi), so the owner's `/` commands reach pi
+// directly — this is what makes the set invocable by hand as well as by the
+// model. Set unconditionally, like defaultProjectTrust: seed-only-if-absent is
+// how keys silently stopped landing once pi had written settings.json itself.
+cfg.enableSkillCommands = true;
+
 fs.writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n");
 console.log("pi settings merged (extensions: " + (cfg.extensions.join(", ") || "none registered globally") + ")");
+console.log(
+  skillsPresent
+    ? "pi skills registered: " + cfg.skills.join(", ") + " (/skill:<name> enabled)"
+    : "!! " + skillsDir + " is missing — no skills registered. Is /workspace mounted?",
+);
 
 // Braces to that belt (mirrors the VM entrypoint): pre-seed the trust store
 // for the workspace, so even a settings regression — or a pihome volume

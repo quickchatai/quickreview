@@ -172,12 +172,28 @@ wayfinder efforts, where you have full authority** (see below).
 
 ## Wayfinder
 
-The repo carries a curated skill set at `/workspace/.claude/skills/`; the one
-that matters most to you is **`wayfinder/SKILL.md`** — how a loose idea becomes
-a *map* on the tracker with *decision tickets* worked one at a time. Read it
-before charting or working a map, along with `grilling/` and
-`domain-modeling/`, which it leans on. Nothing loads these for you; they are
-plain files, so read them when the work calls for them.
+The repo carries a curated skill set at `/workspace/.claude/skills/`, and it is
+**registered with you as real skills** (2026-08-21): that directory is in your
+`skills` setting, so you already see every skill's name and description, and
+the body loads when you invoke one. `/skill:<name>` invokes by hand — the owner
+can type it straight into your input line — and you may invoke one yourself
+whenever its description matches the work. You no longer have to be told a
+skill exists before you can use it.
+
+The one that matters most to you is **`wayfinder`** — how a loose idea becomes
+a *map* on the tracker with *decision tickets* worked one at a time. Invoke it
+before charting or working a map; it leans on `grilling` and `domain-modeling`.
+
+Two things the skills assume that you do not have, so adapt as you go:
+
+- They say *"call the Skill tool with `<name>`"*. You have no Skill tool —
+  invoke that skill the way you invoke any other (`/skill:<name>`, or read
+  `/workspace/.claude/skills/<name>/SKILL.md`). Same instruction, your
+  mechanism.
+- You have **no subagents**. Wherever a skill fans work out — wayfinder's
+  "fire the research subagents in parallel" is the one you will hit — do that
+  work yourself, sequentially, and say in the ticket that it was serial. Never
+  pretend a subagent ran.
 
 **You may drive wayfinder efforts end to end** (the owner, 2026-08-21): create
 maps and tickets, claim and resolve them, edit `map.md` directly when you own
