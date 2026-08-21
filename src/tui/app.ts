@@ -247,6 +247,12 @@ export class App {
 
   async run(initialSelection?: number): Promise<void> {
     if (initialSelection !== undefined) this.selectedPr = initialSelection;
+    // From here the TUI owns the screen, and only from here may it paint
+    //. Before this point the layout is still being assembled —
+    // app.sidebar is wired after the companion starts — so any frame painted
+    // during startup shows a DIFFERENT layout, on the normal screen, and the
+    // real one then lands on top of it as a visible jump.
+    this.started = true;
     this.out.write(ALT_SCREEN_ON + CLEAR + MOUSE_ON);
     if (this.input.isTTY) this.input.setRawMode(true);
     this.input.resume();
@@ -485,6 +491,15 @@ export class App {
 
   notice(text: string): void {
     this.view.noticeLine = text;
+    // Before the TUI owns the screen, a notice is startup progress and prints
+    // as a plain line — the companion can take minutes to build, and silence
+    // there looks like a hang. Painting a frame instead (what this used to do)
+    // is what produced the startup flash. The alt screen hides these the
+    // moment run() begins, so they never linger.
+    if (!this.started) {
+      this.out.write(`${text}\n`);
+      return;
+    }
     this.repaint();
   }
 
@@ -1041,8 +1056,11 @@ export class App {
     return composeColumn(inner, paintSidebar(this.sidebar.view(), width, rows), width, true);
   }
 
+  /** Set by run(): the TUI owns the screen and may paint. */
+  private started = false;
+
   repaint(): void {
-    if (this.suspended || this.stopped) return;
+    if (!this.started || this.suspended || this.stopped) return;
     const cols = this.out.columns ?? 80;
     const rows = this.out.rows ?? 24;
     // +1 when a column is shown: the tab and the column share one border, and

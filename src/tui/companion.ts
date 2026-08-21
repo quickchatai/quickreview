@@ -392,7 +392,13 @@ export class CompanionLifecycle {
     const res = await this.docker([
       "inspect",
       "--format",
-      "{{.State.Running}}\n{{range .Mounts}}{{.Destination}}={{.Source}}\n{{end}}",
+      // `.Name` for a named volume, `.Source` for a bind. Docker
+      // reports a volume's Source as its on-disk _data path, which never
+      // equals the volume NAME the run argv asks for — comparing Source made
+      // the drift check fire on every single start and recreate the container
+      // each time, which is also how a `docker exec` landed on a container
+      // that was still coming up.
+      "{{.State.Running}}\n{{range .Mounts}}{{.Destination}}={{if .Name}}{{.Name}}{{else}}{{.Source}}{{end}}\n{{end}}",
       this.cfg.container_name,
     ]);
     if (!res.ok) return { exists: false, running: false, mounts: new Map() };
@@ -597,9 +603,39 @@ export class CompanionLifecycle {
 
   /** Idempotent: a live companion session is left strictly alone (a second
    * TUI attaches to it). Returns true when this call birthed the session. */
+  /**
+   * Wait until the container is actually running.
+   *
+   * `docker run --detach` returns once the container is created, and a
+   * `docker exec` an instant later can still lose the race with "container is
+   * not running" — observed live right after a recreate. Bounded and total: if
+   * it never comes up, the caller's own error is the better message.
+   */
+  async waitRunning(timeoutMs = 5_000, stepMs = 100): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const st = await this.status();
+      if (st.running) return true;
+      // Gone rather than starting: waiting cannot help, and the caller's own
+      // failure is a better message than a five-second stall.
+      if (!st.exists) return false;
+      if (Date.now() >= deadline) return false;
+      await new Promise((r) => setTimeout(r, stepMs));
+    }
+  }
+
   async spawnPi(): Promise<boolean> {
     if (await this.piRunning()) return false;
-    const res = await this.docker(this.spawnArgv());
+    let res = await this.docker(this.spawnArgv());
+    // `docker run --detach` returns at CREATE, not at running, so an exec an
+    // instant after a recreate can lose the race — observed live as
+    // "container is not running", which then reported the companion as
+    // unavailable for the whole session. Wait for it once and try again;
+    // anything else is a real failure and is raised as one.
+    if (!res.ok && /is not running/i.test(errText(res))) {
+      await this.waitRunning();
+      res = await this.docker(this.spawnArgv());
+    }
     if (!res.ok) throw new Error(`spawning the companion pi session failed: ${errText(res)}`);
     return true;
   }

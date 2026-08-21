@@ -61,13 +61,19 @@ TMUXCONF
 # writable layer, NOT the pihome volume, so it is rewritten every start rather
 # than seeded once. Author, not committer-of-record for anyone else: the name
 # says plainly which hands made the commit.
-git config --global user.name "QCR Companion"
-git config --global user.email "companion@quickchat.ai"
+# `|| true` on every one: `set -e` is on, and a git that exits
+# non-zero here would take the CONTAINER down at boot. That is not theoretical
+# — mounting a git WORKTREE at /workspace does it, because its `.git` is a file
+# pointing at a path that does not exist inside the container, and git fails
+# while discovering the repo. An unusable git identity degrades the companion's
+# committing; it must never stop the companion from starting.
+git config --global user.name "QCR Companion" || true
+git config --global user.email "companion@quickchat.ai" || true
 # The repo is bind-mounted from the host and owned by the same uid, so
 # safe.directory is not needed — but a uid mismatch (a rebuilt image with a
 # different COMPANION_UID) would otherwise wedge every git call with a
 # confusing ownership error rather than a permission one.
-git config --global --add safe.directory /workspace
+git config --global --add safe.directory /workspace || true
 
 # pi settings. ~/.pi lives on a named volume; the merge below preserves every
 # existing key (hand edits win, append-only extensions).
@@ -141,8 +147,15 @@ tmux start-server
 # A trap gives PID 1 the handler it never had. `sleep &` + `wait` rather than
 # `exec`, because a foreground child would block the trap until it returned.
 term() {
+  kill "$child" 2>/dev/null || true
   exit 0
 }
 trap term TERM INT
 sleep infinity &
-wait $!
+child=$!
+# `|| true`: a signal makes `wait` return 128+N, and under `set -e` that status
+# would end the script before the trap's own `exit 0` — the container then
+# recorded "Exited (128)" on every clean stop, which reads like a crash in
+# `docker ps -a` and is the first thing anyone debugging this would chase.
+wait "$child" || true
+exit 0

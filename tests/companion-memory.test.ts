@@ -468,7 +468,7 @@ describe("companion image carries the memory path, not a credential", () => {
     // Backgrounded and guarded: the watcher can never keep the container down.
     // PID 1 parks on `wait` rather than exec'ing sleep, so SIGTERM
     // is actually handled — but it still parks, which is what this asserts.
-    expect(entrypoint.trimEnd().endsWith("wait $!")).toBe(true);
+    expect(entrypoint).toMatch(/wait "\$child" \|\| true/);
   });
 
   it("keeps the alert dir as the watcher's only output surface", () => {

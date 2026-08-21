@@ -247,6 +247,39 @@ describe("mount drift", () => {
     expect(progress.some((l) => l.includes("points at /host/old-tracker"))).toBe(true);
   });
 
+  it("compares a NAMED VOLUME by name, not by its _data path", async () => {
+    // Docker reports a volume's Source as /var/lib/docker/volumes/<name>/_data
+    // (or the daemon's data-root), which never equals the NAME the run argv
+    // asks for. Comparing Source made drift fire on EVERY start: the container
+    // was recreated each time, and the docker exec that followed raced the
+    // fresh container ("is not running") and reported the companion down —
+    // which is why the sidebar kept vanishing on startup.
+    const asDockerReports = (running: boolean) => (argv: string[]) =>
+      argv[0] === "inspect"
+        ? {
+            ...OK,
+            // The format string asks for `.Name` on volumes, so a correct
+            // implementation sees the NAME here.
+            stdout: [
+              String(running),
+              `${CONTAINER.piHome}=companion-pihome`,
+              `${CONTAINER.workspace}=/host/review-sandbox`,
+              `${CONTAINER.tracker}=/host/tracker`,
+              `${CONTAINER.trackerDocs}=${CFG.tracker_docs_dir}`,
+              `${CONTAINER.feed}=/host/feed`,
+              `${CONTAINER.alerts}=/host/alerts`,
+              "",
+            ].join("\n"),
+          }
+        : undefined;
+    const { lc, calls } = lifecycle([asDockerReports(true)]);
+    expect(await lc.ensureUp()).toBe("adopted"); // NOT "recreated"
+    expect(containerCalls(calls).map((c) => c[0])).toEqual(["inspect"]);
+    // And the format string is the mechanism — assert it asks for the name.
+    const fmt = calls.find((c) => c[0] === "inspect")![2]!;
+    expect(fmt).toContain("{{if .Name}}{{.Name}}{{else}}{{.Source}}{{end}}");
+  });
+
   it("never concludes 'drifted' from an inspect it could not read", async () => {
     // A format change, an old docker, a truncated answer: seeing nothing must
     // mean 'no opinion', never 'recreate'. Destroying a container on a parse
@@ -493,7 +526,8 @@ describe("companion image", () => {
   });
 
   it("keeps the container alive rather than owning pi as PID 1", () => {
-    expect(entrypoint.trimEnd().endsWith("wait $!")).toBe(true);
+    expect(entrypoint).toMatch(/wait "\$child" \|\| true/);
+    expect(entrypoint.trimEnd().endsWith("exit 0")).toBe(true);
     expect(entrypoint).not.toContain("exec pi");
   });
 
