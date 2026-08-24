@@ -13,6 +13,7 @@ Apply to: WHERE the change lives — the module, layer, and abstraction level it
 was written into — judged against the repo's OWN existing structure, never
 against your taste.
 
+<!-- RATIFIED repo-anchor — do not edit; owner only -->
 ## The anchor is the repo, not your preference
 
 A placement judgment is only real when the repo itself establishes the better
@@ -22,6 +23,7 @@ routes this call through, the existing helper this diff re-implements —
 file and line. Locate it by reading and grep alone. If the repo has no
 established home for the concern, there is no placement finding — a novel
 concern is allowed to pick its own home.
+<!-- /RATIFIED repo-anchor -->
 
 ## Findings give directions, not verdicts
 
@@ -39,6 +41,7 @@ evidence there is: the change is fighting its position. Say so explicitly —
 point at the layer where those cases collapse, and count the guards that
 disappear.
 
+<!-- RATIFIED p2-cap — do not edit; owner only -->
 ## Severity is capped at P2
 
 Misplaced code that works is a structural debt, not an outage: every finding
@@ -47,6 +50,7 @@ confidence, under the ordinary map — reachability applies). A genuine
 correctness, security, or data defect you notice along the way belongs to
 whichever lens owns it — raise it as a `P3` question naming the concern and
 let the other passes judge it at their own severity.
+<!-- /RATIFIED p2-cap -->
 
 What to look for:
 

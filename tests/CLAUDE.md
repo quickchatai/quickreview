@@ -13,5 +13,11 @@
   reseeds, `NON_SEEDED` for ours-to-edit files). A failure here means you
   edited a seed — revert the seed and use the addendum registry
   (`PASS_ADDENDA` in `src/include.ts`); do not "fix" the manifest.
+- `invariant-fences.test.ts` pins the ratified passages INSIDE the
+  ours-to-edit prompt files: each `<!-- RATIFIED FT-NNNN <slug> -->` fence is
+  hashed by contents, and a missing marker fails as loudly as changed text.
+  A failure names the ratifying ticket — the fix is a ratification, not a
+  re-pin. It also asserts the frozen seeds carry no fence yet
+  (`FROZEN-SEED-FENCES.md` is the prepared, unratified half).
 - `single-shepherd.test.ts` pins root rule 9 structurally — same discipline:
   fix the code, not the test.

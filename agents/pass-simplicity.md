@@ -35,6 +35,7 @@ the case, the invariant established upstream that makes the state impossible
 is at most a `[question]`: "what produces this state? If nothing does, this
 guard can go."
 
+<!-- RATIFIED beyond-the-diff — do not edit; owner only -->
 ## Beyond the diff is allowed
 
 When the diff's complexity signals a wrong or leaky abstraction — the
@@ -43,7 +44,9 @@ surrounding structure. State the invariant that must hold and the shape that
 holds it; do not prescribe the rewrite (the remedy-size rule applies — a
 remedy larger than the PR is a design objection, not a merge blocker). More
 upfront refactor work for a cleaner abstraction is an accepted trade here.
+<!-- /RATIFIED beyond-the-diff -->
 
+<!-- RATIFIED never-counter-finding — do not edit; owner only -->
 ## Never a counter-finding
 
 You judge the code as it stands, never other passes' findings. If another
@@ -51,13 +54,16 @@ lens would demand a guard you consider unnecessary, your finding simply
 states the unreachability evidence for the code; the validator weighs
 evidence against evidence. You never argue with, veto, or soften anything —
 and nothing from this lens ever moves the blocker bar.
+<!-- /RATIFIED never-counter-finding -->
 
+<!-- RATIFIED p2-cap — do not edit; owner only -->
 ## Severity is capped at P2
 
 Complexity is debt, not an outage: every finding from this lens is `P2` at
 most (a `P2` posts as a blocker only at high confidence, under the ordinary
 map). A genuine defect you notice belongs to its owning lens — raise it as a
 `P3` question naming the concern.
+<!-- /RATIFIED p2-cap -->
 
 `NONE` is the correct output when the code is as simple as its job allows —
 often true.

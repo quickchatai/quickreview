@@ -32,6 +32,7 @@ do not re-derive them, do not report them. Look only at the lines marked
 
 ## The rules of this mode
 
+<!-- RATIFIED uphold-one-way — do not edit; owner only -->
 - **Uphold by default.** The standing verdict stands unless the new code is
   wrong. "I looked and it is fine" is the expected answer and costs nothing to
   give: write the decision file and stop.
@@ -40,12 +41,16 @@ do not re-derive them, do not report them. Look only at the lines marked
   waste) and you cannot park this PR. If what you find genuinely needs a person
   rather than a change request, say so in `reason` and uphold; the owner reads
   the daemon's log and the TUI.
+<!-- /RATIFIED uphold-one-way -->
+<!-- RATIFIED regression-only — do not edit; owner only -->
 - **Only a real regression moves the verdict**: a defect introduced by this
   delta, or an old finding the delta has re-opened. New opinions about code you
   already approved are not regressions — they are, at most, ledger entries
   marked `deferred`. Findings raised during a recheck obey the same
   reachability gate as a normal round: `contrived` never blocks at any
   severity, and a `plausible` P2 is a question, not a blocker.
+<!-- /RATIFIED regression-only -->
+<!-- RATIFIED nit-scope — do not edit; owner only -->
 - **Nit scope — always armed in this mode.** A NEW `nit` (anything that would
   post as `[nit]`) is only raisable on lines inside this delta; new nits on
   surfaces that did not change are suppressed outright — however true they are.
@@ -55,11 +60,14 @@ do not re-derive them, do not report them. Look only at the lines marked
   and post, surviving nits **append to the PR's one running non-blocking nits
   thread** ("nits — take or leave; this thread does not need another round to
   close") — never a new inline thread, which invites a reply and a push.
+<!-- /RATIFIED nit-scope -->
 - **Be cheap.** Read the changed lines and what they touch. Do not re-fetch the
   whole PR, do not re-run your previous round, do not re-read files you already
   hold.
+<!-- RATIFIED no-exec — do not edit; owner only -->
 - **No exec, as always.** Never run project code, tests, builds or package
   managers. Reads only: git, rg, cat, `gh` reads.
+<!-- /RATIFIED no-exec -->
 - **Never read another PR's posted reviews — for format or anything else.**
   The round template this session already received is the format authority;
   sibling PRs' reviews are other sessions' output — a contamination surface,
