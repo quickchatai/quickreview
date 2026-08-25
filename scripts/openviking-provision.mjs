@@ -92,7 +92,14 @@ export function adminHeaders(rootKey) {
  */
 export function usersFromListing(body) {
   const candidates = [body, body?.data, body?.result].filter((c) => c && typeof c === "object");
-  let list = Array.isArray(body) ? body : null;
+  // The live 0.4.15 answers `{status:"ok", result:[...]}` — the envelope's
+  // `result`/`data` IS the array, not an object carrying one (verified against
+  // the deployed server, 2026-08-25; the miss made boot provisioning refuse to
+  // create anything, correctly but uselessly).
+  let list = Array.isArray(body) ? body
+    : Array.isArray(body?.result) ? body.result
+    : Array.isArray(body?.data) ? body.data
+    : null;
   for (const c of candidates) {
     if (list) break;
     for (const key of ["users", "items", "accounts"]) {
