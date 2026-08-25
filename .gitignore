@@ -20,7 +20,9 @@ example-app/
 # lives outside the repo (~/.local/share/qcr/evidence) because it grows without
 # bound; this covers an in-repo `[companion] evidence_dir` (and the empty-string
 # default of <root>/evidence). Private-repo transcripts NEVER get committed.
-evidence/
+# ROOT-ANCHORED on purpose: the bare `evidence/` spelling also swallowed
+# skills/companion/evidence/ and silently dropped that skill from a commit.
+/evidence/
 reports/
 pihome/
 *.log

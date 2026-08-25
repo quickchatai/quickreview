@@ -318,7 +318,9 @@ describe("the store's home", () => {
   it("is gitignored wherever it is put", () => {
     // Kept indefinitely and unbounded: private-repo transcripts must never be
     // one `git add -A` away from a commit.
-    expect(readFileSync(join(repoRoot, ".gitignore"), "utf8")).toMatch(/^evidence\/$/m);
+    // Root-anchored: the bare `evidence/` spelling also ignored
+    // skills/companion/evidence/ and silently dropped that skill from a commit.
+    expect(readFileSync(join(repoRoot, ".gitignore"), "utf8")).toMatch(/^\/evidence\/$/m);
   });
 
   it("the copier is wired to the EXISTING poll, with no scheduler of its own", () => {
