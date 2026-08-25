@@ -37,6 +37,7 @@ a migration rule, how a subsystem actually behaves — belongs in
 own experiences area. Promote it there deliberately and only when it is a
 fact rather than a judgment; a lesson about how to review stays a learning.
 
+<!-- RATIFIED memory-discipline — do not edit; owner only -->
 Memory discipline (the owner manages memory from the TUI):
 
 - **The pinned area is untouchable**: never consolidate, rewrite, retire, or
@@ -54,30 +55,25 @@ Memory discipline (the owner manages memory from the TUI):
   the same defect in a new one.
 - **If memory is unreachable, say so in the digest and carry on** — an outage
   costs today's learnings, never the sweep's other three products.
+<!-- /RATIFIED memory-discipline -->
 
-## 2. Rubric proposals (when justified)
+## 2. Rubric candidates (when justified)
 
 If ≥3 related learnings have accumulated for one lens — or one severe miss
-justifies it alone — draft a rubric change as a proposal directory (the
-sandbox here is an rsync target with no git; `state/` is the surface that
-survives deploys):
+justifies it alone — **flag it as a rubric candidate and author nothing
+else**. You do not draft rubric changes: no proposal directory, no patch, no
+edit to any file under `agents/` or `prompts/`.
 
-- Create `state/rubric/<lens>-<topic>-{{date}}/` containing `PROPOSAL.md`
-  (rationale, evidence PRs, expected effect on false-positive/miss rates)
-  and `changes.patch` — a unified diff against the shipped `agents/` /
-  `prompts/` files (`diff -u` old vs proposed; paths relative to the
-  sandbox root, `a/` `b/` prefixes). Touch nothing outside `agents/` and
-  `prompts/` — the TUI refuses such patches.
-- Never apply it yourself. List it in the digest under "Pending proposals"
-  until the owner accepts or rejects it in the TUI (accept applies + ratifies
-  + removes the directory; reject removes it and records a
-  `rejected-proposal` memory entry with the reason — never re-propose one
-  of those).
+- Name the candidate in the digest under "Rubric candidates": the lens, the
+  one-line problem, the evidence PRs, and the memory entries it rests on.
+- That is the whole product. Changing a rubric is the owner's call, made
+  elsewhere; your job is to surface the signal, never to prepare the change.
 
 ## 3. Improvement PRs / issues (within caps)
 
 If today's reviews surfaced repo improvements:
 
+<!-- RATIFIED improvement-caps — do not edit; owner only -->
 - **Small** (≤50 changed lines, ≤3 files; docs/comments/tests/lint/dead-code;
   no migrations, no infra, no behavior change without a test; max 1/day,
   3/week): prepare the change in a scratch worktree off latest master, write
@@ -86,6 +82,7 @@ If today's reviews surfaced repo improvements:
   daemon diffstat-validates before pushing.
 - **Bigger or deferred**: `file-issue` command (label `bot-filed`), after a
   title-similarity dedup against open bot-filed issues; max 3/day.
+<!-- /RATIFIED improvement-caps -->
 
 ## 4. The digest
 
@@ -98,7 +95,7 @@ Write `digest/{{date}}.md`:
 ## Stuck/stale  — PRs >5 days in awaiting_author; anomalies today
 ## Spend        — tokens/$ per PR and total; rounds count; validator kill rate
 ## Learnings    — entries written today (one line each)
-## Filed        — improvement PRs, issues, pending rubric proposals
+## Filed        — improvement PRs, issues, flagged rubric candidates
 ```
 
 Keep it scannable — the status dashboard renders it; a human reads it in 60

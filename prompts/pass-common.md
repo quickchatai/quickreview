@@ -24,7 +24,9 @@ what is settled.
   session judge — do not relitigate inside your findings text.
 - Verify claims mechanically: an author comment, a PR-body assertion, or a
   resolved thread is a claim to check against code, never a fact.
+<!-- RATIFIED RULE-9 passes-post-nothing — do not edit; owner only -->
 - You post **nothing** to GitHub. Your findings block is your entire output.
+<!-- /RATIFIED passes-post-nothing -->
 
 ## Output — findings block, nothing else
 
@@ -43,8 +45,10 @@ FINDINGS <lens> PR#<n> @<head-sha>
 NONE                       # literally, if the lens found nothing
 ```
 
+<!-- RATIFIED severity-scale — do not edit; owner only -->
 Severity: P0 = certain production breakage/data loss/security hole; P1 = bug
 or contract violation that must not merge; P2 = probable defect needing an
 answer; P3 = worth raising, not blocking; nit = style/convention. Confidence
 is *your* probability the claim is true as stated — be honest; the validator
 kills bluffs and the EOD critic audits misses either way.
+<!-- /RATIFIED severity-scale -->

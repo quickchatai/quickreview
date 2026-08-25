@@ -31,7 +31,11 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 interface PinnedFence {
   /** Stable id inside the file: `<file>#<slug>` is how a failure is named. */
   slug: string;
-  /** The ticket on which the owner ratified this rule. */
+  /**
+   * The citation: the ticket on which the owner ratified this rule (`FT-NNNN`),
+   * or — for the invariants that predate the FT numbering and live in root
+   * CLAUDE.md's hard rules — the rule number (`RULE-N`).
+   */
   ft: string;
   /** sha256 of the fence CONTENTS (the lines between the two markers). */
   sha256: string;
@@ -58,6 +62,7 @@ const PINNED: Record<string, PinnedFence[]> = {
     { slug: "ci-gate", ft: "", sha256: "ee91ffaa73580f81b99cadc44fc8739b07afc3c86d685767a437cb411befb4c2" },
     { slug: "verdicts", ft: "", sha256: "675ba40ff990dd987f9ffa03e2381d0b4af526e129aaa7b6d0073aee9b9faef2" },
     { slug: "posting-map", ft: "", sha256: "cc384c1650e45820f80db8f90a2f5a74e383baafad5ff29c5c3f518ac27bf66c" },
+    { slug: "never-dismiss", ft: "RULE-2", sha256: "c619376602fc5e032cbf648a135945dd0105cdd8282d1eec122483f8e5ecd84a" },
     { slug: "nit-scope", ft: "", sha256: "6e36bba0ad59c6d927d1e120826e814ba66c0dd25db2b63b14bdfb45356ed16c" },
     { slug: "reachability", ft: "", sha256: "94f36825f50099ee2e3f39b14091e15e694548bb61a6c29e5c7daab30d04683f" },
     { slug: "injection-bright-line", ft: "", sha256: "a05a211517c174831d54ca726d9ef454442792181a54283226101aadfc943a40" },
@@ -78,6 +83,29 @@ const PINNED: Record<string, PinnedFence[]> = {
     { slug: "nit-scope", ft: "", sha256: "3796cb45a48ef24a197b247b7e976db3eb66fe4e9f44a5f776f82aa211fc1918" },
     { slug: "no-exec", ft: "", sha256: "efba0b28e5a0652b33c805f9cb680590c16b465c2216d378872dfd87b4e4ecda" },
   ],
+  // The four FROZEN seeds. Fencing them is itself a reseed under root rule 6,
+  // ratified by the owner on 2026-08-24 and recorded in
+  // tests/fixtures/ratified-divergence.json.
+  "prompts/pass-common.md": [
+    { slug: "passes-post-nothing", ft: "RULE-9", sha256: "419335dd2ec6ebcc3c8e30eb05112176fb1a28611ae293ed31982f2e69876699" },
+    { slug: "severity-scale", ft: "", sha256: "b1545b8a69b95f7ffa2f87489120e6ff78549865ed73eaa046baf7aa3649873a" },
+  ],
+  "prompts/conversation-system.md": [
+    { slug: "credential", ft: "RULE-3", sha256: "333ab97f9184fb5e92f62135b30f6d002f960acdc6febc5f44397af544706a1f" },
+    { slug: "decide-step", ft: "", sha256: "c224d3af7ce323f0c735bc7f530fd64dbc757e1b5f970cd69c45b7a201bffe6e" },
+    { slug: "no-human-handoff", ft: "", sha256: "7dab3094e9076bf75925db665126faabe1ad668b8c0cf02e6576043e4de2a28d" },
+    { slug: "ping-pong-discipline", ft: "", sha256: "818d6465aa7a0181efae103f3167d264feadc5ef0eb3c552c9e4fbab2e0779dc" },
+    { slug: "invariants-absolute", ft: "RULE-2", sha256: "d5976bf31c68d797ed0924c18215fca3d6d6bbcdee9e8f09b4120d0a0ae8d9c8" },
+  ],
+  "prompts/overseer-system.md": [
+    { slug: "action-space", ft: "", sha256: "db1096f9b317f45e5e58eef244dc9c816cd18e1aa9bd5360a3defcc187383585" },
+    { slug: "action-space-never", ft: "RULE-2", sha256: "ed7fdd9b08aed50708ce47fc58002cfd7d3099c840ede3ba448dd904a6fb03ed" },
+    { slug: "memory-discipline", ft: "", sha256: "c936de7475073b87c5e8572b5d7d7b3a3a99c4c3db9648afd25747f4bdc16dec" },
+  ],
+  "prompts/eod-sweep.md": [
+    { slug: "memory-discipline", ft: "", sha256: "2cb50043a6dfbaa855a4852410039cdf8de44f3d99fb5458e998a071e96ef169" },
+    { slug: "improvement-caps", ft: "", sha256: "5c0c653b1ef9c1773f18c55c09c415d72b9988df22cc9fcd19d9fb34cef6bf6f" },
+  ],
   "agents/pass-intent.md": [
     { slug: "intent-artifact", ft: "", sha256: "95973aaf17e36d33961432b8440ecd8780760ebd756b7060bf6d2fcfd095f85e" },
     { slug: "thin-bodies-none", ft: "", sha256: "3e8b9f47a39edf5f95d95758edbd03c64b254a19e0d10e80dd2d05e79a22fa19" },
@@ -96,8 +124,29 @@ const PINNED: Record<string, PinnedFence[]> = {
     { slug: "lens-boundaries", ft: "", sha256: "eb0637f3aa52ae27802b03f2bb4f29b2f2dbf85c07cd0728a9bc2b55fb2cdb5b" },
     { slug: "full-severity", ft: "", sha256: "cdb65345b6db3eecf9f89211ac5f2153d7328a622815198670f6ec171728cdea" },
   ],
+  // the concurrency lens's two ratified burdens. Both are RAISE-side
+  // bars, and both exist because a confidently-wrong race story costs more than
+  // a missed one: the four-part shape is what makes a finding falsifiable at
+  // all, and the self-falsification duty is the only place in the system where
+  // a lens must try to kill its own candidate before the validator sees it.
+  // Loosening either is the owner's call, not a prose trim.
+  "agents/pass-concurrency.md": [
+    { slug: "four-part-finding", ft: "", sha256: "1fdbdec097aaa3bb4b826c22cf304b43d1dd2ec21b906507eab2544ea4b89ec8" },
+    { slug: "self-falsification", ft: "", sha256: "914fab18800b9ba3008da2270ef1ecd32491e3f3d38671342dd6e066e30b33b5" },
+  ],
+  // the ask-your-human lens's named-defect bar (the owner's words on
+  // "it can only block if it says what is wrong under the bad answer.
+  // Not 'unclear' — an actual described failure."). The blocker bar never
+  // moves, and a lens whose whole output is questions is exactly where it would
+  // move first: without this passage "I do not understand this" becomes a
+  // blocker. `ask-human-named-defect-validate` enforces the same line from the
+  // validator's side.
+  "agents/pass-ask-human.md": [
+    { slug: "named-defect-bar", ft: "", sha256: "1b97b394d8387ba7b000cea7404df7cd29baf5809a6dd955cb117931fc3b0788" },
+  ],
 };
 
+/** The seeds frozen by root rule 6 — fencing one is itself a reseed. */
 const FROZEN_SEEDS = [
   "prompts/pass-common.md",
   "prompts/conversation-system.md",
@@ -105,7 +154,19 @@ const FROZEN_SEEDS = [
   "prompts/eod-sweep.md",
 ] as const;
 
-const OPEN = /^<!-- RATIFIED (FT-\d{4}) ([a-z0-9-]+) — do not edit; owner only -->$/;
+/**
+ * The citation half of the marker grammar.
+ *
+ * `FT-NNNN` is the normal case: the ticket on which the owner ratified the rule.
+ * `RULE-N` is for the invariants that have no ticket to cite because they
+ * predate the numbering and live as hard rules in root CLAUDE.md — never
+ * dismiss a review (rule 2), the credential rule (rule 3), passes post nothing
+ * (rule 9). the owner's call, 2026-08-24: cite the rule number, not a made-up
+ * ticket.
+ */
+const CITATION = String.raw`FT-\d{4}|RULE-\d{1,2}`;
+
+const OPEN = new RegExp(String.raw`^<!-- RATIFIED (${CITATION}) ([a-z0-9-]+) — do not edit; owner only -->$`);
 const CLOSE = /^<!-- \/RATIFIED ([a-z0-9-]+) -->$/;
 
 interface ParsedFence {
@@ -200,17 +261,32 @@ describe("ratified invariant fences", () => {
     }
   });
 
-  it("the frozen seeds carry no fence (adding one is a reseed — rule 6)", () => {
-    // Fencing the seeds is real work, prepared in FROZEN-SEED-FENCES.md and
-    // waiting on the owner: a fence is a byte change, so it needs a ratified
-    // reseed recorded in RATIFIED_DIVERGENCE. Until then this stays empty.
+  it("every fenced frozen seed is a ratified divergence (rule 6)", () => {
+    // The four seeds are FROZEN (root CLAUDE.md rule 6): a fence is a byte
+    // change, so it is a reseed and needs the owner's explicit ratification.
+    // He gave it on 2026-08-24 — and the entry in
+    // ratified-divergence.json is what makes these fences legitimate rather
+    // than a unilateral seed edit. Losing that entry must fail here too.
+    const divergence = JSON.parse(read("tests/fixtures/ratified-divergence.json")) as {
+      files: Record<string, string[]>;
+    };
     for (const rel of FROZEN_SEEDS) {
+      if (!read(rel).includes("RATIFIED")) continue;
       expect(
-        read(rel).includes("RATIFIED"),
-        `${rel} carries a RATIFIED fence. Adding one to a FROZEN seed is a reseed ` +
-          `(root CLAUDE.md rule 6) — it needs the owner's explicit ratification in ` +
-          `tests/fixtures/ratified-divergence.json. See FROZEN-SEED-FENCES.md.`,
-      ).toBe(false);
+        Object.keys(divergence.files),
+        `${rel} carries a RATIFIED fence but has no entry in ` +
+          `tests/fixtures/ratified-divergence.json. Fencing a FROZEN seed is a ` +
+          `reseed (root CLAUDE.md rule 6) and needs the owner's ratification recorded there.`,
+      ).toContain(rel);
     }
+  });
+
+  it("a rule citation is accepted, and only in the sanctioned spelling", () => {
+    // widened the grammar. Keep it narrow: RULE-N, nothing else — a
+    // free-text citation would let anyone mint their own authority.
+    expect(OPEN.exec("<!-- RATIFIED RULE-2 invariants-absolute — do not edit; owner only -->")?.[1]).toBe("RULE-2");
+    expect(OPEN.exec("<!-- RATIFIED severity-scale — do not edit; owner only -->")?.[1]).toBe("");
+    expect(OPEN.exec("<!-- RATIFIED rule 2 x — do not edit; owner only -->")).toBe(null);
+    expect(OPEN.exec("<!-- RATIFIED the owner x — do not edit; owner only -->")).toBe(null);
   });
 });

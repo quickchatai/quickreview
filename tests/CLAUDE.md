@@ -16,8 +16,10 @@
 - `invariant-fences.test.ts` pins the ratified passages INSIDE the
   ours-to-edit prompt files: each `<!-- RATIFIED FT-NNNN <slug> -->` fence is
   hashed by contents, and a missing marker fails as loudly as changed text.
-  A failure names the ratifying ticket — the fix is a ratification, not a
-  re-pin. It also asserts the frozen seeds carry no fence yet
-  (`FROZEN-SEED-FENCES.md` is the prepared, unratified half).
+  A failure names the ratifying citation — `FT-NNNN`, or `RULE-N` for an
+  invariant that predates the numbering — and the fix is a
+  ratification, not a re-pin. Since the four FROZEN seeds are fenced
+  too; the test requires each fenced seed to carry a
+  `ratified-divergence.json` entry, because fencing a seed is a reseed.
 - `single-shepherd.test.ts` pins root rule 9 structurally — same discipline:
   fix the code, not the test.
