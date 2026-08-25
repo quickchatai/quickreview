@@ -135,6 +135,18 @@ config_table_key() {
   ' "$CONFIG"
 }
 
+# A `<key> = ["a", "b"]` ARRAY out of a named config.toml table, normalised to
+# the comma-joined spelling group_vars carries (`openviking_provision_users`).
+# One line only: every list this compares is one line by convention.
+config_list_key() {
+  local raw
+  raw="$(config_table_key "$1" "$2")"
+  [[ -n "$raw" ]] || return 0
+  raw="${raw#[}"
+  raw="${raw%]}"
+  echo "$raw" | tr -d ' ' | sed 's/,$//'
+}
+
 # upstream.json's "commit" — the vendored fork's base commit (mirror 2 of 2).
 upstream_commit() {
   [[ -f "$OV_UPSTREAM" ]] || return 0
@@ -239,6 +251,27 @@ if [[ -n "$CFG_OV" ]]; then
   check_pin "llama-cpp-python" \
     'config.toml   [openviking] llama_cpp_python_version' "$(config_table_key openviking llama_cpp_python_version || true)" \
     'group_vars    llama_cpp_python_version' "$(group_vars_key llama_cpp_python_version || true)"
+  # the auth posture is mirrored the same way the pins are, and for
+  # the same reason — the entrypoint renders group_vars, so a config.toml that
+  # says "api_key" while group_vars says "dev" would ship a server with NO
+  # per-user confinement while every doc claims otherwise. Same for the secret
+  # FILE NAMES the template interpolates and the user list it provisions:
+  # drift there is a memory outage or an unprovisioned user, silently.
+  CFG_OV_AUTH="$(config_table_key openviking auth_mode || true)"
+  if [[ -n "$CFG_OV_AUTH" ]]; then
+    check_pin "openviking auth_mode" \
+      'config.toml   [openviking] auth_mode' "$CFG_OV_AUTH" \
+      'group_vars    openviking_auth_mode' "$(group_vars_key openviking_auth_mode || true)"
+    check_pin "openviking root key file" \
+      'config.toml   [openviking] root_key_file' "$(config_table_key openviking root_key_file || true)" \
+      'group_vars    openviking_root_key_file' "$(group_vars_key openviking_root_key_file || true)"
+    check_pin "openviking reviewer key file" \
+      'config.toml   [openviking] reviewer_key_file' "$(config_table_key openviking reviewer_key_file || true)" \
+      'group_vars    openviking_reviewer_key_file' "$(group_vars_key openviking_reviewer_key_file || true)"
+    check_pin "openviking provisioned users" \
+      'config.toml   [openviking] provision_users' "$(config_list_key openviking provision_users || true)" \
+      'group_vars    openviking_provision_users' "$(group_vars_key openviking_provision_users || true)"
+  fi
   CFG_OV_EXT="$(config_table_key openviking extension_commit || true)"
   if [[ -n "$CFG_OV_EXT" ]]; then
     check_pin "openviking pi-extension base commit" \
@@ -280,6 +313,7 @@ print_plan() {
   echo "  pi pin       $CFG_PI (config.toml == group_vars, not bumped)"
   if [[ -n "$CFG_OV" ]]; then
     echo "  memory pins  openviking $CFG_OV (config.toml == group_vars == image layer), extension ${CFG_OV_EXT:-<unset>} (config.toml == upstream.json)"
+    echo "  memory auth  auth_mode ${CFG_OV_AUTH:-<unset>} (config.toml == group_vars; 'dev' means NO per-user confinement)"
   else
     echo "  memory pins  <no [openviking] block in config.toml — unverified>"
   fi

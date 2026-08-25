@@ -126,9 +126,13 @@ describe("boot-time ov.conf (never the interactive wizard)", () => {
     expect(entrypoint).toMatch(/ln -sfn "\$OV_HOME" "\$HOME\/\.openviking"/);
   });
 
-  it("renders dev auth on loopback, one worker, reduced queue workers, and NO vlm section", () => {
+  it("renders the CONFIGURED auth mode on loopback, one worker, reduced queue workers, and NO vlm section", () => {
     const render = entrypoint.slice(entrypoint.indexOf("OV_CONF_RENDER"), entrypoint.lastIndexOf("OV_CONF_RENDER"));
-    expect(render).toContain('auth_mode: "dev"');
+    // the mode is a group_var, never a literal. `dev` bypasses
+    // authentication, which makes the two-user confinement nominal — a literal
+    // here is exactly the drift that shipped it for a week.
+    expect(render).toContain('auth_mode: "{{ openviking_auth_mode }}"');
+    expect(render).not.toContain('auth_mode: "dev",');
     expect(render).toContain('host: "127.0.0.1"');
     expect(render).toContain("port: {{ openviking_port }}");
     expect(render).toContain("workers: {{ openviking_workers }}");
@@ -152,6 +156,78 @@ describe("boot-time ov.conf (never the interactive wizard)", () => {
 
   it("a failed render never fails the boot — the daemon comes up memory-less", () => {
     expect(entrypoint).toMatch(/OV_CONF_RENDER' \|\| echo "openviking: ov\.conf render FAILED/);
+  });
+});
+
+// the deployed server ran `auth_mode: "dev"`, so the per-user
+// confinement rule 8 rests on did not exist. These pin the fix: the posture is
+// configuration (mirrored, preflight-checked), the root key comes from the
+// secrets mount, and boot provisioning is idempotent and non-rotating.
+describe("api_key confinement", () => {
+  it("config.toml ships api_key — never dev, which enforces nothing", () => {
+    expect(cfg.openviking.auth_mode).toBe("api_key");
+    expect(cfg.openviking.root_key_file).toBe("openviking_root_key");
+    expect(cfg.openviking.reviewer_key_file).toBe("openviking_reviewer_key");
+    expect(cfg.openviking.provision_users).toEqual(["reviewer", "companion"]);
+  });
+
+  it("the auth mirror holds: config.toml == group_vars", () => {
+    expect(gv("openviking_auth_mode")).toBe(cfg.openviking.auth_mode);
+    expect(gv("openviking_root_key_file")).toBe(cfg.openviking.root_key_file);
+    expect(gv("openviking_reviewer_key_file")).toBe(cfg.openviking.reviewer_key_file);
+    expect(gv("openviking_provision_users")).toBe(cfg.openviking.provision_users.join(","));
+  });
+
+  it("defaults api_key too — an older config.toml never silently downgrades", () => {
+    const without = configToml.replace(/\n\[openviking\][\s\S]*?(?=\n\[companion\])/, "\n");
+    expect(parseConfig(without).openviking.auth_mode).toBe("api_key");
+  });
+
+  it("the root key is read from the SECRETS MOUNT, never a literal in the template", () => {
+    const render = entrypoint.slice(entrypoint.indexOf("OV_CONF_RENDER"), entrypoint.lastIndexOf("OV_CONF_RENDER"));
+    expect(render).toContain("{{ openviking_root_key_file }}");
+    expect(render).toContain("conf.server.root_api_key");
+    // The value only ever comes off disk.
+    expect(render).toMatch(/root_api_key = fs\.readFileSync\(rootFile/);
+    expect(render).not.toMatch(/root_api_key\s*[:=]\s*"[A-Za-z0-9_-]{8,}"/);
+  });
+
+  it("a missing root key DEGRADES loudly to dev instead of wedging the server", () => {
+    const render = entrypoint.slice(entrypoint.indexOf("OV_CONF_RENDER"), entrypoint.lastIndexOf("OV_CONF_RENDER"));
+    expect(render).toContain('conf.server.auth_mode = "dev"');
+    expect(render).toContain("Per-user confinement is NOT enforced");
+  });
+
+  it("boot provisioning runs, from the synced script, and never fails the boot", () => {
+    expect(entrypoint).toContain("scripts/openviking-provision.mjs");
+    expect(entrypoint).toContain("--users \"{{ openviking_provision_users }}\"");
+    expect(entrypoint).toContain("--root-key-file \"$SECRETS/{{ openviking_root_key_file }}\"");
+    expect(entrypoint).toContain("--reviewer-key-file \"$SECRETS/{{ openviking_reviewer_key_file }}\"");
+    expect(entrypoint).toMatch(/\|\| echo "openviking: boot provisioning did not complete/);
+  });
+
+  it("provisioning starts a server in the FOREGROUND and leaves none running", () => {
+    // The daemon is still the only supervisor of the long-lived server: the
+    // provisioning step needs one to talk to (admin routes are HTTP), starts
+    // it itself, and stops it before the entrypoint execs the daemon.
+    expect(entrypoint).toContain("--start-server");
+    expect(entrypoint).not.toMatch(/openviking-provision\.mjs[^\n]*&\s*$/m);
+    expect(entrypoint).toMatch(/exec node "\$SANDBOX\/dist\/src\/wire\.js"/);
+  });
+
+  it("the COMPANION key is never provisioned into this container", () => {
+    // A review session runs INSIDE this container. A companion key it could
+    // read would defeat the confinement outright (root CLAUDE.md rule 8).
+    expect(entrypoint).not.toContain("openviking_companion_key");
+    expect(groupVars).not.toContain("openviking_companion_key");
+    expect(configToml).not.toContain("companion_key_file");
+  });
+
+  it("no ADMIN or ROOT key is ever handed to a client surface", () => {
+    // The root key appears in exactly one shape here: read from the secrets
+    // mount into ov.conf. Nothing exports it, nothing puts it on an argv.
+    expect(entrypoint).not.toMatch(/export\s+\w*ROOT\w*KEY/i);
+    expect(entrypoint).not.toMatch(/--root-key(?!-file)\b/);
   });
 });
 

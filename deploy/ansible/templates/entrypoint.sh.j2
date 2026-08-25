@@ -30,9 +30,11 @@ if [[ -r "$SECRETS/openai_api_key" ]]; then
 fi
 
 # OpenViking — the context store the DAEMON supervises as a child
-# process on loopback {{ openviking_port }}. This block only prepares its state
-# and configuration; it never starts the server (nothing here backgrounds a
-# process, so the container keeps a single supervised process tree) and it
+# process on loopback {{ openviking_port }}. This block prepares its state and
+# configuration and provisions its users; it never leaves a server RUNNING
+# (the provisioning step below starts one in the FOREGROUND and stops it again,
+# so the container still ends up with a single supervised process tree — the
+# long-lived server is the daemon's child, as before) and it
 # NEVER runs the server's own setup wizard (the `init` subcommand): that wizard
 # is interactive, and an interactive prompt in this container is exactly the
 # class of stall that wedged pr-5334. ov.conf is templated below instead.
@@ -60,8 +62,15 @@ fi
 #     memories are authored by sessions and the EOD curator, never extracted.
 #     (This is also why `doctor` is not the health gate — it exits 1 with no
 #     vlm configured. The daemon polls /ready.)
-#   * auth_mode "dev" is safe because the listener is loopback-only and the
-#     port is never published out of the container.
+#   * auth_mode comes from `openviking_auth_mode` (mirrored with config.toml
+#     [openviking] auth_mode), and the deployed value is "api_key".
+#     Loopback-only was NEVER the whole story: every review session runs INSIDE
+#     this container, so "nobody can reach the port" does not stop a review
+#     session from reading companion memory. Only the server's per-USER-key
+#     confinement does, and that confinement exists only in api_key mode —
+#     which is why the root key is read from the read-only secrets mount here
+#     and never written as a literal. Proven live 2026-08-20: under "dev" a
+#     reviewer-scoped search returned viking://user/default content.
 #   * workers/queue_workers are cut for the 2-CPU cap: CPU is the measured
 #     cost (~1.63 core-seconds per ~500 B write), not RAM.
 #
@@ -78,7 +87,7 @@ const conf = {
     host: "127.0.0.1",
     port: {{ openviking_port }},
     workers: {{ openviking_workers }},
-    auth_mode: "dev",
+    auth_mode: "{{ openviking_auth_mode }}",
   },
   storage: { workspace: path.join(home, "workspace") },
   queue_workers: {
@@ -98,7 +107,24 @@ const conf = {
 };
 // The read-only secrets mount — one constant, taken from $SECRETS above so a
 // moved mount cannot leave this half behind.
-const keyFile = path.join(process.env.QCR_SECRETS || "/opt/quickreview/secrets", "openai_api_key");
+const secrets = process.env.QCR_SECRETS || "/opt/quickreview/secrets";
+// api_key mode needs the SERVER's own root key, and it must come from the
+// read-only secrets mount — never a literal in this template, never a value
+// baked into the image. ov.conf is written 0600 and is the only place in the
+// container that holds it; `writeOvcliConf` (src/memory/ovsession.ts) refuses
+// to hand it to a pi session and extensions/bash-guard.ts refuses to read it.
+// A missing root key DEGRADES (the server falls back to "dev", loudly) rather
+// than leaving a server nobody can authenticate to: memory never blocks.
+if (conf.server.auth_mode === "api_key") {
+  const rootFile = path.join(secrets, "{{ openviking_root_key_file }}");
+  if (fs.existsSync(rootFile)) {
+    conf.server.root_api_key = fs.readFileSync(rootFile, "utf8").trim();
+  } else {
+    conf.server.auth_mode = "dev";
+    console.warn("openviking: NO {{ openviking_root_key_file }} in the secrets mount — falling back to auth_mode=dev. Per-user confinement is NOT enforced in that mode: provision the root key and restart.");
+  }
+}
+const keyFile = path.join(secrets, "openai_api_key");
 if (fs.existsSync(keyFile)) {
   conf.embedding = {
     dense: {
@@ -118,8 +144,35 @@ fs.mkdirSync(path.join(home, "workspace"), { recursive: true });
 const target = process.env.OPENVIKING_CONF || path.join(home, "ov.conf");
 fs.writeFileSync(target, JSON.stringify(conf, null, 2) + "\n", { mode: 0o600 });
 fs.chmodSync(target, 0o600);
-console.log("openviking: ov.conf rendered at " + target + " (no vlm section; auth_mode=dev on loopback)");
+console.log("openviking: ov.conf rendered at " + target + " (no vlm section; auth_mode=" + conf.server.auth_mode + " on loopback)");
 OV_CONF_RENDER
+
+# Boot provisioning — the users that make api_key mode mean
+# something. Idempotent by construction: it CREATES a missing user, LEAVES an
+# existing one exactly as it is, and never rotates or mints a key for a user
+# that has one (a rotation orphans the key already distributed to the owner's
+# PC). It also verifies that the reviewer key in the secrets mount actually
+# authenticates, so a mismatch is a boot log line rather than a silent memory
+# outage.
+#
+# It starts the server itself, briefly, and stops it again: the daemon is not
+# running yet, and nothing here may background a process. `|| true` plus the
+# script's own exit-0 discipline are belt and braces — an unprovisioned memory
+# engine degrades, it never stops the reviewer coming up.
+if [[ -f "$SANDBOX/scripts/openviking-provision.mjs" ]]; then
+  node "$SANDBOX/scripts/openviking-provision.mjs" \
+    --base "http://127.0.0.1:{{ openviking_port }}" \
+    --users "{{ openviking_provision_users }}" \
+    --root-key-file "$SECRETS/{{ openviking_root_key_file }}" \
+    --reviewer-key-file "$SECRETS/{{ openviking_reviewer_key_file }}" \
+    --start-server \
+    --bin "{{ openviking_venv }}/bin/openviking-server" \
+    --config "$OV_HOME/ov.conf" \
+    --host 127.0.0.1 --port {{ openviking_port }} \
+    || echo "openviking: boot provisioning did not complete — the daemon starts and memory degrades until it does" >&2
+else
+  echo "openviking: scripts/openviking-provision.mjs not synced — users not provisioned" >&2
+fi
 
 # pi extensions — register in $HOME/.pi/agent/settings.json (on the pihome
 # volume). Every pi process shares HOME=/home/review — main sessions AND the

@@ -66,6 +66,25 @@ openviking_queue_concurrency: 2       # ov.conf queue_workers.* (defaults 4/4/8)
 # summaries and digest are off — memories are authored, never extracted).
 openviking_embedding_model: "text-embedding-3-small"
 openviking_embedding_dimension: 1536
+# Server-side confinement. `api_key` makes every request carry a USER
+# key the server confines to that user's tree; `dev` bypasses authentication
+# and makes the two-user design nominal — it was the deployed value until
+# and must never be it again. MIRRORS config.toml [openviking]
+# auth_mode / root_key_file / reviewer_key_file / provision_users;
+# tests/openviking.test.ts and the scripts/deploy.sh preflight refuse on drift.
+openviking_auth_mode: "api_key"
+# Secret FILE NAMES under the container's read-only secrets mount. The ROOT key
+# is the SERVER's own credential — ov.conf carries it (0600) and boot
+# provisioning uses it; no daemon surface, no review session and no companion
+# process ever holds it. The REVIEWER key is the one client credential the
+# container may hold. The COMPANION key is deliberately ABSENT from this
+# machine: a review session that could read it would reach companion memory,
+# which is the whole thing confinement exists to prevent.
+openviking_root_key_file: "openviking_root_key"
+openviking_reviewer_key_file: "openviking_reviewer_key"
+# Users boot provisioning ENSURES exist — created if absent, left alone if
+# present, never rotated (a rotation orphans the distributed keys).
+openviking_provision_users: "reviewer,companion"
 
 # tmux ≥3.5 for csi-u extended keys end-to-end (§3E):
 # Ubuntu 24.04 apt ships 3.4, so the image builds this release from source.

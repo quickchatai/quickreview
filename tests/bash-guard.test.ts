@@ -143,4 +143,32 @@ describe("live-day regressions (2026-08-17): quoted patterns and substitutions",
     deny("echo hi; node evil.js");
     deny(`GH_TOKEN="$(scripts/mint-token.sh)" gh api -X POST repos/x/issues`);
   });
+
+  // in api_key mode ov.conf carries the server's root_api_key, an
+  // account-wide superuser that can list every USER key in plaintext. `cat`
+  // and `grep` are legitimately allowed, so the PATH is the only thing that
+  // separates "read a file" from "become root". This is the third layer: the
+  // key is never on an argv or in a session env, and writeOvcliConf refuses to
+  // write it as a session credential.
+  it("refuses to read the OpenViking root credential, whatever reads it", () => {
+    deny("cat ~/.openviking/ov.conf");
+    deny("cat /opt/quickreview/state/openviking/ov.conf");
+    deny("grep -n root_api_key /opt/quickreview/state/openviking/ov.conf");
+    deny("jq -r .server.root_api_key ~/.openviking/ov.conf");
+    deny("cat /opt/quickreview/secrets/openviking_root_key");
+    deny("head -c 200 ~/.config/quickreview-bot/openviking_root_key");
+    deny("cat ~/.config/quickreview-bot/openviking-keys.env");
+  });
+
+  it("says WHY, so the session learns the identity rule rather than retrying", () => {
+    const why = checkBashCommand("cat ~/.openviking/ov.conf").reason ?? "";
+    expect(why).toContain("root_api_key");
+    expect(why).toContain("reviewer USER");
+  });
+
+  it("leaves ordinary reads alone — the rule is the credential, not the word", () => {
+    allow("cat state/agents/pass-intent.md");
+    allow("rg -n 'openviking' src/memory");
+    allow("cat ~/.openviking/ovcli.conf"); // the session's OWN reviewer credential
+  });
 });

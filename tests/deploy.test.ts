@@ -18,6 +18,11 @@ interface OvPins {
   version?: string;
   llama?: string;
   extension?: string;
+  /** — the auth posture is mirrored exactly like the pins. */
+  auth?: string;
+  rootKeyFile?: string;
+  reviewerKeyFile?: string;
+  users?: string;
 }
 
 const GROUP_VARS = (piVersion: string, withSandboxSrc = true, ov?: OvPins) =>
@@ -31,6 +36,10 @@ const GROUP_VARS = (piVersion: string, withSandboxSrc = true, ov?: OvPins) =>
     `pi_version: "${piVersion}"`,
     ...(ov?.version === undefined ? [] : [`openviking_version: "${ov.version}"`]),
     ...(ov?.llama === undefined ? [] : [`llama_cpp_python_version: "${ov.llama}"`]),
+    ...(ov?.auth === undefined ? [] : [`openviking_auth_mode: "${ov.auth}"`]),
+    ...(ov?.rootKeyFile === undefined ? [] : [`openviking_root_key_file: "${ov.rootKeyFile}"`]),
+    ...(ov?.reviewerKeyFile === undefined ? [] : [`openviking_reviewer_key_file: "${ov.reviewerKeyFile}"`]),
+    ...(ov?.users === undefined ? [] : [`openviking_provision_users: "${ov.users}"`]),
     ...(withSandboxSrc ? ['sandbox_src: "/tmp/whatever"'] : ['# sandbox_src: "/tmp/whatever"']),
     "",
   ].join("\n");
@@ -51,6 +60,12 @@ const CONFIG = (piVersion: string, ov?: OvPins) =>
           ...(ov.version === undefined ? [] : [`version = "${ov.version}"`]),
           ...(ov.llama === undefined ? [] : [`llama_cpp_python_version = "${ov.llama}"`]),
           ...(ov.extension === undefined ? [] : [`extension_commit = "${ov.extension}"`]),
+          ...(ov.auth === undefined ? [] : [`auth_mode = "${ov.auth}"`]),
+          ...(ov.rootKeyFile === undefined ? [] : [`root_key_file = "${ov.rootKeyFile}"`]),
+          ...(ov.reviewerKeyFile === undefined ? [] : [`reviewer_key_file = "${ov.reviewerKeyFile}"`]),
+          ...(ov.users === undefined
+            ? []
+            : [`provision_users = [${ov.users.split(",").map((u) => `"${u}"`).join(", ")}]`]),
         ]),
     "",
   ].join("\n");
@@ -266,6 +281,81 @@ describe("deploy.sh — OpenViking pin drift", () => {
     const r = run(env, ["--dry-run"]);
     expect(r.code).toBe(1);
     expect(r.stderr).toContain('upstream.json "commit" has no openviking pi-extension base commit pin');
+  });
+
+  // the auth posture is a mirror too, and for the sharper reason:
+  // the entrypoint renders group_vars, so a config.toml saying "api_key" over a
+  // group_vars saying "dev" ships a server with NO per-user confinement while
+  // every doc claims otherwise. That is what shipped for a week.
+  describe("auth-mode drift", () => {
+    const AUTH: OvPins = {
+      ...OV,
+      auth: "api_key",
+      rootKeyFile: "openviking_root_key",
+      reviewerKeyFile: "openviking_reviewer_key",
+      users: "reviewer,companion",
+    };
+
+    it("names the auth mode in the plan when the mirror holds", () => {
+      env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", configOv: AUTH, upstreamCommit: OV.extension! });
+      const r = run(env, ["--dry-run"]);
+      expect(r.code).toBe(0);
+      expect(r.stdout).toContain("memory auth  auth_mode api_key");
+      expect(r.stdout).toContain("'dev' means NO per-user confinement");
+    });
+
+    it("REFUSES to deploy api_key over a group_vars still saying dev", () => {
+      env = makeScratch({
+        configPi: "0.84.1",
+        groupVarsPi: "0.84.1",
+        configOv: AUTH,
+        groupVarsOv: { ...AUTH, auth: "dev" },
+        upstreamCommit: OV.extension!,
+      });
+      const r = run(env, ["--dry-run"]);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("openviking auth_mode pin mismatch");
+      expect(r.stderr).toContain('group_vars    openviking_auth_mode = "dev"');
+    });
+
+    it("refuses when a secret FILE NAME drifts — the template would read nothing", () => {
+      env = makeScratch({
+        configPi: "0.84.1",
+        groupVarsPi: "0.84.1",
+        configOv: AUTH,
+        groupVarsOv: { ...AUTH, rootKeyFile: "ov_root" },
+        upstreamCommit: OV.extension!,
+      });
+      const r = run(env, ["--dry-run"]);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("openviking root key file pin mismatch");
+    });
+
+    it("refuses when the provisioned user list drifts", () => {
+      env = makeScratch({
+        configPi: "0.84.1",
+        groupVarsPi: "0.84.1",
+        configOv: AUTH,
+        groupVarsOv: { ...AUTH, users: "reviewer" },
+        upstreamCommit: OV.extension!,
+      });
+      const r = run(env, ["--dry-run"]);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("openviking provisioned users pin mismatch");
+    });
+
+    it("a config.toml with auth_mode and a group_vars without it is fatal, never skipped", () => {
+      env = makeScratch({
+        configPi: "0.84.1",
+        groupVarsPi: "0.84.1",
+        configOv: AUTH,
+        groupVarsOv: { ...AUTH, auth: undefined },
+        upstreamCommit: OV.extension!,
+      });
+      const r = run(env, ["--dry-run"]);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("has no openviking auth_mode pin");
+    });
   });
 
   it("stands down (with a note) on a config.toml carrying no [openviking] block", () => {

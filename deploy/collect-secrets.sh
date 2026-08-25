@@ -29,10 +29,13 @@ status_of() { # file
 
 overview() {
   bold "quickreview secrets — $DIR"
-  for f in app_id app.pem webhook_secret tunnel_token openai_api_key; do
-    printf '  %-16s %s\n' "$f" "$(status_of "$f")"
+  for f in app_id app.pem webhook_secret tunnel_token openai_api_key openviking_root_key openviking_reviewer_key; do
+    printf '  %-24s %s\n' "$f" "$(status_of "$f")"
   done
   info "openai_api_key is OPTIONAL (ChatGPT-OAuth route chosen; pi /login instead)"
+  info "openviking_root_key / openviking_reviewer_key: memory. Missing root key => the"
+  info "server falls back to auth_mode=dev and per-user confinement is NOT enforced."
+  info "NEVER put the COMPANION key here — a review session could read it (rule 8)."
   echo
 }
 
@@ -76,6 +79,9 @@ v_app_id()   { grep -qE '^[0-9]{1,12}$' || { echo "    app_id must be a number (
 v_secret()   { local v; v="$(cat)"; [[ ${#v} -ge 8 ]] || { echo "    suspiciously short (<8 chars)" >&2; return 1; }; }
 v_token()    { local v; v="$(cat)"; [[ ${#v} -ge 60 && "$v" != *" "* ]] || { echo "    tunnel token should be one long unbroken string (connector page → the string after 'cloudflared service install')" >&2; return 1; }; }
 v_openai()   { grep -qE '^sk-' || { echo "    OpenAI keys start with sk-" >&2; return 1; }; }
+# OpenViking keys have no documented prefix — length and "one unbroken string"
+# is everything we can honestly assert about them.
+v_nonempty() { local v; v="$(cat)"; [[ ${#v} -ge 16 && "$v" != *" "* ]] || { echo "    expected one unbroken string of at least 16 characters" >&2; return 1; }; }
 
 prompt_pem() {
   want app.pem || return 0
@@ -121,6 +127,24 @@ fi
 if want openai_api_key; then
   bold "openai_api_key — OPTIONAL (skip under the ChatGPT-OAuth route)"
   prompt_hidden openai_api_key "the OpenAI API key" v_openai
+fi
+
+# the memory engine's identity. Two files, and only two: the SERVER's
+# own root key (ov.conf needs it to run in api_key mode; boot provisioning uses
+# it to create users) and the REVIEWER user key (the one client credential this
+# container may hold). The COMPANION key never belongs on this machine: review
+# sessions run in this container, and a companion key they could read would
+# defeat the confinement entirely.
+if want openviking_root_key; then
+  bold "openviking_root_key — the OpenViking SERVER root key (api_key mode + boot provisioning)"
+  info "never handed to a session, the companion, or the daemon; ov.conf holds it 0600"
+  prompt_hidden openviking_root_key "the OpenViking root key" v_nonempty
+fi
+
+if want openviking_reviewer_key; then
+  bold "openviking_reviewer_key — the reviewer USER key (daemon + every review session)"
+  info "the SAME value goes in ~/.config/quickreview-bot/openviking-keys.env on your PC"
+  prompt_hidden openviking_reviewer_key "the reviewer USER key" v_nonempty
 fi
 
 echo

@@ -218,10 +218,48 @@ export function splitShellSegments(cmd: string): string[] {
   return segs;
 }
 
+/**
+ * Files that carry the OpenViking SERVER's root key.
+ *
+ * `cat` and `grep` are legitimately on the read-only allowlist, so the program
+ * check alone would let a session read `~/.openviking/ov.conf` — which in
+ * api_key mode holds `root_api_key`, an account-wide superuser that can list
+ * every USER key in plaintext. That would hand a review session companion
+ * memory, the exact reach the two-user design exists to deny.
+ *
+ * This is the third layer, not the only one: the key is never on an argv or in
+ * a session's environment, and `writeOvcliConf` refuses to write it as a
+ * session credential. Matching is on the SPELLING anywhere in the command, so
+ * a redirect, a `--file=` form or an argument to any allowed reader is covered.
+ */
+const ROOT_CREDENTIAL_PATTERNS: Array<{ re: RegExp; what: string }> = [
+  { re: /(^|[^A-Za-z0-9_-])ov\.conf\b/, what: "the OpenViking server config (it holds root_api_key)" },
+  { re: /openviking_root_key/, what: "the OpenViking root key secret" },
+  { re: /root_api_key/, what: "the OpenViking root key" },
+  { re: /openviking-keys\.env/, what: "the companion's OpenViking key file" },
+];
+
+/** The root-credential check, exported so the reason is testable on its own. */
+export function checkSecretPaths(cmd: string): BashCheck {
+  for (const { re, what } of ROOT_CREDENTIAL_PATTERNS) {
+    if (re.test(cmd)) {
+      return block(
+        `exec policy: reading ${what} is never sanctioned — review sessions authenticate as the reviewer USER and nothing else`,
+      );
+    }
+  }
+  return { allowed: true };
+}
+
 /** Pure policy check over a full bash command string: split into segments
  * (quote-aware) and vet each segment's first program token. */
 export function checkBashCommand(cmd: string): BashCheck {
   const normalized = cmd.replace(/\d*>&\d*/g, " "); // 2>&1 etc. — not separators
+  // Checked over the WHOLE command, before the per-segment program check: the
+  // programs that would read a root credential (cat, grep, jq…) are all
+  // legitimately allowed, so the path is the only thing that distinguishes it.
+  const secret = checkSecretPaths(normalized);
+  if (!secret.allowed) return secret;
   for (const segment of splitShellSegments(normalized)) {
     const tokens = segment.trim().split(/\s+/).filter((t) => t.length > 0);
     if (tokens.length === 0) continue;
