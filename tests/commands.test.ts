@@ -329,17 +329,45 @@ describe("CommandWatcher", () => {
     expect(nope.pausePr).not.toHaveBeenCalled();
   });
 
-  it("tier author cannot restart sessions or file improvement PRs/issues", async () => {
+  it("tier author cannot restart sessions or file improvement PRs", async () => {
     const alice = origin({ tier: "author", authorized_prs: [1234] });
     for (const cmd of [
       { command: "restart-session", pr: 1234 },
-      { command: "file-issue", title: "t", body: "b" },
       { command: "file-improvement-pr", branch: "wip/x", title: "t", body: "b", slug: "x" },
     ]) {
       const r = await runSlack(makeDeps(), cmd, alice);
       expect(r.ok, JSON.stringify(cmd)).toBe(false);
       expect(r.reason).toContain("requires tier owner_legacy");
     }
+  });
+
+  // (corrected by the owner): a deferral's ticket is filed by the REVIEW
+  // SESSION itself, in the round that deferred — through the legacy commands/
+  // dir, where a daemon-side turn already runs at full autonomy (the
+  // "legacy commands/ keeps full autonomy" test below is that path). So the
+  // brief `author: "own"` widening is reverted: on Slack, `file-issue` stays
+  // owner-only, and naming your own PR buys nothing — `pr` is provenance,
+  // never a right.
+  it("tier author cannot file an issue — not even naming their own PR", async () => {
+    const alice = origin({ tier: "author", authorized_prs: [1234] });
+    for (const cmd of [
+      { command: "file-issue", pr: 1234, title: "t", body: "b" },
+      { command: "file-issue", title: "t", body: "b" },
+    ]) {
+      const deps = makeDeps();
+      const r = await runSlack(deps, cmd, alice);
+      expect(r.ok, JSON.stringify(cmd)).toBe(false);
+      expect(r.reason).toContain("requires tier owner_legacy");
+      expect(deps.fileIssue).not.toHaveBeenCalled();
+    }
+  });
+
+  it("the pr provenance field rides through to fileIssue when the owner files", async () => {
+    const m = origin({ tier: "owner_legacy", slack_user: "U0MAT", authorized_prs: [] });
+    const deps = makeDeps();
+    const r = await runSlack(deps, { command: "file-issue", pr: 1234, title: "t", body: "b" }, m);
+    expect(r.ok).toBe(true);
+    expect(deps.fileIssue).toHaveBeenCalledWith({ title: "t", body: "b", pr: 1234 });
   });
 
   it("tier owner_legacy runs every command on any PR", async () => {
@@ -370,6 +398,20 @@ describe("CommandWatcher", () => {
     await tierWatcher(deps, "local", () => null).sweep();
     expect(result("eod")).toMatchObject({ ok: true });
     expect(deps.fileIssue).toHaveBeenCalled();
+  });
+
+  it("a review session's deferral ticket files through legacy commands/ with pr provenance", async () => {
+    // This IS the deferral path: the session that deferred writes the command
+    // file itself, no Slack turn is live, and the tier table needs no widening
+    // because a local turn already has full autonomy.
+    const deps = makeDeps();
+    writeFileSync(
+      join(cmdDir(), "deferral-pr-5314-retry-jitter.json"),
+      JSON.stringify({ command: "file-issue", pr: 5314, title: "t", body: "b" }),
+    );
+    await tierWatcher(deps, "local", () => null).sweep();
+    expect(result("deferral-pr-5314-retry-jitter")).toMatchObject({ ok: true });
+    expect(deps.fileIssue).toHaveBeenCalledWith({ title: "t", body: "b", pr: 5314 });
   });
 
   it("legacy commands/ refuses mid-turn for a non-owner Slack origin (the belt)", async () => {

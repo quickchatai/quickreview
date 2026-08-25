@@ -309,4 +309,52 @@ describe("fileImprovementPr / fileIssue (dry-run)", () => {
     expect(out.reason).toContain("issue day cap");
     expect(spy).not.toHaveBeenCalled();
   });
+
+  // a deferral's ticket rides THIS path — no second writer, no new
+  // mutation kind, every existing cap intact. What is new is that a refusal is
+  // LOUD: a deferral whose ticket was silently refused is a deferral that
+  // became free again, which is the failure the whole mechanism prevents.
+  describe("deferral tickets", () => {
+    it("files through the same capped path and attributes the filing to the PR", async () => {
+      const out = await fileIssue(
+        { title: "Retry loop misses jitter", body: "evidence", pr: 5314 },
+        { cfg, adapter, gate, store },
+      );
+      expect(out).toMatchObject({ ok: true, pr: 5314, dry_run: true });
+      expect(intents()[0]?.kind).toBe("create_issue");
+      // The cap ledger counts it like any other issue — no exemption.
+      expect(store.filedSince("issue", "1970-01-01T00:00:00.000Z")).toBe(1);
+      expect(store.anomalies()).toHaveLength(0);
+    });
+
+    it("makes a cap refusal LOUD — an anomaly against the PR, and nothing filed", async () => {
+      for (let i = 0; i < 3; i++) store.recordFiledItem("issue", `i${i}`, null);
+      const spy = vi.spyOn(adapter, "createIssue");
+      const out = await fileIssue({ title: "brand new topic", body: "b", pr: 5314 }, { cfg, adapter, gate, store });
+      expect(out.ok).toBe(false);
+      expect(out.reason).toContain("issue day cap");
+      expect(spy).not.toHaveBeenCalled();
+      const anomalies = store.anomalies();
+      expect(anomalies).toHaveLength(1);
+      expect(anomalies[0]).toMatchObject({ kind: "deferral_ticket_refused", pr: 5314 });
+      expect(anomalies[0]?.detail).toContain("issue day cap");
+    });
+
+    it("is just as loud on a duplicate refusal", async () => {
+      openIssues = [{ number: 99, title: "Retry loop misses jitter in webhook receiver" }];
+      const out = await fileIssue(
+        { title: "Retry loop misses jitter in the webhook receiver", body: "b", pr: 5314 },
+        { cfg, adapter, gate, store },
+      );
+      expect(out.ok).toBe(false);
+      expect(store.anomalies().map((a) => a.kind)).toEqual(["deferral_ticket_refused"]);
+    });
+
+    it("stays silent for an unattributed issue — the EOD pipeline is unchanged", async () => {
+      for (let i = 0; i < 3; i++) store.recordFiledItem("issue", `i${i}`, null);
+      const out = await fileIssue({ title: "brand new topic", body: "b" }, { cfg, adapter, gate, store });
+      expect(out.ok).toBe(false);
+      expect(store.anomalies()).toHaveLength(0);
+    });
+  });
 });

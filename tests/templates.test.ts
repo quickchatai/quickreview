@@ -380,6 +380,21 @@ describe("shipped round templates", () => {
       expect(text).toContain("scripts/approve-pr.sh");
     });
 
+    // the ONE corpus rule that is about WHICH LENS RUNS rather than
+    // how a lens judges, so it lives here and not in PASS_ADDENDA. The daemon's
+    // plan is path-shaped (`migrationGate` and pass-data-safety selection both
+    // key on `migrations/`-ish paths), so a models change with no migration
+    // file reaches no lens at all unless the session adds one.
+    it(`${roundTemplateFile(rt)} tells the session to add pass-data-safety on a missing migration`, () => {
+      expect(text).toContain("**Add on a missing migration.**");
+      expect(text).toContain("no migration file at all");
+      expect(text).toContain("add\n`pass-data-safety`");
+      // The reason is stated, so the rule survives a reader who wants to drop it.
+      expect(text).toContain("the **absence** of a\nfile is the defect");
+      // It rides the existing add protocol — it is not a second dispatch path.
+      expect(text).toContain("one-line reason");
+    });
+
     // the halves of the shared pass contract that live in the round
     // templates: the Decide-step reachability gate and the Post-step delta rule.
     it(`${roundTemplateFile(rt)} states the reachability decision rule without moving the blocker bar`, () => {
@@ -418,6 +433,103 @@ describe("shipped round templates", () => {
       expect(text).toContain("filled from the real returns only, never copied from\nthe plan table");
       expect(text).toContain("A pass\nthat never returned gets NO entry");
       expect(text).toContain('"passes": []');
+    });
+
+    // the three shapes that carry no reasoning at all. The governing
+    // constraint is stated in the template itself and pinned here: this is
+    // never a length rule, and success is never counted in characters.
+    it(`${roundTemplateFile(rt)} requires a nit to ask for something`, () => {
+      expect(text).toContain("**A nit asks for something, or it is not posted.**");
+      expect(text).toContain("That is a remark, not a finding");
+      expect(text).toContain("the concrete change it asks for");
+      // The WHY is explicitly protected — no reasoning is traded for the ask.
+      expect(text).toContain("**This cuts nothing from the WHY**");
+      expect(text).toMatch(/at whatever length it takes/);
+    });
+
+    it(`${roundTemplateFile(rt)} forbids findings about the review's own earlier findings`, () => {
+      expect(text).toContain("**Never post a finding about your own earlier findings.**");
+      expect(text).toContain("The ledger already");
+      // Verification is a status, not a finding — and the one real exception
+      // (a fix that broke something else) stays a finding on its own merits.
+      expect(text).toContain("it is a status you record, not a\nfinding you raise");
+      expect(text).toContain("A prior finding whose fix broke something else is a **new\ndefect**");
+    });
+
+    it(`${roundTemplateFile(rt)} closes the tag grammar and says why it is not a style point`, () => {
+      expect(text).toContain("**The tag grammar is closed.**");
+      // All three marker prefixes are in the grammar sentence — `[deferred]`
+      // was missing while the template's own section mandated it.
+      expect(text).toContain("optionally prefixed by `[check this]`,\n`[ask your human]` or `[deferred]` where those apply");
+      expect(text).toContain("never invent a\ntag");
+      expect(text).toContain("[start here 3/5]");
+      expect(text).toContain("silently escapes its own machinery");
+      // The reason the grammar binds: the consumers key on it.
+      expect(text).toContain("thread-resolution refusals");
+    });
+
+    it(`${roundTemplateFile(rt)} ledger vocab matches the code's closed sets`, () => {
+      // posted_as includes `deferred` — SANCTIONED_TAGS accepts it, so the
+      // template's closed list must too.
+      expect(text).toContain("`blocker`, `question`, `nit`, `check this`,\n  `ask your human` or `deferred`");
+      // ask-human-unnamed-defect (include.ts addendum) is recordable: a
+      // downgrade word the addendum mints must be in the template's list.
+      expect(text).toContain("`ask-human-unnamed-defect`, `tag-outside-grammar`)");
+    });
+
+    it(`${roundTemplateFile(rt)} states the bars for the two addable-only lenses`, () => {
+      expect(text).toContain("**Two lenses exist only to be added — no plan ever selects them.**");
+      expect(text).toContain("NAME the suspected\nread-then-write shape");
+      expect(text).toContain("why the answer is not in the repository");
+    });
+
+    it(`${roundTemplateFile(rt)} refuses to measure any of this in characters`, () => {
+      expect(text).toContain("**None of this is a length rule, and success is never counted in characters.**");
+      expect(text).toContain("not one word of\njustification is cut");
+    });
+
+    // a deferral costs a ticket. The decision to defer belongs to the
+    // session (it happens after validation), so the rule lives here and not in
+    // PASS_ADDENDA. Corrected by the owner: the SESSION files the issue itself in
+    // the same round — no author-confirmation step exists.
+    it(`${roundTemplateFile(rt)} makes a deferral cost a ticket the session files itself`, () => {
+      expect(text).toContain("**Deferrals cost a ticket.**");
+      expect(text).toContain("**No ticket, no deferral.**");
+      // A judgment, not a keyword list.
+      expect(text).toContain("a judgment, not a keyword");
+      expect(text).toContain('a reason that is not "later"');
+      // The session files, in the same round — never "invite the author to confirm".
+      expect(text).toContain("you file the issue\n  YOURSELF, in this same round");
+      expect(text).toContain("there is no confirmation step");
+      expect(text).not.toContain("ask the author to confirm");
+      expect(text).not.toContain("On confirmation");
+      // The ONE route: a command file into the daemon's existing capped path.
+      expect(text).toContain('"command": "file-issue"');
+      expect(text).toContain("never a\n  `gh issue create`");
+      expect(text).toContain("commands/results/deferral-pr-{{n}}");
+      // The issue carries full provenance and links back to PR and thread.
+      expect(text).toContain("**The issue body carries full provenance**");
+      expect(text).toContain("Deferred from:");
+      expect(text).toContain("Raised by:");
+      expect(text).toContain("Deferred because:");
+      expect(text).toContain("lead a reader back to the PR\n  and to the finding's thread");
+      // A cap refusal is loud, and never routed around.
+      expect(text).toContain("**A refusal is said out loud, in the thread.**");
+      expect(text).toContain("Never retry it, never route around it");
+      // Nothing is forced and nothing blocks.
+      expect(text).toContain("**Nothing here blocks a merge or forces a fix.**");
+    });
+
+    it(`${roundTemplateFile(rt)} keeps the three markers apart and refuses to resolve a deferral`, () => {
+      // Each of the three is named with its own single meaning, in one place.
+      expect(text).toContain("The finding's comment leads with `[deferred]`");
+      expect(text).toContain("[deferred] [question] <title>");
+      expect(text).toContain("**not** `[check this]`");
+      expect(text).toContain("**not**\n  `[ask your human]`");
+      expect(text).toContain("never put two markers on one comment");
+      // The structural refusal that keeps an ignored deferral from being free.
+      expect(text).toContain("**You never resolve a `[deferred]` thread**");
+      expect(text).toContain("the daemon refuses it\n  structurally");
     });
 
     it(`${roundTemplateFile(rt)} posts only deltas — verified-and-fine material never goes inline`, () => {
@@ -595,6 +707,17 @@ describe("shipped recheck template", () => {
     for (const name of placeholdersIn(text)) expect(supplied).toContain(name);
   });
 
+  // the missing-migration add trigger is deliberately NOT here. A
+  // recheck plans no passes and launches no subagent ("This is not a review
+  // round"), so an instruction to add a lens would be an instruction it cannot
+  // follow. A models-vs-migration mismatch introduced by a delta comes back
+  // through the next round, not through this mode.
+  it("carries no add-a-lens instruction — this mode dispatches nothing", () => {
+    expect(text).toContain("no subagent is launched");
+    expect(text).not.toContain("**Add on a missing migration.**");
+    expect(text).not.toContain("Add protocol");
+  });
+
   it("states the one-way transition and forbids a re-approve or a park", () => {
     expect(text).toContain("Uphold by default");
     expect(text).toMatch(/only move available to you is .* REQUEST_CHANGES/);
@@ -620,6 +743,24 @@ describe("shipped recheck template", () => {
     expect(text).toContain("running non-blocking nits");
     expect(text).toContain("never a new inline thread");
     expect(text).toContain("this thread does not need another round to\n  close");
+  });
+
+  // a deferral costs a ticket on the recheck path too, and the
+  // session files it itself, in the same recheck. No confirmation step.
+  it("makes a recheck deferral cost a self-filed ticket through the capped path", () => {
+    expect(text).toContain("**A `[deferred]` finding costs a ticket here too");
+    expect(text).toContain("you file it\nyourself, in this same recheck");
+    expect(text).toContain("There is no confirmation step");
+    expect(text).toContain('"command": "file-issue"');
+    expect(text).toContain("never a\n`gh issue create`");
+    expect(text).toContain("commands/results/deferral-pr-{{n}}");
+    // Loud refusal, never retried; the thread stays human-resolve-only.
+    expect(text).toContain("Never retry, never route around it");
+    expect(text).toContain("You never resolve a `[deferred]`\nthread");
+    // The two senses of "deferred" are disambiguated outside the ratified
+    // fences: the ledger mark is free and private, only the TAG files a ticket.
+    expect(text).toContain('Two spellings of "deferred" appear in this template');
+    expect(text).toContain("only the tag files a ticket");
   });
 
   // the sibling-review ban holds on the recheck path too; the

@@ -164,12 +164,29 @@ export function validateCommand(raw: unknown): ValidationResult {
       };
     }
     case "file-issue": {
-      const err = fieldError(obj, ["title", "body"]);
+      // `pr` is OPTIONAL provenance — the PR a deferral's ticket was
+      // filed from. The review session files the ticket ITSELF, in the round
+      // that deferred; `pr` attributes the filing — and a cap refusal, which
+      // then leaves a `deferral_ticket_refused` anomaly — to that PR, so the
+      // refusal is visible where the deferral happened. It grants no rights
+      // and lifts no cap. Absent, the command behaves exactly as it always has.
+      const err = fieldError(obj, ["title", "body", "pr"]);
       if (err) return { ok: false, reason: err };
       for (const f of ["title", "body"]) {
         if (!isNonEmptyString(obj[f])) return { ok: false, reason: `'${f}' must be a non-empty string` };
       }
-      return { ok: true, command: { command: "file-issue", title: obj["title"] as string, body: obj["body"] as string } };
+      if (obj["pr"] !== undefined && !isPrNumber(obj["pr"])) {
+        return { ok: false, reason: "'pr' must be a positive integer when present" };
+      }
+      return {
+        ok: true,
+        command: {
+          command: "file-issue",
+          title: obj["title"] as string,
+          body: obj["body"] as string,
+          ...(obj["pr"] === undefined ? {} : { pr: obj["pr"] as number }),
+        },
+      };
     }
     case "slack_reply": {
       const err = fieldError(obj, ["thread", "text"]);
@@ -208,6 +225,15 @@ const TIER_TABLE: Record<CommandName, { anyone: boolean; author: "own" | boolean
   "restart-session": { anyone: false, author: false, owner_legacy: true },
   // improvements.ts caps still apply ON TOP — a tier never lifts a cap.
   "file-improvement-pr": { anyone: false, author: false, owner_legacy: true },
+  // (corrected by the owner): the review SESSION files a deferral's
+  // ticket itself, in the round that deferred — there is no author
+  // confirmation step. The session's command files land in the legacy
+  // `commands/` dir with no Slack origin, which already runs at full tier-M
+  // autonomy, so the deferral path needs no widening here at all. The brief
+  // `author: "own"` widening (built for the retired confirm-then-file design)
+  // is reverted: on Slack, `file-issue` is the owner's alone again. The day cap,
+  // the dedup and the gate all still apply downstream — a tier never lifts a
+  // cap.
   "file-issue": { anyone: false, author: false, owner_legacy: true },
   // Not user-tiered: gated by channel binding, thread, caps, cooldown, length.
   slack_reply: { anyone: true, author: true, owner_legacy: true },
@@ -292,7 +318,13 @@ export async function executeCommand(
         }),
       );
     case "file-issue":
-      return normalize(await deps.fileIssue({ title: command.title, body: command.body }));
+      return normalize(
+        await deps.fileIssue({
+          title: command.title,
+          body: command.body,
+          ...(command.pr === undefined ? {} : { pr: command.pr }),
+        }),
+      );
     case "slack_reply": {
       if (!deps.slackReply) return { ok: false, reason: "slack_reply is not wired (Slack is disabled)" };
       return normalize(await deps.slackReply({ thread: command.thread, text: command.text, file: ctx.file }));

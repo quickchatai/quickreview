@@ -151,3 +151,173 @@ export function deriveVerdict(v: VerdictInput): VerdictType {
  */
 export const CHECK_THIS_TAG = "[check this]";
 export const CHECK_THIS_RE = /^\s*(?:[*_`~>]|\[?!?\[)*\s*\[check this\]/i;
+
+// ---- the "[ask your human]" grammar -----------------------------
+//
+// A SECOND, deliberately distinct marker — same shape, opposite addressee.
+//
+//   [check this]      → "a HUMAN should verify this before merge".
+//                       Addressed to whoever reads the PR; the thread is
+//                       structurally human-resolve-only (resolveOwnReviewThread
+//                       refuses on it) because the repo's merge rule is what
+//                       forces a person's eyes onto it.
+//   [ask your human]  → "IMPLEMENTER: do not answer this yourself — put it to
+//                       the person you are working for and bring the answer
+//                       back here". Addressed to the PR author's AI agent.
+//
+// The two must never be conflated: overloading `[check this]` with a second
+// meaning was rejected outright on (a third meaning had already been
+// proposed for deferrals, and a marker that means three things routes nothing).
+// Nothing here changes what `[check this]` means or how it is treated.
+//
+// RESOLUTION: an `[ask your human]` thread is AUTHOR-RESOLVABLE once answered —
+// no new refusal in resolveOwnReviewThread, by decision (§5, which
+// rejected borrowing `[check this]`'s human-only machinery: it "forces a person
+// into every thread", and the thread's whole point is that the ANSWER, not the
+// resolution, is what a human owes). The ordinary path already gives the right
+// shape: the bot resolves one of its own threads only through ping-pong, i.e.
+// only after the author has replied and the session judged the reply settles
+// it. Rule 2 is untouched either way — resolving one's OWN finding thread after
+// an answer is not dismissing a review, and no review-dismissal path exists.
+export const ASK_HUMAN_TAG = "[ask your human]";
+export const ASK_HUMAN_RE = /^\s*(?:[*_`~>]|\[?!?\[)*\s*\[ask your human\]/i;
+
+/** The lens that mints the tag (dispatch.ts ALL_PASSES; agents/pass-ask-human.md). */
+export const ASK_HUMAN_LENS = "pass-ask-human";
+
+/**
+ * Is this finding an ask-your-human question? Keyed on the lens tag (the
+ * merge step concatenates lens tags, so a substring test is the honest one)
+ * or on an explicit `kind: ask-human`.
+ */
+export function isAskHumanFinding(kind?: string | null, lens?: string | null): boolean {
+  if (kind?.trim().toLowerCase() === "ask-human") return true;
+  return (lens ?? "").toLowerCase().includes(ASK_HUMAN_LENS);
+}
+
+// ---- the "[deferred]" grammar -----------------------------------
+//
+// The THIRD marker, and the last one: "next iteration" was never the author
+// proving the finding wrong — it was a cost decision (right finding, real fix,
+// not worth an hour then), and that cost has collapsed now that the implementer
+// is an AI. So a deferral stops being free: the review session files a ticket
+// itself, in the round that deferred, through the daemon's existing capped
+// issue path — no confirmation step. **No ticket, no deferral.**
+//
+// WHY A THIRD TAG RATHER THAN REUSING ONE OF THE TWO. the owner's decision
+// (amendment): a deferral is neither of the other two things, and a
+// marker that means three things routes nothing — the same argument that got
+// `[ask your human]` its own tag on instead of a second meaning for
+// `[check this]`. The three, side by side:
+//
+//   [check this]      → a HUMAN should VERIFY this before merge.
+//                       Addressee: whoever reads the PR.
+//                       Resolution: human only (structural refusal below).
+//   [ask your human]  → the IMPLEMENTER must not answer this itself; put it to
+//                       its person and bring the answer back.
+//                       Addressee: the PR author's AI agent.
+//                       Resolution: author-resolvable once answered.
+//   [deferred]        → this finding is REAL and this PR is not where it gets
+//                       fixed; the ticket is filed, here is its number.
+//                       Addressee: nobody in particular — it states the
+//                       finding's own STATE, which is why it is the one tag
+//                       with no verb and no addressee in it.
+//                       Resolution: human only (structural refusal below).
+//
+// Confusability was the design constraint, so the spelling avoids every word
+// the other two use: no "this" (which `[check this]` owns and which would make
+// a `[track this]`/`[fix this]` read as its sibling), no "human", no
+// imperative. One word, a past participle, naming a status.
+//
+// RESOLUTION: an ignored deferral must not be quietly closable by the bot, or
+// the whole mechanism is free again — so this marker takes the SAME structural
+// refusal as `[check this]` (github.ts resolveOwnReviewThread), and the reviewed
+// repo's merge rule then forces a person to look. Rule 2 is untouched: refusing
+// to resolve is the safe direction, and no review-dismissal path exists here or
+// anywhere else. Nothing about `[check this]` or `[ask your human]` changes.
+//
+// NOTHING HERE BLOCKS. A deferral never holds the merge gate and never forces a
+// fix; it only stops a deferral being free. The falsifier the owner named is a
+// backlog nobody works.
+export const DEFERRED_TAG = "[deferred]";
+export const DEFERRED_RE = /^\s*(?:[*_`~>]|\[?!?\[)*\s*\[deferred\]/i;
+
+/** Is this finding a conscious deferral? Keyed on an explicit `kind`, the one
+ * signal a session sets deliberately — there is no lens that mints deferrals
+ * (the DECISION to defer belongs to the PR's session, after validation). */
+export function isDeferredFinding(kind?: string | null): boolean {
+  const k = kind?.trim().toLowerCase();
+  return k === "deferred" || k === "deferral";
+}
+
+// ---- the closed tag grammar -------------------------------------
+//
+// 14.4% of the corpus's findings wore a tag this system does not define —
+// `[start here 3/5]`, `[verified]`, and nine spellings of "blocker, now fixed".
+// That is not a style problem. The tag is what the posting guards, the thread
+// resolution refusals and every downstream consumer key on, so an invented tag
+// is A FINDING THAT SILENTLY ESCAPES ITS OWN MACHINERY: a mis-tagged
+// check-this, for instance, would not be protected by resolveOwnReviewThread.
+//
+// So the grammar is CLOSED and defined exactly once, here. Two kinds of tag:
+//
+//   * POSTING tags — the severity map's output, one per finding, always
+//     present: `[blocker]`, `[question]`, `[nit]`.
+//   * MARKER tags — a routing prefix that may precede the posting tag. Each has
+//     one meaning and one resolution rule; see their definitions above.
+//
+// Nothing here weakens or strengthens a finding: it constrains the SPELLING of
+// the tag, never the severity behind it. The blocker bar does not move.
+
+/** The three posting tags, bare (no brackets) — `postTag`'s whole range. */
+export const POSTING_TAG_WORDS: readonly PostTag[] = ["blocker", "question", "nit"];
+
+/** Every sanctioned tag, bracketed, in one list: the three posting tags plus
+ * the marker prefixes. This is THE grammar — a tag not on it is not one. */
+export const SANCTIONED_TAGS: readonly string[] = [
+  ...POSTING_TAG_WORDS.map((t) => `[${t}]`),
+  CHECK_THIS_TAG,
+  ASK_HUMAN_TAG,
+  DEFERRED_TAG,
+];
+
+/** A leading `[…]` tag on a line, however it is spelled. Bounded length so a
+ * markdown link or an array literal at the start of a title is not mistaken
+ * for a tag. */
+const LEADING_TAG_RE = /^\s*\[([^\]\n]{1,40})\]\s*/;
+
+/** Is `raw` — with or without brackets, in any case, with internal whitespace
+ * collapsed — one of the sanctioned tags? */
+export function isSanctionedTag(raw: string | null | undefined): boolean {
+  if (!raw) return false;
+  const inner = raw.trim().replace(/^\[|\]$/g, "").trim().replace(/\s+/g, " ").toLowerCase();
+  return SANCTIONED_TAGS.includes(`[${inner}]`);
+}
+
+/**
+ * Strip a leading tag from a finding TITLE when that tag is outside the
+ * grammar.
+ *
+ * A title is not where a tag belongs — `inlineBody` mints the real one — so a
+ * bracketed prefix on a title is either a duplicate of the sanctioned tag or an
+ * invented one. Both are removed; the invented one is REPORTED, so the escape
+ * shows up in telemetry instead of going out on the PR. A sanctioned marker
+ * (`[check this]`, `[ask your human]`) is left alone: those are minted from the
+ * finding's own fields and carry meaning.
+ *
+ * Only the tag is stripped. Not one word of the finding's reasoning is touched
+ * — this cuts a wrong label, never a justification.
+ */
+export function stripUngrammaticalTag(title: string): { title: string; stripped: string | null } {
+  const m = LEADING_TAG_RE.exec(title);
+  if (!m) return { title, stripped: null };
+  const inner = (m[1] ?? "").trim();
+  if (isSanctionedTag(inner)) {
+    // A sanctioned MARKER stays (it is a routing prefix); a duplicated POSTING
+    // tag goes, because inlineBody is about to mint the authoritative one.
+    const bare = inner.toLowerCase().replace(/\s+/g, " ");
+    if (!POSTING_TAG_WORDS.includes(bare as PostTag)) return { title, stripped: null };
+    return { title: title.slice(m[0].length), stripped: null };
+  }
+  return { title: title.slice(m[0].length), stripped: `[${inner}]` };
+}

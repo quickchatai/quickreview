@@ -343,6 +343,92 @@ describe("buildPassPlan", () => {
     expect(addable_lenses).not.toContain("pass-validate");
   });
 
+  // the concurrency lens is ADDABLE-ONLY: a read-modify-write race
+  // has no filename (the 29 corpus findings span eight unrelated modules), so
+  // no path predicate may plan it. It reaches a round only through the add
+  // protocol, when the session names the read-then-write it suspects.
+  describe("pass-concurrency", () => {
+    it("is a known pass, so it is always in the addable set", () => {
+      expect(ALL_PASSES).toContain("pass-concurrency");
+      const { addable_lenses } = buildPassPlan(planCfg, [file("README.md", 3, 1)]);
+      expect(addable_lenses).toContain("pass-concurrency");
+    });
+
+    it("is NEVER planned by path selection — not on any surface", () => {
+      const surfaces: PrFileEntry[][] = [
+        [file("app/messages_update.py", 200, 10)],
+        [file("app/chat.py", 40, 3)],
+        [file("app/models.py", 200, 0)],
+        [file("app/shopping_handler.py", 120, 5)],
+        [file("app/scraper.py", 80, 2)],
+        [file("app/router.py", 200, 0)],
+        [file("app/article_update.py", 60, 1)],
+        [file("app/views.py", 300, 20)],
+        [file("app/migrations/0042_add_col.py", 5, 0)],
+        [file("app/tasks/retrain.py", 200, 0)],
+        [file("src/components/Thing.tsx", 90, 4)],
+        [file("app/serializers/user.py", 200, 0), file("project/settings_prod.py", 12, 1)],
+        [file("README.md", 3, 1)],
+      ];
+      for (const files of surfaces) {
+        const { pass_plan, addable_lenses } = buildPassPlan(planCfg, files, {
+          body:
+            "This PR introduces a token-bucket rate limiter for the public API. " +
+            "Requests over the limit receive a 429 with a Retry-After header, and " +
+            "the bucket refills once per second per client key.",
+        });
+        const label = files.map((f) => f.filename).join(",");
+        expect(pass_plan.map((p) => p.lens), label).not.toContain("pass-concurrency");
+        expect(addable_lenses, label).toContain("pass-concurrency");
+      }
+    });
+
+    it("is not a risk pass — it needs no config entry and stays tier-laddered", () => {
+      expect(planCfg.models.risk_passes).not.toContain("pass-concurrency");
+      expect(baseCfg.models.risk_passes).not.toContain("pass-concurrency");
+    });
+  });
+
+  // the ask-your-human lens is ADDABLE-ONLY too: no path predicate
+  // finds "code whose intent was never written down", and whether the answer
+  // is in the repo at all is only visible once the diff has been read.
+  describe("pass-ask-human", () => {
+    const body =
+      "This PR introduces a token-bucket rate limiter for the public API. " +
+      "Requests over the limit receive a 429 with a Retry-After header, and " +
+      "the bucket refills once per second per client key.";
+
+    it("is a known pass, so it is always in the addable set", () => {
+      expect(ALL_PASSES).toContain("pass-ask-human");
+      const { addable_lenses } = buildPassPlan(planCfg, [file("README.md", 3, 1)]);
+      expect(addable_lenses).toContain("pass-ask-human");
+    });
+
+    it("is NEVER planned by path selection — not on any surface, thin body or thick", () => {
+      const surfaces: PrFileEntry[][] = [
+        [file("app/service.py", 200, 0)],
+        [file("app/views.py", 300, 20)],
+        [file("app/migrations/0042_add_col.py", 5, 0)],
+        [file("src/components/Thing.tsx", 90, 4)],
+        [file("project/settings_prod.py", 12, 1)],
+        [file("README.md", 3, 1)],
+      ];
+      for (const files of surfaces) {
+        for (const intent of [{ body }, { body: "" }, undefined]) {
+          const { pass_plan, addable_lenses } = buildPassPlan(planCfg, files, intent);
+          const label = `${files.map((f) => f.filename).join(",")} / body=${intent?.body?.length ?? "none"}`;
+          expect(pass_plan.map((p) => p.lens), label).not.toContain("pass-ask-human");
+          expect(addable_lenses, label).toContain("pass-ask-human");
+        }
+      }
+    });
+
+    it("is not a risk pass — it needs no config entry and stays tier-laddered", () => {
+      expect(planCfg.models.risk_passes).not.toContain("pass-ask-human");
+      expect(baseCfg.models.risk_passes).not.toContain("pass-ask-human");
+    });
+  });
+
   // pass-intent: selected on the PR body's substance, priced at the
   // cheapest tier whatever the round's default, raisable like any other lens.
   describe("pass-intent", () => {

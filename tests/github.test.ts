@@ -272,6 +272,53 @@ describe("resolveOwnReviewThread ownership gate", () => {
     const ordinary = build(() => threadPayload(cfg.github.bot_login, false, "[question] please [check this] value"));
     expect((await ordinary.adapter.resolveOwnReviewThread(3, 555)).skipped).toBeNull();
   });
+
+  // (decided §5): the sibling tag is AUTHOR-RESOLVABLE. What a
+  // human owes an [ask your human] thread is the ANSWER, not the resolution —
+  // borrowing [check this]'s human-only machinery was rejected because it
+  // forces a person into every thread. The only caller is ping-pong, so this
+  // path is reached only after the author replied.
+  it("DOES resolve an [ask your human] thread — that tag is author-resolvable, not human-only", async () => {
+    for (const body of [
+      "[ask your human] why does this file exist?",
+      "[ask your human] [blocker] if the deploy assumes X, writes are dropped",
+    ]) {
+      const own = build(() => threadPayload(cfg.github.bot_login, false, body));
+      expect((await own.adapter.resolveOwnReviewThread(3, 555)).skipped, body).toBeNull();
+    }
+  });
+
+  it("still refuses when BOTH markers somehow appear — [check this] wins, human-only", async () => {
+    const own = build(() => threadPayload(cfg.github.bot_login, false, "[check this] [ask your human] mixed"));
+    expect((await own.adapter.resolveOwnReviewThread(3, 555)).skipped).toBe("check-this-human-only");
+  });
+
+  // an IGNORED deferral must not be tidied away by the bot, or a
+  // deferral is free again — the exact thing the mechanism exists to stop. Same
+  // structural refusal as [check this], its own distinct reason string.
+  it("never resolves a [deferred] thread — human-only, with its own reason", async () => {
+    for (const body of [
+      "[deferred] too big for this PR — ticket drafted below",
+      "  [Deferred] casing and leading space",
+      "**[deferred]** [question] bolded tag",
+    ]) {
+      const own = build(() => threadPayload(cfg.github.bot_login, false, body));
+      expect(await own.adapter.resolveOwnReviewThread(3, 555)).toEqual({ skipped: "deferred-human-only" });
+      expect(dryrunRecords()).toHaveLength(0);
+    }
+    // A mention deeper in the body is not the tag.
+    const ordinary = build(() => threadPayload(cfg.github.bot_login, false, "[nit] this was [deferred] once"));
+    expect((await ordinary.adapter.resolveOwnReviewThread(3, 555)).skipped).toBeNull();
+  });
+
+  it("keeps the three markers' refusals distinct — none is a spelling of another", async () => {
+    const check = build(() => threadPayload(cfg.github.bot_login, false, "[check this] verify the boundary"));
+    const deferred = build(() => threadPayload(cfg.github.bot_login, false, "[deferred] not this PR's code"));
+    const ask = build(() => threadPayload(cfg.github.bot_login, false, "[ask your human] why does this exist?"));
+    expect((await check.adapter.resolveOwnReviewThread(3, 555)).skipped).toBe("check-this-human-only");
+    expect((await deferred.adapter.resolveOwnReviewThread(3, 555)).skipped).toBe("deferred-human-only");
+    expect((await ask.adapter.resolveOwnReviewThread(3, 555)).skipped).toBeNull();
+  });
 });
 
 describe("nominating a human reviewer is structurally impossible", () => {

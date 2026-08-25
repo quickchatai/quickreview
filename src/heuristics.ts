@@ -245,6 +245,13 @@ export function selectLenses(files: PrFile[], intent?: { body?: string | null })
   )
     lenses.add(BACKCOMPAT_PASS);
 
+  // NOT selected here, deliberately: `pass-concurrency` and
+  // `pass-ask-human`. Both are ADDABLE-ONLY — a read-modify-write
+  // race has no filename, and neither does a question whose answer was never
+  // written down. Each reaches a round through the add protocol only, once the
+  // session has read the diff and can name what it suspects. Adding a path
+  // predicate for either is a decision, not a tidy-up.
+
   // Intent: keyed on the BODY, not the file shape — the artifact it
   // judges against is the author's own description, so a body below the
   // substance bar means the pass's only honest output would be NONE. Skip it.

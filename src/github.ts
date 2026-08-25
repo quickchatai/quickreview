@@ -4,7 +4,7 @@
 // review-dismissal function in this adapter, by design — never add one.
 import type { CheckSummary } from "./cigate.js";
 import type { Config } from "./config.js";
-import { CHECK_THIS_RE } from "./severity.js";
+import { CHECK_THIS_RE, DEFERRED_RE } from "./severity.js";
 import { MutationGate, type MutationIntent, type GateResult } from "./gate.js";
 import { TokenMinter, type FetchFn } from "./githubAuth.js";
 
@@ -59,6 +59,9 @@ export interface PrFileEntry {
 export interface ReviewFull {
   id: number;
   user: string;
+  /** GitHub's account type ("User" | "Bot") — the human/bot discriminator the
+   * capture sweep filters on. Optional: older callers never read it. */
+  user_type?: string;
   state: string;
   body: string;
   commit_id: string;
@@ -68,11 +71,25 @@ export interface ReviewFull {
 export interface ReviewCommentFull {
   id: number;
   user: string;
+  /** GitHub's account type — see ReviewFull.user_type. */
+  user_type?: string;
   body: string;
   path: string;
   line: number | null;
   pull_request_review_id: number | null;
   in_reply_to_id: number | null;
+  /** When GitHub authored it. Optional for the same reason. */
+  created_at?: string | null;
+}
+
+/** One top-level PR conversation comment (the issues API). Read-only, added
+ * for the capture sweep. */
+export interface IssueCommentFull {
+  id: number;
+  user: string;
+  user_type: string;
+  body: string;
+  created_at: string | null;
 }
 
 /** One past review by the bot identity, as the importer sees it. */
@@ -451,10 +468,24 @@ export class GitHubAdapter {
     return res.map((r) => ({
       id: r.id,
       user: r.user?.login ?? "",
+      user_type: r.user?.type ?? "User",
       state: r.state,
       body: r.body ?? "",
       commit_id: r.commit_id,
       submitted_at: r.submitted_at ?? null,
+    }));
+  }
+
+  /** Top-level PR conversation comments — read-only, the sweep's
+   * third source (the issues API is where GitHub keeps them). */
+  async listIssueComments(n: number): Promise<IssueCommentFull[]> {
+    const res = await this.request<any[]>("GET", `/repos/${this.owner}/${this.repo}/issues/${n}/comments?per_page=100`);
+    return res.map((c) => ({
+      id: c.id,
+      user: c.user?.login ?? "",
+      user_type: c.user?.type ?? "User",
+      body: c.body ?? "",
+      created_at: c.created_at ?? null,
     }));
   }
 
@@ -464,11 +495,13 @@ export class GitHubAdapter {
     return res.map((c) => ({
       id: c.id,
       user: c.user?.login ?? "",
+      user_type: c.user?.type ?? "User",
       body: c.body ?? "",
       path: c.path ?? "",
       line: c.line ?? c.original_line ?? null,
       pull_request_review_id: c.pull_request_review_id ?? null,
       in_reply_to_id: c.in_reply_to_id ?? null,
+      created_at: c.created_at ?? null,
     }));
   }
 
@@ -608,7 +641,7 @@ export class GitHubAdapter {
   async resolveOwnReviewThread(
     n: number,
     rootCommentId: number,
-  ): Promise<{ skipped: "already-resolved" | "check-this-human-only" | null; result?: GateResult }> {
+  ): Promise<{ skipped: "already-resolved" | "check-this-human-only" | "deferred-human-only" | null; result?: GateResult }> {
     const query = `query ($owner: String!, $repo: String!, $number: Int!, $after: String) {
       repository(owner: $owner, name: $repo) {
         pullRequest(number: $number) {
@@ -650,6 +683,26 @@ export class GitHubAdapter {
     // force a human's eyes before merge (repo rule: every conversation must be
     // resolved). The reviewer NEVER resolves one — author or another human only.
     if (CHECK_THIS_RE.test(found.body)) return { skipped: "check-this-human-only" };
+    // (the owner, deferral economics): a "[deferred]" thread says this
+    // finding is real and this PR is not where it gets fixed. If the author
+    // ignores the drafted ticket, the reviewer must not be able to tidy the
+    // thread away — that would make a deferral free again, which is the exact
+    // thing this mechanism exists to stop. So it takes the same structural
+    // refusal as "[check this]", and the repo's merge rule (every conversation
+    // resolved) puts a person in front of it. Distinct marker, distinct reason
+    // string: the two are never conflated, here or anywhere.
+    if (DEFERRED_RE.test(found.body)) return { skipped: "deferred-human-only" };
+    // an "[ask your human]" thread is deliberately NOT refused here.
+    // It is the sibling marker, not a second spelling of the one above: it
+    // addresses the PR author's AI implementer ("do not answer this yourself —
+    // ask a person and bring the answer back"), so what a human owes the thread
+    // is the ANSWER, not the resolution. the owner rejected borrowing the
+    // human-only machinery for it (§5: it "forces a person into every
+    // thread"), and the ordinary path already lands in the right place — the
+    // only caller is ping-pong, so the bot resolves such a thread only after
+    // the author replied and the session judged the reply settles it. Rule 2 is
+    // unaffected: this resolves the bot's OWN finding thread and never
+    // dismisses or edits any review, anyone's.
     if (found.isResolved) return { skipped: "already-resolved" };
 
     const mutation = `mutation ($threadId: ID!) {

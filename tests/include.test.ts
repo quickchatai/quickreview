@@ -348,10 +348,11 @@ describe("the real seeded content", () => {
     const out = mkdtempSync(join(tmpdir(), "qcr-agents-build-"));
     try {
       const built = buildAgents(join(sandbox, "agents"), out, { root: sandbox });
-      // 9 raisable passes × 3 tiers (pass-intent; pass-placement /
-      // pass-simplicity / pass-backcompat) + 3 risk passes × 1 +
-      // validate × 1 (its shipped floor is the top tier) = 31.
-      expect(built).toHaveLength(31);
+      // 11 raisable passes × 3 tiers (pass-intent; pass-placement /
+      // pass-simplicity / pass-backcompat; pass-concurrency
+      //; pass-ask-human) + 3 risk passes × 1 + validate × 1
+      // (its shipped floor is the top tier) = 37.
+      expect(built).toHaveLength(37);
       for (const b of built) {
         const text = readFileSync(b.output, "utf8");
         expect(text).not.toContain("{{include:");
@@ -927,6 +928,210 @@ describe("pass-intent", () => {
   });
 });
 
+// the ask-your-human lens: questions whose answer is NOT in the
+// repo, addressed to the PR author's AI implementer. Full severity WITH a
+// condition (a blocker must name the failure under the bad answer), its own
+// tag, and a trigger contract scoped to this lens alone.
+describe("pass-ask-human", () => {
+  const sandbox = join(import.meta.dirname, "..");
+  let out: string;
+  let bodies: Map<string, string>;
+
+  beforeEach(() => {
+    out = mkdtempSync(join(tmpdir(), "qcr-askhuman-"));
+    bodies = new Map();
+    for (const b of buildAgents(join(sandbox, "agents"), out, { root: sandbox })) {
+      bodies.set(b.name, readFileSync(b.output, "utf8"));
+    }
+  });
+
+  afterEach(() => rmSync(out, { recursive: true, force: true }));
+
+  it("builds like any other raisable lens, at all three tiers", () => {
+    for (const tier of ["terra-med", "sol-med", "sol-high"]) {
+      expect(bodies.has(`pass-ask-human--${tier}`), tier).toBe(true);
+    }
+    const text = bodies.get("pass-ask-human--sol-med")!;
+    expect(text.startsWith("---\nname: pass-ask-human--sol-med\n")).toBe(true);
+    expect(text).toContain("You are a **blank-slate review pass**");
+    expect(text).toContain("## Execution policy (sandbox rule, enforced)");
+  });
+
+  it("is a leaf: no agent-spawning tools in any built variant (rule 9)", () => {
+    for (const tier of ["terra-med", "sol-med", "sol-high"]) {
+      const text = bodies.get(`pass-ask-human--${tier}`)!;
+      const tools = /^tools:[ \t]*(.*)$/m.exec(text)?.[1] ?? "";
+      for (const t of tools.split(",").map((s) => s.trim().toLowerCase())) {
+        expect(["subagent", "subagents", "task", "agent", "agents", "dispatch"]).not.toContain(t);
+      }
+      expect(text).toContain("## You are a leaf (sandbox rule, enforced)");
+    }
+  });
+
+  it("fires only where the answer is outside the repo and the implementer's own context", () => {
+    const text = bodies.get("pass-ask-human--sol-med")!;
+    expect(text).toContain("## The trigger: the answer is NOT in the repo");
+    expect(text).toContain("**Ask only what the implementer cannot answer by reading.**");
+    expect(text).toContain("outside the implementer's own prompt");
+    expect(text).toContain("Above the implementation");
+    expect(text).toContain("Why the change was necessary");
+    expect(text).toContain("could a careful reader answer\nthis from the repository at the pinned sha?");
+  });
+
+  it("carries its own tag and never borrows [check this]", () => {
+    const text = bodies.get("pass-ask-human--sol-med")!;
+    expect(text).toContain("[ask your human] <the question, in one sentence>");
+    expect(text).toContain("**It is NOT the `[check this]` tag and never substitutes for one.**");
+    // [check this] keeps its single meaning: human-verify, human-resolve-only.
+    expect(text).toContain("human-resolve-only");
+  });
+
+  it("blocks only on a NAMED failure — never on uncertainty", () => {
+    const text = bodies.get("pass-ask-human--sol-med")!;
+    expect(text).toContain("a finding that would post\nas a `[blocker]` must state the concrete failure");
+    expect(text).toContain("I do not know what you meant here, so I am blocking");
+    expect(text).toContain("The blocker bar has not moved");
+    // Not a capped lens: the P2 design cap must not reach it.
+    expect(text).not.toContain("Severity is capped at P2");
+  });
+
+  it("the trigger addendum binds this lens ALONE and does not leak", () => {
+    expect(addendaForPass("pass-ask-human").map((a) => a.id)).toContain("ask-human-trigger");
+    const entry = PASS_ADDENDA.find((a) => a.id === "ask-human-trigger")!;
+    expect(entry.scope).toEqual(["pass-ask-human"]);
+    const marker = "## You were added on demand — and the answer must be OUTSIDE the repo (sandbox rule)";
+    for (const [name, text] of bodies) {
+      expect(text.includes(marker), name).toBe(name.startsWith("pass-ask-human--"));
+    }
+    for (const pass of ["pass-baseline", "pass-intent", "pass-concurrency", VALIDATE_PASS]) {
+      expect(addendaForPass(pass).map((a) => a.id), pass).not.toContain("ask-human-trigger");
+    }
+    // …and the concurrency lens's own trigger does not leak the other way.
+    expect(addendaForPass("pass-ask-human").map((a) => a.id)).not.toContain("concurrency-trigger");
+  });
+
+  it("the addendum demands the tag and returns NONE on an unanchored add", () => {
+    const text = bodies.get("pass-ask-human--sol-med")!;
+    expect(text).toContain("**The trigger is the location of the answer, never the shape of the question.**");
+    expect(text).toContain("**Every finding opens with the exact tag `[ask your human]`**");
+    expect(text).toContain("say so in one line and return `NONE`");
+    expect(text).toContain("This rule binds THIS lens only");
+  });
+
+  it("the validator enforces the named-defect bar — a cap, not a kill", () => {
+    const validate = [...bodies].find(([name]) => name.startsWith(`${VALIDATE_PASS}--`))![1];
+    expect(validate).toContain("## Ask-your-human findings block only on a NAMED failure (sandbox rule)");
+    expect(validate).toContain("there is no cap");
+    expect(validate).toContain("capped down to `P3` with the one-word reason `ask-human-unnamed-defect`");
+    expect(validate).toContain("Cap, do not kill");
+    expect(validate).toContain("The blocker bar has not moved in either direction");
+    // The reason word is part of the CLOSED downgrade vocabulary.
+    expect(validate).toContain("`understated-reach`, `ask-human-unnamed-defect`");
+    expect(addendaForPass(VALIDATE_PASS).map((a) => a.id)).toContain("ask-human-named-defect-validate");
+    expect(addendaForPass("pass-ask-human").map((a) => a.id)).not.toContain("ask-human-named-defect-validate");
+  });
+});
+
+describe("pass-concurrency", () => {
+  const sandbox = join(import.meta.dirname, "..");
+  let out: string;
+  let bodies: Map<string, string>;
+
+  beforeEach(() => {
+    out = mkdtempSync(join(tmpdir(), "qcr-concurrency-"));
+    bodies = new Map();
+    for (const b of buildAgents(join(sandbox, "agents"), out, { root: sandbox })) {
+      bodies.set(b.name, readFileSync(b.output, "utf8"));
+    }
+  });
+
+  afterEach(() => rmSync(out, { recursive: true, force: true }));
+
+  it("builds like any other raisable lens, at all three tiers", () => {
+    for (const tier of ["terra-med", "sol-med", "sol-high"]) {
+      expect(bodies.has(`pass-concurrency--${tier}`), tier).toBe(true);
+    }
+    const text = bodies.get("pass-concurrency--sol-med")!;
+    expect(text.startsWith("---\nname: pass-concurrency--sol-med\n")).toBe(true);
+    expect(text).toContain("You are a **blank-slate review pass**");
+    expect(text).toContain("## Execution policy (sandbox rule, enforced)");
+  });
+
+  it("is a leaf: no agent-spawning tools in any built variant (rule 9)", () => {
+    for (const tier of ["terra-med", "sol-med", "sol-high"]) {
+      const text = bodies.get(`pass-concurrency--${tier}`)!;
+      const tools = /^tools:[ \t]*(.*)$/m.exec(text)?.[1] ?? "";
+      for (const t of tools.split(",").map((s) => s.trim().toLowerCase())) {
+        expect(["subagent", "subagents", "task", "agent", "agents", "dispatch"]).not.toContain(t);
+      }
+      expect(text).toContain("## You are a leaf (sandbox rule, enforced)");
+    }
+  });
+
+  it("every finding carries all four parts, the named lock included", () => {
+    const text = bodies.get("pass-concurrency--sol-med")!;
+    expect(text).toContain("## Every finding has four parts");
+    expect(text).toContain("**The name** — what races");
+    expect(text).toContain("**The walkthrough** — the interleaving, step by step");
+    // The corpus archetype is the standard for the walk (§db-race).
+    expect(text).toContain("Process A — get conversation from db");
+    expect(text).toContain("**The risk assessment** — how often this can actually happen");
+    expect(text).toContain("**The proposed lock**");
+    expect(text).toContain("database-level or\n   cache-level, whichever fits this case");
+    expect(text).toContain("Naming the remedy is MANDATORY");
+  });
+
+  it("carries the self-falsification burden, with the validator still the adversary", () => {
+    const text = bodies.get("pass-concurrency--sol-med")!;
+    expect(text).toContain("## Falsify your own finding before you emit it");
+    expect(text).toContain("you must try to kill each candidate yourself, and emit only the survivors");
+    expect(text).toContain("confidently wrong");
+    expect(text).toContain("plausible-but-wrong blocker costs this system far more");
+    expect(text).toContain("`pass-validate` remains the adversary and still vetoes");
+    expect(text).toContain("ADDITIONAL gate on the raise side, not a\nreplacement");
+  });
+
+  it("has no severity cap and judges reachability per finding", () => {
+    const text = bodies.get("pass-concurrency--sol-med")!;
+    expect(text).toContain("## Severity is the ordinary scale — this lens can block");
+    expect(text).toContain("there is no cap on this\nlens");
+    expect(text).toContain("**Reachability is judged PER FINDING, from your risk assessment.**");
+    expect(text).toContain("Reachability only ever WEAKENS a tag");
+    expect(text).toContain("`contrived` never blocks");
+    // The P2 cap that binds placement/simplicity must NOT reach this lens.
+    expect(text).not.toContain("Severity is capped at P2");
+  });
+
+  it("the P2 design cap does not name it — the ceiling stays full severity", () => {
+    const validate = [...bodies].find(([name]) => name.startsWith(`${VALIDATE_PASS}--`))![1];
+    expect(validate).toContain("design-over-cap");
+    expect(validate).not.toContain("pass-concurrency");
+  });
+
+  it("the trigger addendum binds this lens ALONE and does not leak", () => {
+    expect(addendaForPass("pass-concurrency").map((a) => a.id)).toContain("concurrency-trigger");
+    const entry = PASS_ADDENDA.find((a) => a.id === "concurrency-trigger")!;
+    expect(entry.scope).toEqual(["pass-concurrency"]);
+    const marker = "## You were added on demand — your task string must NAME THE SHAPE (sandbox rule)";
+    for (const [name, text] of bodies) {
+      expect(text.includes(marker), name).toBe(name.startsWith("pass-concurrency--"));
+    }
+    for (const pass of ["pass-baseline", "pass-security", "pass-placement", "pass-intent", VALIDATE_PASS]) {
+      expect(addendaForPass(pass).map((a) => a.id), pass).not.toContain("concurrency-trigger");
+    }
+  });
+
+  it("the trigger demands a named read-then-write and returns NONE without one", () => {
+    const text = bodies.get("pass-concurrency--sol-med")!;
+    expect(text).toContain("name the read-then-write it suspects");
+    expect(text).toContain("not merely state a worry");
+    expect(text).toContain("say so in one line in your output and return `NONE`");
+    // The strengthening is scoped in WORDS as well as in registry scope: it
+    // must not read as a new bar for every addable lens.
+    expect(text).toContain("This rule binds THIS lens only.");
+  });
+});
+
 // ----: the memory-tool allowlist and its contract ------------------
 
 describe("applyMemoryTools", () => {
@@ -971,5 +1176,224 @@ describe("the memory addendum", () => {
     // Memory is neither authority nor an obstacle.
     expect(text).toContain("memory never blocks a round");
     expect(text).toContain("not evidence in an `evidence` field");
+  });
+});
+
+describe("the corpus-derived rules", () => {
+  const sandbox = join(import.meta.dirname, "..");
+  let out: string;
+  let bodies: Map<string, string>;
+
+  beforeEach(() => {
+    out = mkdtempSync(join(tmpdir(), "qcr-corpus-"));
+    bodies = new Map();
+    for (const b of buildAgents(join(sandbox, "agents"), out, { root: sandbox })) {
+      bodies.set(b.name, readFileSync(b.output, "utf8"));
+    }
+  });
+
+  afterEach(() => rmSync(out, { recursive: true, force: true }));
+
+  /** id → the ONE pass it may reach, and a marker unique to its text. */
+  const SCOPED: Array<[string, string, string]> = [
+    [
+      "migration-discipline",
+      "pass-data-safety",
+      "## Migration discipline — the team's four standing rules (sandbox rule)",
+    ],
+    [
+      "nullability-two-halves",
+      "pass-backcompat",
+      "## A new column is nullable for the window, then tightened (sandbox rule)",
+    ],
+    ["test-doctrine", "pass-baseline", "## How this team tests — five standing expectations (sandbox rule)"],
+    ["orm-usage", "pass-baseline", "## ORM usage — make the database do the work, exactly once (sandbox rule)"],
+    [
+      "declared-shape",
+      "pass-baseline",
+      "## The declared shape must be honest, and closed where the values are (sandbox rule)",
+    ],
+    ["diff-leftovers", "pass-baseline", "## Leftovers — debris this change dragged along (sandbox rule)"],
+    ["config-placement", "pass-placement", "## Where a VALUE lives is a placement decision too (sandbox rule)"],
+  ];
+
+  it("every corpus rule is scoped to ONE named lens and reaches no other", () => {
+    for (const [id, pass, marker] of SCOPED) {
+      const entry = PASS_ADDENDA.find((a) => a.id === id);
+      expect(entry, id).toBeDefined();
+      // A named list of exactly one pass — never "all", never "lenses".
+      expect(entry!.scope, id).toEqual([pass]);
+      expect(addendaForPass(pass).map((a) => a.id), id).toContain(id);
+      for (const [name, text] of bodies) {
+        expect(text.includes(marker), `${id} in ${name}`).toBe(name.startsWith(`${pass}--`));
+      }
+    }
+  });
+
+  it("none of them reaches the validator — the veto keeps its own vocabulary", () => {
+    const ids = addendaForPass(VALIDATE_PASS).map((a) => a.id);
+    for (const [id] of SCOPED) expect(ids, id).not.toContain(id);
+  });
+
+  it("migration reversibility is recorded as REJECTED, not merely absent", () => {
+    const text = bodies.get("pass-data-safety--sol-high")!;
+    expect(text).toContain("**Never raise migration reversibility.**");
+    expect(text).toContain("RunSQL.noop");
+    expect(text).toContain("the rollback unit here is the deployment, not the migration");
+    // …and the reason points at the lens that DOES own what replaced it.
+    expect(text).toContain("`pass-backcompat`'s territory");
+  });
+
+  it("the four kept migration sub-rules are all present, and R1 never blocks", () => {
+    const text = bodies.get("pass-data-safety--sol-high")!;
+    expect(text).toContain("**One migration per PR.**");
+    expect(text).toContain("never as a blocker");
+    expect(text).toContain("**A migration never imports application code.**");
+    expect(text).toContain('`apps.get_model("app", "Model")`');
+    expect(text).toContain("**Schema DDL and data changes belong in separate migrations.**");
+    expect(text).toContain("NOT recorded in `django_migrations`");
+    expect(text).toContain("**The model changed and there is no migration.**");
+  });
+
+  it("bulk_create carries its two named exceptions, and a finding must rule them out", () => {
+    const text = bodies.get("pass-baseline--sol-med")!;
+    expect(text).toContain("**the code needs the primary keys back**");
+    expect(text).toContain("**the set is strictly bounded and small by construction**");
+    expect(text).toContain("If either holds there is **no finding**");
+  });
+
+  it("query efficiency is ONE rule stated in both directions", () => {
+    const text = bodies.get("pass-baseline--sol-med")!;
+    expect(text).toContain("**Query efficiency runs in BOTH directions, and it is one rule");
+    expect(text).toContain("Use `.count()` / `.exists()`");
+    expect(text).toContain("Use `len()`");
+    expect(text).toContain("**Read which side of the line the call site is on before raising.**");
+  });
+
+  it("parametrize reads as a suggestion, never a demand", () => {
+    const text = bodies.get("pass-baseline--sol-med")!;
+    expect(text).toContain("**`parametrize` is a suggestion, never a demand.**");
+    expect(text).toContain("Never insist, never block");
+    expect(text).not.toContain("must be parametrized");
+  });
+
+  it("the settled anti-rules stop a lens re-litigating them", () => {
+    const text = bodies.get("pass-baseline--sol-med")!;
+    // Global mocks: house style (overrides a reviewer's stated direction).
+    expect(text).toContain("**Global mocks are house style — never campaign against them.**");
+    // assert_called_once_with survives, with pformat.
+    expect(text).toContain("**`assert_called_once_with` stays — with `pformat`.**");
+    expect(text).toContain("**Never ask for `assert_called_once_with` to be removed or replaced**");
+    // Nullability: the anti-rule half lives on pass-backcompat.
+    const bc = bodies.get("pass-backcompat--sol-med")!;
+    expect(bc).toContain("is the required shape, not a modelling defect");
+    expect(bc).toContain("**never a blocker**");
+  });
+
+  it("leftovers stay hygiene: one comment, never a blocker, only inside the diff", () => {
+    const text = bodies.get("pass-baseline--sol-med")!;
+    expect(text).toContain("**Raise it once, as a single `[nit]` listing the locations**");
+    expect(text).toContain("it is not a `P0`–`P2`");
+    expect(text).toContain("inside this diff");
+  });
+
+  it("config placement names the homes and tells the lens to check the tree first", () => {
+    const text = bodies.get("pass-placement--sol-med")!;
+    expect(text).toContain("**settings**");
+    expect(text).toContain("**`consts.py`**");
+    expect(text).toContain("**Read the repo's own layout at the pinned sha before you name a file**");
+    // The existing P2 cap is not disturbed by this entry.
+    expect(text).toContain("Your `P2` cap is unchanged.");
+  });
+
+  it("declared-shape keeps the convention half OUT — that went to memory", () => {
+    const text = bodies.get("pass-baseline--sol-med")!;
+    expect(text).toContain("**A declared type that contradicts the body is a defect");
+    expect(text).toContain("is an enum, not a magic string");
+    expect(text).toContain('Neither of these is "add the missing annotations"');
+    expect(text).toContain("look the convention up in memory");
+  });
+
+  // ----: cut output that carries no reasoning ----------------------
+  //
+  // The governing principle is the owner's (2026-08-24): reading volume was
+  // DECLINED as a target — "we should not sacrifice the reasoning of why for
+  // the problem we point out". Only unreasoned volume is on the table, so every
+  // one of these assertions also pins the protection of the reasoning.
+
+  it("a nit must name the change it asks for, and the WHY is explicitly protected", () => {
+    const text = bodies.get("pass-baseline--sol-med")!;
+    expect(text).toContain("## A nit ASKS FOR SOMETHING, or it is not a finding (sandbox rule)");
+    expect(text).toContain("**No request means no finding.**");
+    expect(text).toContain("request: <the concrete change you are asking for");
+    // Never a licence to trim justification, and never a lever on severity.
+    expect(text).toContain("**This takes nothing away from the WHY.**");
+    expect(text).toContain("the request is an ADDITION to your reasoning");
+    expect(text).toContain("`P0`–`P2` candidates are unaffected");
+  });
+
+  it("a finding's subject is the code, never the review's own earlier findings", () => {
+    const text = bodies.get("pass-baseline--sol-med")!;
+    expect(text).toContain("## Never raise a finding ABOUT one of the review's own earlier findings (sandbox rule)");
+    expect(text).toContain("state/ledgers/pr-<n>.md");
+    // The two things it does NOT touch: verification-as-status, and a fix that
+    // broke something else (a real new defect).
+    expect(text).toContain("**Two things this does NOT touch.**");
+    expect(text).toContain("a STATUS you report, not a finding you raise");
+    expect(text).toContain("fixed in a way that breaks something else is **a new defect**");
+  });
+
+  it("the tag grammar is closed on every lens, and says what an invented tag costs", () => {
+    for (const [name, text] of bodies) {
+      if (name.startsWith("pass-validate--")) continue;
+      expect(text.includes("## The posting-tag grammar is CLOSED (sandbox rule)"), name).toBe(true);
+    }
+    const text = bodies.get("pass-security--sol-high")!;
+    expect(text).toContain("**That is the entire grammar. Never invent one.**");
+    expect(text).toContain("`[start here 3/5]`");
+    expect(text).toContain("silently escapes its own machinery");
+    expect(text).toContain("[check this]");
+    expect(text).toContain("[ask your human]");
+  });
+
+  it("the validator holds the veto for all three, with its own closed words", () => {
+    const [, text] = [...bodies].find(([name]) => name.startsWith("pass-validate--"))!;
+    expect(text).toContain("## Kill output that carries no reasoning — never output that carries some (sandbox rule)");
+    expect(text).toContain("`nit-no-request`");
+    expect(text).toContain("`self-narration`");
+    expect(text).toContain("`tag-outside-grammar`");
+    // The tag defect is a CORRECTION, not a kill: the finding survives.
+    expect(text).toContain("has its tag CORRECTED");
+    // The three new words are also listed in the closed-vocabulary entry, so
+    // the validator never has to reach outside it.
+    expect(text).toContain("a nit-class candidate that asks for no change");
+    // The bar, and the reasoning, are both explicitly out of reach.
+    expect(text).toContain("**Nothing here is a length rule and none of it is a licence to trim reasoning.**");
+    expect(text).toContain("Never kill, shorten or demote a candidate for being verbose");
+  });
+
+  it("the lens rules never reach pass-validate, and its rule never reaches a lens", () => {
+    for (const [name, text] of bodies) {
+      const isValidator = name.startsWith("pass-validate--");
+      expect(text.includes("## A nit ASKS FOR SOMETHING"), name).toBe(!isValidator);
+      expect(text.includes("## Kill output that carries no reasoning"), name).toBe(isValidator);
+    }
+  });
+
+  it("the registry stays byte-stable: unique ids, corpus rules contiguous, after them", () => {
+    expect(new Set(PASS_ADDENDA.map((a) => a.id)).size).toBe(PASS_ADDENDA.length);
+    const ids = PASS_ADDENDA.map((a) => a.id);
+    const first = ids.indexOf("migration-discipline");
+    expect(first).toBeGreaterThan(ids.indexOf("memory-read-only"));
+    // The corpus rules are one unbroken run, in their declared order.
+    expect(ids.slice(first, first + SCOPED.length)).toEqual(SCOPED.map(([id]) => id));
+    // was appended after them — the cheapest possible insertion, so
+    // every existing built body keeps the bytes it already had ahead of it.
+    expect(ids.slice(first + SCOPED.length)).toEqual([
+      "nit-carries-a-request",
+      "no-self-narration",
+      "tag-grammar",
+      "unreasoned-output-validate",
+    ]);
   });
 });

@@ -69,6 +69,10 @@ const NON_SEEDED = [
   "agents/pass-placement.md",
   "agents/pass-simplicity.md",
   "agents/pass-backcompat.md",
+  // the on-demand concurrency lens — post-seed, ours, addable-only.
+  "agents/pass-concurrency.md",
+  // the ask-your-human lens — post-seed, ours, addable-only.
+  "agents/pass-ask-human.md",
   "prompts/round-first.md",
   "prompts/round-re-review.md",
   "prompts/round-staleness.md",

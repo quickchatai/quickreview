@@ -281,6 +281,10 @@ describe("tier enforcement in the production path", () => {
     expect(runtime.origins.latest()?.tier).toBe("author");
 
     const postsBefore = transport.posts.length;
+    // (corrected): a deferral's ticket is filed by the review session
+    // itself through the legacy command dir, so `file-issue` stays
+    // owner-tier on Slack — an author-tier turn is refused outright, with a
+    // `tier: ` reason, no GitHub call and no post.
     writeSlackCommand("issue-1", { command: "file-issue", title: "please fix CI", body: "it is red" });
     await runtime.commands.sweep();
 

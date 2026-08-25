@@ -532,6 +532,22 @@ export const ALL_PASSES: readonly string[] = [
   "pass-placement",
   "pass-simplicity",
   "pass-backcompat",
+  // ADDABLE-ONLY, deliberately. `selectLenses` never emits
+  // pass-concurrency — a read-modify-write race has no filename (the 29
+  // corpus findings span eight unrelated modules), so no path predicate finds
+  // the set. It reaches a round only through the add protocol, when the
+  // session names the read-then-write it suspects.
+  "pass-concurrency",
+  // ADDABLE-ONLY for the same reason and one more. No path predicate
+  // finds "code whose intent is written down nowhere", and the deciding fact —
+  // whether the answer is in the repo at all — is only visible after the diff
+  // has been read, which is exactly when the session runs the add protocol.
+  // (pass-intent's substance bar is the precedent for what daemon-side
+  // selection must be: cheap AND honest. The one body-shaped signal here — "the
+  // PR text never says why" — is true of most PRs, so planning on it would
+  // dispatch the lens nearly always: the pure-spend case that bar exists to
+  // prevent, on a lens whose failure mode is volume.)
+  "pass-ask-human",
   "pass-validate",
 ];
 

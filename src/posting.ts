@@ -13,7 +13,19 @@ import type { GitHubAdapter } from "./github.js";
 import type { GateResult } from "./gate.js";
 import type { StateStore } from "./state.js";
 import { partitionByAnchor, ANCHOR_REASON_TEXT, type AnchorRequest, type Side } from "./anchors.js";
-import { isFirstPartyDirectiveInjection, postTag, type PostTag, type Reachability, type Severity, type Verdict } from "./severity.js";
+import {
+  ASK_HUMAN_TAG,
+  DEFERRED_TAG,
+  isAskHumanFinding,
+  isDeferredFinding,
+  isFirstPartyDirectiveInjection,
+  postTag,
+  stripUngrammaticalTag,
+  type PostTag,
+  type Reachability,
+  type Severity,
+  type Verdict,
+} from "./severity.js";
 
 /** GitHub caps a single review at 50 inline comments (ported constraint). */
 export const INLINE_COMMENT_CAP = 50;
@@ -52,8 +64,20 @@ export interface ReviewInput {
   needs_human_reasons?: string[];
   /** AI_APPROVED soundness marker, rendered on NEEDS_HUMAN. */
   ai_approved?: boolean;
-  /** Prior findings still open and unchanged (re-review sections). */
-  deferred?: string[];
+  /**
+   * Prior findings still open and unchanged at this head (re-review).
+   *
+   * these are POINTED AT, never restated. 14.2% of the corpus's
+   * findings were bookkeeping about the reviewer's own earlier findings —
+   * output spent narrating itself, in a body the author pays to read, while
+   * `state/ledgers/pr-<n>.md` already carries exactly that round-to-round state
+   * and each of those findings already has a live thread carrying its full
+   * reasoning. So the body renders ONE line saying how many are still open and
+   * where they live. Nothing is dropped and no reasoning is lost: the original
+   * threads are untouched, and a finding whose severity or evidence CHANGED is
+   * not this — it is a new finding and posts as one.
+   */
+  carried_over?: string[];
   /**
    * the deterministically-picked teammate to @-mention in the ONE
    * escalation comment a first-party-directive review carries (dispatch picks
@@ -113,6 +137,9 @@ export interface AssembledReview {
   /** Findings that ended up in the body instead of inline, with the reason. */
   overflow: Array<{ finding: Finding; reason: string }>;
   tags: Map<Finding, PostTag>;
+  /** Titles that arrived with a tag outside the closed grammar.
+   * Stripped from the payload, kept here so the escape is countable. */
+  ungrammatical: Array<{ finding: Finding; tag: string }>;
 }
 
 export function eventForVerdict(v: Verdict): ReviewPayload["event"] {
@@ -131,16 +158,63 @@ function verdictLine(v: Verdict, counts: Record<PostTag, number>): string {
   return `**Verdict: ${label}** — ${parts.length ? parts.join(", ") : "no findings"}.`;
 }
 
+/**
+ * The one line that replaces the old "Previously deferred, unchanged" section
+ *. It states the fact and names where the reasoning lives; it never
+ * repeats a title, a severity or a rationale, because all three are already on
+ * the thread the reader can click.
+ */
+export function carriedOverLine(count: number): string {
+  return (
+    `_${count} finding${count === 1 ? "" : "s"} from earlier rounds ${count === 1 ? "is" : "are"} still open on ` +
+    "their existing threads; nothing about them has changed this round._"
+  );
+}
+
 function ref(f: Finding): string {
   return f.line ? `\`${f.path}:${f.line}\`` : `\`${f.path}\``;
 }
 
 function bullet(f: Finding): string {
-  return `- ${ref(f)} — ${f.title} _(${f.severity}/${f.confidence.toFixed(2)}, ${f.lens})_`;
+  return `- ${ref(f)} — ${stripUngrammaticalTag(f.title).title} _(${f.severity}/${f.confidence.toFixed(2)}, ${f.lens})_`;
+}
+
+/**
+ * Findings whose title arrived wearing a tag outside the closed grammar
+ *. The tag is stripped before posting — an invented tag is a finding
+ * that escapes the machinery keyed on the real one — and reported here so the
+ * escape is countable rather than silent.
+ */
+export function ungrammaticalTags(findings: readonly Finding[]): Array<{ finding: Finding; tag: string }> {
+  const out: Array<{ finding: Finding; tag: string }> = [];
+  for (const f of findings) {
+    const { stripped } = stripUngrammaticalTag(f.title);
+    if (stripped) out.push({ finding: f, tag: stripped });
+  }
+  return out;
 }
 
 export function inlineBody(f: Finding, tag: PostTag): string {
-  const head = `[${tag}] ${f.title}`;
+  // an ask-your-human question leads with its own marker, BEFORE the
+  // ordinary posting tag — the first line is a routing instruction to the PR
+  // author's AI implementer ("put this to a person, do not answer it
+  // yourself"), and the reviewed repo's directives key on it appearing there.
+  // The severity tag stays on the same line so a blocking question still reads
+  // as a blocker. It is never `[check this]`, whose meaning is unchanged.
+  // a deferral leads with `[deferred]` — the finding is real and this
+  // PR is not where it gets fixed. It is a THIRD marker, never a spelling of
+  // either other one, and exactly one marker ever rides a comment: when a
+  // question is being deferred, the deferral is the outer state and the one
+  // that says what happens next.
+  const deferred = isDeferredFinding(f.kind);
+  const askHuman = !deferred && isAskHumanFinding(f.kind, f.lens);
+  const marker = deferred ? `${DEFERRED_TAG} ` : askHuman ? `${ASK_HUMAN_TAG} ` : "";
+  // the tag grammar is closed. A title that arrived carrying its own
+  // bracketed tag loses it here — a duplicate of the one about to be minted, or
+  // an invented one that would escape every consumer keyed on the real grammar.
+  // Only the label goes; the finding's words are untouched.
+  const title = stripUngrammaticalTag(f.title).title;
+  const head = `${marker}[${tag}] ${title}`;
   // Reachability is shown only when it is not `routine` — that is exactly when
   // it explains a tag the severity alone would not have produced.
   const reach = f.reachability && f.reachability !== "routine" ? ` · ${f.reachability}` : "";
@@ -200,6 +274,7 @@ export function assembleReview(input: ReviewInput): AssembledReview {
     },
     overflow,
     tags,
+    ungrammatical: ungrammaticalTags(input.findings),
   };
 }
 
@@ -223,8 +298,9 @@ export function renderBody(
   section("Nits", of("nit").map(bullet));
   section("Questions", of("question").map(bullet));
 
-  if (input.deferred?.length) {
-    section("Previously deferred, unchanged", input.deferred.map((d) => `- ${d}`));
+  // a POINTER, not a restatement — see ReviewInput.carried_over.
+  if (input.carried_over?.length) {
+    out.push("", carriedOverLine(input.carried_over.length));
   }
 
   if (overflow.length) {
@@ -305,6 +381,15 @@ export async function submitReview(
   roundNo?: number | null,
 ): Promise<SubmitResult> {
   const { pr, payload } = review;
+  // an invented tag never reaches GitHub (it was stripped at assembly)
+  // but it must never vanish silently either — the whole defect is a finding
+  // that escapes its own machinery unnoticed.
+  if (review.ungrammatical.length > 0) {
+    deps.store.logEvent("review_tag_outside_grammar", pr, {
+      count: review.ungrammatical.length,
+      tags: review.ungrammatical.map((u) => u.tag),
+    });
+  }
   const result = await deps.adapter.createReview(pr, payload);
   const registered: number[] = [];
 

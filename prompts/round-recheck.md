@@ -91,6 +91,78 @@ sentences; a single sentence is correct only when it genuinely carries all of
 that. The script enforces the posting-time guards and its answer is final.
 Never post an APPROVE from this mode; never touch anyone's existing review.
 
+**The tag grammar is closed here too.** A finding posts under exactly
+one of `[blocker]`, `[question]`, `[nit]`, optionally prefixed by `[check this]`,
+`[ask your human]` or `[deferred]` where those apply. Never invent a tag: it is
+what the posting guards, the thread-resolution refusals and every downstream
+consumer key on, so a finding wearing an invented tag silently escapes its own
+machinery. **And never post a finding about one of the review's own earlier
+findings** — the ledger already carries that state and each has a live thread;
+the subject of a posted finding is always the code at `{{head_sha}}`. Neither of
+these is a length rule: keep every word that explains why.
+
+**A `[deferred]` finding costs a ticket here too — and you file it
+yourself, in this same recheck.** There is no confirmation step. After the
+review posts, write ONE command file `commands/deferral-pr-{{n}}-<slug>.json`
+(`{ "command": "file-issue", "pr": {{n}}, "title": …, "body": … }`) — never a
+`gh issue create` — with a body carrying full provenance: the defect and the
+invariant a fix must restore, a link back to PR #{{n}} and to the finding's
+thread, who raised it, and why it was deferred rather than pressed. Then read
+`commands/results/deferral-pr-{{n}}-<slug>.result.json`; on `"ok": true` reply
+in the finding's thread with the issue number, and on `"ok": false` say the
+exact reason in the thread — cap reached, duplicate — and that no ticket exists
+yet. Never retry, never route around it. You never resolve a `[deferred]`
+thread; the daemon refuses it structurally.
+
+Two spellings of "deferred" appear in this template and they are different
+things: a ledger entry marked `deferred` (the regression-only and nit-scope
+rules above) is this recheck's private note, carrying an observation forward to
+the next round at no cost; the `[deferred]` TAG is a posted finding you
+consciously postponed, and only the tag files a ticket.
+
+## The findings record — only if you moved the verdict
+
+An uphold writes no findings record: nothing was raised and nothing was killed,
+and this mode is meant to be cheap. But a recheck that MOVES the verdict has
+posted real findings, and the reasoning behind a backed-down approval is
+exactly what the loop reads. So when — and only when — `outcome` is
+`request_changes`, write `state/findings/{{decision_file}}` — the same
+basename as your outcome file, under `state/findings/` instead of `verdict/` —
+BEFORE the outcome file itself:
+
+```json
+{
+  "pr": {{n}},
+  "head_sha": "{{head_sha}}",
+  "findings": [
+    {
+      "id": "r1",
+      "path": "src/api/orders.py",
+      "line": 212,
+      "lens": "recheck",
+      "severity": "P1",
+      "confidence": 0.9,
+      "reachability": "routine",
+      "evidence": "the delta at :212 drops the tenant check the approved head had at :208",
+      "disposition": "posted",
+      "posted_as": "blocker",
+      "reason": "The regression this delta introduced: cross-tenant read on a path the approved head guarded."
+    }
+  ]
+}
+```
+
+Omit `round_no` — a recheck owns no round; the daemon attributes the entries to
+the round whose verdict this moved. One entry per finding you posted, plus any
+candidate you considered and dropped (`"disposition": "withheld"`, with the
+reason). If a previously posted finding is dropped here because the author
+refuted it and you accept that, record it as `"disposition": "conceded"` with
+`"raised_in_round"` and the reason — a conceded finding is settled on the
+record and must not be resurrected later. `lens` is required on every entry;
+use `recheck` for anything you found yourself. This file is read
+best-effort — its absence never blocks or re-nudges anything, so never let it
+delay the outcome file.
+
 ## Return — always, in both cases
 
 Write `verdict/{{decision_file}}` with EXACTLY this shape:

@@ -11,7 +11,7 @@ import {
   submitReview,
   type Finding,
 } from "../src/posting.js";
-import { postTag } from "../src/severity.js";
+import { ASK_HUMAN_RE, ASK_HUMAN_TAG, CHECK_THIS_RE, DEFERRED_RE, postTag } from "../src/severity.js";
 
 const PATCH = `@@ -1,4 +1,8 @@
  ctx
@@ -71,6 +71,40 @@ describe("severity → tag mapping (spec §5)", () => {
     expect(comment).toContain("· contrived ·");
     // A routine finding's tail is unchanged.
     expect(inlineBody(finding(), "blocker")).toContain("_P1 · confidence 0.90 · lens pass-baseline_");
+  });
+});
+
+// an ask-your-human question leads with its own marker, before the
+// ordinary posting tag — the first line is what routes the comment to a person
+// via the implementer, and the reviewed repo's directives key on it.
+describe("the [ask your human] marker on an inline comment", () => {
+  it("prefixes the tag, keeps the severity tag, and never emits [check this]", () => {
+    const body = inlineBody(finding({ lens: "pass-ask-human", title: "why does this file exist?" }), "question");
+    expect(body.split("\n")[0]).toBe("[ask your human] [question] why does this file exist?");
+    expect(ASK_HUMAN_RE.test(body)).toBe(true);
+    expect(CHECK_THIS_RE.test(body)).toBe(false);
+  });
+
+  it("keeps the blocker visible on a blocking question", () => {
+    const body = inlineBody(finding({ kind: "ask-human", lens: "pass-baseline" }), "blocker");
+    expect(body.split("\n")[0]).toBe("[ask your human] [blocker] missing await");
+  });
+
+  it("leaves every other finding's first line exactly as it was", () => {
+    expect(inlineBody(finding(), "blocker").split("\n")[0]).toBe("[blocker] missing await");
+    expect(inlineBody(finding({ lens: "pass-intent" }), "question").split("\n")[0]).toBe("[question] missing await");
+  });
+
+  it("rides assembly end to end", () => {
+    const review = assembleReview({
+      pr: 1,
+      head_sha: "sha",
+      verdict: "APPROVE",
+      lenses: ["pass-baseline", "pass-ask-human"],
+      patches,
+      findings: [finding({ severity: "P3", lens: "pass-ask-human", title: "do we want dev tracing here?" })],
+    });
+    expect(review.payload.comments[0]?.body ?? "").toContain("[ask your human] [question] do we want dev tracing here?");
   });
 });
 
@@ -195,7 +229,12 @@ describe("assembleReview", () => {
     expect(body).toContain("unclear ordering");
   });
 
-  it("renders the re-review 'Previously deferred, unchanged' section", () => {
+  // carried-over findings are POINTED AT, never restated. The old
+  // "Previously deferred, unchanged" section re-narrated each one into the body
+  // where the author pays for it, while the ledger and the finding's own live
+  // thread already carry that state — 14.2% of the corpus's findings were this
+  // shape. Nothing is dropped: the threads are untouched.
+  it("points at carried-over findings in one line, and restates none of them", () => {
     const review = assembleReview({
       pr: 4,
       head_sha: "sha",
@@ -203,10 +242,148 @@ describe("assembleReview", () => {
       lenses: ["pass-baseline"],
       patches,
       findings: [finding()],
-      deferred: ["F3 `app/y.py:10` — unbounded retry loop (raised round 1, unchanged)"],
+      carried_over: [
+        "F3 `app/y.py:10` — unbounded retry loop (raised round 1, unchanged)",
+        "F4 `app/z.py:1` — magic string (raised round 2, unchanged)",
+      ],
     });
-    expect(review.payload.body).toContain("### Previously deferred, unchanged");
-    expect(review.payload.body).toContain("unbounded retry loop");
+    const body = review.payload.body;
+    expect(body).not.toContain("### Previously deferred, unchanged");
+    expect(body).toContain("2 findings from earlier rounds are still open on their existing threads");
+    // Not one word of the carried-over findings is repeated into the body.
+    expect(body).not.toContain("unbounded retry loop");
+    expect(body).not.toContain("magic string");
+    expect(body).not.toContain("app/y.py");
+  });
+
+  it("uses the singular when exactly one finding is carried over", () => {
+    const review = assembleReview({
+      pr: 4,
+      head_sha: "sha",
+      verdict: "REQUEST_CHANGES",
+      lenses: ["pass-baseline"],
+      patches,
+      findings: [finding()],
+      carried_over: ["F3 `app/y.py:10` — unbounded retry loop"],
+    });
+    expect(review.payload.body).toContain("1 finding from earlier rounds is still open");
+  });
+});
+
+// ----: the deferral marker ------------------------------------------
+describe("the [deferred] marker", () => {
+  it("leads the comment, before the posting tag", () => {
+    const body = inlineBody(finding({ kind: "deferred", severity: "P3", confidence: 0.5 }), "question");
+    expect(body.startsWith("[deferred] [question] missing await")).toBe(true);
+  });
+
+  it("is never confused with either other marker", () => {
+    const body = inlineBody(finding({ kind: "deferred" }), "question");
+    expect(CHECK_THIS_RE.test(body)).toBe(false);
+    expect(ASK_HUMAN_RE.test(body)).toBe(false);
+    expect(DEFERRED_RE.test(body)).toBe(true);
+  });
+
+  it("puts exactly one marker on a comment — a deferred question is deferred", () => {
+    // A finding could carry both signals (an ask-human question the review then
+    // defers). The deferral is the outer state: it is what happens next.
+    const body = inlineBody(finding({ kind: "deferred", lens: "pass-ask-human" }), "question");
+    expect(body).not.toContain(ASK_HUMAN_TAG);
+    expect(body.startsWith("[deferred] [question]")).toBe(true);
+  });
+
+  it("does not change the finding's tag — a deferral never blocks or softens", () => {
+    expect(inlineBody(finding({ kind: "deferred" }), "blocker").startsWith("[deferred] [blocker]")).toBe(true);
+  });
+});
+
+// ----: the closed tag grammar --------------------------------------
+//
+// An invented tag is not a style problem: the tag is what the posting guards,
+// resolveOwnReviewThread's refusals and every downstream consumer key on, so a
+// finding wearing one silently escapes its own machinery.
+describe("the closed tag grammar", () => {
+  const tagged = (title: string): Finding => finding({ title });
+
+  it("strips an invented tag from a title before it reaches the wire", () => {
+    const review = assembleReview({
+      pr: 9,
+      head_sha: "sha",
+      verdict: "REQUEST_CHANGES",
+      lenses: ["pass-baseline"],
+      patches,
+      findings: [tagged("[start here 3/5] missing await")],
+    });
+    const body = review.payload.comments[0]?.body ?? "";
+    expect(body.startsWith("[blocker] missing await")).toBe(true);
+    expect(body).not.toContain("start here");
+    // The escape is reported rather than swallowed.
+    expect(review.ungrammatical.map((u) => u.tag)).toEqual(["[start here 3/5]"]);
+  });
+
+  it("strips a duplicated posting tag without reporting it as an escape", () => {
+    const review = assembleReview({
+      pr: 9,
+      head_sha: "sha",
+      verdict: "REQUEST_CHANGES",
+      lenses: ["pass-baseline"],
+      patches,
+      findings: [tagged("[blocker] missing await")],
+    });
+    expect(review.payload.comments[0]?.body.startsWith("[blocker] missing await")).toBe(true);
+    expect(review.ungrammatical).toEqual([]);
+  });
+
+  it("leaves a sanctioned marker prefix alone", () => {
+    const review = assembleReview({
+      pr: 9,
+      head_sha: "sha",
+      verdict: "REQUEST_CHANGES",
+      lenses: ["pass-baseline"],
+      patches,
+      findings: [tagged("[check this] missing await")],
+    });
+    expect(review.payload.comments[0]?.body).toContain("[check this] missing await");
+    expect(review.ungrammatical).toEqual([]);
+  });
+
+  it("never touches a title that carries no tag — no reasoning is cut", () => {
+    const long = "the retry wrapper duplicates http_client.py:44 and doubles the backoff [see note]";
+    const review = assembleReview({
+      pr: 9,
+      head_sha: "sha",
+      verdict: "REQUEST_CHANGES",
+      lenses: ["pass-baseline"],
+      patches,
+      findings: [tagged(long)],
+    });
+    expect(review.payload.comments[0]?.body).toContain(long);
+    expect(review.ungrammatical).toEqual([]);
+  });
+
+  it("logs the escape once per review through submitReview", async () => {
+    const events: Array<{ kind: string; payload: unknown }> = [];
+    const review = assembleReview({
+      pr: 9,
+      head_sha: "sha",
+      verdict: "REQUEST_CHANGES",
+      lenses: ["pass-baseline"],
+      patches,
+      findings: [tagged("[verified] missing await")],
+    });
+    await submitReview(
+      {
+        adapter: { createReview: async () => ({ executed: true, response: { id: 1, comments: [] } }) } as never,
+        store: {
+          registerBotComment: () => {},
+          logEvent: (kind: string, _pr: number | null, payload: unknown) => events.push({ kind, payload }),
+        } as never,
+      },
+      review,
+    );
+    const escape = events.find((e) => e.kind === "review_tag_outside_grammar");
+    expect(escape).toBeDefined();
+    expect((escape!.payload as { tags: string[] }).tags).toEqual(["[verified]"]);
   });
 });
 

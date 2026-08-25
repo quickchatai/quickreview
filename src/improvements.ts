@@ -25,6 +25,14 @@ export interface ImprovementPayload {
 export interface IssuePayload {
   title: string;
   body: string;
+  /**
+   * The PR this issue was filed from (deferrals — the review session
+   * files a deferral's ticket itself, in the round that deferred). Optional
+   * and purely provenance: it attributes the events and the cap refusal to
+   * that PR so the refusal is visible where the deferral happened. It changes
+   * no cap and grants no rights of its own.
+   */
+  pr?: number;
 }
 
 export interface FileOutcome {
@@ -293,9 +301,17 @@ export interface IssueContext {
 /** file-issue: dedup against open bot-filed issues, day cap, label, record. */
 export async function fileIssue(payload: IssuePayload, ctx: IssueContext): Promise<FileOutcome> {
   const now = (ctx.now ?? (() => new Date()))();
+  const pr = payload.pr ?? null;
   const reject = (reason: string, extra: Record<string, unknown> = {}): FileOutcome => {
-    ctx.store.logEvent("issue_rejected", null, { title: payload.title, reason, ...extra });
-    return { ok: false, reason, ...extra };
+    ctx.store.logEvent("issue_rejected", pr, { title: payload.title, reason, pr, ...extra });
+    // **a cap refusal is loud.** A deferral that produced no ticket is
+    // a deferral that silently became free again — exactly the failure this
+    // mechanism exists to prevent — so a refusal on a PR-attributed draft also
+    // leaves a durable anomaly row against that PR, beside the result file the
+    // caller reads. The cap itself is untouched: the refusal is louder, never
+    // weaker, and nothing here lifts a cap or files anything around it.
+    if (pr !== null) ctx.store.logAnomaly("deferral_ticket_refused", pr, null, `${reason} (draft: "${payload.title}")`);
+    return { ok: false, reason, pr, ...extra };
   };
 
   const rate = issueRateReason(ctx.store, ctx.cfg.caps, now);
@@ -318,6 +334,6 @@ export async function fileIssue(payload: IssuePayload, ctx: IssueContext): Promi
   const issueNumber = (result.response as { number?: number } | undefined)?.number ?? 0;
   const ref = issueNumber > 0 ? `#${issueNumber}` : null;
   ctx.store.recordFiledItem("issue", payload.title, ref);
-  ctx.store.logEvent("issue_filed", null, { title: payload.title, issue: issueNumber || null, dry_run: ctx.gate.isDryRun });
-  return { ok: true, issue: issueNumber > 0 ? issueNumber : null, dry_run: ctx.gate.isDryRun };
+  ctx.store.logEvent("issue_filed", pr, { title: payload.title, issue: issueNumber || null, pr, dry_run: ctx.gate.isDryRun });
+  return { ok: true, issue: issueNumber > 0 ? issueNumber : null, pr, dry_run: ctx.gate.isDryRun };
 }
