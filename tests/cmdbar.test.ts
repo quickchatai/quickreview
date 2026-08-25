@@ -358,6 +358,131 @@ describe("the focused companion column is a TERMINAL, not a text box", () => {
   });
 });
 
+describe("the wheel scrolls the companion column, not the tab behind it", () => {
+  // Reported live: with the companion column focused, wheeling back through
+  // the conversation moved the BOARD's selection instead — and the pi mirror
+  // followed the new selection, so the notch scrolled away the thing being
+  // read. The column is chrome on every tab, so it has to answer the wheel
+  // before the tab dispatch does.
+  function harness(tab: Tab = "board") {
+    const out = new EventEmitter() as unknown as NodeJS.WriteStream;
+    (out as unknown as { columns: number }).columns = 140;
+    (out as unknown as { rows: number }).rows = 40;
+    out.write = (() => true) as never;
+    const input = new EventEmitter() as unknown as NodeJS.ReadStream;
+    (input as unknown as { isTTY: boolean }).isTTY = false;
+    input.resume = (() => input) as never;
+    input.pause = (() => input) as never;
+    const tabNotches: string[] = [];
+    const key = (_a: App, k: { kind: string }) => (tabNotches.push(k.kind), true);
+    const app = new App(TUI_DEFAULTS, async () => ({ ok: true, stdout: "", stderr: "", code: 0 }), out, input, {
+      digestKey: key,
+      deployKey: key,
+      metricsKey: key,
+      changesKey: key,
+    });
+    app.tab = tab;
+    app.view.snapshot = {
+      written_at: "",
+      dry_run: true,
+      prs: [
+        { number: 1, state: "reviewing", title: "a", head_sha: "x", stale_recheck: 0 },
+        { number: 2, state: "reviewing", title: "b", head_sha: "x", stale_recheck: 0 },
+        { number: 3, state: "reviewing", title: "c", head_sha: "x", stale_recheck: 0 },
+      ],
+      running_rounds: 0,
+      total_spend_usd: 0,
+      heartbeat: "",
+    };
+    app.sidebar = new CompanionSidebar(
+      { container_name: "qcr-companion", session: "companion" },
+      async () => ({ ok: true, stdout: "", stderr: "", code: 0 }),
+      { available: () => true },
+    );
+    // 140 cols → a 70-column companion column occupying x 71…140.
+    const wheel = (up: boolean, x: number) =>
+      (input as unknown as EventEmitter).emit("data", Buffer.from(`\x1b[<${up ? 64 : 65};${x};10M`));
+    return { app, tabNotches, wheel, running: app.run() };
+  }
+  const settle = () => new Promise((r) => setTimeout(r, 10));
+
+  it("a focused column keeps the wheel wherever the pointer rests", async () => {
+    const h = harness();
+    h.app.sidebar!.focus();
+    h.wheel(true, 10); // pointer over the BOARD, keyboard on the companion
+    h.wheel(true, 10);
+    await settle();
+    expect(h.app.sidebar!.offset).toBeGreaterThan(0);
+    expect(h.app.view.selected).toBe(0); // the board never moved
+    h.app.sidebar!.blur();
+    h.app.quit();
+    await h.running;
+  });
+
+  it("the pointer over the column scrolls it even unfocused (the pi pane's rule)", async () => {
+    const h = harness();
+    h.wheel(true, 100);
+    await settle();
+    expect(h.app.sidebar!.offset).toBeGreaterThan(0);
+    expect(h.app.view.selected).toBe(0);
+    expect(h.app.sidebar!.focused).toBe(false); // a wheel notch is not a click
+    h.app.quit();
+    await h.running;
+  });
+
+  it("wheeling back down returns the mirror to the live tail", async () => {
+    const h = harness();
+    h.wheel(true, 100);
+    await settle();
+    const parked = h.app.sidebar!.offset;
+    expect(parked).toBeGreaterThan(0);
+    h.wheel(false, 100);
+    h.wheel(false, 100);
+    await settle();
+    expect(h.app.sidebar!.offset).toBe(0);
+    h.app.quit();
+    await h.running;
+  });
+
+  it("leaves the tab's own wheel alone when the pointer is outside an unfocused column", async () => {
+    const h = harness();
+    h.wheel(false, 10);
+    await settle();
+    expect(h.app.sidebar!.offset).toBe(0);
+    expect(h.app.view.selected).toBe(1); // the board's wheel meaning, unchanged
+    h.app.quit();
+    await h.running;
+  });
+
+  for (const tab of ["digest", "deploy", "metrics", "changes"] as Tab[]) {
+    it(`the ${tab} tab still owns the wheel outside the column, and never inside it`, async () => {
+      const h = harness(tab);
+      h.wheel(false, 10);
+      await settle();
+      expect(h.tabNotches).toEqual(["down"]);
+      h.app.sidebar!.focus();
+      h.wheel(true, 10);
+      await settle();
+      expect(h.tabNotches).toEqual(["down"]); // the focused column took it
+      expect(h.app.sidebar!.offset).toBeGreaterThan(0);
+      h.app.sidebar!.blur();
+      h.app.quit();
+      await h.running;
+    });
+  }
+
+  it("a collapsed spine has no mirror to scroll, so the notch falls through", async () => {
+    const h = harness();
+    h.app.sidebar!.toggleCollapse();
+    h.wheel(false, 139); // over the spine
+    await settle();
+    expect(h.app.sidebar!.offset).toBe(0);
+    expect(h.app.view.selected).toBe(1);
+    h.app.quit();
+    await h.running;
+  });
+});
+
 describe("drag-to-copy", () => {
   // Turning mouse reporting on takes the terminal's own selection away, so the
   // TUI owes one back. the owner: "99% I select something to copy it" — release

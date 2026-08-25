@@ -18,7 +18,7 @@ import { ClipboardSink } from "./clipboard.js";
 import { PANE_ESCAPE, PiMirror, keysToTmux } from "./pipane.js";
 import { Poller } from "./poll.js";
 import { prUrl } from "./theme.js";
-import { CompanionSidebar, paintSidebar, sidebarHit, sidebarResizeHit, sidebarWidth } from "./sidebar.js";
+import { CompanionSidebar, paintSidebar, SIDEBAR_SPINE, sidebarHit, sidebarResizeHit, sidebarWidth } from "./sidebar.js";
 import { eventsArgv, sendKeysArgv, whyArgv, type SshRunner } from "./remote.js";
 
 export interface AppHooks {
@@ -697,6 +697,25 @@ export class App {
         }
       }
     }
+    // The wheel belongs to the companion column before any tab sees it. The
+    // column is chrome on EVERY tab, so a wheel notch that the tab dispatch
+    // below answers is a notch stolen from the surface the operator is
+    // actually reading: the reported bug was scrolling the conversation while
+    // the column had focus and watching the board's selection walk instead —
+    // which then dragged the pi mirror away from the PR being read.
+    //
+    // Two ways it belongs here, and they compose: the pointer is over the
+    // column (focused or not — the same rule the pi pane already has), or the
+    // column holds the keyboard, wherever the pointer happens to rest. Focus
+    // means "this surface is the one I am working in"; the wheel is part of
+    // that, not an exception to it.
+    if (ev.kind === "wheel-up" || ev.kind === "wheel-down") {
+      if (this.sidebar && this.wheelBelongsToSidebar(ev.x, cols)) {
+        this.sidebar.scroll(ev.kind === "wheel-up" ? 1 : -1);
+        this.repaint();
+        return;
+      }
+    }
     if (this.tab === "digest") {
       // Memory & learning tab: clicks hit the tab's own zones (rows select,
       // buttons act); the wheel moves the selection / scrolls.
@@ -1126,6 +1145,23 @@ export class App {
       // slicing by code units would cut one in half and bleed colour.
       frame.set(row, spliceDisplay(line, x, box[i]!));
     }
+  }
+
+  /**
+   * Does this wheel notch belong to the companion column's scrollback?
+   *
+   * True when the pointer is inside the expanded column, or when the column
+   * holds the keyboard and the pointer is elsewhere. A collapsed spine has no
+   * mirror on screen, so nothing there can be scrolled — the notch falls
+   * through to the tab, as it always did.
+   */
+  private wheelBelongsToSidebar(x: number, cols: number): boolean {
+    const sb = this.sidebar;
+    if (!sb || !sb.available() || sb.collapsed) return false;
+    const width = this.sidebarWidth(cols);
+    if (width <= SIDEBAR_SPINE) return false;
+    if (x > cols - width && x <= cols) return true;
+    return sb.focused;
   }
 
   /** Width the companion column takes on THIS paint (0 = not shown). */

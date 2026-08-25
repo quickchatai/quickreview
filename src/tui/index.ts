@@ -43,7 +43,8 @@ keys: 1/2/3/4/5 tabs (2 = memory & learning — v toggles digest/memory view,
       5 = changes — every feedback-derived commit, newest first; R arms a
       revert of the selected one and y confirms, local commit only) ·
       companion column on every tab: type any unclaimed key (or /) to talk to
-      it — ⏎ sends · Esc clears the draft · PgUp/PgDn walk its scrollback ·
+      it — every byte reaches pi · wheel over the column, or PgUp/PgDn while
+      focused, walks its scrollback ·
       \ collapses the column · click it to take the keyboard ·
       j/k select · ⏎ focus the PR's pi pane ·
       Ctrl-q release focus · Ctrl-c ×3 hard-kill the TUI ·
