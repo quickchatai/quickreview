@@ -210,7 +210,9 @@ export async function createUser({ base, account, user, rootKey, fetchFn = fetch
  * there is exactly ONE definition of reach/refusal/inconclusive in the repo.
  */
 export async function probeKey({ base, key, user, fetchFn = fetch, env = process.env, timeoutMs = DEFAULTS.requestTimeoutMs }) {
-  const url = `${base}${PATHS.read(env)}?uri=${encodeURIComponent(PATHS.readUri(env))}`;
+  // Namespace in the URI — the server confines by URI, not by the header
+  // (verified live 2026-08-25; see PATHS.readUri in the forward).
+  const url = `${base}${PATHS.read(env)}?uri=${encodeURIComponent(PATHS.readUri(env, user))}`;
   const r = await call(fetchFn, url, { method: "GET", headers: authHeaders(key, user, env) }, timeoutMs);
   return { classification: classify(r.status, r.body), status: r.status, detail: r.error ?? `HTTP ${r.status}` };
 }

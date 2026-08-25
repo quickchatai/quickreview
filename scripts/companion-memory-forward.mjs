@@ -300,7 +300,13 @@ export const PATHS = {
   /** A directory listing at the user root: exists for every user, and needs no
    * knowledge of which memory "space" that user happens to have. */
   read: (env = process.env) => (env.QCR_OV_READ_PATH ?? "/api/v1/fs/ls").trim(),
-  readUri: (env = process.env) => (env.QCR_OV_READ_URI ?? "viking://user/").trim(),
+  // `{user}` is substituted with the namespace being probed. VERIFIED LIVE
+  // (2026-08-25, api_key mode): the server derives identity from the KEY and
+  // confines by URI — `X-OpenViking-User` does NOT select the namespace, so a
+  // bare `viking://user/` read answered 200 for every key and the cross-cells
+  // could never fail. The namespace must live in the URI.
+  readUri: (env = process.env, user = "") =>
+    (env.QCR_OV_READ_URI ?? "viking://user/{user}/").trim().replaceAll("{user}", user),
   /** The ONE durable write path (see the vendored client's PATCH 4 note). */
   write: (env = process.env) => (env.QCR_OV_WRITE_PATH ?? "/api/v1/content/batch-write").trim(),
 };
@@ -386,15 +392,19 @@ async function probePair(base, key, ns, env, fetchFn, doWrite) {
         method: "POST",
         headers,
         body: JSON.stringify({
-          root_uri: "viking://user/memories",
-          operations: [{ uri: `viking://user/memories/qcr-confinement-probe-${at}.md`, content: `confinement probe ${at}\n` }],
+          // Namespace in the URI, same reason as the read probe: the server
+          // confines by URI, not by the X-OpenViking-User header.
+          root_uri: `viking://user/${ns}/memories`,
+          operations: [{ uri: `viking://user/${ns}/memories/qcr-confinement-probe-${at}.md`, content: `confinement probe ${at}\n` }],
           wait: false,
         }),
       }
     : { method: "GET", headers };
-  const url = doWrite ? `${base}${PATHS.write(env)}` : `${base}${PATHS.read(env)}?uri=${encodeURIComponent(PATHS.readUri(env))}`;
+  const url = doWrite ? `${base}${PATHS.write(env)}` : `${base}${PATHS.read(env)}?uri=${encodeURIComponent(PATHS.readUri(env, ns))}`;
   try {
-    const res = await fetchFn(url, { ...init, signal: AbortSignal.timeout(8000) });
+    // 30s: the forward path is ssh + docker exec per request, and the local
+    // dense embedder answers slowly from cold — 8s produced false timeouts.
+    const res = await fetchFn(url, { ...init, signal: AbortSignal.timeout(30000) });
     const body = res.json ? await res.json().catch(() => ({})) : {};
     return { status: res.status, classification: classify(res.status, body) };
   } catch (err) {
