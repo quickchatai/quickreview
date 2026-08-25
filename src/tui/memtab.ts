@@ -37,6 +37,7 @@ import { awaitingRows, sortPrs } from "./model.js";
 import { parseEventTags } from "../memory/eventtags.js";
 import { defectEntries, refOf, storeHealth, timelineOrder, tuiMemoryStore, type MemoryEntry, type MemoryStore } from "./memory.js";
 import type { ForwardStatus } from "./memforward.js";
+import { isActionableTicket, readEffortTickets, type TrackerTicket } from "./trackertickets.js";
 import { ACCENT, HEADING, MUTED, RESET, STRONG, WARN, button, modeBadge, sectionTitle, selected as selectedLine } from "./design.js";
 import { Frame, displayWidth, rule, sanitizeText, stripAnsi, truncate, wrap } from "./paint.js";
 import {
@@ -56,9 +57,14 @@ export interface MemTabState {
   digest: DigestState;
   entries: MemoryEntry[];
   memLoaded: boolean;
-  focus: "timeline" | "proposals";
+  focus: "timeline" | "tickets" | "proposals";
   sel: number;
   propSel: number;
+  /** Read-only fleet tickets from the review-feedback-loop effort. */
+  tickets?: TrackerTicket[];
+  ticketSel?: number;
+  ticketScroll?: number;
+  ticketShowClosed?: boolean;
   scroll: number;
   proposals: RubricProposal[];
   improvements: ImprovementItem[];
@@ -224,6 +230,7 @@ export type MemAction =
   | { t: "key"; key: string }
   | { t: "mem"; i: number }
   | { t: "prop"; i: number }
+  | { t: "ticket"; i: number }
   | { t: "prop-accept"; i: number }
   | { t: "prop-reject"; i: number }
   | { t: "url"; url: string };
@@ -357,77 +364,117 @@ export function renderMemoryView(
     right.push(zonedRow(chunks, gap));
   };
   const selected = ordered[st.sel];
-  if (selected) {
+  const allTickets = st.tickets ?? [];
+  const tickets = st.ticketShowClosed ? allTickets : allTickets.filter(isActionableTicket);
+  const ticketSel = Math.min(st.ticketSel ?? 0, Math.max(0, tickets.length - 1));
+  const selectedTicket = tickets[ticketSel];
+
+  if (st.focus === "tickets") {
+    const actionable = allTickets.filter(isActionableTicket).length;
     row([
-      { text: `${sectionTitle("ENTRY")} ${selected.ts} ${MUTED}[${selected.id}]${RESET}${selected.pinned ? ` ${ACCENT}●${RESET}pinned` : ""}` },
+      { text: sectionTitle(`FEEDBACK TICKETS (${actionable} actionable / ${allTickets.length} total)`) },
+      { text: button(st.ticketShowClosed ? "c actionable" : "c show all"), action: { t: "key", key: "c" } },
+      { text: button("t next pane"), action: { t: "key", key: "t" } },
     ]);
-    row([
-      { text: button("e edit"), action: { t: "key", key: "e" } },
-      { text: button(selected.pinned ? "p unpin" : "p pin"), action: { t: "key", key: "p" } },
-      { text: st.confirmRetire === entryKey(selected) ? `${WARN}${STRONG}[x CONFIRM retire]${RESET}` : button("x retire"), action: { t: "key", key: "x" } },
-      { text: button("n new"), action: { t: "key", key: "n" } },
-      { text: button("r refresh"), action: { t: "key", key: "r" } },
-    ]);
-    // -13, not -10: the blank + two forward rows at the foot share this pane.
-    const detailCap = Math.max(5, bodyRows - 13 - st.proposals.length * 2 - Math.min(4, st.improvements.length));
-    const feedback = feedbackPresentation(selected, st.entries);
-    const detailText = feedback
-      ? [
-          `${feedback.processed ? "✓ PROCESSED" : "○ UNPROCESSED — needs adjudication"}  episode=${feedback.episode}`,
-          "",
-          `TITLE\n${feedback.title}`,
-          "",
-          `SUMMARY\n${feedback.summary}`,
-          "",
-          `RAW FEEDBACK\n${feedback.raw}`,
-          "",
-          `WHAT WE CAN LEARN\n${feedback.learning}`,
-        ].join("\n")
-      : selected.text;
-    const wrapped = wrap(sanitizeText(detailText), rightW - 3);
-    for (const l of wrapped.slice(0, detailCap)) row([{ text: l }]);
-    if (wrapped.length > detailCap) row([{ text: `… ${wrapped.length - detailCap} more lines`, dim: true }]);
-  }
-  row([{ text: "" }]);
-  row([{ text: sectionTitle(`RUBRIC PROPOSALS (${st.proposals.length})`) }]);
-  if (!st.propLoaded) row([{ text: "loading…", dim: true }]);
-  else if (st.proposals.length === 0) row([{ text: "none yet — the companion authors proposals into state/rubric/", dim: true }]);
-  st.proposals.forEach((p, i) => {
-    const isSel = st.focus === "proposals" && i === st.propSel;
-    row([
-      { text: isSel ? selectedLine(`▸ ${truncate(p.slug, rightW - 26)}`) : `▸ ${truncate(p.slug, rightW - 26)}`, action: { t: "prop", i } },
-      { text: button("accept"), action: { t: "prop-accept", i } },
-      { text: button("reject"), action: { t: "prop-reject", i } },
-    ]);
-    if (p.head[0]) row([{ text: truncate(`  ${p.head[0]}`, rightW - 2), dim: true }]);
-  });
-  row([{ text: "" }]);
-  row([{ text: sectionTitle("BOT PRs / ISSUES") }]);
-  if (st.improvements.length === 0) row([{ text: "none yet — the overseer files them", dim: true }]);
-  for (const it of st.improvements.slice(0, 6)) {
-    const url = repo ? `https://github.com/${repo}/${it.kind === "pr" ? "pull" : "issues"}/${it.number}` : undefined;
-    row([
-      {
-        text: truncate(`${it.kind === "pr" ? "PR" : "IS"} #${it.number} [${it.state}] ${it.title}`, rightW - 2),
-        action: url ? { t: "url", url } : undefined,
-      },
-    ]);
-  }
-  row([{ text: "" }]);
-  const defects = defectEntries(st.entries);
-  row([{ text: `${sectionTitle(`DEFECT FLAGS (${defects.length})`)}${st.filedTotal > 0 ? ` ${MUTED}${st.filedTotal} auto-filed${RESET}` : ""}` }]);
-  for (const d of defects.slice(0, 5)) {
-    const i = ordered.findIndex((e) => entryKey(e) === entryKey(d));
-    row([{ text: truncate(`⚑ ${d.ts.slice(5, 10)} ${d.links[0] ?? d.text.slice(0, 30)}`, rightW - 2), action: i >= 0 ? { t: "mem", i } : undefined }]);
-  }
-  // The transport, last: it is chrome, and the ENTRY block with its verb
-  // buttons owns the top of this pane. Two fixed rows (`detailCap` reserves
-  // them) so the Studio link does not move between repaints.
-  row([{ text: "" }]);
-  for (const chunks of forwardRows(st.forward, rightW)) row(chunks);
-  if (st.status) {
+    if (tickets.length === 0) row([{ text: "none — adjudication files a ticket only when something changes", dim: true }]);
+    const ticketStart = Math.max(0, Math.min(ticketSel - 5, Math.max(0, tickets.length - 6)));
+    for (const [offset, ticket] of tickets.slice(ticketStart, ticketStart + 6).entries()) {
+      const i = ticketStart + offset;
+      const label = truncate(`${ticket.id} [${ticket.status}] ${ticket.title}`, rightW - 3);
+      row([{ text: i === ticketSel ? selectedLine(label) : label, action: { t: "ticket", i } }]);
+    }
+    if (selectedTicket) {
+      row([{ text: "" }]);
+      row([{ text: `${sectionTitle(selectedTicket.id)} ${STRONG}${truncate(selectedTicket.title, rightW - selectedTicket.id.length - 7)}${RESET}` }]);
+      row([{ text: `${selectedTicket.status} · role ${selectedTicket.role} · updated ${selectedTicket.updated}`, dim: true }]);
+      row([{ text: `${MUTED}[ / ] scroll ticket · j/k choose ticket · t changes pane${RESET}` }]);
+      const ticketLines = wrap(sanitizeText(selectedTicket.body), rightW - 3);
+      const cap = Math.max(4, bodyRows - right.length - 1);
+      const start = Math.max(0, Math.min(st.ticketScroll ?? 0, Math.max(0, ticketLines.length - cap)));
+      for (const line of ticketLines.slice(start, start + cap)) row([{ text: line }]);
+      if (start + cap < ticketLines.length) row([{ text: `… ${ticketLines.length - start - cap} more lines`, dim: true }]);
+    }
+  } else {
+    if (selected) {
+      row([
+        { text: `${sectionTitle("ENTRY")} ${selected.ts} ${MUTED}[${selected.id}]${RESET}${selected.pinned ? ` ${ACCENT}●${RESET}pinned` : ""}` },
+      ]);
+      row([
+        { text: button("e edit"), action: { t: "key", key: "e" } },
+        { text: button(selected.pinned ? "p unpin" : "p pin"), action: { t: "key", key: "p" } },
+        { text: st.confirmRetire === entryKey(selected) ? `${WARN}${STRONG}[x CONFIRM retire]${RESET}` : button("x retire"), action: { t: "key", key: "x" } },
+        { text: button("n new"), action: { t: "key", key: "n" } },
+        { text: button("r refresh"), action: { t: "key", key: "r" } },
+      ]);
+      // Reserve the foot plus the feedback-ticket invitation; this keeps the
+      // actionable queue visible instead of letting a long raw entry bury it.
+      const detailCap = Math.max(5, bodyRows - 18 - st.proposals.length * 2 - Math.min(4, st.improvements.length));
+      const feedback = feedbackPresentation(selected, st.entries);
+      const detailText = feedback
+        ? [
+            `${feedback.processed ? "✓ PROCESSED" : "○ UNPROCESSED — needs adjudication"}  episode=${feedback.episode}`,
+            "",
+            `TITLE\n${feedback.title}`,
+            "",
+            `SUMMARY\n${feedback.summary}`,
+            "",
+            `RAW FEEDBACK\n${feedback.raw}`,
+            "",
+            `WHAT WE CAN LEARN\n${feedback.learning}`,
+          ].join("\n")
+        : selected.text;
+      const wrapped = wrap(sanitizeText(detailText), rightW - 3);
+      for (const l of wrapped.slice(0, detailCap)) row([{ text: l }]);
+      if (wrapped.length > detailCap) row([{ text: `… ${wrapped.length - detailCap} more lines`, dim: true }]);
+    }
     row([{ text: "" }]);
-    row([{ text: truncate(st.status, rightW - 2) }]);
+    const actionable = allTickets.filter(isActionableTicket).length;
+    row([
+      { text: sectionTitle(`FEEDBACK TICKETS (${actionable})`) },
+      { text: button("t inspect"), action: { t: "key", key: "t" } },
+    ]);
+    if (actionable === 0) row([{ text: "none actionable — changed adjudications file here", dim: true }]);
+    for (const [i, ticket] of allTickets.filter(isActionableTicket).slice(0, 3).entries()) {
+      row([{ text: truncate(`${ticket.id} [${ticket.status}] ${ticket.title}`, rightW - 3), action: { t: "ticket", i } }]);
+    }
+    row([{ text: "" }]);
+    row([{ text: sectionTitle(`RUBRIC PROPOSALS (${st.proposals.length})`) }]);
+    if (!st.propLoaded) row([{ text: "loading…", dim: true }]);
+    else if (st.proposals.length === 0) row([{ text: "none yet — the companion authors proposals into state/rubric/", dim: true }]);
+    st.proposals.forEach((p, i) => {
+      const isSel = st.focus === "proposals" && i === st.propSel;
+      row([
+        { text: isSel ? selectedLine(`▸ ${truncate(p.slug, rightW - 26)}`) : `▸ ${truncate(p.slug, rightW - 26)}`, action: { t: "prop", i } },
+        { text: button("accept"), action: { t: "prop-accept", i } },
+        { text: button("reject"), action: { t: "prop-reject", i } },
+      ]);
+      if (p.head[0]) row([{ text: truncate(`  ${p.head[0]}`, rightW - 2), dim: true }]);
+    });
+    row([{ text: "" }]);
+    row([{ text: sectionTitle("BOT PRs / ISSUES") }]);
+    if (st.improvements.length === 0) row([{ text: "none yet — the overseer files them", dim: true }]);
+    for (const it of st.improvements.slice(0, 6)) {
+      const url = repo ? `https://github.com/${repo}/${it.kind === "pr" ? "pull" : "issues"}/${it.number}` : undefined;
+      row([
+        {
+          text: truncate(`${it.kind === "pr" ? "PR" : "IS"} #${it.number} [${it.state}] ${it.title}`, rightW - 2),
+          action: url ? { t: "url", url } : undefined,
+        },
+      ]);
+    }
+    row([{ text: "" }]);
+    const defects = defectEntries(st.entries);
+    row([{ text: `${sectionTitle(`DEFECT FLAGS (${defects.length})`)}${st.filedTotal > 0 ? ` ${MUTED}${st.filedTotal} auto-filed${RESET}` : ""}` }]);
+    for (const d of defects.slice(0, 5)) {
+      const i = ordered.findIndex((e) => entryKey(e) === entryKey(d));
+      row([{ text: truncate(`⚑ ${d.ts.slice(5, 10)} ${d.links[0] ?? d.text.slice(0, 30)}`, rightW - 2), action: i >= 0 ? { t: "mem", i } : undefined }]);
+    }
+    row([{ text: "" }]);
+    for (const chunks of forwardRows(st.forward, rightW)) row(chunks);
+    if (st.status) {
+      row([{ text: "" }]);
+      row([{ text: truncate(st.status, rightW - 2) }]);
+    }
   }
 
   const rightX0 = leftW + 4; // │ + left cell (leftW+1) + │ + leading space
@@ -454,6 +501,9 @@ export interface MemTabDeps {
   accept?: (app: App, slug: string) => Promise<{ ok: boolean; message: string }>;
   reject?: (app: App, slug: string, reason: string) => Promise<{ ok: boolean; message: string }>;
   tracker?: TrackerPaths;
+  /** Read-only feedback-effort tickets. Defaults to tracker.root when the
+   * tracker is configured; injected in tests so no fixture tree is required. */
+  readTickets?: () => TrackerTicket[];
   gitRun?: AcceptDeps["git"]["run"];
   /** The canonical repo root the accept path applies/ratifies/commits in —
    * NOT process.cwd(): `qcr` runs from anywhere. */
@@ -482,6 +532,10 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
     proposals: [],
     improvements: [],
     propLoaded: false,
+    tickets: [],
+    ticketSel: 0,
+    ticketScroll: 0,
+    ticketShowClosed: false,
     filedTotal: 0,
     ...(deps.forward ? { forward: deps.forward.view() } : {}),
   };
@@ -490,6 +544,18 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
    * expression from st) and every verb below share it, so x/p/e can never
    * address an entry the filter hides. */
   const orderedNow = (): MemoryEntry[] => feedbackInbox(st.entries, st.memFilter);
+
+  const loadTickets = (): void => {
+    try {
+      st.tickets = deps.readTickets?.() ?? (deps.tracker ? readEffortTickets(deps.tracker.root) : []);
+    } catch {
+      st.tickets = [];
+    }
+    const visible = st.ticketShowClosed ? st.tickets : st.tickets.filter(isActionableTicket);
+    st.ticketSel = Math.min(st.ticketSel ?? 0, Math.max(0, visible.length - 1));
+    st.ticketScroll = 0;
+  };
+  loadTickets();
 
   const loadDigest = async (): Promise<void> => {
     st.digest.files = await digestFetcher.list();
@@ -676,6 +742,16 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
         st.propSel = action.i;
         theApp.repaint();
         return;
+      case "ticket": {
+        st.focus = "tickets";
+        st.ticketSel = action.i;
+        st.ticketScroll = 0;
+        const visible = st.ticketShowClosed ? (st.tickets ?? []) : (st.tickets ?? []).filter(isActionableTicket);
+        const ticket = visible[action.i];
+        if (ticket) theApp.notice(`ticket open → ${ticket.id} ${ticket.title}`);
+        theApp.repaint();
+        return;
+      }
       case "prop-accept":
       case "prop-reject":
         st.focus = "proposals";
@@ -777,6 +853,7 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
         st.digest.loaded = false;
         st.memLoaded = false;
         st.propLoaded = false;
+        loadTickets();
         loadAll();
         return true;
       default:
@@ -804,6 +881,8 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
     const ordered = orderedNow();
     const selected = ordered[st.sel];
     const proposal = st.proposals[st.propSel];
+    const visibleTickets = st.ticketShowClosed ? (st.tickets ?? []) : (st.tickets ?? []).filter(isActionableTicket);
+    const ticket = visibleTickets[st.ticketSel ?? 0];
     if (!(key.kind === "char" && key.ch === "x")) st.confirmRetire = undefined;
     switch (key.kind) {
       case "down":
@@ -812,16 +891,28 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
         // it, so there is no separate scroll to desynchronize from.
         const delta = key.kind === "down" ? 1 : -1;
         if (st.focus === "timeline") st.sel = Math.max(0, Math.min(st.sel + delta, Math.max(0, ordered.length - 1)));
-        else st.propSel = Math.max(0, Math.min(st.propSel + delta, Math.max(0, st.proposals.length - 1)));
+        else if (st.focus === "tickets") {
+          st.ticketSel = Math.max(0, Math.min((st.ticketSel ?? 0) + delta, Math.max(0, visibleTickets.length - 1)));
+          st.ticketScroll = 0;
+          const next = visibleTickets[st.ticketSel];
+          if (next) theApp.notice(`ticket open → ${next.id} ${next.title}`);
+        } else st.propSel = Math.max(0, Math.min(st.propSel + delta, Math.max(0, st.proposals.length - 1)));
         theApp.repaint();
         return true;
       }
       case "digest-older":
       case "digest-newer":
+        if (st.focus === "tickets") {
+          const delta = key.kind === "digest-older" ? 5 : -5;
+          st.ticketScroll = Math.max(0, (st.ticketScroll ?? 0) + delta);
+          theApp.repaint();
+          return true;
+        }
         return pageDigest(theApp, key.kind === "digest-older" ? 1 : -1);
       case "refresh":
         st.memLoaded = false;
         st.propLoaded = false;
+        loadTickets();
         loadAll();
         return true;
       case "events": {
@@ -835,7 +926,16 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
       case "char":
         switch (key.ch) {
           case "t":
-            st.focus = st.focus === "timeline" ? "proposals" : "timeline";
+            st.focus = st.focus === "timeline" ? "tickets" : st.focus === "tickets" ? "proposals" : "timeline";
+            st.ticketScroll = 0;
+            if (st.focus === "tickets" && ticket) theApp.notice(`ticket open → ${ticket.id} ${ticket.title}`);
+            theApp.repaint();
+            return true;
+          case "c":
+            if (st.focus !== "tickets") return true;
+            st.ticketShowClosed = !st.ticketShowClosed;
+            st.ticketSel = 0;
+            st.ticketScroll = 0;
             theApp.repaint();
             return true;
           case "x": {
@@ -857,19 +957,20 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
             return true;
           }
           case "n":
+            if (st.focus !== "timeline") return true;
             theApp.promptInput("new memory entry (#manual)", "", (text) => {
               verb(memory.apply({ op: "add", text }));
             });
             return true;
           case "A": {
-            if (!proposal) return true;
+            if (st.focus !== "proposals" || !proposal) return true;
             st.status = `accepting '${proposal.slug}'…`;
             theApp.repaint();
             verb(doAccept(theApp, proposal.slug));
             return true;
           }
           case "R": {
-            if (!proposal) return true;
+            if (st.focus !== "proposals" || !proposal) return true;
             theApp.promptInput(`reject '${proposal.slug}' — reason`, "", (reason) => {
               verb(doReject(theApp, proposal.slug, reason));
             });

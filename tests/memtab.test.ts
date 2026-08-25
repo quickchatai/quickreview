@@ -231,6 +231,40 @@ describe("feedback adjudication inbox", () => {
     expect(screen).toContain("RAW FEEDBACK");
     expect(screen).toContain("WHAT WE CAN LEARN");
   });
+
+  it("opens actionable feedback-effort tickets with their complete body", () => {
+    const body = `# Adjudicate one real episode\n\nId: FT-0227\nStatus: open\nRole: ready-for-human\nUpdated: 2026-08-25T18:00:00Z\n\n## Question\n\nSettle the complaint against all three evidence sources.`;
+    const st: MemTabState = {
+      view: "memory",
+      digest: { files: [], back: 0, scroll: 0, awaitingSelected: 0, loaded: true },
+      entries: [raw],
+      memLoaded: true,
+      focus: "tickets",
+      sel: 0,
+      propSel: 0,
+      scroll: 0,
+      proposals: [],
+      improvements: [],
+      propLoaded: true,
+      filedTotal: 0,
+      memFilter: "feedback",
+      tickets: [{
+        id: "FT-0227",
+        title: "Adjudicate one real episode",
+        status: "open",
+        role: "ready-for-human",
+        category: "—",
+        updated: "2026-08-25T18:00:00Z",
+        path: "/tracker/FT-0227.md",
+        body,
+      }],
+    };
+    const screen = stripAnsi(renderMemoryView(st, false, undefined, 180, 52).render());
+    expect(screen).toContain("FEEDBACK TICKETS (1 actionable / 1 total)");
+    expect(screen).toContain("FT-0227 [open] Adjudicate one real episode");
+    expect(screen).toContain("Settle the complaint against all three evidence sources.");
+    expect(screen).toContain("[ / ] scroll ticket");
+  });
 });
 
 describe("renderMemoryView", () => {
@@ -368,6 +402,7 @@ describe("management verbs", () => {
     app.hooks.digestScreen!(app, 110, 30);
     await settle();
     st.view = "memory";
+    app.hooks.digestKey!(app, { kind: "char", ch: "t" }); // focus feedback tickets
     app.hooks.digestKey!(app, { kind: "char", ch: "t" }); // focus proposals
     app.hooks.digestKey!(app, { kind: "char", ch: "A" });
     await settle();
