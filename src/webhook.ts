@@ -7,6 +7,7 @@
 // this path is only the fast one.
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { captureFromEvent } from "./capture.js";
 import type { Config } from "./config.js";
 import { interpretReviewEvent, isFeedbackBody } from "./feedback.js";
 import { applyEvent as applyEventFor } from "./statemachine.js";
@@ -389,6 +390,17 @@ export function handleDelivery(
     reviewTeam: deps.cfg.github.review_team,
     botCommentPr: (id) => deps.store.botCommentPr(id),
   });
+  // the capture SIDE RECORD, taken beside the interpretation and
+  // never instead of it. `interpretation` above is already decided and is not
+  // read here — capture cannot divert a comment, cannot suppress one, and
+  // cannot classify one. It also must not be able to break the receiver: a
+  // capture failure is logged and the delivery proceeds exactly as before.
+  try {
+    captureComment(deps, event, action, payload);
+  } catch (err) {
+    log("webhook: comment capture failed", err);
+    deps.store.logEvent("comment_capture_failed", null, { guid, event, error: String(err) });
+  }
   deps.store.logEvent("webhook_event", interpretationPr(interpretation), {
     guid,
     event,
@@ -397,6 +409,26 @@ export function handleDelivery(
     ...(interpretation.kind === "ignored" ? { reason: interpretation.reason } : {}),
   });
   return { status: 200, reason: interpretation.kind, interpretation };
+}
+
+/** Capture every human comment on a tracked PR. Returns nothing —
+ * no caller may branch on it, which is the point: the record is a copy, not a
+ * routing input. */
+function captureComment(deps: WebhookDeps, event: string, action: string | null, payload: any): void {
+  const outcome = captureFromEvent(event, action, payload, {
+    botLogin: deps.cfg.github.bot_login,
+    isTrackedPr: (pr) => deps.store.getPr(pr) !== undefined,
+  });
+  if (!("captured" in outcome)) return;
+  const c = outcome.captured;
+  if (deps.store.recordPrComment({ ...c, captured_via: "webhook" }))
+    deps.store.logEvent("comment_captured", c.pr, {
+      source: c.source,
+      comment_id: c.comment_id,
+      author: c.author,
+      tagged: c.tagged,
+      via: "webhook",
+    });
 }
 
 /** The PR an interpretation is about, when it is about one. */
