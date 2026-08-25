@@ -162,6 +162,21 @@
       no_log: true
       when: lookup('ansible.builtin.fileglob', secrets_src + '/openai_api_key') | length > 0
 
+    # the OpenViking auth keys. Copied-if-present, matching the
+    # openai_api_key idiom — a missing root key degrades the boot LOUDLY to
+    # auth_mode=dev (the entrypoint warns), it never blocks the deploy. The
+    # companion key must NEVER be in this list (rule 8: it never touches the VM).
+    - name: OpenViking auth keys (root + reviewer; confinement is dev-mode without them)
+      ansible.builtin.copy:
+        src: "{{ secrets_src }}/{{ item }}"
+        dest: "{{ sandbox_root }}/secrets/{{ item }}"
+        mode: "0400"
+        owner: "{{ container_uid }}"
+        group: "{{ container_uid }}"
+      loop: ["{{ openviking_root_key_file }}", "{{ openviking_reviewer_key_file }}"]
+      no_log: true
+      when: lookup('ansible.builtin.fileglob', secrets_src + '/' + item) | length > 0
+
     - name: Seed prompts (from the artifact set)
       ansible.builtin.copy:
         src: "{{ seed_src }}/{{ item }}"
