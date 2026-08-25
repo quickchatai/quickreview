@@ -395,7 +395,15 @@ async function probePair(base, key, ns, env, fetchFn, doWrite) {
           // Namespace in the URI, same reason as the read probe: the server
           // confines by URI, not by the X-OpenViking-User header.
           root_uri: `viking://user/${ns}/memories`,
-          operations: [{ uri: `viking://user/${ns}/memories/qcr-confinement-probe-${at}.md`, content: `confinement probe ${at}\n` }],
+          operations: [
+            {
+              uri: `viking://user/${ns}/memories/qcr-confinement-probe-${at}.md`,
+              content: `confinement probe ${at}\n`,
+              // Mandatory on the live 0.4.15: an operation without a
+              // precondition is HTTP 400 (mirrors src/openviking/client.ts).
+              precondition: { kind: "create_if_absent" },
+            },
+          ],
           wait: false,
         }),
       }
