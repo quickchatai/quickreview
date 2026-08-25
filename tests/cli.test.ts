@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { renderStatus, todayJson, whyJson } from "../src/cli.js";
+import { cancellationsOn, renderStatus, todayCancellationLine, todayJson, whyJson } from "../src/cli.js";
 import { StateStore, type StatusSnapshot } from "../src/state.js";
 
 const snapshot: StatusSnapshot = {
@@ -92,6 +92,56 @@ describe("usage-aware spend reporting", () => {
       expect(payload.spend_usd).toBeCloseTo(1.56, 6);
       expect(payload.tokens_in).toBe(120_000);
       expect(payload.tokens_out).toBe(8_000);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("counts an expired round's spend (finding 1)", () => {
+    const store = seededStore();
+    try {
+      const zombie = store.startRound(9, "first", [], 45);
+      store.db.prepare("UPDATE rounds SET status = 'expired', est_usd = 2.0 WHERE id = ?").run(zombie);
+      const today = new Date().toISOString().slice(0, 10);
+      expect(todayJson(store, today).spend_usd).toBeCloseTo(3.56, 6);
+      expect(whyJson(store, 9, "/nonexistent-archive").spend_usd).toBeCloseTo(2.0, 6);
+    } finally {
+      store.close();
+    }
+  });
+});
+
+describe("cancellation reporting", () => {
+  it("`qcr today` reports the split by cause, loud first, and never stays silent", () => {
+    const store = new StateStore(":memory:");
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      expect(todayCancellationLine(cancellationsOn(store, today))).toBe("cancelled: none");
+
+      for (const pr of [1, 2]) store.markRoundCancelled(store.startRound(pr, "first", [], 45), "x", "orphan_sweep");
+      store.markRoundCancelled(store.startRound(3, "re-review", [], 45), "y", "deadline_overrun");
+
+      expect(cancellationsOn(store, today)).toEqual([
+        { cause: "deadline_overrun", count: 1, loud: true },
+        { cause: "orphan_sweep", count: 2, loud: false },
+      ]);
+      expect(todayCancellationLine(cancellationsOn(store, today))).toBe(
+        "cancelled: 3 — stopped dead 1 ⚑, orphan sweep (redeploy) 2  (1 needing a look)",
+      );
+      expect(todayJson(store, today).cancellations).toHaveLength(2);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("whyJson carries the cause per round — null on everything not cancelled", () => {
+    const store = new StateStore(":memory:");
+    try {
+      store.markRoundCancelled(store.startRound(5, "first", [], 45), "x", "deadline_overrun");
+      const done = store.startRound(5, "re-review", [], 45);
+      store.finishRound(done, "APPROVE", null);
+      const payload = whyJson(store, 5, "/nonexistent-archive");
+      expect(payload.rounds.map((r) => r.cancel_cause)).toEqual(["deadline_overrun", null]);
     } finally {
       store.close();
     }

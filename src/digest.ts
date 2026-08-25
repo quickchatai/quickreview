@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { join } from "node:path";
 import { sandboxRoot } from "./config.js";
 import type { Run } from "./improvements.js";
-import type { StateStore } from "./state.js";
+import { cancelCauseLabel, isLoudCancelCause, type CancelCause, type CancellationTally, type StateStore } from "./state.js";
 
 export const HEADLINE_MAX = 200;
 
@@ -67,10 +67,15 @@ export interface DailyUsage {
   est_usd: number;
 }
 
-/** Aggregate one day's measured usage from the rounds table. Expired zombie
- * rounds are excluded from every figure. */
+/**
+ * Aggregate one day's measured usage from the rounds table.
+ *
+ * Expired rounds are INCLUDED (reversing the exclusion): a
+ * round that blew its deadline still burned its tokens, and leaving it out of
+ * the day's spend under-reported real cost — see `StateStore.totalSpend`.
+ */
 export function dailyUsage(store: StateStore, date: string): DailyUsage {
-  const rounds = store.roundsOn(date).filter((r) => r.status !== "expired");
+  const rounds = store.roundsOn(date);
   return {
     date,
     rounds: rounds.length,
@@ -83,6 +88,71 @@ export function dailyUsage(store: StateStore, date: string): DailyUsage {
 /** One digest-ready line, e.g. "usage: 3 rounds — 120000 in / 4000 out tokens — est $1.23". */
 export function usageSummaryLine(usage: DailyUsage): string {
   return `usage: ${usage.rounds} rounds — ${usage.tokens_in} in / ${usage.tokens_out} out tokens — est $${usage.est_usd.toFixed(2)}`;
+}
+
+// ---- cancellations -----------------------------------------------
+
+export interface DailyCancellations {
+  date: string;
+  total: number;
+  /** The subset a human should act on — `LOUD_CANCEL_CAUSES`. */
+  loud: number;
+  by_cause: CancellationTally[];
+}
+
+/**
+ * One day's cancelled rounds, grouped by cause.
+ *
+ * The digest is where a day's shape is written down, and cancellation was
+ * missing from it entirely: measured 55 cancellations since the
+ * cutover with no digest entry, no metric and no anomaly, while the rare
+ * `overdue` raised an alarm five times. Grouping is the whole point — 70% of
+ * that volume is the boot orphan sweep after a redeploy, and a total that
+ * lumps it in with a round that stopped dead says nothing.
+ */
+export function dailyCancellations(store: StateStore, date: string): DailyCancellations {
+  const counts = new Map<string, number>();
+  for (const r of store.roundsOn(date)) {
+    if (r.status !== "cancelled") continue;
+    const cause = r.cancel_cause ?? "unknown";
+    counts.set(cause, (counts.get(cause) ?? 0) + 1);
+  }
+  const byCause: CancellationTally[] = [...counts.entries()]
+    .map(([cause, count]) => ({ cause: cause as CancelCause, count, loud: isLoudCancelCause(cause) }))
+    .sort((a, b) => Number(b.loud) - Number(a.loud) || b.count - a.count || a.cause.localeCompare(b.cause));
+  return {
+    date,
+    total: byCause.reduce((n, c) => n + c.count, 0),
+    loud: byCause.filter((c) => c.loud).reduce((n, c) => n + c.count, 0),
+    by_cause: byCause,
+  };
+}
+
+/**
+ * One digest-ready line, e.g.
+ * "cancelled: 4 rounds — stopped dead 1 ⚑, orphan sweep (redeploy) 3".
+ * A quiet day says so explicitly: "cancelled: none" is a fact, and its absence
+ * was the bug.
+ */
+export function cancellationSummaryLine(c: DailyCancellations): string {
+  if (c.total === 0) return "cancelled: none";
+  const parts = c.by_cause.map((b) => `${cancelCauseLabel(b.cause)} ${b.count}${b.loud ? " ⚑" : ""}`);
+  return `cancelled: ${c.total} round${c.total === 1 ? "" : "s"} — ${parts.join(", ")}${
+    c.loud > 0 ? ` (${c.loud} stopped dead — worth a look; the orphan sweep is a redeploy artefact and is not)` : ""
+  }`;
+}
+
+/**
+ * Daemon-measured context appended to the EOD sweep prompt (wiring).
+ *
+ * The digest itself is written by the sweep's pi session from a ratified
+ * seed prompt the daemon may not edit — so the only render the daemon owns is
+ * the injected prompt, and the cancellation line rides it. Without this the
+ * two helpers above were dead code and the digest never mentioned
+ * cancellations at all (the gap, reopened).
+ */
+export function eodDigestContext(store: StateStore, date: string): string {
+  return cancellationSummaryLine(dailyCancellations(store, date));
 }
 
 // ---- rubric proposals (local-only branches) --------------------------------

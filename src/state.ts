@@ -104,6 +104,157 @@ export interface RoundRow {
    * recovery (rewrite the wake file, same round and session), bounded on its
    * own rather than out of the `max_self_requeues` budget. */
   redeliveries: number;
+  /** The per-round comment count: inline comments this round posted,
+   * as the session reports it in its findings record. Null = unknown (no
+   * record, or a record that omitted the count) — never confused with 0. */
+  comments_posted: number | null;
+  /** WHY this round was cancelled — null on every round that was
+   * not cancelled, and on legacy cancellations the boot migration could
+   * not classify from their prose summary. The prose stays in `summary`; this
+   * is the machine-readable half every aggregate groups by. */
+  cancel_cause: string | null;
+}
+
+/**
+ * The reasons a round can be cancelled.
+ *
+ * Cancellation used to be prose only: `summary` carried a sentence and nothing
+ * anywhere read it back. The diagnosis had to reconstruct the split by
+ * grepping that prose — 55 cancellations since the cutover, 70% of them the
+ * benign boot-time orphan sweep, and NOTHING consumed the signal while the
+ * rare `overdue` (5 occurrences) raised an alarm. The loud signal was the rare
+ * one. These are the causes; `LOUD_CANCEL_CAUSES` is which of them deserve a
+ * human's attention.
+ */
+export type CancelCause =
+  /** Boot-time orphan sweep: tmux lives in the container, so a restart orphans
+   * every in-flight round BY CONSTRUCTION. A redeploy artefact, never a defect. */
+  | "orphan_sweep"
+  /** The round stopped dead inside its deadline window with no verdict. The
+   * real defect (Q5: against completed rounds of 0.6–23.4 minutes, a
+   * 75-minute overrun is never a slow round). */
+  | "deadline_overrun"
+  /** The round's prompt never reached the session and redelivery could not
+   * repair it (#5362) — a delivery fault, not a review fault. */
+  | "lost_prompt"
+  /** The PR advanced mid-round; the session correctly posted nothing and the
+   * round was redispatched against the fresh head. Benign. */
+  | "head_moved"
+  /** The round verdicted without executing any passes — redone rather than
+   * handed to a person. */
+  | "incomplete_round"
+  /** A newer round on the same PR outlived this one. The benign explanation
+   * the diagnosis refuted as the DOMINANT one: 6.5%, not the story. */
+  | "superseded"
+  /** An operator unwedge lever (`rerun-round` / `restart-session`). */
+  | "operator"
+  /** Legacy prose the migration could not classify. Never inferred as
+   * benign: unknown is unknown. */
+  | "unknown";
+
+export const CANCEL_CAUSES: readonly CancelCause[] = [
+  "orphan_sweep",
+  "deadline_overrun",
+  "lost_prompt",
+  "head_moved",
+  "incomplete_round",
+  "superseded",
+  "operator",
+  "unknown",
+];
+
+/**
+ * The causes that deserve a human (and the whole point of the ticket).
+ *
+ * `orphan_sweep` is deliberately NOT here: it is what a clean redeploy does to
+ * every round in flight, it fired 38 times in eight days of heavy building, and
+ * alarming on it would train everyone to ignore cancellation entirely — the
+ * exact inversion found. `head_moved` and `superseded` are the system
+ * working. What is left is a round that stopped dead: that gets an anomaly row.
+ */
+export const LOUD_CANCEL_CAUSES: ReadonlySet<CancelCause> = new Set<CancelCause>(["deadline_overrun"]);
+
+export function isLoudCancelCause(cause: string | null | undefined): boolean {
+  return cause !== null && cause !== undefined && LOUD_CANCEL_CAUSES.has(cause as CancelCause);
+}
+
+/** Short human labels — one wording, shared by the CLI, the digest and the TUI. */
+export const CANCEL_CAUSE_LABEL: Record<CancelCause, string> = {
+  orphan_sweep: "orphan sweep (redeploy)",
+  deadline_overrun: "stopped dead",
+  lost_prompt: "prompt lost",
+  head_moved: "head moved",
+  incomplete_round: "incomplete round",
+  superseded: "superseded",
+  operator: "operator",
+  unknown: "unclassified",
+};
+
+export function cancelCauseLabel(cause: string | null | undefined): string {
+  const key = (cause ?? "unknown") as CancelCause;
+  return CANCEL_CAUSE_LABEL[key] ?? key;
+}
+
+/** One cause's tally, as every cancellation surface reports it. */
+export interface CancellationTally {
+  cause: CancelCause;
+  count: number;
+  /** Whether this cause is human-attention grade (`LOUD_CANCEL_CAUSES`). */
+  loud: boolean;
+}
+
+/** One parsed row of the durable reasoning record. */
+export interface RoundFindingRow {
+  id: number;
+  pr: number;
+  round_id: number | null;
+  round_no: number;
+  head_sha: string;
+  finding_key: string;
+  path: string | null;
+  line: number | null;
+  lens: string;
+  tier: string | null;
+  /** 1 when the lens is not in the round's plan — the add protocol ran it. */
+  unplanned: number;
+  severity: string | null;
+  confidence: number | null;
+  reachability: string | null;
+  kind: string | null;
+  disposition: string;
+  axis: string | null;
+  word: string | null;
+  reason: string | null;
+  evidence: string | null;
+  posted_as: string | null;
+  raised_in_round: number | null;
+  thread_id: number | null;
+  recorded_at: string;
+}
+
+/**
+ * What the store needs to write one recorded finding. Structural on purpose —
+ * `FindingsRecordEntry` (src/findingsrecord.ts) satisfies it without state.ts
+ * having to know anything about files, parsing or the record's schema.
+ */
+export interface RoundFindingInput {
+  key: string;
+  path?: string | null;
+  line?: number | null;
+  lens?: string | null;
+  tier?: string | null;
+  severity?: string | null;
+  confidence?: number | null;
+  reachability?: string | null;
+  kind?: string | null;
+  disposition?: string | null;
+  axis?: string | null;
+  word?: string | null;
+  reason?: string | null;
+  evidence?: string | null;
+  posted_as?: string | null;
+  raised_in_round?: number | null;
+  thread_id?: number | null;
 }
 
 /** PR lifecycle facts for PRs the daemon never tracked (M2 backfill fills it).
@@ -275,6 +426,85 @@ CREATE UNIQUE INDEX IF NOT EXISTS feedback_by_review
 -- Warsaw day — a re-blocked, re-merged PR months later is a fresh signal.
 CREATE UNIQUE INDEX IF NOT EXISTS feedback_by_pr_day
   ON feedback_signals (kind, pr, day) WHERE comment_id IS NULL AND review_id IS NULL;
+-- Human-comment capture (deciding): every human comment on a
+-- tracked PR, kept locally because the companion cannot read GitHub and review
+-- prose has no other local copy (bot_comments stores ids only). A SIDE
+-- RECORD — nothing here changes how a comment is routed, and nothing here
+-- classifies it. Identity is GitHub's own (source, comment_id), never body
+-- text, so a webhook delivery and a reconcile sweep of the same comment
+-- collapse to one row.
+CREATE TABLE IF NOT EXISTS pr_comments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  pr INTEGER NOT NULL,
+  -- 'review_comment' (inline) | 'issue_comment' (top-level) | 'review' (a
+  -- submitted review's own body). Part of the identity: GitHub numbers review
+  -- ids and comment ids in separate spaces.
+  source TEXT NOT NULL,
+  comment_id INTEGER NOT NULL,
+  in_reply_to_id INTEGER,
+  thread_id INTEGER,
+  review_id INTEGER,
+  author TEXT NOT NULL DEFAULT '',
+  -- GitHub's account type. Only humans are captured; the column is what lets a
+  -- reader still tell the two apart in the record itself.
+  author_type TEXT NOT NULL DEFAULT 'User',
+  -- 1 when the body starts with [feedback]. A fact about the text, not a
+  -- verdict on it: the tag's privileges stay in feedback.ts.
+  tagged INTEGER NOT NULL DEFAULT 0,
+  path TEXT,
+  line INTEGER,
+  body TEXT NOT NULL DEFAULT '',
+  created_at TEXT,
+  captured_at TEXT NOT NULL,
+  -- 'webhook' | 'reconcile' — which path saw it first, i.e. the webhook-health
+  -- signal the sweep exists to expose.
+  captured_via TEXT NOT NULL DEFAULT 'webhook'
+);
+CREATE UNIQUE INDEX IF NOT EXISTS pr_comments_identity ON pr_comments (source, comment_id);
+CREATE INDEX IF NOT EXISTS pr_comments_pr ON pr_comments (pr, id);
+-- The durable reasoning record (deciding): why each candidate
+-- finding was raised or killed. Parsed out of the session-written
+-- state/findings/pr-<n>-round-<k>.json — the file is the artifact, these are
+-- the countable rows's "how often the review backs down" needs.
+-- The unplanned flag is the daemon's own judgement (the lens is not in
+-- rounds.lenses), never the session's: the add protocol lets the main pi run a
+-- lens that appears in no plan, so the executed set is never assumed equal to
+-- the plan.
+CREATE TABLE IF NOT EXISTS round_findings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  pr INTEGER NOT NULL,
+  round_id INTEGER,
+  round_no INTEGER NOT NULL,
+  head_sha TEXT NOT NULL DEFAULT '',
+  finding_key TEXT NOT NULL,
+  path TEXT,
+  line INTEGER,
+  lens TEXT NOT NULL DEFAULT '',
+  tier TEXT,
+  unplanned INTEGER NOT NULL DEFAULT 0,
+  severity TEXT,
+  confidence REAL,
+  reachability TEXT,
+  kind TEXT,
+  -- posted | killed | downgraded | merged | folded | withheld | conceded |
+  -- unknown. conceded = refuted-and-conceded: the state that lets a later
+  -- round tell escalating an OPEN finding from resurrecting a SETTLED one.
+  disposition TEXT NOT NULL DEFAULT 'unknown',
+  axis TEXT,
+  word TEXT,
+  reason TEXT,
+  evidence TEXT,
+  posted_as TEXT,
+  raised_in_round INTEGER,
+  thread_id INTEGER,
+  recorded_at TEXT NOT NULL
+);
+-- Re-recording a round (a re-nudge that finally lands, a sweep replay)
+-- REPLACES its rows rather than doubling them.
+CREATE UNIQUE INDEX IF NOT EXISTS round_findings_identity
+  ON round_findings (pr, round_no, finding_key);
+CREATE INDEX IF NOT EXISTS round_findings_pr ON round_findings (pr, round_no);
+CREATE INDEX IF NOT EXISTS round_findings_lens ON round_findings (lens, disposition);
 CREATE INDEX IF NOT EXISTS events_kind_pr ON events(kind, pr, id);
 -- Wakes held while their PR's round was in flight (single-shepherd invariant
 -- S4: the PR's ONE main pi is never given two instructions at once). Flushed
@@ -400,6 +630,26 @@ export interface FeedbackSignalRow {
   created_at: string;
 }
 
+/** One captured human comment. `tagged` is 0/1 (SQLite boolean). */
+export interface PrCommentRow {
+  id: number;
+  pr: number;
+  source: string;
+  comment_id: number;
+  in_reply_to_id: number | null;
+  thread_id: number | null;
+  review_id: number | null;
+  author: string;
+  author_type: string;
+  tagged: number;
+  path: string | null;
+  line: number | null;
+  body: string;
+  created_at: string | null;
+  captured_at: string;
+  captured_via: string;
+}
+
 export interface ReviewedHeadRow {
   pr: number;
   head_sha: string;
@@ -451,6 +701,16 @@ export interface PendingWakeRow {
 /** Per-PR ceiling on held wakes. A PR whose author writes more than this while
  * one round runs loses the oldest holds — logged, never silent. */
 export const MAX_HELD_WAKES = 5;
+
+/**
+ * How long an `overdue` round may sit before it counts as STRANDED.
+ *
+ * Deliberately far wider than `expire_overdue_after_h` (24h by config): that
+ * sweep buries rounds whose PR has moved on, this one is about rounds nothing
+ * will ever come back for. Seven days is "a week went by and nobody noticed",
+ * which is precisely what happened to pr 4662 round 2.
+ */
+export const STRANDED_ROUND_HORIZON_H = 168;
 
 /** Optional per-round facts recorded at (or just after) round start. */
 export interface RoundStartMeta {
@@ -521,6 +781,16 @@ export class StateStore {
       // Redelivery is cheap and does NOT spend the self-requeue budget, so it
       // needs its own bound.
       "ALTER TABLE rounds ADD COLUMN redeliveries INTEGER NOT NULL DEFAULT 0",
+      // The per-round comment count: how many inline comments the
+      // round actually posted, as the SESSION reports it in its findings
+      // record. Nullable — null is "unknown", distinct from 0 = "posted none".
+      // The registry's own answer is bot_comments.round_no; the two disagreeing
+      // is itself a signal, so both are kept.
+      "ALTER TABLE rounds ADD COLUMN comments_posted INTEGER",
+      // Why a cancelled round was cancelled — nullable, additive.
+      // Null on every non-cancelled round; the boot migration classifies the
+      // historical cancellations from their prose summary once.
+      "ALTER TABLE rounds ADD COLUMN cancel_cause TEXT",
     ]) {
       try {
         this.db.exec(ddl);
@@ -544,6 +814,11 @@ export class StateStore {
    *    verdict) or closed move to terminal `expired`. Rounds a rerun could
    *    still service (open PR, nothing decided since) are left alone — live
    *    rerun of a stuck round is's job, never this one's.
+   * 3. Cancel-cause backfill: every cancellation before this slice
+   *    recorded its reason as PROSE in `summary` and nothing read it back.
+   *    The prose is stable (each cancelling call site writes one fixed
+   *    phrasing), so it classifies exactly once here into `cancel_cause`.
+   *    Anything that does not match stays `unknown` — never guessed benign.
    */
   private runDataMigrations(): void {
     this.db
@@ -562,6 +837,29 @@ export class StateStore {
       )
       .run({ now: this.ts() });
     if (info.changes > 0) this.logEvent("rounds_expired", null, { count: info.changes, one_shot: true });
+    this.classifyLegacyCancellations();
+  }
+
+  /** backfill: read the historical cancellation prose into
+   * `cancel_cause`. Idempotent (only NULL causes are touched) and additive —
+   * it never rewrites `summary`, which stays the human record. */
+  private classifyLegacyCancellations(): void {
+    const info = this.db
+      .prepare(
+        `UPDATE rounds SET cancel_cause = CASE
+            WHEN summary LIKE 'orphaned —%'                       THEN 'orphan_sweep'
+            WHEN summary LIKE 'superseded —%'                     THEN 'superseded'
+            WHEN summary LIKE 'cancelled by %'                    THEN 'operator'
+            WHEN summary LIKE '%passed its deadline%'             THEN 'deadline_overrun'
+            WHEN summary LIKE '%dropped in delivery%'             THEN 'lost_prompt'
+            WHEN summary LIKE '%head_moved%'                      THEN 'head_moved'
+            WHEN summary LIKE '%without executing any passes%'    THEN 'incomplete_round'
+            ELSE 'unknown'
+          END
+          WHERE status = 'cancelled' AND cancel_cause IS NULL`,
+      )
+      .run();
+    if (info.changes > 0) this.logEvent("cancel_causes_backfilled", null, { count: info.changes });
   }
 
   close(): void {
@@ -671,7 +969,18 @@ export class StateStore {
    * Dispatch's first-review-vs-re-review choice and the nit-cap "review age"
    * key on this (§2.1; live 2026-08-18: #5313's two failed rounds
    * aged it to a "round 3 re-review" with the nit cap active despite zero
-   * posted reviews — a failed round must not age the PR). */
+   * posted reviews — a failed round must not age the PR).
+   *
+   * **Read the name carefully (finding 3).** This is not "how
+   * many rounds has this PR had"; it is "how many rounds DELIVERED a verdict".
+   * A PR whose first round is cancelled therefore produces a SECOND round
+   * still typed `"first"`, and the `first` / `re-review` split in `round_type`
+   * really means *has this PR ever been successfully reviewed*. That is the
+   * ratified behaviour and stays (a failed round must not age the PR, nor
+   * switch the nit cap on for a review the author never saw) — but any
+   * measurement that reads `round_type` as "round ordinal" is reading it
+   * wrong, and `rounds.round_no` is the ordinal it wants. Pinned by
+   * tests/state.test.ts. */
   priorRoundCount(pr: number): number {
     return (
       this.db
@@ -737,6 +1046,136 @@ export class StateStore {
     }
   }
 
+  // ---- the durable reasoning record ----------------------------
+
+  /** The per-round comment count: how many inline comments the round posted,
+   * as the session reported it. Idempotent overwrite. */
+  recordRoundComments(id: number, count: number): void {
+    this.db.prepare("UPDATE rounds SET comments_posted = ? WHERE id = ?").run(Math.max(0, Math.trunc(count)), id);
+  }
+
+  /**
+   * Store one round's reasoning record as rows.
+   *
+   * `planned` is the round's PLAN (`rounds.lenses`), used only to stamp
+   * `unplanned` — a lens outside it is recorded, never rejected: the add
+   * protocol lets the main pi run a lens that appears in no plan, so the
+   * executed set is never assumed equal to the plan.
+   *
+   * Idempotent per (pr, round_no, finding_key): a record that arrives twice
+   * (re-nudge landing, sweep replay) replaces its rows instead of doubling
+   * them. Returns how many entries were stored.
+   */
+  recordRoundFindings(
+    round: { pr: number; round_id: number | null; round_no: number; head_sha: string | null },
+    findings: readonly RoundFindingInput[],
+    planned: readonly string[] = [],
+  ): number {
+    const plan = new Set(planned.filter(Boolean));
+    const at = this.ts();
+    const stmt = this.db.prepare(
+      `INSERT INTO round_findings
+         (pr, round_id, round_no, head_sha, finding_key, path, line, lens, tier, unplanned,
+          severity, confidence, reachability, kind, disposition, axis, word, reason, evidence,
+          posted_as, raised_in_round, thread_id, recorded_at)
+       VALUES
+         (@pr, @round_id, @round_no, @head_sha, @finding_key, @path, @line, @lens, @tier, @unplanned,
+          @severity, @confidence, @reachability, @kind, @disposition, @axis, @word, @reason, @evidence,
+          @posted_as, @raised_in_round, @thread_id, @recorded_at)
+       ON CONFLICT(pr, round_no, finding_key) DO UPDATE SET
+         round_id=@round_id, head_sha=@head_sha, path=@path, line=@line, lens=@lens, tier=@tier,
+         unplanned=@unplanned, severity=@severity, confidence=@confidence, reachability=@reachability,
+         kind=@kind, disposition=@disposition, axis=@axis, word=@word, reason=@reason,
+         evidence=@evidence, posted_as=@posted_as, raised_in_round=@raised_in_round,
+         thread_id=@thread_id, recorded_at=@recorded_at`,
+    );
+    const write = this.db.transaction((rows: readonly RoundFindingInput[]) => {
+      for (const f of rows) {
+        stmt.run({
+          pr: round.pr,
+          round_id: round.round_id,
+          round_no: round.round_no,
+          head_sha: round.head_sha ?? "",
+          finding_key: f.key,
+          path: f.path ?? null,
+          line: f.line ?? null,
+          lens: f.lens ?? "",
+          tier: f.tier ?? null,
+          // Unknown-lens entries are never called "unplanned": that would
+          // assert a fact about a lens the record does not name.
+          unplanned: f.lens && plan.size > 0 && !plan.has(f.lens) ? 1 : 0,
+          severity: f.severity ?? null,
+          confidence: f.confidence ?? null,
+          reachability: f.reachability ?? null,
+          kind: f.kind ?? null,
+          disposition: f.disposition ?? "unknown",
+          axis: f.axis ?? null,
+          word: f.word ?? null,
+          reason: f.reason ?? null,
+          evidence: f.evidence ?? null,
+          posted_as: f.posted_as ?? null,
+          raised_in_round: f.raised_in_round ?? null,
+          thread_id: f.thread_id ?? null,
+          recorded_at: at,
+        });
+      }
+    });
+    write(findings);
+    return findings.length;
+  }
+
+  /** Every recorded finding for a PR, oldest round first. */
+  roundFindings(pr: number): RoundFindingRow[] {
+    return this.db
+      .prepare("SELECT * FROM round_findings WHERE pr = ? ORDER BY round_no, id")
+      .all(pr) as RoundFindingRow[];
+  }
+
+  /** Findings for one round. */
+  findingsForRound(pr: number, roundNo: number): RoundFindingRow[] {
+    return this.db
+      .prepare("SELECT * FROM round_findings WHERE pr = ? AND round_no = ? ORDER BY id")
+      .all(pr, roundNo) as RoundFindingRow[];
+  }
+
+  /**
+   * The refuted-and-conceded set for a PR: findings a previous round posted,
+   * the author refuted, and the reviewer accepted the refutation on. This is
+   * what lets a later round tell "escalating an OPEN finding" — legitimate,
+   * and deliberately so (the owner, 2026-08-19: blocking late beats never) —
+   * from "resurrecting a SETTLED one", which is not.
+   */
+  concededFindings(pr: number): RoundFindingRow[] {
+    return this.db
+      .prepare("SELECT * FROM round_findings WHERE pr = ? AND disposition = 'conceded' ORDER BY round_no, id")
+      .all(pr) as RoundFindingRow[];
+  }
+
+  /**
+   * The once-per-round findings-record re-nudge mark — the
+   * ledger idiom exactly: events-table backed, so no new DDL and boot-safe on
+   * the live DB by construction. Scanned with no recency window; the cap is
+   * per round, not per recent history.
+   */
+  recordFindingsNudge(pr: number, key: string, extra?: Record<string, unknown>): void {
+    this.logEvent("findings_record_nudged", pr, { key, ...(extra ?? {}) });
+  }
+
+  /** Was the findings-record re-nudge for this (pr, key) already sent? */
+  findingsNudgeSent(pr: number, key: string): boolean {
+    const rows = this.db
+      .prepare("SELECT payload FROM events WHERE kind = 'findings_record_nudged' AND pr = ?")
+      .all(pr) as Array<{ payload: string | null }>;
+    return rows.some((r) => {
+      if (!r.payload) return false;
+      try {
+        return (JSON.parse(r.payload) as { key?: unknown }).key === key;
+      } catch {
+        return false;
+      }
+    });
+  }
+
   /** A dispatch attempt creates its round row before handing the order to the
    * session hook. If that handoff fails, remove the provisional row so it
    * cannot consume capacity or inflate the round number on retry. */
@@ -760,11 +1199,51 @@ export class StateStore {
 
   /** Administrative close of a round that will never produce a verdict —
    * superseded by a newer round, or orphaned when its tmux session died.
-   * Unlike overdue it carries no anomaly semantics and touches no PR state. */
-  markRoundCancelled(id: number, reason: string): void {
+   * Unlike overdue it carries no anomaly semantics and touches no PR state.
+   *
+   * `cause` is the machine-readable half of `reason`: cancellation
+   * is grouped by it everywhere it is now surfaced, and a caller that omits it
+   * lands in `unknown` rather than being silently folded into a benign bucket.
+   * Every live call site passes one — the default exists for tests and for
+   * paths added later, and `unknown` showing up in the tallies is itself the
+   * signal that a new cancelling path forgot to declare itself. */
+  markRoundCancelled(id: number, reason: string, cause: CancelCause = "unknown"): void {
     this.db
-      .prepare("UPDATE rounds SET status = 'cancelled', summary = ?, finished_at = ? WHERE id = ? AND status = 'running'")
-      .run(reason, this.ts(), id);
+      .prepare(
+        "UPDATE rounds SET status = 'cancelled', summary = ?, cancel_cause = ?, finished_at = ? WHERE id = ? AND status = 'running'",
+      )
+      .run(reason, cause, this.ts(), id);
+  }
+
+  /**
+   * Cancellations grouped by cause — the query the diagnosis had to
+   * reconstruct by grepping prose. `since` is an inclusive ISO lower bound on
+   * `started_at`; null is all of history. Ordered loud-first, then by count,
+   * so the surface that renders it does not have to know the policy.
+   */
+  cancellationsByCause(since: string | null = null): CancellationTally[] {
+    const rows = this.db
+      .prepare(
+        `SELECT COALESCE(cancel_cause, 'unknown') AS cause, COUNT(*) AS c
+           FROM rounds WHERE status = 'cancelled' AND (@since IS NULL OR started_at >= @since)
+          GROUP BY cause`,
+      )
+      .all({ since }) as Array<{ cause: string; c: number }>;
+    return rows
+      .map((r) => ({ cause: r.cause as CancelCause, count: r.c, loud: isLoudCancelCause(r.cause) }))
+      .sort((a, b) => Number(b.loud) - Number(a.loud) || b.count - a.count || a.cause.localeCompare(b.cause));
+  }
+
+  /** The cancelled rounds a human should look at — loud causes only. */
+  loudCancellations(since: string | null = null): RoundRow[] {
+    const causes = [...LOUD_CANCEL_CAUSES];
+    const holes = causes.map(() => "?").join(",");
+    return this.db
+      .prepare(
+        `SELECT * FROM rounds WHERE status = 'cancelled' AND cancel_cause IN (${holes})
+           AND (? IS NULL OR started_at >= ?) ORDER BY started_at`,
+      )
+      .all(...causes, since, since) as RoundRow[];
   }
 
   /** hardening: stamp the first sweep that saw this round fully
@@ -803,7 +1282,7 @@ export class StateStore {
       .prepare("SELECT id, round_no FROM rounds WHERE pr = ? AND status = 'running'")
       .all(pr) as Array<{ id: number; round_no: number }>;
     for (const r of rows) {
-      this.markRoundCancelled(r.id, `cancelled by ${reason}`);
+      this.markRoundCancelled(r.id, `cancelled by ${reason}`, "operator");
       this.logEvent("round_cancelled_by_operator", pr, { round_id: r.id, round_no: r.round_no, reason });
     }
     return rows.map((r) => r.id);
@@ -907,12 +1386,21 @@ export class StateStore {
     return this.db.prepare("SELECT * FROM rounds WHERE started_at LIKE ? ORDER BY started_at").all(`${dateIso}%`) as RoundRow[];
   }
 
-  /** est_usd is the ONE spend field (legacy spend_usd folded into it
-   * at boot). Expired zombie rounds are excluded from every aggregate. */
+  /**
+   * est_usd is the ONE spend field (legacy spend_usd folded into it
+   * at boot).
+   *
+   * **Expired rounds ARE counted** (finding 1, fixed).
+   * They used to be filtered out here and in every other spend aggregate, on
+   * the reasoning that a zombie row should not pollute the numbers —
+   * but a round that blew its deadline still ran the passes and still burned
+   * the tokens, so excluding it did not remove noise, it ERASED REAL COST.
+   * Expiry is a bookkeeping status, not a refund. Round *counts* and duration
+   * statistics still exclude them (see metrics.ts): those are the figures an
+   * abandoned row genuinely distorts.
+   */
   totalSpend(): number {
-    return (
-      this.db.prepare("SELECT COALESCE(SUM(est_usd), 0) AS s FROM rounds WHERE status != 'expired'").get() as { s: number }
-    ).s;
+    return (this.db.prepare("SELECT COALESCE(SUM(est_usd), 0) AS s FROM rounds").get() as { s: number }).s;
   }
 
   /**
@@ -943,6 +1431,51 @@ export class StateStore {
     for (const r of rows) stamp.run(this.ts(), r.id);
     this.logEvent("rounds_expired", null, { count: rows.length, rounds: rows.map((r) => ({ id: r.id, pr: r.pr, round_no: r.round_no })) });
     return rows.map((r) => r.id);
+  }
+
+  /**
+   * The rounds `expireOverdueRounds` deliberately refuses to bury.
+   *
+   * Its guard is narrow on purpose: an `overdue` round whose PR is still open
+   * and still undecided might yet be rescued by a rerun, and burying it would
+   * hide a PR that was never reviewed. But nothing ever reruns an overdue
+   * round automatically — `markRoundOverdue` is terminal — so in practice such
+   * a row just SITS there. found exactly one, stranded since the
+   * 2026-08-14 cutover: pr 4662 round 2, ten days overdue, invisible.
+   *
+   * A round past this far wider horizon is not "pending rescue", it is
+   * stranded, and the answer is to say so out loud (the caller raises the
+   * anomaly) rather than to keep quietly not-deciding. `sinceHours` is
+   * measured from the deadline.
+   */
+  strandedOverdueRounds(horizonHours: number = STRANDED_ROUND_HORIZON_H): RoundRow[] {
+    const cutoff = new Date(this.now().getTime() - horizonHours * 3_600_000).toISOString();
+    return this.db
+      .prepare("SELECT * FROM rounds WHERE status = 'overdue' AND deadline_at < ? ORDER BY deadline_at")
+      .all(cutoff) as RoundRow[];
+  }
+
+  /**
+   * Terminalize the stranded rounds above. Returns the rows as they
+   * were, so the caller can name each one in its anomaly — after this they are
+   * `expired`, which since no longer erases their spend, so nothing is
+   * lost by closing the row. The PR is NOT requeued and GitHub is not touched:
+   * deciding to redo a ten-day-old review is a human's call, and this sweep's
+   * whole job is to make sure a human is told.
+   */
+  expireStrandedRounds(horizonHours: number = STRANDED_ROUND_HORIZON_H): RoundRow[] {
+    const rows = this.strandedOverdueRounds(horizonHours);
+    if (rows.length === 0) return [];
+    const stamp = this.db.prepare(
+      "UPDATE rounds SET status = 'expired', finished_at = COALESCE(finished_at, ?) WHERE id = ? AND status = 'overdue'",
+    );
+    for (const r of rows) stamp.run(this.ts(), r.id);
+    this.logEvent("rounds_stranded", null, {
+      count: rows.length,
+      horizon_h: horizonHours,
+      rounds: rows.map((r) => ({ id: r.id, pr: r.pr, round_no: r.round_no, deadline_at: r.deadline_at })),
+    });
+    return rows;
   }
 
   // ---- backfilled rounds (M2 importer writes; nothing live reads them) ----
@@ -1018,18 +1551,30 @@ export class StateStore {
 
   // ---- bot-comment registry ---------------------------------------------
 
-  /** `roundNo` links the comment to the round that produced it (review-depth
-   * metric). When omitted it defaults to the PR's latest daemon-run round —
-   * the only defensible attribution for comments discovered after the fact. */
+  /**
+   * `roundNo` links the comment to the round that produced it (review-depth
+   * metric). When omitted it defaults to the round the comment most plausibly
+   * came out of — the only defensible attribution for comments discovered
+   * after the fact.
+   *
+   * that fallback used to consider ONLY daemon-run rounds
+   * (`backfilled = 0`) and gave up at null otherwise, which is why the column
+   * was populated on 2 rows of 275 — the live write sites are the reconcile
+   * registry backfill and the webhook, neither of which passes a round, and a
+   * PR whose only rounds came from the history import matched nothing.
+   * The ladder now falls through to a backfilled round before it gives up: an
+   * imported round is a worse attribution than a live one and a far better one
+   * than null. A RUNNING round wins over both — a comment arriving while a
+   * round is in flight came out of that round, not the one before it.
+   */
   registerBotComment(commentId: number, pr: number, kind = "review_comment", roundNo?: number | null): void {
+    const pick = (sql: string): number | null =>
+      (this.db.prepare(sql).get(pr) as { round_no: number } | undefined)?.round_no ?? null;
     const linked =
       roundNo ??
-      (
-        this.db
-          .prepare("SELECT round_no FROM rounds WHERE pr = ? AND backfilled = 0 ORDER BY id DESC LIMIT 1")
-          .get(pr) as { round_no: number } | undefined
-      )?.round_no ??
-      null;
+      pick("SELECT round_no FROM rounds WHERE pr = ? AND status = 'running' ORDER BY id DESC LIMIT 1") ??
+      pick("SELECT round_no FROM rounds WHERE pr = ? AND backfilled = 0 ORDER BY id DESC LIMIT 1") ??
+      pick("SELECT round_no FROM rounds WHERE pr = ? ORDER BY id DESC LIMIT 1");
     this.db
       .prepare("INSERT OR IGNORE INTO bot_comments (comment_id, pr, kind, posted_at, round_no) VALUES (?, ?, ?, ?, ?)")
       .run(commentId, pr, kind, this.ts(), linked);
@@ -1236,6 +1781,91 @@ export class StateStore {
     return this.db
       .prepare("SELECT * FROM feedback_signals WHERE day = ? AND kind = 'feedback_comment' ORDER BY id")
       .all(day) as FeedbackSignalRow[];
+  }
+
+  // ---- captured human comments ---------------------------------
+
+  /** Record one captured comment; false when GitHub's own identity
+   * `(source, comment_id)` is already on file — which is what makes the
+   * reconcile sweep idempotent against the webhook that already saw it. Never
+   * keyed on body text: an edited comment is the same comment. */
+  recordPrComment(c: {
+    pr: number;
+    source: string;
+    comment_id: number;
+    in_reply_to_id?: number | null;
+    thread_id?: number | null;
+    review_id?: number | null;
+    author?: string | null;
+    author_type?: string | null;
+    tagged?: boolean;
+    path?: string | null;
+    line?: number | null;
+    body?: string | null;
+    created_at?: string | null;
+    captured_via?: string;
+  }): boolean {
+    const info = this.db
+      .prepare(
+        `INSERT OR IGNORE INTO pr_comments
+           (pr, source, comment_id, in_reply_to_id, thread_id, review_id, author, author_type,
+            tagged, path, line, body, created_at, captured_at, captured_via)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        c.pr,
+        c.source,
+        c.comment_id,
+        c.in_reply_to_id ?? null,
+        c.thread_id ?? null,
+        c.review_id ?? null,
+        c.author ?? "",
+        c.author_type ?? "User",
+        c.tagged ? 1 : 0,
+        c.path ?? null,
+        c.line ?? null,
+        c.body ?? "",
+        c.created_at ?? null,
+        this.ts(),
+        c.captured_via ?? "webhook",
+      );
+    return info.changes > 0;
+  }
+
+  /** A PR's captured comments, oldest first — the companion's local copy of
+   * the conversation. */
+  prComments(pr: number): PrCommentRow[] {
+    return this.db.prepare("SELECT * FROM pr_comments WHERE pr = ? ORDER BY id").all(pr) as PrCommentRow[];
+  }
+
+  /** True when this exact GitHub comment is already captured. */
+  hasPrComment(source: string, comment_id: number): boolean {
+    return (
+      this.db.prepare("SELECT 1 FROM pr_comments WHERE source = ? AND comment_id = ?").get(source, comment_id) !==
+      undefined
+    );
+  }
+
+  /** Comment-capture sweep watermark: the sweep costs three GitHub
+   * reads per PR, so reconcile skips a PR whose row has not moved since its
+   * last clean sweep. Kept in the events table (kind = 'comment_sweep'), the
+   * same no-new-DDL idiom as the anomaly record — boot-safe on the live DB. */
+  markCommentSweep(pr: number, rowUpdatedAt: string): void {
+    this.logEvent("comment_sweep", pr, { row_updated_at: rowUpdatedAt });
+  }
+
+  /** The pr_state `updated_at` this PR was last cleanly swept at, when any. */
+  lastCommentSweep(pr: number): string | undefined {
+    const row = this.db
+      .prepare("SELECT payload FROM events WHERE kind = 'comment_sweep' AND pr = ? ORDER BY id DESC LIMIT 1")
+      .get(pr) as { payload: string | null } | undefined;
+    if (!row?.payload) return undefined;
+    try {
+      const parsed = JSON.parse(row.payload) as { row_updated_at?: unknown };
+      return typeof parsed.row_updated_at === "string" ? parsed.row_updated_at : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   /** Timestamp of the latest event of `kind` for `pr`, when any — the
@@ -1679,7 +2309,8 @@ export function buildStatusSnapshot(
   openviking?: OpenVikingStatus,
 ): StatusSnapshot {
   const today = now().toISOString().slice(0, 10);
-  // Expired zombie rounds never count towards any aggregate.
+  // Expired zombie rounds stay out of the per-PR round COUNTS —
+  // but they DO count in every spend aggregate (below).
   const roundStats = store.db
     .prepare("SELECT pr, COUNT(*) AS c, (SELECT verdict FROM rounds r2 WHERE r2.pr = rounds.pr AND verdict IS NOT NULL ORDER BY round_no DESC LIMIT 1) AS v FROM rounds WHERE status != 'expired' GROUP BY pr")
     .all() as Array<{ pr: number; c: number; v: string | null }>;
@@ -1703,7 +2334,9 @@ export function buildStatusSnapshot(
     running_rounds: store.runningRounds().length,
     ...(maxConcurrentRounds !== undefined ? { max_concurrent_rounds: maxConcurrentRounds } : {}),
     total_spend_usd: store.totalSpend(),
-    today_spend_usd: store.roundsOn(today).reduce((n, r) => n + (r.status !== "expired" ? (r.est_usd ?? 0) : 0), 0),
+    // Expired rounds COUNT (reversing): a round that blew its
+    // deadline still burned its tokens — same rule as totalSpend/cli/metrics.
+    today_spend_usd: store.roundsOn(today).reduce((n, r) => n + (r.est_usd ?? 0), 0),
     ...(digestHeadline ? { digest_headline: digestHeadline } : {}),
     ...(piAuth ? { pi_auth_expired: piAuth } : {}),
     ...(openviking ? { openviking } : {}),

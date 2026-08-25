@@ -113,4 +113,104 @@ describe("dailyUsage / usageSummaryLine", () => {
       store.close();
     }
   });
+
+  it("counts expired rounds' spend (finding 1 — expiry is not a refund)", async () => {
+    const { StateStore } = await import("../src/state.js");
+    const { dailyUsage } = await import("../src/digest.js");
+    const store = new StateStore(":memory:");
+    try {
+      const a = store.startRound(7, "initial", [], 45);
+      store.finishRound(a, "APPROVE", 1.0);
+      const zombie = store.startRound(8, "initial", [], 45);
+      store.db.prepare("UPDATE rounds SET status = 'expired', est_usd = 3.0 WHERE id = ?").run(zombie);
+      const usage = dailyUsage(store, new Date().toISOString().slice(0, 10));
+      expect(usage.est_usd).toBeCloseTo(4.0, 6);
+    } finally {
+      store.close();
+    }
+  });
+});
+
+describe("dailyCancellations / cancellationSummaryLine", () => {
+  const openStore = async () => {
+    const { StateStore } = await import("../src/state.js");
+    return new StateStore(":memory:");
+  };
+
+  it("a quiet day says so — the answer that used to be missing entirely", async () => {
+    const { dailyCancellations, cancellationSummaryLine } = await import("../src/digest.js");
+    const store = await openStore();
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const c = dailyCancellations(store, today);
+      expect(c).toMatchObject({ total: 0, loud: 0, by_cause: [] });
+      expect(cancellationSummaryLine(c)).toBe("cancelled: none");
+    } finally {
+      store.close();
+    }
+  });
+
+  it("groups the day by cause and marks only the round that stopped dead", async () => {
+    const { dailyCancellations, cancellationSummaryLine } = await import("../src/digest.js");
+    const store = await openStore();
+    try {
+      for (const pr of [1, 2, 3]) store.markRoundCancelled(store.startRound(pr, "first", [], 45), "x", "orphan_sweep");
+      store.markRoundCancelled(store.startRound(4, "re-review", [], 45), "y", "deadline_overrun");
+
+      const c = dailyCancellations(store, new Date().toISOString().slice(0, 10));
+      expect(c.total).toBe(4);
+      expect(c.loud).toBe(1);
+      expect(cancellationSummaryLine(c)).toBe(
+        "cancelled: 4 rounds — stopped dead 1 ⚑, orphan sweep (redeploy) 3 " +
+          "(1 stopped dead — worth a look; the orphan sweep is a redeploy artefact and is not)",
+      );
+    } finally {
+      store.close();
+    }
+  });
+
+  it("a day of pure redeploy churn carries no flag at all", async () => {
+    const { dailyCancellations, cancellationSummaryLine } = await import("../src/digest.js");
+    const store = await openStore();
+    try {
+      for (let pr = 1; pr <= 12; pr++) store.markRoundCancelled(store.startRound(pr, "first", [], 45), "x", "orphan_sweep");
+      const c = dailyCancellations(store, new Date().toISOString().slice(0, 10));
+      expect(c.loud).toBe(0);
+      expect(cancellationSummaryLine(c)).toBe("cancelled: 12 rounds — orphan sweep (redeploy) 12");
+    } finally {
+      store.close();
+    }
+  });
+
+  // The wiring half: the helpers above were dead code until the
+  // summary line rode the EOD sweep prompt (eod.ts renderEodPrompt dayContext,
+  // wired in wire.ts) — the digest is written by the sweep session, so the
+  // prompt is the only render the daemon owns.
+  it("eodDigestContext is the day's cancellation line, 'none' included", async () => {
+    const { eodDigestContext } = await import("../src/digest.js");
+    const store = await openStore();
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      expect(eodDigestContext(store, today)).toBe("cancelled: none");
+      store.markRoundCancelled(store.startRound(1, "first", [], 45), "x", "orphan_sweep");
+      store.markRoundCancelled(store.startRound(2, "first", [], 45), "y", "deadline_overrun");
+      expect(eodDigestContext(store, today)).toBe(
+        "cancelled: 2 rounds — stopped dead 1 ⚑, orphan sweep (redeploy) 1 " +
+          "(1 stopped dead — worth a look; the orphan sweep is a redeploy artefact and is not)",
+      );
+    } finally {
+      store.close();
+    }
+  });
+
+  it("renderEodPrompt appends the day context so the sweep carries it into the digest", async () => {
+    const { renderEodPrompt } = await import("../src/eod.js");
+    const bare = renderEodPrompt("sweep {{date}}", "2026-08-21");
+    expect(bare).toBe("sweep 2026-08-21");
+    expect(renderEodPrompt("sweep {{date}}", "2026-08-21", "  ")).toBe(bare);
+    const withContext = renderEodPrompt("sweep {{date}}\n", "2026-08-21", "cancelled: none");
+    expect(withContext).toContain("## Daemon-measured context for 2026-08-21");
+    expect(withContext).toContain("cancelled: none");
+    expect(withContext.startsWith("sweep 2026-08-21\n")).toBe(true);
+  });
 });

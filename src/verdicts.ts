@@ -24,10 +24,24 @@ import { auditExecViolations, collectWindowLines, estimateUsd, measureRoundUsage
 import type { GateResult } from "./gate.js";
 import { applyEvent } from "./statemachine.js";
 import type { VerdictAnnouncer } from "./slack/announce.js";
-import type { RoundRow, StateStore } from "./state.js";
+import { isLoudCancelCause, type CancelCause, type RoundRow, type StateStore } from "./state.js";
 import { enforceLedgerFreshness } from "./ledgercheck.js";
+import { enforceFindingsRecord } from "./findingsrecord.js";
 import { normalizeVerdict, type SessionHooks, type VerdictFile, type VerdictPassEntry } from "./types.js";
 import { flushHeldWakes } from "./wakes.js";
+
+/** Self-requeue mode → the cancellation cause it records. Two modes
+ * mean the same thing to a human — the round stopped dead with no verdict,
+ * whether its session had died or was alive and wedged — and that is the ONE
+ * loud cause; the rest are the machinery working (a moved head, a delivery
+ * fault, a round redone because it executed no passes). */
+const SELF_REQUEUE_CAUSE: Record<"dead" | "alive_stuck" | "needs_human_incomplete" | "lost_prompt" | "head_moved", CancelCause> = {
+  dead: "deadline_overrun",
+  alive_stuck: "deadline_overrun",
+  needs_human_incomplete: "incomplete_round",
+  lost_prompt: "lost_prompt",
+  head_moved: "head_moved",
+};
 
 export interface VerdictAdapter {
   addLabel(n: number, label: string): Promise<GateResult>;
@@ -68,6 +82,17 @@ export interface VerdictDeps {
   /** Where a PR's mirrored ledger snapshot lives. Defaults to
    * `<root>/state/ledgers/pr-<n>.md` — sessions.ts ledgerPath's shape. */
   ledgerPathFor?: (pr: number) => string;
+  /**
+   * Where the session writes its per-round reasoning record —
+   * daemon.ts passes `<root>/state/findings`.
+   *
+   * Opt-in rather than defaulted off `root`, in the same shape as every other
+   * additive round-end check here: absent ⇒ the record is neither parsed nor
+   * enforced, which is exactly the legacy behaviour a stub-wired daemon
+   * and every older test sees. Production has ONE assembly site (daemon.ts)
+   * and it passes the dir.
+   */
+  findingsDir?: string;
   now?: () => Date;
   log?: (msg: string, extra?: unknown) => void;
   /** Parse retries for partially-written files. */
@@ -470,12 +495,28 @@ export class VerdictWatcher {
     // nudge typed into that window is lost with the aborted turn (live
     // 2026-08-19, #5290 round 7: wake delivered to .done, never a turn).
     // Best-effort fire-and-forget — nothing here may disturb the verdict.
+    //
+    // The reasoning-record check rides the SAME settle window, for the
+    // same reason: it may nudge, and a nudge typed into a compacting pane is
+    // lost. It runs after the ledger check and is likewise fire-and-forget —
+    // by the time either runs the verdict is applied, the round row is
+    // finished and the PR has transitioned, so a record that never arrives
+    // costs one anomaly row and one nudge and CANNOT hold the round open.
+    const planned = round?.lenses ? round.lenses.split(",").filter(Boolean) : [];
+    const roundId = round?.id ?? null;
+    const tail = async (): Promise<void> => {
+      await this.safe(() => this.checkLedger(v.pr, v.round_no, v.head_sha), `ledger check pr-${v.pr}`);
+      await this.safe(
+        () => this.checkFindingsRecord(v.pr, v.round_no, roundId, v.head_sha, planned),
+        `findings record check pr-${v.pr}`,
+      );
+    };
     const settleMs = this.deps.ledgerCheckDelayMs ?? 90_000;
     if (settleMs <= 0) {
-      await this.safe(() => this.checkLedger(v.pr, v.round_no, v.head_sha), `ledger check pr-${v.pr}`);
+      await tail();
     } else {
       const timer = setTimeout(() => {
-        void this.safe(() => this.checkLedger(v.pr, v.round_no, v.head_sha), `ledger check pr-${v.pr}`);
+        void tail();
       }, settleMs);
       timer.unref?.();
     }
@@ -506,6 +547,30 @@ export class VerdictWatcher {
         log: this.log.bind(this),
       },
       { pr, roundNo, headSha },
+    );
+  }
+
+  // ---- the durable reasoning record ---------------------------
+
+  /** Parse `state/findings/pr-<n>-round-<k>.json` into rows. Missing or
+   * unparseable ⇒ anomaly + exactly ONE re-nudge, never a held-open round. */
+  private async checkFindingsRecord(
+    pr: number,
+    roundNo: number,
+    roundId: number | null,
+    headSha: string,
+    planned: readonly string[],
+  ): Promise<void> {
+    const findingsDir = this.deps.findingsDir;
+    if (!findingsDir) return;
+    await enforceFindingsRecord(
+      {
+        store: this.deps.store,
+        findingsDir,
+        inject: (n, message) => this.deps.hooks.inject(n, message),
+        log: this.log.bind(this),
+      },
+      { pr, roundNo, roundId, headSha, planned },
     );
   }
 
@@ -853,8 +918,25 @@ export class VerdictWatcher {
     if (mode === "alive_stuck" && this.deps.hooks.killSession) {
       await this.safe(() => this.deps.hooks.killSession!.call(this.deps.hooks, round.pr), `kill wedged session pr-${round.pr}`);
     }
-    store.markRoundCancelled(round.id, `self-requeue ${attempt}/${cap} — ${reason}`);
+    const cause = SELF_REQUEUE_CAUSE[mode];
+    store.markRoundCancelled(round.id, `self-requeue ${attempt}/${cap} — ${reason}`, cause);
+    if (isLoudCancelCause(cause)) {
+      // the durable twin of the inject below. A round that stopped
+      // dead inside its deadline window is the residual real defect
+      // isolated (17 of 55 cancellations) — the redeploy orphan sweep, which
+      // is 70% of the volume, writes NOTHING here. `round_stopped_dead` is
+      // deliberately absent from anomalies.ts WAKE_KINDS: the bespoke
+      // SELF-REQUEUE inject a few lines down IS this record's wake, and
+      // listing it there would inject the same event twice.
+      store.logAnomaly(
+        "round_stopped_dead",
+        round.pr,
+        round.round_no,
+        `round ${round.round_no} stopped dead inside its deadline window (${round.started_at} → ${round.deadline_at}) and was cancelled; self-requeue attempt ${attempt}/${cap}`,
+      );
+    }
     store.logEvent("round_self_requeued", round.pr, {
+      cancel_cause: cause,
       round_id: round.id,
       round_no: round.round_no,
       head_sha: head,
@@ -1016,7 +1098,7 @@ export class VerdictWatcher {
         continue;
       }
       if (store.hasLaterRound(round.pr, round.round_no)) {
-        store.markRoundCancelled(round.id, `superseded — round ${round.round_no} outlived by a newer round`);
+        store.markRoundCancelled(round.id, `superseded — round ${round.round_no} outlived by a newer round`, "superseded");
         store.logEvent("round_superseded", round.pr, { round_id: round.id, round_no: round.round_no });
         // Slack: "read the newest one" — no existing review is touched, ever
         // (CLAUDE.md hard rule 2); the wording invariant lives in messages.ts.

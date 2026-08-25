@@ -263,7 +263,11 @@ describe("zombie-round expiry + spend fold", () => {
     expect(store.expireOverdueRounds(24)).toEqual([]); // idempotent
   });
 
-  it("expired rounds are excluded from every aggregate (spend, snapshot counts)", () => {
+  // reverses half of the rule: an expired round is still
+  // dropped from the round COUNTS (an abandoned row is not a review), but its
+  // spend is real money and is counted. Excluding it did not remove noise —
+  // it erased cost the reviewer actually incurred (finding 1).
+  it("expired rounds keep their spend but not their place in the counts", () => {
     store.upsertPr(prRow(30, { state: "closed" }));
     const zombie = seedOverdue(store, 30, 1, T0.toISOString());
     store.db.prepare("UPDATE rounds SET est_usd = 9.99 WHERE id = ?").run(zombie);
@@ -272,9 +276,15 @@ describe("zombie-round expiry + spend fold", () => {
     clock = new Date(T0.getTime() + 25 * 3_600_000);
     store.expireOverdueRounds(24);
 
-    expect(store.totalSpend()).toBeCloseTo(0.5, 6);
+    expect(store.totalSpend()).toBeCloseTo(10.49, 6);
     const snap = buildStatusSnapshot(store, true, undefined, now);
     expect(snap.prs.find((p) => p.number === 30)?.rounds).toBe(1);
+
+    // today_spend_usd follows the same rule: rewind to the rounds'
+    // calendar day and the expired round's 9.99 is in the day's spend too.
+    clock = new Date("2026-08-13T23:00:00.000Z");
+    const sameDay = buildStatusSnapshot(store, true, undefined, now);
+    expect(sameDay.today_spend_usd).toBeCloseTo(10.49, 6);
   });
 
   it("boot folds legacy spend_usd into est_usd — the ONE spend field", () => {
@@ -444,5 +454,180 @@ describe("status.json", () => {
     expect(read.digest_headline).toBe("second");
     expect(read.prs.map((p) => p.number)).toEqual([11]);
     expect(readdirSync(dir)).toEqual(["status.json"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// cancellation is visible, GROUPED BY CAUSE.
+//
+// measured 55 cancelled rounds since the 2026-08-14 cutover that
+// nothing anywhere read back, against 5 `overdue` rounds that each raised an
+// alarm: the loud signal was the rare one. The fix is not "alarm on
+// cancellation" — 70% of that volume is the boot orphan sweep, which a clean
+// redeploy causes by construction — it is to record WHY, and to separate the
+// benign from the real.
+// ---------------------------------------------------------------------------
+
+describe("cancellation causes", () => {
+  const startCancelled = (pr: number, cause: Parameters<StateStore["markRoundCancelled"]>[2], reason = "because"): number => {
+    const id = store.startRound(pr, "re-review", [], 45);
+    store.markRoundCancelled(id, reason, cause);
+    return id;
+  };
+
+  it("records the cause beside the prose, and only for cancelled rounds", () => {
+    startCancelled(1, "orphan_sweep", "orphaned — tmux session lost across a restart");
+    const done = store.startRound(2, "first", [], 45);
+    store.finishRound(done, "APPROVE", null);
+
+    const cancelled = store.roundsFor(1)[0]!;
+    expect(cancelled.status).toBe("cancelled");
+    expect(cancelled.cancel_cause).toBe("orphan_sweep");
+    expect(cancelled.summary).toBe("orphaned — tmux session lost across a restart");
+    expect(store.roundsFor(2)[0]!.cancel_cause).toBeNull();
+  });
+
+  it("a caller that declares nothing lands in `unknown` — never silently benign", () => {
+    const id = store.startRound(3, "first", [], 45);
+    store.markRoundCancelled(id, "some new path nobody classified");
+    expect(store.roundsFor(3)[0]!.cancel_cause).toBe("unknown");
+    expect(store.cancellationsByCause()).toEqual([{ cause: "unknown", count: 1, loud: false }]);
+  });
+
+  it("groups by cause, loud first — the query the diagnosis had to grep prose for", () => {
+    startCancelled(10, "orphan_sweep");
+    startCancelled(11, "orphan_sweep");
+    startCancelled(12, "orphan_sweep");
+    startCancelled(13, "deadline_overrun");
+    startCancelled(14, "superseded");
+
+    expect(store.cancellationsByCause()).toEqual([
+      // The ONE loud cause sorts first even though it is the rarest — that
+      // ordering is the inversion found, undone.
+      { cause: "deadline_overrun", count: 1, loud: true },
+      { cause: "orphan_sweep", count: 3, loud: false },
+      { cause: "superseded", count: 1, loud: false },
+    ]);
+    expect(store.loudCancellations().map((r) => r.pr)).toEqual([13]);
+  });
+
+  it("the redeploy orphan sweep is NEVER loud, however much of the volume it is", () => {
+    for (let i = 0; i < 40; i++) startCancelled(100 + i, "orphan_sweep");
+    expect(store.cancellationsByCause()).toEqual([{ cause: "orphan_sweep", count: 40, loud: false }]);
+    expect(store.loudCancellations()).toEqual([]);
+  });
+
+  it("honours the `since` bound", () => {
+    startCancelled(20, "deadline_overrun");
+    clock = new Date(T0.getTime() + 86_400_000);
+    startCancelled(21, "deadline_overrun");
+
+    expect(store.cancellationsByCause(clock.toISOString())).toEqual([{ cause: "deadline_overrun", count: 1, loud: true }]);
+    expect(store.loudCancellations(clock.toISOString()).map((r) => r.pr)).toEqual([21]);
+  });
+
+  it("classifies the historical prose exactly once, at boot", () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-state-"));
+    try {
+      const path = join(dir, "state.db");
+      const first = new StateStore(path, now);
+      // Legacy rows: the prose each call site used to write, and nothing
+      // else. Inserted straight so the column is genuinely NULL.
+      const legacy = [
+        ["orphaned — tmux session lost across a restart", "orphan_sweep"],
+        ["superseded — round 2 outlived by a newer round", "superseded"],
+        ["cancelled by rerun-round", "operator"],
+        ["self-requeue 1/2 — round 3 passed its deadline (…) with no verdict and its session is dead", "deadline_overrun"],
+        ["self-requeue 1/2 — round 4's prompt … was dropped in delivery; redispatching", "lost_prompt"],
+        ["self-requeue 1/2 — round 5 ended head_moved (guard 5)", "head_moved"],
+        ["self-requeue 1/2 — round 6 verdicted NEEDS_HUMAN without executing any passes", "incomplete_round"],
+        ["something nobody ever wrote", "unknown"],
+      ] as const;
+      legacy.forEach(([summary], i) => {
+        first.db
+          .prepare(
+            `INSERT INTO rounds (pr, round_no, round_type, lenses, summary, started_at, deadline_at, status)
+             VALUES (@pr, 1, 'first', '', @summary, '2026-08-16T10:00:00.000Z', '2026-08-16T11:00:00.000Z', 'cancelled')`,
+          )
+          .run({ pr: 900 + i, summary });
+      });
+      first.close();
+
+      const second = new StateStore(path, now);
+      legacy.forEach(([, cause], i) => {
+        expect(second.roundsFor(900 + i)[0]!.cancel_cause).toBe(cause);
+      });
+      expect(second.eventsOn("2026-08-13").filter((e) => e.kind === "cancel_causes_backfilled")).toHaveLength(1);
+      second.close();
+
+      // Idempotent: a second boot finds nothing left to classify.
+      const third = new StateStore(path, now);
+      expect(third.eventsOn("2026-08-13").filter((e) => e.kind === "cancel_causes_backfilled")).toHaveLength(1);
+      third.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("stranded rounds", () => {
+  const seedStranded = (pr: number, deadlineAt: string): void => {
+    store.db
+      .prepare(
+        `INSERT INTO rounds (pr, round_no, round_type, lenses, est_usd, started_at, deadline_at, status)
+         VALUES (@pr, 2, 'first', '', 1.25, @deadline_at, @deadline_at, 'overdue')`,
+      )
+      .run({ pr, deadline_at: deadlineAt });
+  };
+
+  it("finds the round the zombie sweep deliberately refuses to bury", () => {
+    // The live case: pr 4662 round 2, overdue since the cutover, PR still open
+    // and undecided — so `expireOverdueRounds` skips it forever.
+    store.upsertPr(prRow(4662));
+    seedStranded(4662, "2026-08-14T12:00:00.000Z");
+    clock = new Date("2026-08-24T12:00:00.000Z");
+
+    expect(store.expireOverdueRounds(24)).toEqual([]);
+    expect(store.strandedOverdueRounds().map((r) => r.pr)).toEqual([4662]);
+  });
+
+  it("does not touch a round that is merely late", () => {
+    store.upsertPr(prRow(4663));
+    seedStranded(4663, "2026-08-24T06:00:00.000Z");
+    clock = new Date("2026-08-24T12:00:00.000Z");
+    expect(store.strandedOverdueRounds()).toEqual([]);
+    expect(store.expireStrandedRounds()).toEqual([]);
+  });
+
+  it("terminalizes it, logs it, and keeps its spend", () => {
+    store.upsertPr(prRow(4662));
+    seedStranded(4662, "2026-08-14T12:00:00.000Z");
+    clock = new Date("2026-08-24T12:00:00.000Z");
+
+    const closed = store.expireStrandedRounds();
+    expect(closed.map((r) => ({ pr: r.pr, round_no: r.round_no }))).toEqual([{ pr: 4662, round_no: 2 }]);
+    expect(store.roundsFor(4662)[0]).toMatchObject({ status: "expired", finished_at: clock.toISOString() });
+    expect(store.eventsOn("2026-08-24").filter((e) => e.kind === "rounds_stranded")).toHaveLength(1);
+    // Burying the row must not erase what it cost (finding 1).
+    expect(store.totalSpend()).toBeCloseTo(1.25, 6);
+    // And it reports once: it is no longer overdue.
+    expect(store.expireStrandedRounds()).toEqual([]);
+  });
+});
+
+describe("priorRoundCount semantics (finding 3)", () => {
+  it('counts VERDICTED rounds only — "first" really means "never successfully reviewed"', () => {
+    store.upsertPr(prRow(50));
+    const one = store.startRound(50, "first", [], 45);
+    store.markRoundCancelled(one, "orphaned — tmux session lost across a restart", "orphan_sweep");
+    // A failed round must not age the PR (ratified, §2.1 / #5313) — so
+    // the SECOND round is still typed "first" and the nit cap stays off.
+    expect(store.priorRoundCount(50)).toBe(0);
+
+    const two = store.startRound(50, "first", [], 45);
+    expect(store.roundsFor(50).map((r) => r.round_no)).toEqual([1, 2]);
+    store.finishRound(two, "APPROVE", null);
+    // Only now does the PR age. `round_no` is the ordinal; priorRoundCount is not.
+    expect(store.priorRoundCount(50)).toBe(1);
   });
 });

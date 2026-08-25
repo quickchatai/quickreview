@@ -18,7 +18,7 @@ import {
 } from "./config.js";
 import { CommandWatcher, type CommandDeps } from "./commands.js";
 import { createDaemon, type Daemon } from "./daemon.js";
-import { latestDigestHeadline } from "./digest.js";
+import { eodDigestContext, latestDigestHeadline } from "./digest.js";
 import { startHeartbeat, type HeartbeatTimer } from "./anomalies.js";
 import { promptReader, startEodTimer, type EodTimer } from "./eod.js";
 import { MutationGate, type MutationIntent } from "./gate.js";
@@ -677,6 +677,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         timeHHMM: cfg.eod.time,
         timeZone: cfg.eod.timezone,
         readPrompt: promptReader(join(root, "prompts", "eod-sweep.md")),
+        // the day's cancellation summary rides the sweep prompt so
+        // the digest actually mentions cancellations (grouped, loud first,
+        // "none" explicit).
+        dayContext: (date) => eodDigestContext(d.store, date),
         injectOverseer: pinWatch ? pinWatch.wrapInject(injectEod) : injectEod,
         onFire: (date) => log(`EOD sweep injected for ${date}`),
         onError: (err) => log("EOD injection failed", err),

@@ -151,9 +151,19 @@ export function nextEodFire(now: Date, timeHHMM: string, timeZone: string): Date
   return candidate;
 }
 
-/** Substitute {{date}} in the eod-sweep template. */
-export function renderEodPrompt(template: string, date: string): string {
-  return template.replaceAll("{{date}}", date);
+/** Substitute {{date}} in the eod-sweep template. `dayContext` (optional) is
+ * daemon-measured context — e.g. the day's cancellation summary —
+ * appended after the seeded template, which we may not edit (rule 6): the
+ * sweep session is told to carry it into the digest it writes. */
+export function renderEodPrompt(template: string, date: string, dayContext?: string): string {
+  const rendered = template.replaceAll("{{date}}", date);
+  if (!dayContext?.trim()) return rendered;
+  return (
+    `${rendered.replace(/\n*$/, "\n")}\n` +
+    `## Daemon-measured context for ${date}\n\n` +
+    `Carry these lines into today's digest verbatim (under Spend):\n\n` +
+    `${dayContext.trim()}\n`
+  );
 }
 
 export type TimerHandle = unknown;
@@ -163,6 +173,10 @@ export interface EodTimerDeps {
   timeZone: string;
   /** eod-sweep.md contents; read lazily so an edit lands without a restart. */
   readPrompt: () => string;
+  /** Daemon-measured lines for the fired date, appended to the prompt so the
+   * sweep carries them into the digest (the cancellation summary).
+   * A throw here never loses the sweep: the prompt just goes out bare. */
+  dayContext?: (date: string) => string;
   /** SessionHooks.injectOverseer. */
   injectOverseer: (message: string) => Promise<void>;
   now?: () => Date;
@@ -213,7 +227,13 @@ export function startEodTimer(deps: EodTimerDeps): EodTimer {
     const date = zoneDateString(target, deps.timeZone);
     void (async () => {
       try {
-        await deps.injectOverseer(renderEodPrompt(deps.readPrompt(), date));
+        let context = "";
+        try {
+          context = deps.dayContext?.(date) ?? "";
+        } catch {
+          // context is best-effort; the sweep itself must still fire
+        }
+        await deps.injectOverseer(renderEodPrompt(deps.readPrompt(), date, context));
         deps.onFire?.(date);
       } catch (err) {
         deps.onError?.(err);

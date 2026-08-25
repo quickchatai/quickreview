@@ -4,11 +4,18 @@
 // to match. GitHub always wins. Every correction is logged as a
 // `reconcile_correction` event: a rising correction rate is the webhook-health
 // signal the operator watches.
+import {
+  capturedFromIssueComment,
+  capturedFromReview,
+  capturedFromReviewComment,
+  isHumanCapture,
+  type CapturedComment,
+} from "./capture.js";
 import { retryWithheldApproval, type CheckSummary } from "./cigate.js";
 import { recheckFingerprint } from "./recheck.js";
 import { normalizeVerdict, recheckPromptMarker } from "./types.js";
 import { DEFAULT_ROUND_STALL_GRACE_MIN, type Config } from "./config.js";
-import type { PrRef } from "./github.js";
+import type { IssueCommentFull, PrRef, ReviewCommentFull, ReviewFull } from "./github.js";
 import { applyEvent, isBotAuthor } from "./statemachine.js";
 import type { StateStore } from "./state.js";
 import type { SessionHooks } from "./types.js";
@@ -33,7 +40,35 @@ export interface ReconcileAdapter {
    * through this. Optional: a stub-wired daemon without it simply has no
    * backstop, exactly as it had none before the slice existed. */
   listChecks?(ref: string): Promise<CheckSummary[]>;
+  /** The comment-capture sweep's three READ sources. All optional and
+   * all-or-nothing: a stub-wired daemon without them simply has no backstop,
+   * exactly as it had none before the slice existed. Reads only — capture
+   * never writes to GitHub. */
+  listReviewCommentsFull?(n: number): Promise<ReviewCommentFull[]>;
+  listIssueComments?(n: number): Promise<IssueCommentFull[]>;
+  listReviewsFull?(n: number): Promise<ReviewFull[]>;
 }
+
+/**
+ * Per-pass bound on the comment-capture sweep: three API reads per
+ * PR, so the sweep must never grow with the whole tracked history. Freshest
+ * local activity first — a PR nobody has touched in weeks is not where a
+ * missed comment lives, and the ones left out are picked up on a later pass as
+ * soon as they move.
+ */
+export const COMMENT_SWEEP_MAX_PRS = 25;
+
+/**
+ * How long after a PR closes the capture sweep still includes it. The
+ * closed-sync step earlier in the SAME pass is what marks a PR closed, so a
+ * blanket `state !== "closed"` filter would skip exactly the PR that closed
+ * while the daemon was down — the scenario the sweep exists to recover. The
+ * rule: a closed PR is swept when it transitioned this pass, or when its row
+ * last moved (which for a closed PR is the close itself — nothing writes the
+ * row after that) within this window. The watermark below makes the repeat
+ * cost of the window one skipped filter check, not three API reads.
+ */
+export const COMMENT_SWEEP_CLOSED_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export interface ReconcileDeps {
   cfg: Config;
@@ -56,6 +91,11 @@ export interface ReconcileDeps {
    * webhook missed (GitHub never redelivers). The daemon wires the same
    * engine sink the webhook path uses; dedupe is the store's. */
   onMergedOverBlock?: (pr: number) => Promise<void> | void;
+  /** backstop: capture comments the webhook never saw (GitHub never
+   * redelivers, so a comment posted while the daemon was down would otherwise
+   * be permanent evidence loss). Default on when the adapter can read;
+   * `false` disables it for a poll that must stay cheap. */
+  captureComments?: boolean;
 }
 
 export interface ReconcileReport {
@@ -65,6 +105,9 @@ export interface ReconcileReport {
   closed: number[];
   awaiting_human: number[];
   backfilled_comments: number;
+  /** Human comments the sweep captured that the webhook had missed.
+   * A rising number is the same webhook-health signal `corrections` is. */
+  captured_comments: number;
   corrections: number;
   errors: string[];
 }
@@ -92,7 +135,10 @@ export function reconcileOrphanedRounds(
   const requeued: number[] = [];
   for (const round of store.runningRounds()) {
     if (live.has(round.pr)) continue;
-    store.markRoundCancelled(round.id, "orphaned — tmux session lost across a restart");
+    // `orphan_sweep` is the QUIET cause: tmux lives in the container,
+    // so a clean redeploy orphans every round in flight by construction. It is
+    // counted and grouped like every other cause, and it raises nothing.
+    store.markRoundCancelled(round.id, "orphaned — tmux session lost across a restart", "orphan_sweep");
     store.logEvent("round_orphaned", round.pr, { round_id: round.id, round_no: round.round_no });
     cancelled.push(round.pr);
     log(`startup: #${round.pr} round ${round.round_no} cancelled (session lost)`);
@@ -123,6 +169,7 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
     closed: [],
     awaiting_human: [],
     backfilled_comments: 0,
+    captured_comments: 0,
     corrections: 0,
     errors: [],
   };
@@ -385,6 +432,80 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
     });
   }
 
+  // ---- 5b. human-comment capture sweep --------------------------
+  // The webhook is the fast path and GitHub never redelivers, so a comment
+  // posted while the daemon was down is — under widened capture — permanent
+  // evidence loss rather than a delayed signal. This is the backstop, and it
+  // is deliberately shaped like every other sweep here: READ-ONLY (three list
+  // calls per PR, no mutation anywhere in the path), bounded
+  // (COMMENT_SWEEP_MAX_PRS, freshest first, one API page per source), and
+  // idempotent — dedupe is GitHub's own `(source, comment_id)` identity in
+  // `pr_comments`, so re-running captures nothing twice and an edited comment
+  // is still the same comment.
+  //
+  // It captures ONLY: nothing here routes, wakes a session, stamps a mark or
+  // feeds the [feedback] engine. A tagged comment picked up here gets the tag
+  // recorded and nothing else — the same-day addendum stays tag-gated on the
+  // webhook's feedback path, where a human is in the loop.
+  if (deps.captureComments !== false && adapter.listReviewCommentsFull && adapter.listIssueComments && adapter.listReviewsFull) {
+    await step("comment-capture", async () => {
+      // Recently-closed PRs stay in: closed-sync above marks a
+      // closed-during-downtime PR closed in this very pass, and its comments
+      // are what this backstop exists to recover (adversarial finding,
+      // review). `updated_at` is the close instant for a closed row.
+      const nowMs = now().getTime();
+      const closedRecently = (updated_at: string): boolean => {
+        const t = Date.parse(updated_at);
+        return Number.isFinite(t) && nowMs - t <= COMMENT_SWEEP_CLOSED_WINDOW_MS;
+      };
+      const candidates = store
+        .allPrs()
+        .filter((p) => p.state !== "closed" || report.closed.includes(p.number) || closedRecently(p.updated_at))
+        // Change gating (adversarial finding: ~900 standing reads/h without
+        // it): a PR whose row has not moved since the last successful sweep
+        // of it has produced no webhook the sweep could have missed a
+        // *newer* version of than last time — skip it. The watermark is the
+        // row's own `updated_at`, recorded per PR after a clean sweep.
+        .filter((p) => store.lastCommentSweep(p.number) !== p.updated_at)
+        .sort((a, b) => (a.updated_at < b.updated_at ? 1 : a.updated_at > b.updated_at ? -1 : a.number - b.number))
+        .slice(0, COMMENT_SWEEP_MAX_PRS);
+      for (const local of candidates) {
+        const n = local.number;
+        let rows: CapturedComment[];
+        try {
+          const [inline, top, reviews] = await Promise.all([
+            adapter.listReviewCommentsFull!(n),
+            adapter.listIssueComments!(n),
+            adapter.listReviewsFull!(n),
+          ]);
+          rows = [
+            ...inline.map((c) => capturedFromReviewComment(n, c)),
+            ...top.map((c) => capturedFromIssueComment(n, c)),
+            ...reviews.map((r) => capturedFromReview(n, r)),
+          ];
+        } catch (err) {
+          report.errors.push(`comment-capture #${n}: ${String(err)}`);
+          continue;
+        }
+        for (const c of rows) {
+          if (!isHumanCapture(c, botLogin)) continue;
+          if (!store.recordPrComment({ ...c, captured_via: "reconcile" })) continue;
+          report.captured_comments++;
+          store.logEvent("comment_captured", n, {
+            source: c.source,
+            comment_id: c.comment_id,
+            author: c.author,
+            tagged: c.tagged,
+            via: "reconcile",
+          });
+        }
+        // Watermark only a CLEAN sweep of this PR — a failed read `continue`s
+        // above without one, so it is retried on the next pass.
+        store.markCommentSweep(n, local.updated_at);
+      }
+    });
+  }
+
   // ---- 6. retired-park migration -------------------------------------------
   // awaiting_human was RETIRED on 2026-08-19 (the owner: the review is never
   // handed to a human — the AI keeps driving). Nothing transitions into it any
@@ -407,6 +528,7 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
     triggered: report.triggered.length,
     closed: report.closed.length,
     awaiting_human: report.awaiting_human.length,
+    captured_comments: report.captured_comments,
     corrections: report.corrections,
     errors: report.errors.length,
   });

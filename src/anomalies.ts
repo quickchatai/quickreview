@@ -48,6 +48,12 @@ const WAKE_KINDS: ReadonlySet<string> = new Set([
   // session ignored the nudge, a human-attention grade. First-detection
   // "ledger_stale" stays quiet: the nudge is the response.
   "ledger_stale_unresolved",
+  //, the same shape one tier down: a findings record still absent
+  // AFTER its one re-nudge — the session ignored the nudge, which is
+  // human-attention grade. First detection ("findings_record_missing") stays
+  // quiet: the nudge IS the response, and a wake there would double every
+  // missing record into overseer traffic.
+  "findings_record_unresolved",
   // 2026-08-19 (the owner): pi sessions failing API calls with token-expired
   // errors — every round in flight is doomed until a human re-logins, so this
   // is human-attention grade. Detected passively (src/authwatch.ts), never by
@@ -59,7 +65,27 @@ const WAKE_KINDS: ReadonlySet<string> = new Set([
   // kind (`eod_pinned_watchdog_degraded`) is deliberately left unlisted: "could
   // not check" is heartbeat-tier, "may have been rewritten" is not.
   "eod_pinned_area_modified",
+  // a round that blew its deadline and is being buried rather than
+  // rescued — nothing will ever come back for it, and the PR it belonged to
+  // may never have been reviewed at all. Fires at most once per round, by
+  // construction (the sweep terminalizes what it reports), so it can wake.
+  "round_stranded",
 ]);
+
+/**
+ * Two cancellation kinds are DELIBERATELY unlisted above, for
+ * opposite reasons — the pair is the whole shape of the ticket:
+ *
+ *   `round_stopped_dead` — human-attention grade, but its wake already exists:
+ *     the self-requeue path writes its own bespoke overseer inject beside the
+ *     anomaly row. Listing it here would inject the same event twice.
+ *   the orphan sweep — no anomaly row at ALL, by design. tmux lives in the
+ *     container, so a clean redeploy orphans every in-flight round; it was 70%
+ *     of the 55 cancellations measured. Alarming on it would train
+ *     everyone to ignore cancellation, which is exactly the inversion that
+ *     ticket found (the rare `overdue` was loud, the common `cancelled` was
+ *     silent). It is counted, grouped and rendered — never alarmed on.
+ */
 
 export function anomalySeverity(kind: string): AnomalySeverity {
   return WAKE_KINDS.has(kind) ? "wake" : "quiet";

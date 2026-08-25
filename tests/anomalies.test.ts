@@ -43,6 +43,15 @@ describe("anomalySeverity — the map", () => {
       expect(anomalySeverity(kind), kind).toBe("quiet");
     }
   });
+
+  // the two cancellation kinds, and why they sit on opposite sides.
+  it("a stranded round wakes: nothing else will ever come back for it", () => {
+    expect(anomalySeverity("round_stranded")).toBe("wake");
+  });
+
+  it("`round_stopped_dead` stays quiet HERE — its wake is the self-requeue inject, and would double", () => {
+    expect(anomalySeverity("round_stopped_dead")).toBe("quiet");
+  });
 });
 
 describe("logAnomaly → wake funnel", () => {

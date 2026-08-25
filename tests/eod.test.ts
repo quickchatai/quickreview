@@ -193,4 +193,44 @@ describe("startEodTimer", () => {
   it("renderEodPrompt substitutes every {{date}}", () => {
     expect(renderEodPrompt("a {{date}} b {{date}}", "2026-08-13")).toBe("a 2026-08-13 b 2026-08-13");
   });
+
+  it("appends dayContext to the fired prompt, and a throwing dayContext never loses the sweep", async () => {
+    let clock = new Date("2026-08-13T09:00:00Z");
+    const timers: Array<{ cb: () => void; ms: number }> = [];
+    const injected: string[] = [];
+    let boom = false;
+    const timer = startEodTimer({
+      timeHHMM: "18:00",
+      timeZone: TZ,
+      now: () => clock,
+      readPrompt: () => "sweep {{date}}",
+      dayContext: (d) => {
+        if (boom) throw new Error("db gone");
+        return `cancelled: none (${d})`;
+      },
+      injectOverseer: async (m) => {
+        injected.push(m);
+      },
+      setTimer: (cb, ms) => {
+        timers.push({ cb, ms });
+        return timers.length - 1;
+      },
+      clearTimer: () => {},
+    });
+    clock = new Date("2026-08-13T16:00:00Z");
+    timers[0]!.cb();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(injected).toHaveLength(1);
+    expect(injected[0]).toContain("sweep 2026-08-13");
+    expect(injected[0]).toContain("## Daemon-measured context for 2026-08-13");
+    expect(injected[0]).toContain("cancelled: none (2026-08-13)");
+
+    boom = true;
+    clock = new Date("2026-08-14T16:00:00Z");
+    timers[1]!.cb();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(injected).toHaveLength(2); // still fired
+    expect(injected[1]).toBe("sweep 2026-08-14");
+    timer.stop();
+  });
 });

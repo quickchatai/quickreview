@@ -11,7 +11,7 @@
 // Warsaw-day bucketing goes through eod.ts's Intl helpers (DST-correct; never
 // manual offsets).
 import { zoneDateString } from "./eod.js";
-import type { RoundRow, StateStore } from "./state.js";
+import { cancelCauseLabel, isLoudCancelCause, type RoundRow, type StateStore } from "./state.js";
 
 // ---- the M1<->M3 contract (verbatim; do not rename or reshape) ------------
 
@@ -51,6 +51,17 @@ export interface MetricsWindow {
   pingpong: Dist & { cap_hits: number }; // exchanges per thread; cap = 3
   /** Every event kind the daemon logged in this window, busiest first, cap 12. */
   events_by_kind: { kind: string; count: number }[];
+  /**
+   * Cancelled rounds, GROUPED BY CAUSE — the figure that did not
+   * exist when measured 55 silent cancellations against 5 loud
+   * overdues. `loud` is the subset a human should act on (a round that stopped
+   * dead); the boot-time orphan sweep is counted here and nowhere alarmed.
+   */
+  cancellations: {
+    total: number;
+    loud: number;
+    by_cause: { cause: string; label: string; count: number; loud: boolean }[];
+  };
 }
 
 export const EVENT_KIND_CAP = 12;
@@ -341,7 +352,11 @@ export function computeWindow(input: WindowInput): MetricsWindow {
   const { since } = input;
   const rounds = input.rounds.filter((r) => within(roundAnchor(r), since));
   const live = rounds.filter((r) => !isBackfilled(r));
-  const finishedLive = live.filter((r) => r.finished_at !== null);
+  // Duration and overrun read `finished_at`, and an EXPIRED round's is the
+  // expiry sweep's clock rather than a real end — including them would report
+  // day-long "rounds". They stay in the spend and count populations above
+  // (expiry is bookkeeping, not a refund) and out of this one.
+  const finishedLive = live.filter((r) => r.finished_at !== null && r.status !== "expired");
 
   const triggeredPrs = new Set<number>();
   for (const e of input.events) {
@@ -481,6 +496,23 @@ export function computeWindow(input: WindowInput): MetricsWindow {
     .sort((a, b) => b.count - a.count || a.kind.localeCompare(b.kind))
     .slice(0, EVENT_KIND_CAP);
 
+  // ---- cancellations by cause ----
+  const causeCounts = new Map<string, number>();
+  for (const r of live) {
+    if (r.status !== "cancelled") continue;
+    const cause = r.cancel_cause ?? "unknown";
+    causeCounts.set(cause, (causeCounts.get(cause) ?? 0) + 1);
+  }
+  const byCause = [...causeCounts.entries()]
+    .map(([cause, count]) => ({ cause, label: cancelCauseLabel(cause), count, loud: isLoudCancelCause(cause) }))
+    // Loud first: the surface renders in order and never has to know policy.
+    .sort((a, b) => Number(b.loud) - Number(a.loud) || b.count - a.count || a.cause.localeCompare(b.cause));
+  const cancellations = {
+    total: byCause.reduce((n, c) => n + c.count, 0),
+    loud: byCause.filter((c) => c.loud).reduce((n, c) => n + c.count, 0),
+    by_cause: byCause,
+  };
+
   return {
     header: {
       prs_triggered: triggeredPrs.size,
@@ -512,6 +544,7 @@ export function computeWindow(input: WindowInput): MetricsWindow {
     size,
     pingpong,
     events_by_kind: eventsByKind,
+    cancellations,
   };
 }
 
@@ -581,9 +614,12 @@ export function computeMetrics(store: StateStore, opts: MetricsOptions = {}): Me
   const timeZone = opts.timeZone ?? "Europe/Warsaw";
   const nowIso = now.toISOString();
 
-  // Expired zombie rounds are excluded from every aggregate window;
-  // the per-PR timeline (computeTimeline) still shows them as history.
-  const rounds = store.allRounds().filter((r) => r.status !== "expired");
+  // Expired zombie rounds used to be dropped here, before any
+  // aggregate saw them — which silently erased the tokens they really burned
+  // (finding 1). They are now IN, and `computeWindow` excludes them
+  // from the one population they genuinely distort: duration/overrun, whose
+  // `finished_at` is the expiry sweep's clock rather than a real end.
+  const rounds = store.allRounds();
   const events = readEvents(store);
   const allEvents = readEventKinds(store);
   const comments = store.db.prepare("SELECT pr, round_no, posted_at FROM bot_comments").all() as CommentRow[];
@@ -740,6 +776,19 @@ export function computeTimeline(store: StateStore, pr: number): TimelinePayload 
 const fmtSecs = (s: number | null): string =>
   s === null ? "—" : s >= 3600 ? `${(s / 3600).toFixed(1)}h` : s >= 60 ? `${(s / 60).toFixed(1)}m` : `${Math.round(s)}s`;
 
+/**
+ * One plain-text line for the cancellation split — shared wording
+ * between `qcr metrics` and `qcr today`, loud causes first and flagged, benign
+ * ones present but unmarked. An empty window says so rather than printing an
+ * ambiguous zero.
+ */
+export function cancellationLine(win: MetricsWindow, label = "cancelled (7d)"): string {
+  const c = win.cancellations;
+  if (!c || c.total === 0) return `${label}: none`;
+  const parts = c.by_cause.map((b) => `${b.label} ${b.count}${b.loud ? " ⚑" : ""}`);
+  return `${label}: ${c.total} — ${parts.join(", ")}${c.loud > 0 ? `  (${c.loud} needing a look)` : ""}`;
+}
+
 export function renderMetrics(payload: MetricsPayload): string {
   const lines: string[] = [];
   const w = payload.windows.d7;
@@ -777,6 +826,7 @@ export function renderMetrics(payload: MetricsPayload): string {
   lines.push(`rounds until resolution (7d): median ${w.rounds_until_resolution.median ?? "—"} n=${w.rounds_until_resolution.n}`);
   lines.push(`verdict mix (7d): ${w.verdict_mix.map((v) => `${v.verdict} ${v.count}`).join("  ") || "—"}`);
   lines.push(`events (7d): ${w.events_by_kind.map((e) => `${e.kind} ${e.count}`).join("  ") || "—"}`);
+  lines.push(cancellationLine(w));
   lines.push("");
   lines.push("day          rounds  PRs  spend   appr  rc");
   for (const d of payload.daily.slice(-14)) {

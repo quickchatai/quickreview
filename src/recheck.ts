@@ -44,6 +44,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, watch, type FSWatcher } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.js";
+import { readFindingsRecord } from "./findingsrecord.js";
 import type { PrFileEntry } from "./github.js";
 import { applyEvent } from "./statemachine.js";
 import type { StateStore } from "./state.js";
@@ -733,6 +734,18 @@ export interface RecheckWatcherDeps {
    * legacy behaviour. Best-effort — never allowed to disturb the
    * decision (the caller wraps it). */
   checkLedger?: (pr: number, headSha: string) => Promise<void>;
+  /**
+   * Where the session writes reasoning records — `<root>/state/
+   * findings`. A recheck that MOVES the verdict posts real findings, and
+   * "how often the review backs down" counts those too, so its
+   * record is parsed into the same rows.
+   *
+   * Deliberately weaker than the round path: read-if-present, never a nudge
+   * and never an anomaly. A recheck has no round row and no deadline
+   * underneath it, so a claim-then-nudge here would be the unbounded pattern
+   * #5362 W4 warned about. Absent ⇒ nothing happens, exactly as before.
+   */
+  findingsDir?: string;
   now?: () => Date;
   log?: (msg: string, extra?: unknown) => void;
   /** Parse retries for partially-written files (fs.watch fires on creation,
@@ -796,6 +809,38 @@ export class RecheckWatcher {
     }
   }
 
+  /**
+   * Parse `state/findings/pr-<n>-recheck-<head12>.json` into `round_findings`.
+   *
+   * A recheck owns no round row, so its entries are attributed to the round
+   * whose verdict it just moved — the PR's reviewed-head mark, falling back to
+   * its highest round number. Keys are prefixed `recheck:<head12>:` so a
+   * recheck's rows can never collide with that round's own.
+   */
+  private async recordRecheckFindings(pr: number, headSha: string): Promise<void> {
+    const dir = this.deps.findingsDir;
+    if (!dir) return;
+    try {
+      const head12 = headSha.slice(0, 12).toLowerCase();
+      const path = join(dir, `pr-${pr}-recheck-${head12}.json`);
+      const store = this.deps.store;
+      const roundNo =
+        store.reviewedHead(pr)?.round_no ??
+        store.roundsFor(pr).reduce<number>((m, r) => (r.round_no > m ? r.round_no : m), 0);
+      const parsed = readFindingsRecord(path, pr, roundNo);
+      if (parsed.status !== "ok" || !parsed.record) {
+        store.logEvent("recheck_findings_record_absent", pr, { head_sha: headSha, status: parsed.status });
+        this.deps.log?.(`recheck: #${pr} moved the verdict with no findings record (${parsed.status}) — decision stands`);
+        return;
+      }
+      const entries = parsed.record.findings.map((f) => ({ ...f, key: `recheck:${head12}:${f.key}` }));
+      store.recordRoundFindings({ pr, round_id: null, round_no: roundNo, head_sha: headSha }, entries);
+      store.logEvent("recheck_findings_recorded", pr, { head_sha: headSha, round_no: roundNo, entries: entries.length });
+    } catch (err) {
+      this.deps.log?.(`recheck: #${pr} findings record read failed`, err);
+    }
+  }
+
   async handleFile(name: string): Promise<boolean> {
     const match = RECHECK_FILE_RE.exec(name);
     if (!match || this.inFlight.has(name)) return false;
@@ -838,6 +883,10 @@ export class RecheckWatcher {
         this.deps.store.logEvent("recheck_outcome_coerced", pr, { file: name, given: parsed.coerced, applied: "uphold" });
 
       if (d.outcome === "request_changes") {
+        // The reasoning behind a backed-down approval. Best-effort
+        // and strictly additive: a missing record here is logged and nothing
+        // else — the decision above is what moves the PR.
+        await this.recordRecheckFindings(pr, d.head_sha);
         // Approval is off the table now — a lingering withheld mark would let
         // a later green CI re-queue "for the withheld approval" of a PR whose
         // standing verdict this very decision just flipped.

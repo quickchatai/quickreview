@@ -549,6 +549,83 @@ describe("ops", () => {
     });
   });
 
+  // ---- -------------------------------------------------------------
+
+  describe("cancellations by cause", () => {
+    const cancel = (pr: number, roundNo: number, cause: string, startedAt = "2026-08-14T08:00:00.000Z"): void => {
+      insertRound(store, { pr, round_no: roundNo, started_at: startedAt, finished_at: startedAt, status: "cancelled" });
+      store.db.prepare("UPDATE rounds SET cancel_cause = ? WHERE pr = ? AND round_no = ?").run(cause, pr, roundNo);
+    };
+
+    it("an empty window says none, rather than nothing at all", () => {
+      const c = computeMetrics(store, { now }).windows.d7.cancellations;
+      expect(c).toEqual({ total: 0, loud: 0, by_cause: [] });
+      expect(renderMetrics(computeMetrics(store, { now }))).toContain("cancelled (7d): none");
+    });
+
+    it("groups by cause with the loud one first, whatever the volumes", () => {
+      cancel(300, 1, "orphan_sweep");
+      cancel(301, 1, "orphan_sweep");
+      cancel(302, 1, "orphan_sweep");
+      cancel(303, 1, "deadline_overrun");
+      cancel(304, 1, "superseded");
+
+      const c = computeMetrics(store, { now }).windows.d7.cancellations;
+      expect(c.total).toBe(5);
+      // Only the round that stopped dead counts as needing a look — the boot
+      // orphan sweep is a redeploy artefact and is counted, never flagged.
+      expect(c.loud).toBe(1);
+      expect(c.by_cause).toEqual([
+        { cause: "deadline_overrun", label: "stopped dead", count: 1, loud: true },
+        { cause: "orphan_sweep", label: "orphan sweep (redeploy)", count: 3, loud: false },
+        { cause: "superseded", label: "superseded", count: 1, loud: false },
+      ]);
+    });
+
+    it("renders one line naming every cause and flagging only the loud one", () => {
+      cancel(300, 1, "orphan_sweep");
+      cancel(303, 1, "deadline_overrun");
+      const text = renderMetrics(computeMetrics(store, { now }));
+      expect(text).toContain("cancelled (7d): 2 — stopped dead 1 ⚑, orphan sweep (redeploy) 1  (1 needing a look)");
+    });
+
+    it("an unclassified cancellation is reported as unclassified, not folded in", () => {
+      insertRound(store, {
+        pr: 305, round_no: 1, started_at: "2026-08-14T08:00:00.000Z",
+        finished_at: "2026-08-14T08:10:00.000Z", status: "cancelled",
+      });
+      const c = computeMetrics(store, { now }).windows.d7.cancellations;
+      expect(c.by_cause).toEqual([{ cause: "unknown", label: "unclassified", count: 1, loud: false }]);
+    });
+  });
+
+  describe("expired rounds in the aggregates (finding 1)", () => {
+    beforeEach(() => {
+      // A round that ran, burned $4, blew its deadline and was later buried by
+      // the zombie sweep — with a `finished_at` stamped by that sweep, hours
+      // after anything really happened.
+      insertRound(store, {
+        pr: 400, round_no: 1, spend_usd: 4, started_at: "2026-08-14T08:00:00.000Z",
+        deadline_at: "2026-08-14T08:45:00.000Z", finished_at: "2026-08-14T20:00:00.000Z", status: "expired",
+      });
+    });
+
+    it("counts their SPEND — expiry is bookkeeping, not a refund", () => {
+      const w = computeMetrics(store, { now }).windows.d7;
+      // 1.5 + 2 + 0.5 from the seed, plus the expired round's 4.
+      expect(w.header.spend_usd).toBeCloseTo(8, 6);
+      expect(store.totalSpend()).toBeCloseTo(8, 6);
+    });
+
+    it("keeps them OUT of duration and overrun — that finished_at is a sweep's clock", () => {
+      const before = computeMetrics(store, { now }).windows.d7;
+      store.db.prepare("DELETE FROM rounds WHERE pr = 400").run();
+      const after = computeMetrics(store, { now }).windows.d7;
+      expect(before.duration.n).toBe(after.duration.n);
+      expect(before.header.overruns).toBe(after.header.overruns);
+    });
+  });
+
   it("renderMetrics surfaces the daemon line and the window's event traffic", () => {
     const payload = computeMetrics(store, { now });
     payload.ops = { heartbeat: "2026-08-14T11:59:30Z", dry_run: false, running_rounds: 1, max_concurrent_rounds: 3, build: { sha: "abc1234", at: "2026-08-13T12:00:00Z", mode: "sync" } };

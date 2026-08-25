@@ -180,6 +180,8 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     announce,
     verdictDir,
     root, // anchors the default pi-session dir for round usage measurement
+    // The durable reasoning record — same dir the round prompts pin.
+    findingsDir: join(root, "state", "findings"),
     log,
   });
   const pingpong = new PingPongLedger(store.db);
@@ -215,6 +217,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     cfg,
     store,
     verdictDir,
+    findingsDir: join(root, "state", "findings"),
     log,
     // Ledger freshness after a recheck uphold — same enforcement the
     // VerdictWatcher runs at round end, keyed by head (no round in flight).
@@ -359,7 +362,8 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
       });
       log(
         `reconcile: open=${report.open_prs} triggered=${report.triggered.length} ` +
-          `closed=${report.closed.length} corrections=${report.corrections} errors=${report.errors.length}`,
+          `closed=${report.closed.length} captured=${report.captured_comments} ` +
+          `corrections=${report.corrections} errors=${report.errors.length}`,
       );
       await pump();
     });
@@ -494,6 +498,27 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         if (cfg.daemon.expire_overdue_after_h > 0) {
           const expired = store.expireOverdueRounds(cfg.daemon.expire_overdue_after_h);
           if (expired.length > 0) log(`expired ${expired.length} zombie round(s): ids ${expired.join(",")}`);
+        }
+        // Stranded rounds: the ones the sweep above deliberately
+        // leaves — overdue, but the PR is still open and still undecided, so
+        // "a rerun could service it". Nothing ever does; found one
+        // sitting untouched since the cutover, ten days and invisible. Past a
+        // week that is not pending rescue, it is abandoned: terminalize it and
+        // SAY SO. One anomaly per round, once, because the row stops being
+        // overdue the moment it is reported.
+        for (const r of store.expireStrandedRounds()) {
+          store.logAnomaly(
+            "round_stranded",
+            r.pr,
+            r.round_no,
+            `round ${r.round_no} has sat overdue since ${r.deadline_at} with nothing to rescue it — closed as expired`,
+            [
+              `STRANDED ROUND — PR #${r.pr} round ${r.round_no}`,
+              `Overdue since ${r.deadline_at}; its PR was still open and undecided, so the zombie sweep kept skipping it. Nothing reruns an overdue round, so it would have sat there indefinitely.`,
+              "The round row is now closed (expired). Its spend still counts. GitHub was NOT touched and the PR was NOT requeued — decide whether this PR still needs a review, and if so trigger one (commands/rerun-round).",
+            ].join("\n"),
+          );
+          log(`stranded round closed: #${r.pr} round ${r.round_no} (overdue since ${r.deadline_at})`);
         }
       }));
       every(STATUS_TICK_S, writeStatus);

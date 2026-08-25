@@ -975,4 +975,66 @@ describe("cancelRunningRounds — the missing half of rerun-round (#5362 W4)", (
   it("is a no-op on a PR with nothing running", () => {
     expect(store.cancelRunningRounds(712, "rerun-round")).toEqual([]);
   });
+
+  it("declares its cause — an operator lever, not a defect", () => {
+    const roundId = reviewingRound(713);
+    store.cancelRunningRounds(713, "rerun-round");
+    expect(store.roundsFor(713).find((r) => r.id === roundId)!.cancel_cause).toBe("operator");
+    expect(store.cancellationsByCause()).toEqual([{ cause: "operator", count: 1, loud: false }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// every cancelling path declares WHY, and only one of them is loud.
+//
+// 55 silent cancellations against 5 loud `overdue`s. The split that
+// matters is 70% boot orphan sweep (a redeploy artefact, by construction) vs
+// the residual real defect — a round that stopped dead inside its deadline.
+// ---------------------------------------------------------------------------
+
+describe("cancellation causes on the live paths", () => {
+  function anomalies(): Array<{ kind: string; pr: number | null; round_no: number | null }> {
+    return store.anomalies().map((a) => ({ kind: a.kind, pr: a.pr, round_no: a.round_no }));
+  }
+
+  it("a dead session past the deadline records `deadline_overrun` — and raises the anomaly row", async () => {
+    const roundId = reviewingRound(800);
+    pastDeadline();
+    const { hooks, overseer } = hooksWith(false);
+    await watcher(hooks).checkDeadlines();
+
+    expect(store.roundsFor(800).find((r) => r.id === roundId)!.cancel_cause).toBe("deadline_overrun");
+    expect(store.cancellationsByCause()).toEqual([{ cause: "deadline_overrun", count: 1, loud: true }]);
+    // The durable record found missing…
+    expect(anomalies()).toEqual([{ kind: "round_stopped_dead", pr: 800, round_no: 1 }]);
+    // …beside exactly ONE overseer wake, the bespoke self-requeue text. The
+    // anomaly kind is deliberately not a WAKE class, or this would double.
+    expect(overseer.filter((m) => m.startsWith("SELF-REQUEUE"))).toHaveLength(1);
+    expect(overseer.filter((m) => m.startsWith("ANOMALY (round_stopped_dead)"))).toHaveLength(0);
+    expect(events("round_self_requeued")[0]!.payload).toMatchObject({ cancel_cause: "deadline_overrun" });
+  });
+
+  it("a superseded round is cancelled as `superseded` and raises nothing", async () => {
+    const oldRound = reviewingRound(801);
+    pastDeadline();
+    store.startRound(801, "re-review", ["pass-baseline"], baseCfg.daemon.round_deadline_min);
+    const { hooks } = hooksWith(false);
+    await watcher(hooks).checkDeadlines();
+
+    expect(store.roundsFor(801).find((r) => r.id === oldRound)!.cancel_cause).toBe("superseded");
+    expect(store.loudCancellations()).toEqual([]);
+    expect(anomalies()).toEqual([]);
+  });
+
+  it("the boot orphan sweep records `orphan_sweep` and stays SILENT, at any volume", () => {
+    for (let pr = 810; pr < 830; pr++) reviewingRound(pr);
+    const { cancelled } = reconcileOrphanedRounds(store, [], { botLogin: "bot", now: () => clock });
+
+    expect(cancelled).toHaveLength(20);
+    expect(store.cancellationsByCause()).toEqual([{ cause: "orphan_sweep", count: 20, loud: false }]);
+    // The whole point of the grouping: twenty of these is a redeploy, not an
+    // incident. Nothing is raised, and none of them is loud.
+    expect(anomalies()).toEqual([]);
+    expect(store.loudCancellations()).toEqual([]);
+  });
 });

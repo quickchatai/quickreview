@@ -1,10 +1,17 @@
 // qcr — the operator CLI. Read-only against state/ (status.json + state.db);
 // `attach` wraps tmux/docker-exec. Subcommands land across slices: status and
 // spend here (B1); today/why in B5; checklist/compare in B6.
-import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig, sandboxRoot } from "./config.js";
-import { StateStore, type StatusSnapshot } from "./state.js";
+import {
+  cancelCauseLabel,
+  isLoudCancelCause,
+  StateStore,
+  type CancelCause,
+  type CancellationTally,
+  type StatusSnapshot,
+} from "./state.js";
 import { computeMetrics, computeTimeline, readOps, renderMetrics, renderTimeline } from "./metrics.js";
 
 function stateDir(): string {
@@ -50,11 +57,12 @@ function cmdSpend(): void {
     const total = store.totalSpend();
     const today = new Date().toISOString().slice(0, 10);
     // est_usd is the ONE spend field (legacy spend_usd folded into it
-    // at boot); expired zombie rounds never count towards an aggregate.
-    const todayRounds = store.roundsOn(today).filter((r) => r.status !== "expired");
+    // at boot). Expired rounds ARE counted: they blew a deadline,
+    // they did not get a refund — excluding them erased real token cost.
+    const todayRounds = store.roundsOn(today);
     const todaySpend = todayRounds.reduce((n, r) => n + (r.est_usd ?? 0), 0);
     const totals = store.db
-      .prepare("SELECT COALESCE(SUM(tokens_in), 0) AS tin, COALESCE(SUM(tokens_out), 0) AS tout FROM rounds WHERE status != 'expired'")
+      .prepare("SELECT COALESCE(SUM(tokens_in), 0) AS tin, COALESCE(SUM(tokens_out), 0) AS tout FROM rounds")
       .get() as { tin: number; tout: number };
     const todayIn = todayRounds.reduce((n, r) => n + (r.tokens_in ?? 0), 0);
     const todayOut = todayRounds.reduce((n, r) => n + (r.tokens_out ?? 0), 0);
@@ -73,10 +81,14 @@ function cmdToday(): void {
     console.log(`rounds on ${today}: ${rounds.length}`);
     for (const r of rounds) {
       const tokens = r.tokens_in !== null || r.tokens_out !== null ? ` tok=${r.tokens_in ?? 0}/${r.tokens_out ?? 0}` : "";
+      // A cancelled round says WHY inline — its status alone was
+      // exactly the thing nobody could read back.
+      const why = r.status === "cancelled" ? ` cause=${cancelCauseLabel(r.cancel_cause)}` : "";
       console.log(
-        `#${r.pr} round ${r.round_no} (${r.round_type}) [${r.status}] verdict=${r.verdict ?? "—"} spend=$${(r.est_usd ?? 0).toFixed(2)}${tokens} lenses=${r.lenses}`,
+        `#${r.pr} round ${r.round_no} (${r.round_type}) [${r.status}]${why} verdict=${r.verdict ?? "—"} spend=$${(r.est_usd ?? 0).toFixed(2)}${tokens} lenses=${r.lenses}`,
       );
     }
+    console.log(todayCancellationLine(cancellationsOn(store, today)));
     const events = store.eventsOn(today);
     console.log(`events: ${events.length}`);
     for (const e of events.slice(-40)) console.log(`  ${e.ts} ${e.kind}${e.pr ? ` #${e.pr}` : ""}`);
@@ -98,7 +110,7 @@ export interface WhyPayload {
   stale_recheck?: boolean;
   updated_at?: string;
   spend_usd: number;
-  rounds: Array<{ round_no: number; round_type: string; status: string; verdict: string | null; started_at: string; finished_at: string | null; spend_usd: number | null; est_usd?: number | null; tokens_in?: number | null; tokens_out?: number | null; lenses: string; summary?: string | null }>;
+  rounds: Array<{ round_no: number; round_type: string; status: string; verdict: string | null; started_at: string; finished_at: string | null; spend_usd: number | null; est_usd?: number | null; tokens_in?: number | null; tokens_out?: number | null; lenses: string; summary?: string | null; cancel_cause?: string | null }>;
   threads: { open: number; total: number };
   ledger?: string;
   archive?: string[];
@@ -136,7 +148,8 @@ export function whyJson(store: StateStore, n: number, archiveDir: string): WhyPa
   const payload: WhyPayload = {
     pr: n,
     known: pr !== undefined || rounds.length > 0,
-    spend_usd: rounds.reduce((s, r) => s + (r.status !== "expired" ? (r.est_usd ?? 0) : 0), 0),
+    // Every round's cost, expired ones included.
+    spend_usd: rounds.reduce((s, r) => s + (r.est_usd ?? 0), 0),
     rounds: rounds.map((r) => ({
       round_no: r.round_no,
       round_type: r.round_type,
@@ -150,6 +163,9 @@ export function whyJson(store: StateStore, n: number, archiveDir: string): WhyPa
       tokens_out: r.tokens_out ?? null,
       lenses: r.lenses,
       summary: r.summary ?? null,
+      // Why a cancelled round was cancelled — null on every other
+      // status. The TUI's detail pane reads this beside the prose summary.
+      cancel_cause: r.cancel_cause ?? null,
     })),
     // The registry knows every bot thread; "open" needs GitHub truth the
     // daemon doesn't mirror, so it is reported as total until archived.
@@ -175,17 +191,51 @@ export function whyJson(store: StateStore, n: number, archiveDir: string): WhyPa
 export function todayJson(
   store: StateStore,
   today: string,
-): { date: string; rounds: unknown[]; spend_usd: number; tokens_in: number; tokens_out: number; events: unknown[] } {
+): {
+  date: string;
+  rounds: unknown[];
+  spend_usd: number;
+  tokens_in: number;
+  tokens_out: number;
+  events: unknown[];
+  cancellations: CancellationTally[];
+} {
   const rounds = store.roundsOn(today);
-  const live = rounds.filter((r) => r.status !== "expired");
   return {
     date: today,
     rounds,
-    spend_usd: live.reduce((n, r) => n + (r.est_usd ?? 0), 0),
-    tokens_in: live.reduce((n, r) => n + (r.tokens_in ?? 0), 0),
-    tokens_out: live.reduce((n, r) => n + (r.tokens_out ?? 0), 0),
+    // Expired rounds included — see StateStore.totalSpend.
+    spend_usd: rounds.reduce((n, r) => n + (r.est_usd ?? 0), 0),
+    tokens_in: rounds.reduce((n, r) => n + (r.tokens_in ?? 0), 0),
+    tokens_out: rounds.reduce((n, r) => n + (r.tokens_out ?? 0), 0),
     events: store.eventsOn(today),
+    cancellations: cancellationsOn(store, today),
   };
+}
+
+/** Today's cancellations grouped by cause — the same tally the
+ * metrics payload carries, scoped to one Warsaw-agnostic ISO date so `qcr
+ * today` can print it beside the rounds it explains. */
+export function cancellationsOn(store: StateStore, date: string): CancellationTally[] {
+  const counts = new Map<string, number>();
+  for (const r of store.roundsOn(date)) {
+    if (r.status !== "cancelled") continue;
+    const cause = (r.cancel_cause ?? "unknown") as CancelCause;
+    counts.set(cause, (counts.get(cause) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([cause, count]) => ({ cause: cause as CancelCause, count, loud: isLoudCancelCause(cause) }))
+    .sort((a, b) => Number(b.loud) - Number(a.loud) || b.count - a.count || a.cause.localeCompare(b.cause));
+}
+
+/** `qcr today`'s one-line cancellation summary. Never silent: "none" is an
+ * answer, and it is the answer that used to be missing entirely. */
+export function todayCancellationLine(tallies: CancellationTally[]): string {
+  if (tallies.length === 0) return "cancelled: none";
+  const total = tallies.reduce((n, t) => n + t.count, 0);
+  const loud = tallies.filter((t) => t.loud).reduce((n, t) => n + t.count, 0);
+  const parts = tallies.map((t) => `${cancelCauseLabel(t.cause)} ${t.count}${t.loud ? " ⚑" : ""}`);
+  return `cancelled: ${total} — ${parts.join(", ")}${loud > 0 ? `  (${loud} needing a look)` : ""}`;
 }
 
 function cmdWhy(n: number): void {
@@ -264,6 +314,51 @@ export async function cmdBackfill(dryRun: boolean, limit: number | undefined, js
   } finally {
     store.close();
   }
+}
+
+/**
+ * `qcr regression` — run the human-review case set against the
+ * reviewer and write the investigation.
+ *
+ * The gate is built HERE, exactly as `cmdBackfill` builds its own: a dry-run
+ * gate whose executor throws. That is not a claim copied out of `config.toml`
+ * — `runRegression` refuses to start unless the object it is handed reports
+ * dry-run, and this is the only gate in the process. `src/replay.ts` holds no
+ * adapter and no mutation surface at all, so there is nothing for a gate to
+ * front even if one were live.
+ */
+export async function cmdRegression(rest: string[], json: boolean): Promise<number> {
+  const { MutationGate } = await import("./gate.js");
+  const { nodeReplayIo, parseRegressionArgs, readCaseSet, runRegressionCli, ScratchReplay } = await import("./replay.js");
+  const cfg = loadConfig();
+  const root = sandboxRoot();
+  const args = parseRegressionArgs(rest, json);
+  const gate = new MutationGate(true, join(stateDir(), "dryrun"), async () => {
+    throw new Error("qcr regression performs no mutations");
+  });
+  const scratchRoot = join(stateDir(), "regression");
+  return runRegressionCli(args, {
+    loadCaseSet: (p) => readCaseSet(p ?? join(root, "tests", "fixtures", "regression-cases.json")),
+    gate,
+    makeReplay: async (g) => {
+      const io = await nodeReplayIo({ cfg, sandboxRoot: root, scratchRoot });
+      return new ScratchReplay({
+        gate: g,
+        cfg,
+        sandboxRoot: root,
+        scratchRoot,
+        io,
+        ...(args.clonePath !== undefined ? { baseClone: args.clonePath } : {}),
+        log: (l) => console.log(l),
+      }).replay;
+    },
+    reportPath: (ranAt) => join(root, "reports", `regression-${ranAt.replace(/[:.]/g, "-")}.md`),
+    writeReport: (p, body) => {
+      mkdirSync(join(p, ".."), { recursive: true });
+      writeFileSync(p, body);
+    },
+    log: (line) => console.log(line),
+  });
 }
 
 function cmdAttach(target: string): void {
@@ -365,6 +460,10 @@ export async function main(argv: string[]): Promise<void> {
       }
       return cmdBackfill(rest.includes("--dry-run"), limit, json);
     }
+    case "regression": {
+      process.exitCode = await cmdRegression(rest, json);
+      return;
+    }
     case "status":
       return cmdStatus();
     case "spend":
@@ -415,7 +514,8 @@ export async function main(argv: string[]): Promise<void> {
     default:
       console.log(
         "usage: qcr <status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|tui [pr|overseer]|" +
-          "companion <up|down|status|rebuild>|backfill [--dry-run] [--limit <n>]|checklist|compare <pr...>>",
+          "companion <up|down|status|rebuild>|backfill [--dry-run] [--limit <n>]|checklist|compare <pr...>|" +
+          "regression [--set <path>] [--clone <path>] [--change <name>] [--limit <n>] [--out <path>]>",
       );
       loadConfig(); // surface config errors early even on bad usage
   }
