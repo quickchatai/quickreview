@@ -192,7 +192,9 @@ export async function createUser({ base, account, user, rootKey, fetchFn = fetch
   const r = await call(
     fetchFn,
     `${base}${adminUsersPath(account)}`,
-    { method: "POST", headers: adminHeaders(rootKey), body: JSON.stringify({ user_id: user, user, role: "USER" }) },
+    // role is lowercase on the live 0.4.15: uppercase gets INVALID_ARGUMENT
+    // "Account user role must be user or admin" (verified 2026-08-25).
+    { method: "POST", headers: adminHeaders(rootKey), body: JSON.stringify({ user_id: user, user, role: "user" }) },
     timeoutMs,
   );
   if (r.status === 409) return { ok: true, existed: true, detail: "HTTP 409 — already present" };
