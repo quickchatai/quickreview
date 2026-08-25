@@ -4,7 +4,7 @@
 // subtitles, clickable zones for full mouse navigation, OSC-8 PR links.
 // Pure: (view, cols, rows) → Frame (+ zones/meta for the input layer).
 import type { WhyPayload } from "../cli.js";
-import type { StatusSnapshot } from "../state.js";
+import { cancelCauseLabel, isLoudCancelCause, type StatusSnapshot } from "../state.js";
 import type { AlertBadge } from "./alerts.js";
 import { paintCmdBar } from "./cmdbar.js";
 import { filterLabel, visiblePrs, type BoardFilter } from "./filters.js";
@@ -245,12 +245,34 @@ export function detailLines(detail: WhyPayload | undefined, pr: SnapshotPr | und
   } else {
     lines.push(truncate(`${FG.dim}none yet — the live ledger is pinned in the session${RESET}`, width));
   }
+  // A cancelled round used to render as a bare "—", indistinguishable from any
+  // other verdictless round. It now carries its own glyph, and the
+  // ONE loud cause — a round that stopped dead inside its deadline — is the
+  // only one that gets a color; a redeploy orphan stays dim on purpose.
   const roundsBits = detail.rounds.map((r) => {
-    const v = r.verdict ? (VERDICT_ABBREV[r.verdict] ?? r.verdict) : r.status === "running" ? "…" : "—";
-    const color = r.verdict === "APPROVE" ? FG.approve : r.verdict === "REQUEST_CHANGES" ? FG.request_changes : FG.dim;
+    const cancelled = r.status === "cancelled";
+    const loud = cancelled && isLoudCancelCause(r.cancel_cause);
+    const v = r.verdict ? (VERDICT_ABBREV[r.verdict] ?? r.verdict) : cancelled ? "✕" : r.status === "running" ? "…" : "—";
+    const color = loud
+      ? FG.anomaly
+      : r.verdict === "APPROVE"
+        ? FG.approve
+        : r.verdict === "REQUEST_CHANGES"
+          ? FG.request_changes
+          : FG.dim;
     return `r${r.round_no} ${color}${v}${RESET}`;
   });
   lines.push(truncate(`${section("ROUNDS", "review rounds + verdicts")}  ${roundsBits.join(" · ") || "—"}`, width));
+  for (const r of detail.rounds) {
+    if (r.status !== "cancelled") continue;
+    const loud = isLoudCancelCause(r.cancel_cause);
+    lines.push(
+      truncate(
+        `  ${loud ? FG.anomaly : FG.dim}✕ r${r.round_no} cancelled — ${cancelCauseLabel(r.cancel_cause)}${RESET}`,
+        width,
+      ),
+    );
+  }
   lines.push(truncate(`${section("THREADS", "bot review threads")} ${detail.threads.total} known`, width));
   if (detail.comments && detail.comments.length > 0) {
     lines.push(truncate(section("COMMENTS", "latest PR conversation"), width));
@@ -270,7 +292,9 @@ export function detailLines(detail: WhyPayload | undefined, pr: SnapshotPr | und
 }
 
 export const HELP_LINES = [
-  "1/2/3/4       board / memory & learning / deploy / metrics tab",
+  "1/2/3/4/5     board / memory & learning / deploy / metrics / changes tab",
+  "               changes tab: every feedback-derived commit, newest first (they carry a Ratified-in-session: trailer)",
+  "               j/k select · R arms a revert of the selected one, y confirms (local commit only — never pushed)",
   "               metrics tab: 7 / 0 / a switch the 7d / 30d / all window; # <pr> ⏎ opens a PR timeline (Esc back)",
   "               deploy tab: click ▶ DEPLOY TO VM (or D D) to deploy · ■ STOP/▶ START VM APP (or S S) to power the container",
   "s              reconnect VM ssh (the one ssh key-passphrase prompt, shared 4h)",

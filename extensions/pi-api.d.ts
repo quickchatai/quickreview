@@ -92,8 +92,49 @@ declare module "@earendil-works/pi-coding-agent" {
     path?: string;
   }
 
+  /** What a registered tool hands back to the model. VERIFY-ON-PIN: the
+   * `content` array shape is copied from the vendored OpenViking extension
+   * (`extensions/vendor/openviking-pi/tools.ts`), which is live against
+   * 0.84.1 — the only evidence we have for it here. */
+  export interface PiToolResult {
+    content: Array<{ type: "text"; text: string }>;
+    details?: Record<string, unknown>;
+  }
+
+  /** A tool definition passed to `pi.registerTool`.
+   *
+   * VERIFY-ON-PIN, every field: modelled on the five `registerTool` calls in
+   * the vendored fork. `parameters` is a TypeBox schema there; TypeBox schemas
+   * ARE plain JSON Schema objects at runtime, so a literal
+   * `{ type: "object", properties: {} }` is assumed equivalent — that
+   * assumption is why `tui-view.ts` needs no TypeBox import, and it is the one
+   * to check first if the tools do not appear in pi.
+   *
+   * VERIFY-ON-PIN: `execute`'s positional signature
+   * `(id, params, signal, onUpdate, ctx)`. */
+  export interface PiToolDefinition {
+    name: string;
+    label?: string;
+    description: string;
+    promptSnippet?: string;
+    promptGuidelines?: string[];
+    parameters: unknown;
+    execute(
+      id: string,
+      params: Record<string, unknown>,
+      signal?: AbortSignal,
+      onUpdate?: unknown,
+      ctx?: unknown,
+    ): PiToolResult | Promise<PiToolResult>;
+  }
+
   export interface Pi {
     on(event: PiEvent, handler: PiEventHandler): void;
+    /** VERIFY-ON-PIN: tool registration. Present in 0.84.1 per the vendored
+     * fork's own usage; OPTIONAL here on purpose — an extension that finds it
+     * missing must degrade to registering nothing, never to a pi that will not
+     * start (the companion never wedges). */
+    registerTool?(definition: PiToolDefinition): void;
     /** Injects a real user message and always triggers a turn (findings §3). */
     sendUserMessage(content: string, options?: SendMessageOptions): void | Promise<void>;
     sendMessage?(message: unknown, options?: SendMessageOptions): void | Promise<void>;

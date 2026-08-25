@@ -19,6 +19,7 @@ const NAV: Array<BarButton & { tab: Tab }> = [
   { key: "2", label: "2 memory", tab: "digest" },
   { key: "3", label: "3 deploy", tab: "deploy" },
   { key: "4", label: "4 metrics", tab: "metrics" },
+  { key: "5", label: "5 changes", tab: "changes" },
 ];
 
 /** Row A right: always the same four, always in the same place. */
@@ -64,10 +65,11 @@ export const TAB_COMMANDS: Record<Tab, BarButton[]> = {
     { key: "a", label: "a all" },
     { key: "#", label: "# pr" },
   ],
+  changes: [{ key: "R", label: "R revert" }],
 };
 
 /** Row A globals + the navigation keys every tab answers to. */
-const GLOBAL_KEYS = ["q", "r", "s", "?", "1", "2", "3", "4", "j", "k"];
+const GLOBAL_KEYS = ["q", "r", "s", "?", "1", "2", "3", "4", "5", "j", "k"];
 
 /** Printable keys a tab's own handler consumes BEYOND its row-B buttons. */
 const TAB_EXTRA_KEYS: Record<Tab, string[]> = {
@@ -77,6 +79,10 @@ const TAB_EXTRA_KEYS: Record<Tab, string[]> = {
   digest: ["a", "m", "w", "g", "o", "M", "F", "W"],
   deploy: [],
   metrics: [],
+  // `y` confirms an armed revert. It MUST be registered — an
+  // unregistered printable focuses the companion column and is typed into pi,
+  // so the confirmation would go to the companion instead of the register.
+  changes: ["y", "Y"],
 };
 
 /**

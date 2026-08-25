@@ -1,9 +1,10 @@
 // Remote access layer for qcr tui — every VM touch goes through here, and
 // every command it can produce is read-only against the box except the
 // user-initiated writes (attach keystrokes ride a pty in attach.ts; inject
-// files in msg.ts; `sendKeysArgv` types into the board's focused pi pane; and
-// rubric-proposal dir removal in proposals.ts, an operator keystroke). Memory
-// edits do NOT ride this runner any more: the TUI talks HTTP to
+// files in msg.ts; and `sendKeysArgv` types into the board's focused pi
+// pane). Rubric proposals do NOT ride this runner any more: they are LOCAL
+// state/rubric/ dirs (companion-authored) handled by fs in proposals.ts.
+// Memory edits do NOT ride it either: the TUI talks HTTP to
 // OpenViking over the memory forward's loopback listener — see
 // src/tui/memory.ts.
 // None of them touch GitHub mutations, so none go near the gate (the
@@ -11,6 +12,7 @@
 // Command construction is pure so tests can assert the exact argv; execution
 // is one injectable runner.
 import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import type { TuiConfig } from "../config.js";
 
 export interface RemoteResult {
@@ -171,18 +173,26 @@ export const realSshRunner: SshRunner = (host, argv, opts) =>
     let stdout = "";
     let stderr = "";
     let settled = false;
+    // Chunk boundaries fall wherever the kernel put them, and a bare
+    // `buf.toString()` per chunk mangles any multi-byte character split across
+    // two of them into replacement bytes. Harmless on a one-line `cat
+    // status.json`; corrupting on a megabyte of pi transcript full of box
+    // drawing and emoji (evidence copier reads exactly that). The
+    // decoder carries the partial sequence across chunks.
+    const outDec = new StringDecoder("utf8");
+    const errDec = new StringDecoder("utf8");
     const settle = (ok: boolean, code: number | null) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolvePromise({ ok, stdout, stderr, code });
+      resolvePromise({ ok, stdout: stdout + outDec.end(), stderr: stderr + errDec.end(), code });
     };
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
       settle(false, null);
     }, opts?.timeoutMs ?? 15_000);
-    child.stdout.on("data", (d: Buffer) => (stdout += d.toString()));
-    child.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
+    child.stdout.on("data", (d: Buffer) => (stdout += outDec.write(d)));
+    child.stderr.on("data", (d: Buffer) => (stderr += errDec.write(d)));
     child.on("error", () => settle(false, null));
     child.on("close", (code) => settle(code === 0, code));
     if (opts?.stdin !== undefined) child.stdin.end(opts.stdin);

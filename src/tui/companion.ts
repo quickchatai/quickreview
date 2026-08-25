@@ -75,6 +75,17 @@ export const CONTAINER = {
    * issues; the doc that says how to write them lives one level up on the
    * host, outside every other mount. */
   trackerDocs: "/tracker-docs",
+  /** The REVIEWED repo (example-app), read-only. The companion
+   * reads the code a review is about; `:ro` is the whole guarantee that it can
+   * never touch that repo's `master`. Mounted only when the host checkout
+   * exists — a missing one leaves the companion under-equipped, never broken. */
+  reviewedRepo: "/example-app",
+  /** Finished-round evidence, read-only. The TUI holds the VM access
+   * and copies each finished round's artefacts down here; the companion reads
+   * plain files. That is the WHOLE of the transport — it grants no ssh, no
+   * credential and no network reach (root CLAUDE.md rule 8 is unchanged).
+   * `:ro` because this is a record: read history, never rewrite it. */
+  evidence: "/evidence",
   feed: "/feed",
   alerts: "/alerts",
 } as const;
@@ -231,6 +242,19 @@ export class CompanionLifecycle {
       `${this.cfg.tracker_dir}:${CONTAINER.tracker}:rw`,
       "--volume",
       `${this.cfg.tracker_docs_dir}:${CONTAINER.trackerDocs}:ro`,
+    );
+    // the reviewed repo, READ-ONLY and only when it is really there.
+    if (this.reviewedRepoPresent()) {
+      argv.push("--volume", `${this.cfg.reviewed_repo_dir}:${CONTAINER.reviewedRepo}:ro`);
+    }
+    argv.push(
+      // the evidence store. Created by the TUI before the container
+      // starts (`ensureDirs`), so unlike the reviewed repo it is never absent
+      // and the mount is unconditional — an empty store is a companion that has
+      // seen no rounds yet, which is honest; a MISSING one would have docker
+      // invent a root-owned dir the copier could not then write.
+      "--volume",
+      `${this.cfg.evidence_dir}:${CONTAINER.evidence}:ro`,
       "--volume",
       `${this.cfg.feed_dir}:${CONTAINER.feed}:rw`,
       "--volume",
@@ -320,6 +344,13 @@ export class CompanionLifecycle {
       // the delivery is race-free. QCR_INJECT_DIR (below) points it at the
       // companion's own dir. VERIFY-ON-PIN: `--extension <path>` again.
       `${CONTAINER.workspace}/extensions/inject-bridge.ts`,
+      "--extension",
+      // the read-only `tui_*` tools over what the TUI published to
+      // /feed (screen.txt + view.json). Reads only — it holds no credential and
+      // cannot fetch; see the header of extensions/tui-view.ts for why that is
+      // structural and not a promise. QCR_FEED_DIR (below) points it at the
+      // same dir the FeedWriter writes. VERIFY-ON-PIN: `--extension <path>`.
+      `${CONTAINER.workspace}/extensions/tui-view.ts`,
       "--model",
       this.cfg.model,
       "--session-dir",
@@ -372,6 +403,20 @@ export class CompanionLifecycle {
    * day-open message (the repo is bind-mounted, so no docker exec needed). */
   hostInjectDir(): string {
     return `${this.cfg.repo_dir}/inject/${this.cfg.session}`;
+  }
+
+  /**
+   * Is the reviewed repo (example-app) checked out on this host?
+   *
+   * The mount is conditional on this, in `runArgv()` AND in `expectedMounts()`,
+   * so the two never disagree: present ⇒ the container must carry it (absence
+   * is drift, and drift recreates); absent ⇒ nothing is expected and a stale
+   * mount is still drift. `docker run` would happily invent an empty host dir
+   * for a missing bind source, which is worse than no mount: the companion
+   * would read an empty tree and conclude the code says nothing.
+   */
+  reviewedRepoPresent(): boolean {
+    return this.cfg.reviewed_repo_dir !== "" && this.fs.exists(this.cfg.reviewed_repo_dir);
   }
 
   /** Host side of the vendored extension (the repo is bind-mounted). */
@@ -544,18 +589,31 @@ export class CompanionLifecycle {
 
   /** `dest -> source` for every mount `runArgv()` declares. */
   expectedMounts(): Map<string, string> {
-    return new Map([
+    const m = new Map<string, string>([
       [CONTAINER.piHome, this.cfg.pihome_volume],
       [CONTAINER.workspace, this.cfg.repo_dir],
       [CONTAINER.tracker, this.cfg.tracker_dir],
       [CONTAINER.trackerDocs, this.cfg.tracker_docs_dir],
+      [CONTAINER.evidence, this.cfg.evidence_dir],
       [CONTAINER.feed, this.cfg.feed_dir],
       [CONTAINER.alerts, this.cfg.alerts_dir],
     ]);
+    // Same condition as runArgv() — see reviewedRepoPresent().
+    if (this.reviewedRepoPresent()) m.set(CONTAINER.reviewedRepo, this.cfg.reviewed_repo_dir);
+    return m;
   }
 
   async ensureUp(onProgress?: (line: string) => void): Promise<EnsureOutcome> {
     await this.resolveMemoryWiring(onProgress);
+    // say which of the two worlds this start is in, either way. A
+    // missing checkout is a normal, non-fatal state — but a companion silently
+    // reading no reviewed source at all is exactly the gap found, so it
+    // is never left implicit.
+    onProgress?.(
+      this.reviewedRepoPresent()
+        ? `reviewed repo ${this.cfg.reviewed_repo_dir} → ${CONTAINER.reviewedRepo} (read-only)`
+        : `no reviewed repo at ${this.cfg.reviewed_repo_dir} — companion starts without it ([companion] reviewed_repo_dir)`,
+    );
     let st = await this.status();
     let recreating = false;
     // Mount drift is repaired by recreation and nothing else. Do it before the
@@ -592,7 +650,7 @@ export class CompanionLifecycle {
     }
     // Self-healing first run: build the image rather than failing on its absence.
     if (!(await this.imageExists())) await this.buildImage(onProgress);
-    this.ensureDirs([this.cfg.feed_dir, this.cfg.alerts_dir]);
+    this.ensureDirs([this.cfg.feed_dir, this.cfg.alerts_dir, this.cfg.evidence_dir]);
     const created = await this.docker(this.runArgv(), { timeoutMs: 120_000 });
     if (!created.ok) throw new Error(`docker run ${this.cfg.image} failed: ${errText(created)}`);
     return st.exists || recreating ? "recreated" : "created";

@@ -108,6 +108,34 @@ describe("detailLines", () => {
     const lines = detailLines(undefined, snapshot.prs[0], 60).map(stripAnsi);
     expect(lines[1]).toBe("loading detail…");
   });
+
+  // a cancelled round used to render as a bare "—", identical to
+  // every other verdictless round. It now says which kind of cancellation.
+  describe("cancelled rounds name their cause", () => {
+    const withRounds = (rounds: WhyPayload["rounds"]): string[] =>
+      detailLines({ ...why, rounds }, snapshot.prs[0], 60).map(stripAnsi);
+
+    it("marks the round and spells the cause out underneath", () => {
+      const lines = withRounds([
+        { round_no: 1, round_type: "initial", status: "cancelled", verdict: null, started_at: "", finished_at: "", spend_usd: null, lenses: "a", cancel_cause: "orphan_sweep" },
+        { round_no: 2, round_type: "rework", status: "cancelled", verdict: null, started_at: "", finished_at: "", spend_usd: null, lenses: "b", cancel_cause: "deadline_overrun" },
+      ]);
+      expect(lines.find((l) => l.startsWith("▍ROUNDS"))).toContain("r1 ✕ · r2 ✕");
+      expect(lines).toContain("  ✕ r1 cancelled — orphan sweep (redeploy)");
+      expect(lines).toContain("  ✕ r2 cancelled — stopped dead");
+    });
+
+    it("an older daemon's payload (no cause) reads as unclassified, never as benign", () => {
+      const lines = withRounds([
+        { round_no: 1, round_type: "initial", status: "cancelled", verdict: null, started_at: "", finished_at: "", spend_usd: null, lenses: "a" },
+      ]);
+      expect(lines).toContain("  ✕ r1 cancelled — unclassified");
+    });
+
+    it("adds nothing for a PR with no cancelled round", () => {
+      expect(withRounds(why.rounds).filter((l) => l.includes("cancelled"))).toEqual([]);
+    });
+  });
 });
 
 describe("sanitizeText + wrap (foreign-text hygiene)", () => {

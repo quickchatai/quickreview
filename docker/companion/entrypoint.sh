@@ -28,6 +28,31 @@ else
   echo "pi home on the volume: $PI_HOME_DIR (OAuth + conversation are durable)"
 fi
 
+# Reviewed-repo mount. example-app's source arrives READ-ONLY at
+# /example-app so the companion can read the code a review is about. It is
+# conditional by design (src/tui/companion.ts runArgv): a host without the
+# checkout gets no mount, and that must leave the companion under-equipped
+# rather than unable to start — same degrade discipline as the skills dir and
+# the vendored extension. Never `mkdir` it as a fallback: an empty tree reads
+# as "the code says nothing", which is worse than a plainly absent mount.
+if [ -d /example-app ] && [ -n "$(ls -A /example-app 2>/dev/null)" ]; then
+  echo "reviewed repo mounted READ-ONLY at /example-app (read it; you can never write it)"
+else
+  echo "!! /example-app is not mounted — no reviewed-repo source to read."
+  echo "!! Set [companion] reviewed_repo_dir to the example-app checkout on this host."
+fi
+
+# Evidence store. Finished-round artefacts the TUI copied down from
+# the VM arrive READ-ONLY at /evidence. Say which world this boot is in: an
+# empty store (no rounds copied yet) and an absent mount look identical from
+# inside the conversation, and only one of them is a misconfiguration.
+if [ -d /evidence ]; then
+  echo "round evidence mounted READ-ONLY at /evidence ($(ls -1 /evidence 2>/dev/null | wc -l) PR dirs)"
+else
+  echo "!! /evidence is not mounted — no finished-round transcripts to read."
+  echo "!! Set [companion] evidence_dir and restart the TUI (qcr companion rebuild not needed)."
+fi
+
 # csi-u extended keys must be configured BEFORE the server starts, or modified
 # Enter (Shift/Alt/Ctrl) collapses to plain Enter before reaching pi and the
 # TUI's steer/queue keys die. Requires tmux ≥3.5 (built from source in the
@@ -121,6 +146,19 @@ const skillsDir = "/workspace/.claude/skills";
 if (!Array.isArray(cfg.skills)) cfg.skills = [];
 const skillsPresent = fs.existsSync(skillsDir);
 if (skillsPresent && !cfg.skills.includes(skillsDir)) cfg.skills.push(skillsDir);
+
+// OUR OWN skills, a SECOND registered directory. `.claude/skills` is
+// a pinned vendored copy (see .claude/skills/VENDORED.md — it is re-copied
+// wholesale on an upstream bump), so a companion skill we author cannot live
+// there: the next vendor pass would either clobber it or make the folder no
+// longer a clean mirror. It gets its own tree at /workspace/skills/companion/,
+// scanned one level deep for <name>/SKILL.md exactly like the vendored one —
+// which is why this is a second ARRAY ENTRY and not a merged parent dir.
+// Guarded independently and the same way: a missing dir leaves the companion
+// under-equipped (it keeps the vendored set), never unable to start.
+const ourSkillsDir = "/workspace/skills/companion";
+const ourSkillsPresent = fs.existsSync(ourSkillsDir);
+if (ourSkillsPresent && !cfg.skills.includes(ourSkillsDir)) cfg.skills.push(ourSkillsDir);
 // `/skill:<name>` from pi's own input line. The embedded companion column is a
 // TERMINAL (rule: every byte goes to pi), so the owner's `/` commands reach pi
 // directly — this is what makes the set invocable by hand as well as by the
@@ -131,10 +169,14 @@ cfg.enableSkillCommands = true;
 fs.writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n");
 console.log("pi settings merged (extensions: " + (cfg.extensions.join(", ") || "none registered globally") + ")");
 console.log(
-  skillsPresent
+  cfg.skills.length
     ? "pi skills registered: " + cfg.skills.join(", ") + " (/skill:<name> enabled)"
-    : "!! " + skillsDir + " is missing — no skills registered. Is /workspace mounted?",
+    : "!! no skills registered. Is /workspace mounted?",
 );
+// Each missing dir says so on its own line: the two degrade independently, and
+// "the vendored set is there" must never read as "adjudicate is there".
+if (!skillsPresent) console.log("!! " + skillsDir + " is missing — the vendored skill set is not registered.");
+if (!ourSkillsPresent) console.log("!! " + ourSkillsDir + " is missing — our own skills (adjudicate) are not registered.");
 
 // Braces to that belt (mirrors the VM entrypoint): pre-seed the trust store
 // for the workspace, so even a settings regression — or a pihome volume

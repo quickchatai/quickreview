@@ -41,11 +41,10 @@ import { Frame, displayWidth, rule, sanitizeText, stripAnsi, truncate, wrap } fr
 import {
   acceptProposal,
   improvementsArgv,
+  listRubricProposals,
   parseImprovements,
-  parseRubricList,
-  rubricListArgv,
-  rubricReadArgv,
-  rubricRemoveArgv,
+  readRubricFile,
+  removeRubricDir,
   type AcceptDeps,
   type ImprovementItem,
   type RubricProposal,
@@ -255,7 +254,7 @@ export function renderMemoryView(
   row([{ text: "" }]);
   row([{ text: sectionTitle(`RUBRIC PROPOSALS (${st.proposals.length})`) }]);
   if (!st.propLoaded) row([{ text: "loading…", dim: true }]);
-  else if (st.proposals.length === 0) row([{ text: "none yet — the EOD sweep proposes rubric changes", dim: true }]);
+  else if (st.proposals.length === 0) row([{ text: "none yet — the companion authors proposals into state/rubric/", dim: true }]);
   st.proposals.forEach((p, i) => {
     const isSel = st.focus === "proposals" && i === st.propSel;
     row([
@@ -396,21 +395,16 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
   };
 
   const defaultFetchProposals = async (theApp: App): Promise<{ proposals: RubricProposal[]; improvements: ImprovementItem[] }> => {
-    const listRes = await theApp.ssh(theApp.cfg.ssh_host, rubricListArgv(theApp.cfg));
-    const slugs = listRes.ok ? parseRubricList(listRes.stdout) : [];
-    const proposals: RubricProposal[] = [];
-    for (const slug of slugs) {
-      const head = await theApp.ssh(theApp.cfg.ssh_host, rubricReadArgv(theApp.cfg, slug, "PROPOSAL.md"));
-      proposals.push({
-        slug,
-        head: head.ok
-          ? head.stdout
-              .split("\n")
-              .filter((l) => l.trim().length > 0)
-              .slice(0, 3)
-          : [],
-      });
-    }
+    // Proposals are LOCAL (producer change: the companion's `land`
+    // skill writes state/rubric/ in this repo — no ssh, no VM path).
+    const root = deps.repoRoot ?? process.cwd();
+    const proposals: RubricProposal[] = listRubricProposals(root).map((slug) => ({
+      slug,
+      head: (readRubricFile(root, slug, "PROPOSAL.md") ?? "")
+        .split("\n")
+        .filter((l) => l.trim().length > 0)
+        .slice(0, 3),
+    }));
     const repo = theApp.view.repo ?? "";
     let improvements: ImprovementItem[] = [];
     if (repo) {
@@ -455,11 +449,9 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
 
   const doAccept =
     deps.accept ??
-    (async (theApp: App, slug: string) =>
+    (async (_theApp: App, slug: string) =>
       acceptProposal(
         {
-          cfg: theApp.cfg,
-          ssh: theApp.ssh,
           git: { run: deps.gitRun ?? failingGit },
           repoRoot: deps.repoRoot ?? process.cwd(),
           today: () => now().toISOString().slice(0, 10),
@@ -469,9 +461,12 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
 
   const doReject =
     deps.reject ??
-    (async (theApp: App, slug: string, reason: string) => {
-      const rm = await theApp.ssh(theApp.cfg.ssh_host, rubricRemoveArgv(theApp.cfg, slug));
-      if (!rm.ok) return { ok: false, message: `could not remove state/rubric/${slug}` };
+    (async (_theApp: App, slug: string, reason: string) => {
+      try {
+        removeRubricDir(deps.repoRoot ?? process.cwd(), slug);
+      } catch {
+        return { ok: false, message: `could not remove state/rubric/${slug}` };
+      }
       // The sweep's never-re-propose contract rides this memory entry.
       const mem = await memory.apply({ op: "add", text: `#rejected-proposal ${slug} — ${reason}` });
       return { ok: mem.ok, message: mem.ok ? `rejected '${slug}' — recorded` : `rejected '${slug}' but the memory record failed: ${mem.message}` };

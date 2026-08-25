@@ -3,7 +3,13 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { COMPANION_DEFAULTS, parseConfig, resolveCompanionPaths, type CompanionConfig } from "../src/config.js";
-import { CompanionLifecycle, CONTAINER, type DockerResult, type DockerRunner } from "../src/tui/companion.js";
+import {
+  CompanionLifecycle,
+  CONTAINER,
+  type CompanionFs,
+  type DockerResult,
+  type DockerRunner,
+} from "../src/tui/companion.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -12,6 +18,10 @@ const CFG: CompanionConfig = resolveCompanionPaths(
     ...COMPANION_DEFAULTS,
     repo_dir: "/host/review-sandbox",
     tracker_dir: "/host/tracker",
+    // a path that does not exist on any machine running this suite —
+    // so the default lifecycle() (real fs) is the MISSING-checkout case, and
+    // the present case is opted into explicitly via withRepo().
+    reviewed_repo_dir: "/host/example-app",
     feed_dir: "/host/feed",
     alerts_dir: "/host/alerts",
     ssh_dir: "/host/.ssh",
@@ -51,6 +61,18 @@ const noDirs = (): void => {};
 function lifecycle(answers: Parameters<typeof fakeDocker>[0], env: NodeJS.ProcessEnv = {}) {
   const { runner, calls } = fakeDocker(answers);
   return { lc: new CompanionLifecycle(CFG, runner, env, noDirs), calls };
+}
+
+/** Same, but with the reviewed-repo checkout PRESENT on the host.
+ * The fs seam answers for that one path only, so nothing else changes. */
+function withRepo(answers: Parameters<typeof fakeDocker>[0], env: NodeJS.ProcessEnv = {}) {
+  const { runner, calls } = fakeDocker(answers);
+  const fs: CompanionFs = {
+    exists: (p) => p === CFG.reviewed_repo_dir,
+    read: () => undefined,
+    mode: () => undefined,
+  };
+  return { lc: new CompanionLifecycle(CFG, runner, env, noDirs, fs), calls };
 }
 
 /** ensureUp() resolves the memory wiring first (docker network …).
@@ -111,6 +133,9 @@ describe("CompanionLifecycle argv", () => {
       // needs its own mount — read-only, because the companion follows the
       // protocol and never rewrites it.
       `${CFG.tracker_docs_dir}:${CONTAINER.trackerDocs}:ro`,
+      // the finished-round evidence store, read-only. The TUI holds
+      // the VM access and writes it; the companion only reads.
+      `${CFG.evidence_dir}:${CONTAINER.evidence}:ro`,
       `/host/feed:${CONTAINER.feed}:rw`,
       `/host/alerts:${CONTAINER.alerts}:rw`,
     ]);
@@ -160,6 +185,10 @@ describe("CompanionLifecycle argv", () => {
       // the inject bridge delivers the day-open message.
       "--extension",
       `${CONTAINER.workspace}/extensions/inject-bridge.ts`,
+      // the read-only tui_* tools over what the TUI published to
+      // /feed. Reads only — it cannot fetch (see extensions/tui-view.ts).
+      "--extension",
+      `${CONTAINER.workspace}/extensions/tui-view.ts`,
       "--model",
       COMPANION_DEFAULTS.model,
       "--session-dir",
@@ -174,6 +203,136 @@ describe("CompanionLifecycle argv", () => {
   it("attaches locally through docker exec — no ssh in the argv", () => {
     expect(lc.attachArgv()).toEqual(["exec", "-it", "qcr-companion", "tmux", "attach", "-t", "companion"]);
     expect(lc.attachArgv()).not.toContain("ssh");
+  });
+});
+
+describe("the reviewed repo, read-only", () => {
+  /** `docker inspect` as the real format string renders it. */
+  const inspectWith = (running: boolean, mounts: Record<string, string>) => (argv: string[]) =>
+    argv[0] === "inspect"
+      ? { ...OK, stdout: [String(running), ...Object.entries(mounts).map(([d, s]) => `${d}=${s}`), ""].join("\n") }
+      : undefined;
+
+  const BASE: Record<string, string> = {
+    [CONTAINER.piHome]: "companion-pihome",
+    [CONTAINER.workspace]: "/host/review-sandbox",
+    [CONTAINER.tracker]: "/host/tracker",
+    [CONTAINER.trackerDocs]: CFG.tracker_docs_dir,
+    // read-only evidence store — part of the expected mount set, so a
+    // container created before it drifts and is recreated.
+    [CONTAINER.evidence]: CFG.evidence_dir,
+    [CONTAINER.feed]: "/host/feed",
+    [CONTAINER.alerts]: "/host/alerts",
+  };
+
+  it("mounts example-app READ-ONLY when the checkout is there", () => {
+    const argv = withRepo([]).lc.runArgv();
+    const mounts = argv.filter((_, i) => argv[i - 1] === "--volume");
+    expect(mounts).toContain(`/host/example-app:${CONTAINER.reviewedRepo}:ro`);
+    // `:ro` is the entire guarantee that reading the reviewed code can never
+    // become writing it — rule 8's boundary is structural, not prompted.
+    expect(mounts.some((m) => m.startsWith("/host/example-app:") && m.endsWith(":rw"))).toBe(false);
+    expect(argv[argv.length - 1]).toBe("qcr-companion"); // image still last
+  });
+
+  it("drops the mount when the checkout is missing — under-equipped, never broken", async () => {
+    // Default lifecycle() runs on the real fs, and /host/example-app is not
+    // on any machine: this IS the missing-checkout case.
+    const { lc, calls } = lifecycle([inspect("absent"), okFor("image"), okFor("run")]);
+    expect(lc.runArgv().join(" ")).not.toContain(CONTAINER.reviewedRepo);
+    const progress: string[] = [];
+    // The container still comes up — a missing checkout must never be fatal.
+    expect(await lc.ensureUp((l) => progress.push(l))).toBe("created");
+    expect(calls.some((c) => c[0] === "run")).toBe(true);
+    // …and it says so at boot rather than leaving the gap implicit.
+    expect(progress.some((l) => l.includes("no reviewed repo at /host/example-app"))).toBe(true);
+  });
+
+  it("says which way it went at boot when the checkout IS there", async () => {
+    const { lc } = withRepo([inspect(true)]);
+    const progress: string[] = [];
+    await lc.ensureUp((l) => progress.push(l));
+    expect(progress.some((l) => l.includes(`${CONTAINER.reviewedRepo} (read-only)`))).toBe(true);
+  });
+
+  it("recreates a container created BEFORE the mount existed", async () => {
+    // Bind mounts freeze at creation, so the container the owner is already
+    // running carries the old set; `docker start` would silently resurrect a
+    // companion that cannot read the reviewed code at all.
+    const { lc, calls } = withRepo([inspectWith(true, BASE), okFor("rm"), okFor("image"), okFor("run")]);
+    const progress: string[] = [];
+    expect(await lc.ensureUp((l) => progress.push(l))).toBe("recreated");
+    expect(containerCalls(calls).map((c) => c[0])).toEqual(["inspect", "rm", "image", "run"]);
+    expect(progress.some((l) => l.includes(`missing ${CONTAINER.reviewedRepo}`))).toBe(true);
+    // The recreate must actually carry the mount, or it recreates forever.
+    expect(calls.find((c) => c[0] === "run")!).toContain(`/host/example-app:${CONTAINER.reviewedRepo}:ro`);
+  });
+
+  it("adopts a container that already carries it — no recreate loop", async () => {
+    const { lc, calls } = withRepo([
+      inspectWith(true, { ...BASE, [CONTAINER.reviewedRepo]: "/host/example-app" }),
+    ]);
+    expect(await lc.ensureUp()).toBe("adopted");
+    expect(containerCalls(calls).map((c) => c[0])).toEqual(["inspect"]);
+  });
+
+  it("recreates when the mount points at a different checkout", async () => {
+    const { lc, calls } = withRepo([
+      inspectWith(false, { ...BASE, [CONTAINER.reviewedRepo]: "/host/old-example-app" }),
+      okFor("rm"),
+      okFor("image"),
+      okFor("run"),
+    ]);
+    const progress: string[] = [];
+    expect(await lc.ensureUp((l) => progress.push(l))).toBe("recreated");
+    expect(progress.some((l) => l.includes("points at /host/old-example-app"))).toBe(true);
+  });
+
+  it("treats the mount as STALE once the checkout goes away", async () => {
+    // Symmetry matters: expectedMounts() and runArgv() share one condition, so
+    // a container holding a mount whose source no longer exists is drift too.
+    const { lc, calls } = lifecycle([
+      inspectWith(false, { ...BASE, [CONTAINER.reviewedRepo]: "/host/example-app" }),
+      okFor("rm"),
+      okFor("image"),
+      okFor("run"),
+    ]);
+    const progress: string[] = [];
+    expect(await lc.ensureUp((l) => progress.push(l))).toBe("recreated");
+    expect(progress.some((l) => l.includes(`stale ${CONTAINER.reviewedRepo}`))).toBe(true);
+  });
+
+  it("defaults the config key to the usual local checkout and expands ~", () => {
+    expect(COMPANION_DEFAULTS.reviewed_repo_dir).toBe("~/src/example-app");
+    const cfg = resolveCompanionPaths({ ...COMPANION_DEFAULTS, reviewed_repo_dir: "~/qc" }, "/root");
+    expect(cfg.reviewed_repo_dir.startsWith("/")).toBe(true);
+    expect(cfg.reviewed_repo_dir.endsWith("/qc")).toBe(true);
+    // config.toml documents it as a commented default, like every other knob.
+    expect(readFileSync(resolve(root, "config.toml"), "utf8")).toContain("# reviewed_repo_dir =");
+  });
+
+  it("the entrypoint reports the mount either way, and never fabricates it", () => {
+    const entrypoint = readFileSync(resolve(root, "docker/companion/entrypoint.sh"), "utf8");
+    expect(entrypoint).toContain("/example-app is not mounted");
+    expect(entrypoint).toContain("READ-ONLY at /example-app");
+    // An invented empty dir reads as "the code says nothing" — worse than a
+    // plainly absent mount. Never mkdir it.
+    expect(entrypoint).not.toMatch(/mkdir[^\n]*\/example-app/);
+  });
+
+  it("tells the companion it has it, and that it is read-only", () => {
+    const prompt = readFileSync(resolve(root, "prompts/companion.md"), "utf8");
+    expect(prompt).toContain(CONTAINER.reviewedRepo);
+    expect(prompt).toMatch(/READ-ONLY at `\/example-app`/);
+    expect(prompt).toMatch(/Never\*\* write to `\/example-app`/);
+  });
+
+  it("alert family 3 does not lean on the retired awaiting_human state", () => {
+    const prompt = readFileSync(resolve(root, "prompts/companion.md"), "utf8");
+    expect(prompt).not.toMatch(/sitting in `awaiting_human`/);
+    expect(prompt).toContain("`awaiting_human` itself is retired,");
+    // The live concept: repeated non-decision / the legacy tracked landing.
+    expect(prompt).toContain("stuck on repeated non-decision");
   });
 });
 
@@ -197,6 +356,9 @@ describe("mount drift", () => {
     [CONTAINER.workspace]: "/host/review-sandbox",
     [CONTAINER.tracker]: "/host/tracker",
     [CONTAINER.trackerDocs]: CFG.tracker_docs_dir,
+    // read-only evidence store — part of the expected mount set, so a
+    // container created before it drifts and is recreated.
+    [CONTAINER.evidence]: CFG.evidence_dir,
     [CONTAINER.feed]: "/host/feed",
     [CONTAINER.alerts]: "/host/alerts",
   };
@@ -264,6 +426,7 @@ describe("mount drift", () => {
               `${CONTAINER.workspace}=/host/review-sandbox`,
               `${CONTAINER.tracker}=/host/tracker`,
               `${CONTAINER.trackerDocs}=${CFG.tracker_docs_dir}`,
+              `${CONTAINER.evidence}=${CFG.evidence_dir}`,
               `${CONTAINER.feed}=/host/feed`,
               `${CONTAINER.alerts}=/host/alerts`,
               "",
@@ -526,6 +689,50 @@ describe("companion image", () => {
     expect(skills.map((e) => e.name)).toContain("wayfinder");
     // The two wayfinder leans on, named in prompts/companion.md.
     expect(skills.map((e) => e.name)).toEqual(expect.arrayContaining(["grilling", "domain-modeling"]));
+  });
+
+  // our OWN skills are a SECOND registered directory. `.claude/skills`
+  // is a pinned vendored copy re-copied wholesale on an upstream bump, so a
+  // companion skill we author cannot live there.
+  it("registers our own skills tree as a second entry, guarded independently", () => {
+    expect(entrypoint).toContain('const ourSkillsDir = "/workspace/skills/companion"');
+    expect(entrypoint).toMatch(/fs\.existsSync\(ourSkillsDir\)/);
+    expect(entrypoint).toMatch(/cfg\.skills\.includes\(ourSkillsDir\)/);
+    expect(entrypoint).toMatch(/cfg\.skills\.push\(ourSkillsDir\)/);
+    // The vendored entry keeps its own guard and its own push — one missing
+    // dir must never take the other registration down with it.
+    expect(entrypoint).toMatch(/cfg\.skills\.push\(skillsDir\)/);
+    const vendored = entrypoint.indexOf("const skillsDir");
+    const ours = entrypoint.indexOf("const ourSkillsDir");
+    expect(vendored).toBeGreaterThan(0);
+    expect(ours).toBeGreaterThan(vendored);
+    expect(entrypoint.indexOf("fs.writeFileSync(path,")).toBeGreaterThan(ours);
+    // Degrade loudly and separately: "the vendored set is there" must never
+    // read as "adjudicate is there".
+    expect(entrypoint).toMatch(/if \(!ourSkillsPresent\) console\.log/);
+  });
+
+  // A registration pointing at nothing is worse than none (same rule as the
+  // vendored set): the directory has to really carry the skill.
+  it("ships the adjudicate skill in the directory it registers", () => {
+    const dir = resolve(root, "skills/companion");
+    expect(existsSync(dir)).toBe(true);
+    const skill = resolve(dir, "adjudicate/SKILL.md");
+    expect(existsSync(skill)).toBe(true);
+    const body = readFileSync(skill, "utf8");
+    // pi selects a skill from its description alone (§4).
+    expect(body).toMatch(/^---\nname: adjudicate\ndescription: .+/);
+    // The doctrine's load-bearing rules, pinned so a rewrite cannot quietly
+    // drop one. Prose is hard-wrapped, so match on a flattened copy
+    // — a phrase pin must not fail on where the line happened to break.
+    const flat = body.replace(/\s+/g, " ");
+    expect(flat).toMatch(/survive contact with the code/i);
+    expect(flat).toMatch(/falsifier/i);
+    expect(flat).toMatch(/never a confidence number/i);
+    expect(flat).toMatch(/counter-case is mandatory/i);
+    expect(flat).toMatch(/#adjudication/);
+    // the ratifying turn, and that it dies with the session.
+    expect(flat).toMatch(/void at session end/i);
   });
 
   // Rule 9: lens passes are leaves. A charting/planning skill set is nothing a

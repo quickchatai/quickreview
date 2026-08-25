@@ -12,12 +12,13 @@ import { Frame, stripAnsi } from "../src/tui/paint.js";
 import { CompanionSidebar } from "../src/tui/sidebar.js";
 import type { DockerRunner } from "../src/tui/companion.js";
 
-const TABS: Tab[] = ["board", "digest", "deploy", "metrics"];
+const TABS: Tab[] = ["board", "digest", "deploy", "metrics", "changes"];
 const NAV: Array<[string, string]> = [
   ["1", "1 board"],
   ["2", "2 memory"],
   ["3", "3 deploy"],
   ["4", "4 metrics"],
+  ["5", "5 changes"], // — the change register
 ];
 const GLOBALS: Array<[string, string]> = [
   ["r", "r refresh"],
@@ -101,7 +102,7 @@ describe("active-tab highlight", () => {
     const rows = 30;
     for (const tab of TABS) {
       const raw = paint(tab, 140, rows).lines[rows - 3]!;
-      const label = NAV.find(([, l]) => l.startsWith({ board: "1", digest: "2", deploy: "3", metrics: "4" }[tab]))![1];
+      const label = NAV.find(([, l]) => l.startsWith({ board: "1", digest: "2", deploy: "3", metrics: "4", changes: "5" }[tab]))![1];
       expect(raw).toContain(`${ACCENT_BG}\x1b[1m[${label}]`);
       expect(raw.split(ACCENT_BG).length).toBe(2); // one selection fill only
       expect(raw).not.toContain("\x1b[7m"); // no ad-hoc inverse (§8)

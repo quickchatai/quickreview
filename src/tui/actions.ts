@@ -34,7 +34,7 @@ import { isValidSessionName } from "./msg.js";
 /** What the TUI exposes to the action channel — supplied at wiring time
  * (see docs/tui-actions-wiring.md for the ~30-line production impl). */
 export interface TuiDriver {
-  switchTab(tab: "board" | "memory" | "deploy" | "metrics"): void;
+  switchTab(tab: "board" | "memory" | "deploy" | "metrics" | "changes"): void;
   selectPr(pr: number): void;
   metricsWindow(w: "7d" | "30d" | "all"): void;
   metricsPr(pr: number): void;
@@ -50,7 +50,7 @@ export interface TuiDriver {
 // ---- the schema -------------------------------------------------------------
 
 export type TuiAction =
-  | { verb: "switch_tab"; tab: "board" | "memory" | "deploy" | "metrics" }
+  | { verb: "switch_tab"; tab: "board" | "memory" | "deploy" | "metrics" | "changes" }
   | { verb: "select_pr"; pr: number }
   | { verb: "metrics"; window: "7d" | "30d" | "all" }
   | { verb: "metrics"; pr: number }
@@ -64,7 +64,7 @@ export type TuiAction =
 
 export const ACTION_TEXT_MAX = 2000;
 
-const TABS = new Set(["board", "memory", "deploy", "metrics"]);
+const TABS = new Set(["board", "memory", "deploy", "metrics", "changes"]);
 const WINDOWS = new Set(["7d", "30d", "all"]);
 const DEPLOY_ACTIONS = new Set(["deploy", "stop", "start", "abort"]);
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -114,8 +114,8 @@ export function parseTuiAction(text: string): { ok: true; action: TuiAction } | 
   switch (verb) {
     case "switch_tab": {
       const tab = p["tab"];
-      if (typeof tab !== "string" || !TABS.has(tab)) return { ok: false, error: "switch_tab needs tab: board|memory|deploy|metrics" };
-      return { ok: true, action: { verb, tab: tab as "board" | "memory" | "deploy" | "metrics" } };
+      if (typeof tab !== "string" || !TABS.has(tab)) return { ok: false, error: "switch_tab needs tab: board|memory|deploy|metrics|changes" };
+      return { ok: true, action: { verb, tab: tab as "board" | "memory" | "deploy" | "metrics" | "changes" } };
     }
     case "select_pr": {
       const pr = prNumber(p["pr"]);

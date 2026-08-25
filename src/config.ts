@@ -30,6 +30,10 @@ export interface TuiConfig {
    * to the daemon's ~30s write cadence, not the TUI's fetch cadence. */
   stale_after_s: number;
   msg_timeout_s: number;
+  /** Per-remote-read budget for the finished-round evidence copier.
+   * Every artefact fetch is killed at this age, so a wedged ssh control master
+   * costs one sweep and nothing else — never the poll, never the paint loop. */
+  evidence_timeout_s: number;
 }
 
 /** The local companion container. Host paths are expanded; empty
@@ -52,6 +56,20 @@ export interface CompanionConfig {
    * Sits outside `tracker_dir`, so it needs its own mount: without it the
    * companion drives wayfinder from a summary instead of the real adapter. */
   tracker_docs_dir: string;
+  /** Host path of the REVIEWED repo (example-app) → /example-app,
+   * READ-ONLY. The companion reads the code a review is about; it
+   * can never write to it, and rule 8's boundary is otherwise unchanged (no
+   * GitHub, no gate, no deploy.sh, no VM credential). A missing checkout
+   * simply drops the mount — under-equipped, never broken. */
+  reviewed_repo_dir: string;
+  /** Host dir the TUI copies finished-round evidence into → /evidence,
+   * READ-ONLY. The companion reads transcripts, ledgers, prompts and
+   * verdicts as plain files; it gains NO ssh, no credential and no new reach —
+   * the TUI holds the VM access and does all the fetching. Read-only because
+   * this is a RECORD: the companion reads history, it never rewrites it.
+   * Empty ⇒ `<sandbox root>/evidence` (gitignored); the default lives outside
+   * the repo because the store grows without bound and is kept indefinitely. */
+  evidence_dir: string;
   /** Host dir the TUI writes ambient snapshots into → /feed. */
   feed_dir: string;
   /** Host dir the companion writes alert files into → /alerts. */
@@ -360,6 +378,28 @@ export interface OpenVikingConfig {
    * key. Never an ADMIN or ROOT key: ADMIN grants no cross-user data access
    * and can list every user key in plaintext. */
   reviewer_key_file: string;
+  /** ov.conf `server.auth_mode`. `api_key` is the ratified posture:
+   * every request carries a USER key the server CONFINES to its own tree, and
+   * that confinement is the only thing keeping companion memory out of a
+   * posted review. `dev` bypasses authentication entirely — it is a local
+   * development escape hatch, never the deployed value. MIRRORED into
+   * `deploy/ansible/group_vars/all.yml` (`openviking_auth_mode`), which the
+   * entrypoint template renders; `tests/openviking.test.ts` and the
+   * `scripts/deploy.sh` preflight both fail on drift. */
+  auth_mode: string;
+  /** Secret FILE NAME under the container's secrets mount holding the
+   * server's OWN root key — the credential ov.conf needs to run in `api_key`
+   * mode and to mint users at boot. It is the server's, never a client's: no
+   * daemon surface, no review session and no companion process ever reads it
+   * (`writeOvcliConf` refuses it as a session credential and the bash guard
+   * refuses to read the files that hold it). Mirrored as
+   * `openviking_root_key_file`. */
+  root_key_file: string;
+  /** The OpenViking users boot provisioning ENSURES exist — created if
+   * absent, left exactly as they are if present. Never rotated: a rotation
+   * would orphan the keys already distributed to the companion's PC. Mirrored
+   * as `openviking_provision_users` (comma-joined). */
+  provision_users: string[];
   request_timeout_ms: number;
   /** Tighter than `request_timeout_ms`: a search sits on the round-build
    * path, where the deadline in [memory] is the real guard. */
@@ -436,6 +476,9 @@ export const OPENVIKING_DEFAULTS: OpenVikingConfig = {
   user: "reviewer",
   account: "",
   reviewer_key_file: "openviking_reviewer_key",
+  auth_mode: "api_key",
+  root_key_file: "openviking_root_key",
+  provision_users: ["reviewer", "companion"],
   request_timeout_ms: 10000,
   search_timeout_ms: 2500,
   default_category: "experiences",
@@ -563,6 +606,7 @@ export const TUI_DEFAULTS: TuiConfig = {
   poll_interval_s: 3,
   stale_after_s: 90,
   msg_timeout_s: 30,
+  evidence_timeout_s: 60,
 };
 
 /** [companion] is optional in config.toml, exactly like [tui]. */
@@ -576,6 +620,8 @@ export const COMPANION_DEFAULTS: CompanionConfig = {
   repo_dir: "", // → sandboxRoot()
   tracker_dir: "~/src/tracker",
   tracker_docs_dir: "~/src/tracker-docs",
+  reviewed_repo_dir: "~/src/example-app", // → /example-app (ro)
+  evidence_dir: "~/.local/share/qcr/evidence", // → /evidence (ro),
   feed_dir: "", // → <root>/state/companion/feed
   alerts_dir: "", // → <root>/state/companion/alerts
   ssh_dir: "~/.ssh",
@@ -622,6 +668,8 @@ export function resolveCompanionPaths(c: CompanionConfig, root: string = sandbox
     repo_dir: c.repo_dir ? expandHome(c.repo_dir) : root,
     tracker_dir: expandHome(c.tracker_dir),
     tracker_docs_dir: expandHome(c.tracker_docs_dir),
+    reviewed_repo_dir: expandHome(c.reviewed_repo_dir),
+    evidence_dir: c.evidence_dir ? expandHome(c.evidence_dir) : resolve(root, "evidence"),
     feed_dir: c.feed_dir ? expandHome(c.feed_dir) : resolve(root, "state", "companion", "feed"),
     alerts_dir: c.alerts_dir ? expandHome(c.alerts_dir) : resolve(root, "state", "companion", "alerts"),
     ssh_dir: expandHome(c.ssh_dir),

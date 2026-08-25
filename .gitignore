@@ -16,6 +16,11 @@ memory/*
 !memory/.gitkeep
 wt/
 example-app/
+# finished-round evidence copied down from the VM. The default store
+# lives outside the repo (~/.local/share/qcr/evidence) because it grows without
+# bound; this covers an in-repo `[companion] evidence_dir` (and the empty-string
+# default of <root>/evidence). Private-repo transcripts NEVER get committed.
+evidence/
 reports/
 pihome/
 *.log

@@ -375,6 +375,39 @@ export function opsLines(
   return lines;
 }
 
+/**
+ * The CANCELLED ROUNDS card.
+ *
+ * A cancelled round used to leave no trace anywhere a human looks — 55 of them
+ * since the cutover against 5 loud `overdue`s. The card exists to invert that,
+ * and it groups by cause because an ungrouped total is worse than nothing
+ * here: most cancellation is the boot orphan sweep after a redeploy (a
+ * container restart orphans every in-flight round by construction), and that
+ * bar stays in normal ink no matter how tall it gets. Only a round that
+ * STOPPED DEAD is marked.
+ */
+export function cancellationLines(win: MetricsWindow, width: number): string[] {
+  const c = win.cancellations;
+  if (!c || c.total === 0) return [dim("no cancelled rounds in this window")];
+  const max = c.by_cause.reduce((m, b) => Math.max(m, b.count), 0);
+  const lines = c.by_cause.map((b) =>
+    hbar(b.label, b.count, max, width, String(b.count), b.loud ? BAD : ACCENTS.yellow),
+  );
+  lines.push("");
+  lines.push(
+    c.loud > 0
+      ? `${BAD}${c.loud} stopped dead${DRESET} ${FG.dim}— no verdict inside the deadline; the rest is the system working${RESET}`
+      : dim("none stopped dead — every cancellation here is a redeploy artefact or a superseded round"),
+  );
+  return lines;
+}
+
+function cancelSubtitle(win: MetricsWindow): string {
+  const c = win.cancellations;
+  if (!c || c.total === 0) return "by cause";
+  return `${c.total} by cause · ${c.loud} stopped dead`;
+}
+
 /** Tall terminals earn a real column chart in the ACTIVITY card. */
 export function activityChartHeight(rows: number): number {
   if (rows < 34) return 0; // short: the 1-row sparkline degradation
@@ -508,6 +541,12 @@ export function metricsCards(win: MetricsWindow, daily: DailyRow[], rows = 24, e
         ),
     },
     {
+      title: "CANCELLED ROUNDS",
+      subtitle: cancelSubtitle(win),
+      accent: ACCENTS.yellow,
+      body: (w) => cancellationLines(win, w),
+    },
+    {
       title: "PING-PONG",
       subtitle: `cap hits ${win.pingpong.cap_hits} · ${distStats(win.pingpong)}`,
       accent: ACCENTS.cyan,
@@ -574,6 +613,10 @@ export function statStrip(win: MetricsWindow, width: number): string {
     `${FG.dim}rounds${RESET} ${STRONG}${h.rounds}${DRESET}`,
     `${FG.accent}$${h.spend_usd.toFixed(2)}${RESET}`,
     `${h.overruns > 0 ? WARN : FG.dim}overruns ${h.overruns}${RESET}`,
+    // the loud cancellations only — a round that stopped dead. The
+    // benign redeploy orphan sweep is in the card below, never in the strip:
+    // a tile that lights up after every deploy is a tile nobody reads.
+    `${(win.cancellations?.loud ?? 0) > 0 ? WARN : FG.dim}stopped ${win.cancellations?.loud ?? 0}${RESET}`,
     `${FG.awaiting_human}⚑ ${h.awaiting_you} awaiting you${RESET}`,
   ];
   return truncate(bits.join(SEP), width);

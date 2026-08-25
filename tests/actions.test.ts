@@ -40,7 +40,7 @@ const err = (obj: unknown): string => {
 
 describe("parseTuiAction — valid requests, every verb", () => {
   it("switch_tab", () => {
-    for (const tab of ["board", "memory", "deploy", "metrics"]) {
+    for (const tab of ["board", "memory", "deploy", "metrics", "changes"]) {
       expect(ok({ verb: "switch_tab", params: { tab } })).toEqual({ verb: "switch_tab", tab });
     }
   });
@@ -189,6 +189,7 @@ describe("executeTuiAction — driver dispatch + traces", () => {
     const { calls, driver } = mockDriver();
     const traces = [
       executeTuiAction({ verb: "switch_tab", tab: "metrics" }, driver),
+      executeTuiAction({ verb: "switch_tab", tab: "changes" }, driver),
       executeTuiAction({ verb: "select_pr", pr: 5312 }, driver),
       executeTuiAction({ verb: "metrics", window: "30d" }, driver),
       executeTuiAction({ verb: "metrics", pr: 5312 }, driver),
@@ -204,6 +205,7 @@ describe("executeTuiAction — driver dispatch + traces", () => {
     ];
     expect(calls).toEqual([
       ["switchTab", "metrics"],
+      ["switchTab", "changes"],
       ["selectPr", 5312],
       ["metricsWindow", "30d"],
       ["metricsPr", 5312],
@@ -219,6 +221,7 @@ describe("executeTuiAction — driver dispatch + traces", () => {
     ]);
     expect(traces).toEqual([
       "companion ▸ tab → metrics",
+      "companion ▸ tab → changes",
       "companion ▸ board → #5312",
       "companion ▸ metrics window → 30d",
       "companion ▸ metrics → #5312 timeline",

@@ -36,10 +36,12 @@ usage: qcr tui [<pr> | overseer | main] [--no-companion] [--no-reload]
                     "companion off")
   --no-reload       do not re-exec when a new dist/ build lands
 
-keys: 1/2/3/4 tabs (2 = memory & learning — v toggles digest/memory view,
+keys: 1/2/3/4/5 tabs (2 = memory & learning — v toggles digest/memory view,
       x×2 retire · p pin · e edit · n new · A/R accept/reject a rubric proposal;
       3 = deploy — click ▶/■ buttons (D D deploy, S S stop/start);
-      4 = metrics — 7/0/a window, # <pr> ⏎ for a PR timeline) ·
+      4 = metrics — 7/0/a window, # <pr> ⏎ for a PR timeline;
+      5 = changes — every feedback-derived commit, newest first; R arms a
+      revert of the selected one and y confirms, local commit only) ·
       companion column on every tab: type any unclaimed key (or /) to talk to
       it — ⏎ sends · Esc clears the draft · PgUp/PgDn walk its scrollback ·
       \ collapses the column · click it to take the keyboard ·
@@ -404,6 +406,28 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
   // read-only local-git seam the deploy tab uses.
   const metricsView = installMetricsHooks(app, undefined, localHeadProbe(localRunner));
 
+  // the change register — every feedback-derived commit (identified by
+  // its `Ratified-in-session:` trailer), newest first, with a one-key revert.
+  // It reads and writes the LOCAL checkout only, through the same read-only
+  // local-git seam the deploy tab uses; nothing here touches the VM, GitHub or
+  // the gate. Persisted under state/ so the list is on screen before git has
+  // been asked anything.
+  const { ChangeLog, ChangeRegisterStore } = await import("./changelog-store.js");
+  const { installChangesHooks } = await import("./changestab.js");
+  installChangesHooks(app, new ChangeLog(new ChangeRegisterStore(join(sandboxRoot(), "state", "changes")), localRunner));
+
+  // finished-round evidence, copied down from the VM into a local
+  // store the companion reads read-only. Created BEFORE the container starts —
+  // the mount source must exist first, or docker invents it root-owned and the
+  // copier can never write into it.
+  const { EvidenceCopier, EvidenceStore } = await import("./evidence.js");
+  const evidence = new EvidenceStore(full.companion.evidence_dir);
+  try {
+    evidence.ensure();
+  } catch (err) {
+    app.notice(`✖ evidence store ${evidence.dir}: ${String(err instanceof Error ? err.message : err)}`);
+  }
+
   // Companion container: adopt-or-start before the board comes up. A failure
   // here is a degraded mode, never a reason not to open the TUI.
   const { CompanionLifecycle, realDockerRunner } = await import("./companion.js");
@@ -491,10 +515,93 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
     });
   });
 
+  // the evidence copier rides the EXISTING poll — no second scheduler,
+  // and deliberately not awaited. `sweep()` is re-entrant-safe (a sweep in
+  // flight makes the next call a no-op) and every remote read is killed at
+  // `evidence_timeout_s`, so a wedged ssh control master stalls the copier and
+  // nothing else: the poll keeps polling and the board keeps painting. Runs
+  // whether or not the companion is up — the record is worth keeping either
+  // way, and it is what the companion will read when it next starts.
+  const evidenceCopier = new EvidenceCopier(cfg, evidence, realSshRunner, {
+    sessionDir: full.pi.session_dir,
+    timeoutMs: Math.max(5, cfg.evidence_timeout_s) * 1000,
+    onNotice: (text) => app.notice(text),
+  });
+  chainOnPoll(app, (a) => {
+    void evidenceCopier.sweep(a.view.snapshot).catch(() => {
+      /* best-effort — a failed copy is retried on the next poll, never fatal */
+    });
+  });
+
+  // the durable candidate list behind the `survey` skill. Derived from
+  // what is already on this disk — the poll snapshot plus's round
+  // manifests — so it costs ZERO remote reads and rides the same poll. It lands
+  // in the evidence dir, which is already mounted `/evidence:ro`, so the
+  // companion reads `/evidence/candidates.json` over an existing channel and
+  // cannot write to it.
+  //
+  // Judged-ness comes back the other way, out of the `#adjudication` memory
+  // entries `adjudicate` already mandates — one record, one direction, and no
+  // second write path from the companion. It is read at a slow cadence because
+  // memory is an HTTP hop and the list only needs it to stop re-offering
+  // something settled.
+  const { CandidateStore, CandidateSweeper, adjudicationsFrom } = await import("./candidates.js");
+  const candidates = new CandidateStore(full.companion.evidence_dir);
+  let adjudicationsAt = 0;
+  let adjudicationsCache = new Map<number, string>();
+  const candidateSweeper = new CandidateSweeper(candidates, {
+    evidenceDir: evidence.dir,
+    onNotice: (text) => app.notice(text),
+    adjudications: async () => {
+      // 5 minutes: an adjudication is a human-scale event, and a stale map only
+      // re-offers something already judged for one more cycle.
+      if (Date.now() - adjudicationsAt < 300_000) return adjudicationsCache;
+      adjudicationsAt = Date.now();
+      adjudicationsCache = adjudicationsFrom(await memStore.read());
+      return adjudicationsCache;
+    },
+  });
+  chainOnPoll(app, (a) => {
+    void candidateSweeper.sweep(a.view.snapshot).catch(() => {
+      /* best-effort — the survey is rebuilt from scratch on the next poll */
+    });
+  });
+
   let alerts: { stop(): void } | undefined;
   if (companionUp) {
-    const { FeedWriter } = await import("./feed.js");
+    const { FeedWriter, buildTuiView } = await import("./feed.js");
     const feed = new FeedWriter(full.companion.feed_dir);
+
+    // publish the operator's view: the last painted frame plus the
+    // derived state behind it. Two triggers, one throttle: the poll below (so
+    // it keeps up with the daemon) and every repaint (so it keeps up with
+    // the owner's keystrokes — "what is on his screen" is only true if it
+    // tracks the screen). Files only: this NEVER injects a companion turn,
+    // and the companion reads it on demand through the `tui_*` tools.
+    const publishView = (): void => {
+      try {
+        feed.writeView(
+          buildTuiView({
+            now: new Date(),
+            tab: app.tab,
+            snapshot: app.view.snapshot,
+            health: app.view.health,
+            selectedPr: app.currentPr(),
+            panePr: app.view.piPr,
+            paneFocused: app.view.piFocus === true,
+            notice: app.view.noticeLine,
+            deploy: deployState,
+          }),
+          app.screenText(),
+        );
+      } catch {
+        // Publishing the view is a side effect of painting it — a failure here
+        // must never surface on the notice line, let alone break the poll.
+      }
+    };
+    app.afterRepaint = publishView;
+    chainOnPoll(app, () => publishView());
+
     chainOnPoll(app, (a) => {
       const snap = a.view.snapshot;
       if (!snap) return;
@@ -572,6 +679,7 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
     if (resumed.tab === "digest") app.tab = "digest";
     else if (resumed.tab === "deploy") app.tab = "deploy";
     else if (resumed.tab === "metrics") app.tab = "metrics";
+    else if (resumed.tab === "changes") app.tab = "changes";
     app.view.eventsScroll = resumed.eventsScroll;
     app.view.eventsFocus = resumed.eventsFocus;
     app.view.detailFull = resumed.detailFull;

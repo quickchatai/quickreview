@@ -1,21 +1,25 @@
-// Proposals module (§7/§8): rubric list/read/remove argv, gh parsing,
-// and accept = merge + auto-ratify against a temp repo-root with fake ssh/git.
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+// Proposals module (§7/§8; producer moved to the companion after
+// retired the EOD curator's authoring): LOCAL state/rubric/ dir
+// list/read/remove, gh parsing, patch vetting incl. the RATIFIED-fence
+// refusal, and accept = merge + auto-ratify against a temp repo-root with a
+// fake git.
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { TuiConfig } from "../src/config.js";
-import type { RemoteResult } from "../src/tui/remote.js";
 import {
   acceptProposal,
+  fenceRanges,
   improvementsArgv,
+  listRubricProposals,
   parseImprovements,
-  parseRubricList,
+  patchFenceViolation,
   patchTargets,
+  readRubricFile,
   recordRatification,
-  rubricListArgv,
-  rubricReadArgv,
-  rubricRemoveArgv,
+  removeRubricDir,
+  rubricDir,
   targetsAllowed,
   validSlug,
 } from "../src/tui/proposals.js";
@@ -31,7 +35,7 @@ const cfg = {
   msg_timeout_s: 10,
 } as TuiConfig;
 
-describe("slugs and argv", () => {
+describe("slugs", () => {
   it("accepts kebab slugs, refuses traversal and shell metacharacters", () => {
     expect(validSlug("baseline-mergebase-2026-08-20")).toBe(true);
     expect(validSlug("../etc")).toBe(false);
@@ -39,26 +43,54 @@ describe("slugs and argv", () => {
     expect(validSlug("x;rm")).toBe(false);
     expect(validSlug(".hidden")).toBe(false);
   });
+});
 
-  it("read/remove argv are slug-validated and path-fixed", () => {
-    expect(rubricListArgv(cfg).join(" ")).toContain("state/rubric");
-    expect(rubricReadArgv(cfg, "ok-slug", "PROPOSAL.md").join(" ")).toContain("state/rubric/ok-slug/PROPOSAL.md");
-    expect(() => rubricReadArgv(cfg, "../x", "PROPOSAL.md")).toThrow(/bad rubric slug/);
-    expect(() => rubricRemoveArgv(cfg, "a/../b")).toThrow(/bad rubric slug/);
-    expect(rubricRemoveArgv(cfg, "good").join(" ")).toContain("rm -rf '/opt/quickreview/sandbox/state/rubric/good'");
+describe("local proposal store (state/rubric/ in THIS repo — the companion writes it at /workspace)", () => {
+  let root: string;
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "rubric-"));
+  });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  const seed = (slug: string, files: Record<string, string>): void => {
+    mkdirSync(join(root, "state/rubric", slug), { recursive: true });
+    for (const [name, body] of Object.entries(files)) writeFileSync(join(root, "state/rubric", slug, name), body);
+  };
+
+  it("lives under <repoRoot>/state/rubric — a local path, never a VM one", () => {
+    expect(rubricDir(root)).toBe(join(root, "state", "rubric"));
   });
 
-  it("improvements argv reads both lists with the mint-token credential", () => {
+  it("lists slugs sorted, skipping invalid names, and is empty (not a throw) with no dir", () => {
+    expect(listRubricProposals(root)).toEqual([]);
+    seed("b-slug", { "PROPOSAL.md": "x" });
+    seed("a-slug", { "PROPOSAL.md": "x" });
+    mkdirSync(join(root, "state/rubric", ".hidden"), { recursive: true });
+    writeFileSync(join(root, "state/rubric", "stray file"), "not a dir, bad name");
+    expect(listRubricProposals(root)).toEqual(["a-slug", "b-slug"]);
+  });
+
+  it("reads proposal files (null when missing) and validates the slug", () => {
+    seed("ok-slug", { "PROPOSAL.md": "## Rationale\nbody\n" });
+    expect(readRubricFile(root, "ok-slug", "PROPOSAL.md")).toContain("## Rationale");
+    expect(readRubricFile(root, "ok-slug", "changes.patch")).toBeNull();
+    expect(() => readRubricFile(root, "../x", "PROPOSAL.md")).toThrow(/bad rubric slug/);
+  });
+
+  it("removes a decided dir, slug-validated", () => {
+    seed("done", { "PROPOSAL.md": "x" });
+    removeRubricDir(root, "done");
+    expect(existsSync(join(root, "state/rubric/done"))).toBe(false);
+    expect(() => removeRubricDir(root, "a/../b")).toThrow(/bad rubric slug/);
+  });
+});
+
+describe("gh improvements read (still remote — the ONLY ssh this module produces)", () => {
+  it("reads both lists with the mint-token credential", () => {
     const s = improvementsArgv(cfg, "example-org/example-app").join(" ");
     expect(s).toContain("mint-token.sh");
     expect(s).toContain("head:bot/improve");
     expect(s).toContain("--label bot-filed");
-  });
-});
-
-describe("parsing", () => {
-  it("parses the rubric dir listing", () => {
-    expect(parseRubricList("b-slug\na-slug\n\nbad name\n")).toEqual(["a-slug", "b-slug"]);
   });
 
   it("parses the two gh JSON lists around the --- separator", () => {
@@ -72,6 +104,10 @@ describe("parsing", () => {
   it("degrades to empty lists on garbage", () => {
     expect(parseImprovements("gh: auth broken")).toEqual([]);
   });
+
+  it("refuses a malformed repo string in the gh read", () => {
+    expect(() => improvementsArgv(cfg, "owner/repo; rm -rf /")).toThrow(/bad repo/);
+  });
 });
 
 const PATCH = `--- a/agents/pass-baseline.md
@@ -82,7 +118,7 @@ const PATCH = `--- a/agents/pass-baseline.md
  line two
 `;
 
-describe("patch vetting", () => {
+describe("patch vetting — targets", () => {
   it("extracts target files", () => {
     expect(patchTargets(PATCH)).toEqual(["agents/pass-baseline.md"]);
   });
@@ -102,9 +138,48 @@ describe("patch vetting", () => {
     expect(patchTargets(rename)).toContain("src/gate.ts");
     expect(targetsAllowed(patchTargets(rename))).toBe(false);
   });
+});
 
-  it("refuses a malformed repo string in the gh read", () => {
-    expect(() => improvementsArgv(cfg, "owner/repo; rm -rf /")).toThrow(/bad repo/);
+// A prompt with a RATIFIED fence on lines 3..6 (markers included).
+const FENCED = ["intro line", "", "<!-- RATIFIED ci-gate — do not edit; owner only -->", "ratified line A", "ratified line B", "<!-- /RATIFIED ci-gate -->", "outro line", ""].join("\n");
+
+describe("patch vetting — RATIFIED fences (rule 6, structural)", () => {
+  const read = (rel: string): string | null => (rel === "prompts/round-first.md" ? FENCED : null);
+
+  it("fenceRanges returns 1-based inclusive ranges, markers included; unterminated protects to EOF", () => {
+    expect(fenceRanges(FENCED)).toEqual([{ start: 3, end: 6 }]);
+    expect(fenceRanges("a\n<!-- RATIFIED FT-1 x -->\nb\nc")).toEqual([{ start: 2, end: 4 }]);
+    expect(fenceRanges("no fences here\n")).toEqual([]);
+  });
+
+  it("refuses a deletion/edit of a line inside the fence", () => {
+    const patch = `--- a/prompts/round-first.md\n+++ b/prompts/round-first.md\n@@ -3,4 +3,4 @@\n <!-- RATIFIED ci-gate — do not edit; owner only -->\n-ratified line A\n+quietly weakened line A\n ratified line B\n <!-- /RATIFIED ci-gate -->\n`;
+    expect(patchFenceViolation(patch, read)).toMatch(/inside a RATIFIED fence in prompts\/round-first\.md/);
+  });
+
+  it("refuses deleting a fence marker itself", () => {
+    const patch = `--- a/prompts/round-first.md\n+++ b/prompts/round-first.md\n@@ -5,2 +5,1 @@\n ratified line B\n-<!-- /RATIFIED ci-gate -->\n`;
+    expect(patchFenceViolation(patch, read)).toMatch(/RATIFIED fence/);
+  });
+
+  it("refuses an insertion between fenced lines", () => {
+    const patch = `--- a/prompts/round-first.md\n+++ b/prompts/round-first.md\n@@ -4,2 +4,3 @@\n ratified line A\n+a rider paragraph\n ratified line B\n`;
+    expect(patchFenceViolation(patch, read)).toMatch(/inserts inside a RATIFIED fence/);
+  });
+
+  it("refuses added lines carrying a fence marker anywhere — a proposal cannot mint a fence", () => {
+    const patch = `--- a/prompts/round-first.md\n+++ b/prompts/round-first.md\n@@ -7,1 +7,3 @@\n outro line\n+<!-- RATIFIED fake — do not edit; owner only -->\n+ridden-in text\n`;
+    expect(patchFenceViolation(patch, read)).toMatch(/adds a RATIFIED fence marker/);
+    const close = `--- a/agents/pass-x.md\n+++ b/agents/pass-x.md\n@@ -1,1 +1,2 @@\n body\n+<!-- /RATIFIED sneaky -->\n`;
+    expect(patchFenceViolation(close, () => "body\n")).toMatch(/adds a RATIFIED fence marker/);
+  });
+
+  it("passes edits strictly outside the fence, and new files with no fence", () => {
+    const outside = `--- a/prompts/round-first.md\n+++ b/prompts/round-first.md\n@@ -7,1 +7,2 @@\n outro line\n+one more outro line\n`;
+    expect(patchFenceViolation(outside, read)).toBeNull();
+    const fresh = `--- /dev/null\n+++ b/agents/pass-new.md\n@@ -0,0 +1,1 @@\n+brand new body\n`;
+    expect(patchFenceViolation(fresh, () => null)).toBeNull();
+    expect(patchFenceViolation(PATCH, () => "line one\nline two\n")).toBeNull();
   });
 });
 
@@ -136,32 +211,30 @@ describe("recordRatification", () => {
   });
 });
 
-describe("acceptProposal", () => {
-  const sshOf =
-    (patch: string, removed: string[]): ((host: string, argv: string[]) => Promise<RemoteResult>) =>
-    (_host, argv) => {
-      const s = argv.join(" ");
-      if (s.includes("changes.patch")) return Promise.resolve({ ok: true, stdout: patch, stderr: "", code: 0 });
-      if (s.includes("rm -rf")) {
-        removed.push(s);
-        return Promise.resolve({ ok: true, stdout: "", stderr: "", code: 0 });
-      }
-      return Promise.resolve({ ok: true, stdout: "", stderr: "", code: 0 });
-    };
-
-  it("applies, ratifies, commits, then removes the VM dir", async () => {
-    const root = mkdtempSync(join(tmpdir(), "accept-"));
+describe("acceptProposal (local dirs, fake git)", () => {
+  let root: string;
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "accept-"));
     mkdirSync(join(root, "tests/fixtures"), { recursive: true });
     mkdirSync(join(root, "agents"), { recursive: true });
-    writeFileSync(join(root, "agents/pass-baseline.md"), "body\n");
+    mkdirSync(join(root, "prompts"), { recursive: true });
+    writeFileSync(join(root, "agents/pass-baseline.md"), "line one\nline two\n");
     writeFileSync(join(root, "tests/fixtures/seed-manifest.json"), JSON.stringify({ files: { "agents/pass-baseline.md": "old" } }));
     writeFileSync(join(root, "tests/fixtures/ratified-divergence.json"), JSON.stringify({ files: {} }));
+  });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  const propose = (slug: string, patch: string): void => {
+    mkdirSync(join(root, "state/rubric", slug), { recursive: true });
+    writeFileSync(join(root, "state/rubric", slug, "PROPOSAL.md"), "## Rationale\n");
+    writeFileSync(join(root, "state/rubric", slug, "changes.patch"), patch);
+  };
+
+  it("reads the LOCAL changes.patch, applies, ratifies, commits, then removes the dir", async () => {
+    propose("fix-mergebase", PATCH);
     const gitCalls: string[][] = [];
-    const removed: string[] = [];
     const res = await acceptProposal(
       {
-        cfg,
-        ssh: sshOf(PATCH, removed),
         git: {
           run: (cmd, args) => {
             gitCalls.push([cmd, ...args]);
@@ -176,26 +249,29 @@ describe("acceptProposal", () => {
     expect(res.ok).toBe(true);
     expect(gitCalls.map((c) => c.slice(0, 2).join(" "))).toEqual(["git apply", "git apply", "git add", "git commit"]);
     expect(gitCalls[3]!.join(" ")).toContain("ratified by the owner via TUI");
-    expect(removed).toHaveLength(1);
     const div = JSON.parse(readFileSync(join(root, "tests/fixtures/ratified-divergence.json"), "utf8"));
     expect(Object.keys(div.files)).toEqual(["agents/pass-baseline.md"]);
-    rmSync(root, { recursive: true, force: true });
+    expect(existsSync(join(root, "state/rubric/fix-mergebase"))).toBe(false);
+  });
+
+  it("refuses when there is no changes.patch", async () => {
+    const res = await acceptProposal({ git: { run: () => Promise.resolve("") }, repoRoot: root, today: () => "2026-08-20" }, "ghost");
+    expect(res.ok).toBe(false);
+    expect(res.message).toContain("no changes.patch");
   });
 
   it("refuses a patch reaching outside agents//prompts/ before touching git", async () => {
-    const evil = PATCH.replace(/agents\/pass-baseline\.md/g, "src/gate.ts");
+    propose("evil", PATCH.replace(/agents\/pass-baseline\.md/g, "src/gate.ts"));
     const gitCalls: string[][] = [];
     const res = await acceptProposal(
       {
-        cfg,
-        ssh: sshOf(evil, []),
         git: {
           run: (cmd, args) => {
             gitCalls.push([cmd, ...args]);
             return Promise.resolve("");
           },
         },
-        repoRoot: "/nonexistent",
+        repoRoot: root,
         today: () => "2026-08-20",
       },
       "evil",
@@ -203,17 +279,42 @@ describe("acceptProposal", () => {
     expect(res.ok).toBe(false);
     expect(res.message).toContain("non-rubric paths");
     expect(gitCalls).toHaveLength(0);
+    expect(existsSync(join(root, "state/rubric/evil"))).toBe(true); // a refusal never deletes the evidence
+  });
+
+  it("refuses a patch that edits inside a RATIFIED fence, before touching git", async () => {
+    writeFileSync(join(root, "prompts/round-first.md"), FENCED);
+    propose(
+      "fence-ride",
+      `--- a/prompts/round-first.md\n+++ b/prompts/round-first.md\n@@ -3,4 +3,4 @@\n <!-- RATIFIED ci-gate — do not edit; owner only -->\n-ratified line A\n+quietly weakened line A\n ratified line B\n <!-- /RATIFIED ci-gate -->\n`,
+    );
+    const gitCalls: string[][] = [];
+    const res = await acceptProposal(
+      {
+        git: {
+          run: (cmd, args) => {
+            gitCalls.push([cmd, ...args]);
+            return Promise.resolve("");
+          },
+        },
+        repoRoot: root,
+        today: () => "2026-08-20",
+      },
+      "fence-ride",
+    );
+    expect(res.ok).toBe(false);
+    expect(res.message).toMatch(/RATIFIED fence/);
+    expect(gitCalls).toHaveLength(0);
   });
 
   it("refuses a patch that does not apply cleanly", async () => {
+    propose("conflicting", PATCH);
     const res = await acceptProposal(
       {
-        cfg,
-        ssh: sshOf(PATCH, []),
         git: {
           run: (cmd, args) => (args[1] === "--check" ? Promise.reject(new Error("does not apply")) : Promise.resolve("")),
         },
-        repoRoot: "/nonexistent",
+        repoRoot: root,
         today: () => "2026-08-20",
       },
       "conflicting",

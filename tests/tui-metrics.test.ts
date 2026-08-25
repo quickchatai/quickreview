@@ -88,6 +88,17 @@ const fullWindow = {
     { kind: "head_push", count: 12 },
     { kind: "round_finished", count: 9 },
   ],
+  // the shape measured: mostly redeploy orphans, one round
+  // that genuinely stopped dead.
+  cancellations: {
+    total: 9,
+    loud: 2,
+    by_cause: [
+      { cause: "deadline_overrun", label: "stopped dead", count: 2, loud: true },
+      { cause: "orphan_sweep", label: "orphan sweep (redeploy)", count: 6, loud: false },
+      { cause: "superseded", label: "superseded", count: 1, loud: false },
+    ],
+  },
 };
 
 const ops = {
@@ -287,6 +298,49 @@ describe("metrics dashboard", () => {
     expect(text).toContain("$31.50");
     expect(text).toContain("overruns 2");
     expect(text).toContain("⚑ 3 awaiting you");
+    // the strip carries the LOUD count only. Six redeploy orphans do
+    // not light a tile — a tile that lights after every deploy is unreadable.
+    expect(text).toContain("stopped 2");
+  });
+
+  describe("CANCELLED ROUNDS card", () => {
+    const card = (win: unknown) => metricsCards(win as never, daily, 24).find((c) => c.title === "CANCELLED ROUNDS")!;
+
+    it("groups by cause and says how many stopped dead", () => {
+      const c = card(fullWindow);
+      expect(c.subtitle).toBe("9 by cause · 2 stopped dead");
+      const body = c.body(50).map(stripAnsi);
+      expect(body[0]).toContain("stopped dead");
+      expect(body[1]).toContain("orphan sweep");
+      expect(body[2]).toContain("superseded");
+      expect(body[body.length - 1]).toContain("2 stopped dead");
+    });
+
+    it("a window of pure redeploy churn reads as benign, not as an incident", () => {
+      const quiet = {
+        ...fullWindow,
+        cancellations: {
+          total: 20,
+          loud: 0,
+          by_cause: [{ cause: "orphan_sweep", label: "orphan sweep (redeploy)", count: 20, loud: false }],
+        },
+      };
+      expect(stripAnsi(statStrip(quiet as never, 200))).toContain("stopped 0");
+      const body = card(quiet).body(70).map(stripAnsi);
+      expect(body[body.length - 1]).toContain("none stopped dead");
+    });
+
+    it("an empty window says so", () => {
+      const none = { ...fullWindow, cancellations: { total: 0, loud: 0, by_cause: [] } };
+      expect(card(none).body(50).map(stripAnsi)).toEqual(["no cancelled rounds in this window"]);
+    });
+
+    it("degrades on an older daemon's payload rather than throwing", () => {
+      const legacy = { ...fullWindow } as Record<string, unknown>;
+      delete legacy.cancellations;
+      expect(() => card(legacy).body(50)).not.toThrow();
+      expect(stripAnsi(statStrip(legacy as never, 200))).toContain("stopped 0");
+    });
   });
 
   it("renders every chart card in the single-column stack (scrolling the fold into view)", () => {
@@ -306,6 +360,7 @@ describe("metrics dashboard", () => {
       "AUTHOR RESPONSE",
       "REVIEW DEPTH",
       "PR SIZE",
+      "CANCELLED ROUNDS",
       "PING-PONG",
     ]) {
       expect(text).toContain(title);

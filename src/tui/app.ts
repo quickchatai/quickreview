@@ -12,7 +12,7 @@ import { visiblePrs } from "./filters.js";
 import { formatEvent, moveSelection, reselect, type EventLine } from "./model.js";
 import { TripleCtrlC } from "./chord.js";
 import { MOUSE_OFF, MOUSE_ON, extractMouseEvents, hitTest, type MouseEvent, type Zone } from "./mouse.js";
-import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR, Frame, composeColumn, fit, sliceDisplay, spliceDisplay } from "./paint.js";
+import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR, Frame, composeColumn, fit, sliceDisplay, spliceDisplay, stripAnsi } from "./paint.js";
 import { RESET, SELECTION } from "./design.js";
 import { ClipboardSink } from "./clipboard.js";
 import { PANE_ESCAPE, PiMirror, keysToTmux } from "./pipane.js";
@@ -65,6 +65,12 @@ export interface AppHooks {
   metricsKey?: (app: App, key: ReturnType<typeof decodeKey>) => boolean;
   /** Metrics tab click routing (window switcher zones); true = consumed. */
   metricsClick?: (app: App, x: number, y: number) => boolean;
+  /**: the change register — feedback-derived commits, newest first. */
+  changesScreen?: (app: App, cols: number, rows: number) => string | Frame;
+  /** Change-register key handling; returns true when it consumed the key. */
+  changesKey?: (app: App, key: ReturnType<typeof decodeKey>) => boolean;
+  /** Change-register click routing (row selection); true = consumed. */
+  changesClick?: (app: App, x: number, y: number) => boolean;
   /** Start ./scripts/deploy.sh sync, streaming its output back into the
    * deploy tab (the TUI stays up). onData receives raw chunks, onExit the
    * exit code; the handle aborts a stuck run. The script's own guardrails
@@ -89,7 +95,7 @@ export interface AppHooks {
   reconnect?: (app: App) => void;
 }
 
-export type Tab = "board" | "digest" | "deploy" | "metrics";
+export type Tab = "board" | "digest" | "deploy" | "metrics" | "changes";
 
 /** Every encoding of the End key we might see — the pi pane's "back to live". */
 const END_KEYS = new Set(["\x1b[F", "\x1bOF", "\x1b[4~", "\x1b[8~"]);
@@ -708,6 +714,11 @@ export class App {
       else this.hooks.metricsKey?.(this, { kind: ev.kind === "wheel-down" ? "down" : "up" });
       return;
     }
+    if (this.tab === "changes") {
+      if (ev.kind === "click") this.hooks.changesClick?.(this, ev.x, ev.y);
+      else this.hooks.changesKey?.(this, { kind: ev.kind === "wheel-down" ? "down" : "up" });
+      return;
+    }
     const zoneAt = (x: number, y: number): BoardAction | undefined =>
       this.lastFrame ? hitTest(this.lastFrame.zones as Zone<BoardAction>[], x, y) : undefined;
     if (ev.kind === "wheel-up" || ev.kind === "wheel-down") {
@@ -849,7 +860,15 @@ export class App {
     }
     if (this.tab === "digest" && this.hooks.digestKey?.(this, key)) return;
     if (this.tab === "deploy" && this.hooks.deployKey?.(this, key)) return;
-    if (this.tab === "metrics" && this.hooks.metricsKey?.(this, key)) return;
+    // The metrics tab reads nav digits as TEXT inside its `# <pr> ⏎` box, and
+    // maps `1`–`4` back from their tab kinds itself (metricstab `keyChar`).
+    // `5` is newer than that map, so hand it over as the digit —
+    // otherwise `#5265` silently loses its 5. It cannot swallow the tab
+    // switch: outside the entry box the tab does not answer to `5`, so the
+    // hook returns false and the key falls through to the switch below.
+    const forTab = this.tab === "metrics" && key.kind === "tab-changes" ? ({ kind: "char", ch: "5" } as const) : key;
+    if (this.tab === "metrics" && this.hooks.metricsKey?.(this, forTab)) return;
+    if (this.tab === "changes" && this.hooks.changesKey?.(this, key)) return;
     // An unregistered printable is a message to the companion, not a dead
     // key: focus the sidebar seeded with it (paste seeds whole).
     if (
@@ -884,6 +903,9 @@ export class App {
         break;
       case "tab-metrics":
         this.tab = "metrics";
+        break;
+      case "tab-changes":
+        this.tab = "changes";
         break;
       case "up":
       case "down": {
@@ -1166,6 +1188,32 @@ export class App {
     return rows.join("\n");
   }
 
+  /**
+   * the WHOLE last painted frame as plain text: exactly what is on
+   * screen, ANSI stripped, trailing blank rows dropped. Same source as
+   * `selectedText()` (the last painted frame), for the same reason: what the
+   * companion is shown must be what the owner is looking at, not a re-render of
+   * the model behind it.
+   *
+   * `undefined` when there is no composed frame — a string-rendering tab, or
+   * the app is suspended/stopped. Never a fetch: this is a getter over state
+   * already painted.
+   */
+  screenText(): string | undefined {
+    const frame = this.lastFrame;
+    if (!frame) return undefined;
+    const rows = frame.lines.map((line) => stripAnsi(line).replace(/\s+$/, ""));
+    while (rows.length > 0 && rows[rows.length - 1] === "") rows.pop();
+    return rows.join("\n");
+  }
+
+  /**
+   * called at the end of every repaint, so the published view tracks
+   * keystrokes and not just the 3 s poll. Installed by index.ts; the callee
+   * throttles. It must never repaint (that would recurse) and never throw.
+   */
+  afterRepaint?: () => void;
+
   private copySelection(): void {
     const text = this.selectedText();
     this.selAnchor = undefined;
@@ -1203,6 +1251,16 @@ export class App {
     }
   }
 
+  /** Fire `afterRepaint` — never let a publisher's failure reach the paint
+   * path. The screen is the product; publishing it is a side effect. */
+  private notifyRepaint(): void {
+    try {
+      this.afterRepaint?.();
+    } catch {
+      /* a failed publish is never worth a broken frame */
+    }
+  }
+
   repaint(): void {
     if (!this.started || this.suspended || this.stopped) return;
     const cols = this.out.columns ?? 80;
@@ -1220,6 +1278,7 @@ export class App {
       if (screen === undefined) {
         this.lastFrame = undefined;
         this.out.write(`${CLEAR}${fallback}`);
+        this.notifyRepaint();
         return;
       }
       // A tab still returning a bare string predates the sidebar and simply
@@ -1227,6 +1286,7 @@ export class App {
       if (typeof screen === "string") {
         this.lastFrame = undefined;
         this.out.write(screen);
+        this.notifyRepaint();
         return;
       }
       const frame = this.withSidebar(screen, cols, rows);
@@ -1236,6 +1296,7 @@ export class App {
       this.paintQuitPrompt(frame, cols, rows);
       this.lastFrame = frame;
       this.out.write(frame.render());
+      this.notifyRepaint();
     };
     if (this.tab === "digest") {
       paint(this.hooks.digestScreen?.(this, inner, rows), "digest tab lands in — [1] back to board");
@@ -1247,6 +1308,10 @@ export class App {
     }
     if (this.tab === "metrics") {
       paint(this.hooks.metricsScreen?.(this, inner, rows), "metrics tab not wired — [1] back to board");
+      return;
+    }
+    if (this.tab === "changes") {
+      paint(this.hooks.changesScreen?.(this, inner, rows), "changes tab not wired — [1] back to board");
       return;
     }
     this.view.now = this.now();
