@@ -433,4 +433,36 @@ NEVER concurrently with a live sandbox.
 EOF
   exit 1
 fi
+
+# Refresh the host-side memory forward (2026-08-25, the owner: "this has to
+# happen during the deploy"). The forward's long-lived ssh state ages while
+# the container underneath it churns — after the 2026-08-25 window every
+# relay was exiting 255 and the TUI reported OpenViking down until a manual
+# `systemctl --user restart`. So a deploy that touched the container restarts
+# the unit itself. Three deliberate softnesses: the unit may not exist or may
+# be inactive (the TUI can own the forward instead, adopt-or-bind) —
+# skip silently; the restart or the probe failing WARNS and never fails the
+# deploy (memory never blocks a deploy, same rule as the boot); verify-only
+# runs skip it (no container was touched).
+refresh_memory_forward() {
+  [[ "$MODE" == "verify" ]] && return 0
+  command -v systemctl >/dev/null 2>&1 || return 0
+  if ! systemctl --user is-active --quiet qcr-memory-forward 2>/dev/null; then
+    note "memory forward: systemd unit not active (TUI-owned or absent) — not restarted"
+    return 0
+  fi
+  note "memory forward: restarting qcr-memory-forward (its ssh state predates this deploy's container)"
+  if ! systemctl --user restart qcr-memory-forward 2>/dev/null; then
+    note "WARNING — memory forward restart failed; memory stays degraded until 'systemctl --user restart qcr-memory-forward' succeeds"
+    return 0
+  fi
+  sleep 3
+  if curl -s -m 15 -o /dev/null "http://198.51.100.1:1933/health"; then
+    note "memory forward: restarted and answering on the qcr-memory bridge"
+  else
+    note "WARNING — memory forward restarted but /health did not answer on 198.51.100.1:1933; check 'journalctl --user -u qcr-memory-forward -n 20'"
+  fi
+}
+refresh_memory_forward
+
 note "deploy ok ($MODE, $HEAD_SHA)"
