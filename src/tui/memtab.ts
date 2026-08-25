@@ -34,6 +34,7 @@ import { paintCmdBar } from "./cmdbar.js";
 import { currentFile, renderDigestTab, SshDigestFetcher, type DigestAction, type DigestFetcher, type DigestState } from "./digesttab.js";
 import { applyMemoryFilter, memoryFilterLabel } from "./filters.js";
 import { awaitingRows, sortPrs } from "./model.js";
+import { parseEventTags } from "../memory/eventtags.js";
 import { defectEntries, refOf, storeHealth, timelineOrder, tuiMemoryStore, type MemoryEntry, type MemoryStore } from "./memory.js";
 import type { ForwardStatus } from "./memforward.js";
 import { ACCENT, HEADING, MUTED, RESET, STRONG, WARN, button, modeBadge, sectionTitle, selected as selectedLine } from "./design.js";
@@ -95,6 +96,127 @@ export function entryLine(e: MemoryEntry, width: number, highlightDay: string | 
   const pinned = e.pinned ? line.replace("● ", `${ACCENT}●${RESET} `) : line;
   if (highlightDay && e.day === highlightDay) return `${STRONG}${pinned}${RESET}`;
   return pinned;
+}
+
+export interface FeedbackPresentation {
+  pr?: string;
+  episode: string;
+  processed: boolean;
+  listTitle: string;
+  title: string;
+  summary: string;
+  raw: string;
+  learning: string;
+}
+
+const hasTag = (e: MemoryEntry, tag: string): boolean => e.tags.some((t) => t.replace(/^#+/, "").toLowerCase() === tag);
+
+/** The #feedback filter is an inbox: adjudication records describe processing
+ * of a signal, but are not themselves another signal row. They still remain in
+ * `all` so the selected card can prove its PROCESSED badge. */
+export function feedbackInbox(entries: MemoryEntry[], filter: string | null | undefined): MemoryEntry[] {
+  const filtered = applyMemoryFilter(timelineOrder(entries), filter);
+  if ((filter ?? "").replace(/^#+/, "").toLowerCase() !== "feedback") return filtered;
+  return filtered.filter((e) => !hasTag(e, "adjudication"));
+}
+
+function feedbackRaw(text: string): string {
+  const quoted = /\):\s*"([\s\S]*)"\s+—\s+/.exec(text);
+  if (quoted?.[1]) return quoted[1].trim();
+  return text.replace(/^(?:#[^\s]+\s+)*(?:[a-z][a-z0-9_-]*=[^\s]+\s+)*/, "").trim();
+}
+
+function feedbackEpisode(e: MemoryEntry, signal: string): string {
+  if (signal === "feedback_comment") {
+    const id = /\bcomment\s+(\d+)\)/.exec(e.text)?.[1];
+    if (id) return `comment-${id}`;
+  }
+  if (signal === "review_set_aside") {
+    const id = /\bbot review\s+(\d+)\b/.exec(e.text)?.[1];
+    if (id) return `review-${id}`;
+  }
+  return `${signal || "feedback"}-${e.day}`;
+}
+
+function adjudicationFor(e: MemoryEntry, all: MemoryEntry[], pr: string | undefined, episode: string): MemoryEntry | undefined {
+  if (!pr) return undefined;
+  return all.find((candidate) => {
+    if (!hasTag(candidate, "adjudication")) return false;
+    const tags = parseEventTags(candidate.text);
+    return tags["pr"] === pr && tags["episode"] === episode;
+  });
+}
+
+/** A deterministic, inspectable presentation over the raw memory signal. It
+ * does not adjudicate: unprocessed cards name a question to investigate, while
+ * processed cards quote the attribution and Changed fields from the actual
+ * #adjudication entry. */
+export function feedbackPresentation(e: MemoryEntry, all: MemoryEntry[]): FeedbackPresentation | undefined {
+  if (!hasTag(e, "feedback") || hasTag(e, "adjudication")) return undefined;
+  const tags = parseEventTags(e.text);
+  const pr = tags["pr"] ?? /\bPR\s+#?(\d+)\b/i.exec(e.text)?.[1];
+  const signal = tags["signal"] ?? (e.text.includes("merged while") ? "merged_over_block" : "feedback");
+  const raw = feedbackRaw(e.text);
+  const lower = raw.toLowerCase();
+  const episode = feedbackEpisode(e, signal);
+  const adjudication = adjudicationFor(e, all, pr, episode);
+  const actor = /human \[feedback\] by ([^\s]+) on PR/i.exec(e.text)?.[1];
+
+  let title: string;
+  let summary: string;
+  let learning: string;
+  if (signal === "review_set_aside") {
+    title = "Bot review was dismissed";
+    summary = `A bot review${pr ? ` on #${pr}` : ""} was set aside; GitHub may also auto-dismiss stale reviews, so this is a strong investigation prompt but not proof of a bad finding.`;
+    learning = "Check whether the dismissed review was stale, superseded, or disposable on its merits before changing reviewer behaviour.";
+  } else if (signal === "merged_over_block") {
+    title = "PR merged over a standing bot block";
+    summary = `The PR${pr ? ` #${pr}` : ""} merged while REQUEST_CHANGES stood. That is a low-weight disagreement signal because repository policy may allow advisory overrides.`;
+    learning = "Reconstruct the standing blockers and test each against the merged code; the merge alone does not refute them.";
+  } else if (signal === "trigger_withdrawn") {
+    title = "Review trigger was withdrawn";
+    summary = `The review trigger${pr ? ` on #${pr}` : ""} was removed before completion, which may indicate cost, delay, irrelevance, or an ordinary workflow change.`;
+    learning = "Inspect timing and work already produced before attributing this to review quality.";
+  } else if (lower.includes("prompt injection")) {
+    title = "Prompt-injection blocker disputed";
+    summary = `${actor ?? "A human reviewer"} says the prompt-injection finding${pr ? ` on #${pr}` : ""} should be ignored as a false positive.`;
+    learning = "Test the claimed execution boundary against the code and the standing injection bright line; do not infer safety merely from prior testing.";
+  } else if (/\brare\b|\bnarrow\b|\bunlikely\b|\bimprobabl/.test(lower)) {
+    title = "Narrow edge case judged non-actionable";
+    summary = `${actor ?? "A human reviewer"} says the finding${pr ? ` on #${pr}` : ""} concerns a production path too rare or narrow to belong in this feature PR.`;
+    learning = "Re-derive reachability and impact separately: the bug may be real while its severity or delivery is wrong.";
+  } else if (lower.includes("small impact")) {
+    title = "Low-impact finding judged non-actionable";
+    summary = `${actor ?? "A human reviewer"} says the finding${pr ? ` on #${pr}` : ""} has too little impact to justify action.`;
+    learning = "Check whether the evidence supports a present defect, then whether its delivery exceeded the practical maintenance bar.";
+  } else {
+    title = "Human disputes a review finding";
+    summary = `${actor ?? "A human reviewer"} challenged a finding${pr ? ` on #${pr}` : ""}; the complaint still needs contact with the review evidence and code.`;
+    learning = "Compare the human claim, the posted finding, and the reviewed code before assigning fault or changing the rubric.";
+  }
+
+  if (adjudication) {
+    const attribution = /^Attribution:\s*(.+)$/im.exec(adjudication.text)?.[1]?.trim() ?? "recorded in adjudication";
+    const changed = /^Changed:\s*(.+)$/im.exec(adjudication.text)?.[1]?.trim() ?? "see adjudication";
+    learning = `Adjudicated as ${attribution}. Changed: ${changed}.`;
+  }
+
+  return {
+    pr,
+    episode,
+    processed: adjudication !== undefined,
+    listTitle: `${pr ? `#${pr} · ` : ""}${title}`,
+    title,
+    summary,
+    raw,
+    learning,
+  };
+}
+
+export function feedbackEntryLine(e: MemoryEntry, presentation: FeedbackPresentation, width: number, highlightDay: string | undefined): string {
+  const status = presentation.processed ? "✓" : "○";
+  const line = truncate(`  ${e.day} ${status} ${presentation.listTitle}`, width);
+  return highlightDay && e.day === highlightDay ? `${STRONG}${line}${RESET}` : line;
 }
 
 /** Every click target on the Memory & learning tab's memory view. */
@@ -191,7 +313,7 @@ export function renderMemoryView(
   const rightW = cols - 4 - leftW; // │ + (leftW+1) + │ + rightW + │ = cols
   const bodyRows = rows - 4; // top bar + command bar (2 rows) + bottom border
 
-  const ordered = applyMemoryFilter(timelineOrder(st.entries), st.memFilter);
+  const ordered = feedbackInbox(st.entries, st.memFilter);
   const left: string[] = [];
   const leftActions: Array<MemAction | undefined> = [];
   if (!st.memLoaded) left.push(`${MUTED}loading memory…${RESET}`);
@@ -222,7 +344,8 @@ export function renderMemoryView(
     const start = Math.max(0, Math.min(st.sel - (visible - 1), ordered.length - visible));
     ordered.slice(Math.max(0, start), Math.max(0, start) + visible).forEach((e, i) => {
       const abs = Math.max(0, start) + i;
-      const line = entryLine(e, leftW - 3, highlightDay);
+      const feedback = feedbackPresentation(e, st.entries);
+      const line = feedback ? feedbackEntryLine(e, feedback, leftW - 3, highlightDay) : entryLine(e, leftW - 3, highlightDay);
       const selected = st.focus === "timeline" && abs === st.sel;
       left.push(selected ? selectedLine(line) : line);
       leftActions.push({ t: "mem", i: abs });
@@ -247,7 +370,21 @@ export function renderMemoryView(
     ]);
     // -13, not -10: the blank + two forward rows at the foot share this pane.
     const detailCap = Math.max(5, bodyRows - 13 - st.proposals.length * 2 - Math.min(4, st.improvements.length));
-    const wrapped = wrap(sanitizeText(selected.text), rightW - 3);
+    const feedback = feedbackPresentation(selected, st.entries);
+    const detailText = feedback
+      ? [
+          `${feedback.processed ? "✓ PROCESSED" : "○ UNPROCESSED — needs adjudication"}  episode=${feedback.episode}`,
+          "",
+          `TITLE\n${feedback.title}`,
+          "",
+          `SUMMARY\n${feedback.summary}`,
+          "",
+          `RAW FEEDBACK\n${feedback.raw}`,
+          "",
+          `WHAT WE CAN LEARN\n${feedback.learning}`,
+        ].join("\n")
+      : selected.text;
+    const wrapped = wrap(sanitizeText(detailText), rightW - 3);
     for (const l of wrapped.slice(0, detailCap)) row([{ text: l }]);
     if (wrapped.length > detailCap) row([{ text: `… ${wrapped.length - detailCap} more lines`, dim: true }]);
   }
@@ -352,7 +489,7 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
   /** THE timeline ordering — render (renderMemoryView computes the same
    * expression from st) and every verb below share it, so x/p/e can never
    * address an entry the filter hides. */
-  const orderedNow = (): MemoryEntry[] => applyMemoryFilter(timelineOrder(st.entries), st.memFilter);
+  const orderedNow = (): MemoryEntry[] => feedbackInbox(st.entries, st.memFilter);
 
   const loadDigest = async (): Promise<void> => {
     st.digest.files = await digestFetcher.list();

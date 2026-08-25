@@ -12,7 +12,14 @@ import { TUI_DEFAULTS } from "../src/config.js";
 import { App } from "../src/tui/app.js";
 import { barHitKey, registeredKeys } from "../src/tui/cmdbar.js";
 import type { DigestFetcher } from "../src/tui/digesttab.js";
-import { installMemoryLearningHooks, pinnedBudget, renderMemoryView, type MemTabState } from "../src/tui/memtab.js";
+import {
+  feedbackInbox,
+  feedbackPresentation,
+  installMemoryLearningHooks,
+  pinnedBudget,
+  renderMemoryView,
+  type MemTabState,
+} from "../src/tui/memtab.js";
 import { legacyBlockHash as blockHash, parseLegacyMemory as parseMemory } from "../src/memory/legacy-file.js";
 import type { MemoryEntry, MemoryOp, MemoryStore } from "../src/memory/store.js";
 import type { MemoryHealth } from "../src/tui/memory.js";
@@ -152,6 +159,77 @@ describe("body-row width contract (review P2: rows were cols+1 wide)", () => {
     const memory = renderMemoryView(st, false, undefined, 120, rows);
     expect(memory.lines[rows - 4]!.startsWith("│")).toBe(true); // content, not chrome
     expect(stripAnsi(memory.lines[rows - 3]!)).toContain("1 board");
+  });
+});
+
+describe("feedback adjudication inbox", () => {
+  const memoryEntry = (text: string, ts = "2026-08-25 08:48:09"): MemoryEntry => ({
+    id: `entry-${ts}`,
+    ts,
+    day: ts.slice(0, 10),
+    block: 0,
+    text,
+    tags: text.split(/\s+/).filter((token) => token.startsWith("#")).map((token) => token.slice(1)),
+    links: [],
+    pinned: false,
+    hash: `hash-${ts}`,
+  });
+
+  const raw = memoryEntry(
+    '#feedback kind=feedback pr=5372 day=2026-08-25 signal=feedback_comment human [feedback] by pmercier on PR #5372 (reply to bot comment 3000000101, comment 3000000202): "This edge case is too unlikely to matter in production." — a review comment judged wrong',
+  );
+  const adjudication = memoryEntry(
+    "#adjudication #feedback pr=5372 episode=comment-3000000202 attribution=review-defect changed=no adjudicated=2026-08-25\nAttribution: review-defect — severity exceeded reachability\nChanged: nothing",
+    "2026-08-25 12:00:00",
+  );
+
+  it("generates a concrete title, summary, raw text and cautious candidate lesson", () => {
+    const card = feedbackPresentation(raw, [raw]);
+    expect(card).toMatchObject({
+      episode: "comment-3000000202",
+      processed: false,
+      title: "Narrow edge case judged non-actionable",
+      raw: "This edge case is too unlikely to matter in production.",
+    });
+    expect(card!.summary).toContain("too rare or narrow");
+    expect(card!.learning).toContain("reachability and impact separately");
+  });
+
+  it("marks only an exact episode as processed and reads the recorded outcome", () => {
+    const card = feedbackPresentation(raw, [raw, adjudication]);
+    expect(card!.processed).toBe(true);
+    expect(card!.learning).toContain("review-defect — severity exceeded reachability");
+    expect(card!.learning).toContain("Changed: nothing");
+  });
+
+  it("makes #feedback an inbox by hiding its adjudication records", () => {
+    expect(feedbackInbox([raw, adjudication], "feedback")).toEqual([raw]);
+    expect(feedbackInbox([raw, adjudication], null)).toHaveLength(2);
+  });
+
+  it("renders date + generated title on the left and the structured card on the right", () => {
+    const st: MemTabState = {
+      view: "memory",
+      digest: { files: [], back: 0, scroll: 0, awaitingSelected: 0, loaded: true },
+      entries: [raw],
+      memLoaded: true,
+      focus: "timeline",
+      sel: 0,
+      propSel: 0,
+      scroll: 0,
+      proposals: [],
+      improvements: [],
+      propLoaded: true,
+      filedTotal: 0,
+      memFilter: "feedback",
+    };
+    const screen = stripAnsi(renderMemoryView(st, false, undefined, 180, 52).render());
+    expect(screen).toContain("2026-08-25 ○ #5372 · Narrow edge case judged non-actionable");
+    expect(screen).toContain("UNPROCESSED — needs adjudication");
+    expect(screen).toContain("TITLE");
+    expect(screen).toContain("SUMMARY");
+    expect(screen).toContain("RAW FEEDBACK");
+    expect(screen).toContain("WHAT WE CAN LEARN");
   });
 });
 
