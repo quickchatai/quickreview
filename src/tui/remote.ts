@@ -167,9 +167,47 @@ export function shellQuote(arg: string): string {
   return `'${arg.replaceAll("'", `'\\''`)}'`;
 }
 
+/**
+ * Every ssh child this runner has started and not yet settled.
+ *
+ * The per-call SIGKILL below lives on OUR event loop, so it only fires while
+ * that loop is turning. The hot reload stops it dead: `realReexec` calls
+ * `spawnSync`, which blocks the stack forever, and the timers of any ssh
+ * in flight at that moment never run again. Those children then outlive the
+ * generation that spawned them — measured live at 4h58m against a wedged
+ * ControlMaster (the `my-vm` block carries no `ServerAliveInterval`, so a
+ * network blip hangs the master and every slave riding it).
+ *
+ * Hence this set and `killInFlightSsh`: whoever is about to freeze the loop
+ * kills the children first, while it still can.
+ */
+const inFlightSsh = new Set<ReturnType<typeof spawn>>();
+
+/**
+ * SIGKILL every ssh still in flight. Call before anything that stops this
+ * process's event loop (the re-exec's `spawnSync`) — after that point the
+ * per-call timeouts can no longer fire. Returns how many were killed so the
+ * caller can say so. Total: a child that is already gone is skipped, never
+ * a throw.
+ */
+export function killInFlightSsh(): number {
+  let killed = 0;
+  for (const child of inFlightSsh) {
+    try {
+      child.kill("SIGKILL");
+      killed++;
+    } catch {
+      /* already reaped — nothing to clean up */
+    }
+  }
+  inFlightSsh.clear();
+  return killed;
+}
+
 export const realSshRunner: SshRunner = (host, argv, opts) =>
   new Promise((resolvePromise) => {
     const child = spawn("ssh", ["-o", "BatchMode=yes", host, argv.map(shellQuote).join(" ")], { stdio: ["pipe", "pipe", "pipe"] });
+    inFlightSsh.add(child);
     let stdout = "";
     let stderr = "";
     let settled = false;
@@ -185,6 +223,7 @@ export const realSshRunner: SshRunner = (host, argv, opts) =>
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      inFlightSsh.delete(child);
       resolvePromise({ ok, stdout: stdout + outDec.end(), stderr: stderr + errDec.end(), code });
     };
     const timer = setTimeout(() => {

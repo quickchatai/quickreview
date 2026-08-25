@@ -157,9 +157,19 @@ export function reexecArgv(argv: string[], stateFile: string): string[] {
   return [entry!, ...rest, "--resume-state", stateFile];
 }
 
-/** Production re-exec: run the new build to completion in our place, then exit
- * with its code. spawnSync keeps the terminal on one process at a time — the
- * old TUI has already torn its screen down by the time this runs. */
+/**
+ * Production re-exec: run the new build to completion in our place, then exit
+ * with its code. spawnSync keeps the terminal on one process at a time.
+ *
+ * `teardown` is the LAST code this generation runs. `app.quit()` only resolves
+ * a promise, so `App.teardown()` is a microtask — and the `spawnSync` below
+ * blocks the stack before any microtask can run, which means this process
+ * freezes with its listeners still registered and its event loop stopped for
+ * good. Anything that must happen before that freeze has to happen
+ * SYNCHRONOUSLY inside `teardown`, and that specifically includes killing
+ * in-flight ssh children: their timeouts live on the loop that is about to
+ * stop (see `killInFlightSsh` in remote.ts).
+ */
 export function realReexec(stateFile: string, teardown?: () => void): void {
   teardown?.();
   const argv = reexecArgv(process.argv.slice(1), stateFile);

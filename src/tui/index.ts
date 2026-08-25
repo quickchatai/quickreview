@@ -14,7 +14,7 @@ import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR } from "./paint.js";
 import { visiblePrs } from "./filters.js";
 import { reselect } from "./model.js";
 import { HotReloader, parseResumeArg, readResumeState, realReexec } from "./reload.js";
-import { realSshRunner } from "./remote.js";
+import { killInFlightSsh, realSshRunner } from "./remote.js";
 
 export function parseTarget(arg: string | undefined): { kind: "none" } | { kind: "pr"; pr: number } | { kind: "session"; session: string } | { kind: "bad"; reason: string } {
   if (arg === undefined || arg === "") return { kind: "none" };
@@ -712,8 +712,18 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
         // to it, the old process would sit inside spawnSync holding :1933
         // with a FROZEN event loop: the new TUI finds the port taken, cannot
         // bind, and memory is dead for the rest of the session.
+        // Same reasoning covers in-flight ssh: the per-call SIGKILL in
+        // `realSshRunner` is a timer on the loop that spawnSync is about to
+        // freeze, so a capture/poll/why still running at reload time is
+        // orphaned FOREVER. Against a wedged ControlMaster (the `my-vm`
+        // config block sets no ServerAliveInterval, so a network blip hangs
+        // the master and every slave riding it) those children never exit on
+        // their own either: measured live at 4h58m, with 26 stacked
+        // generations each holding its own. Kill them here, while the loop
+        // still turns.
         reexec: (file) =>
           realReexec(file, () => {
+            killInFlightSsh();
             memForward.stop();
             app.quit();
           }),
