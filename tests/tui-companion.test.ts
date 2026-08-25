@@ -6,6 +6,7 @@ import { COMPANION_DEFAULTS, parseConfig, resolveCompanionPaths, type CompanionC
 import {
   CompanionLifecycle,
   CONTAINER,
+  SUBAGENTS,
   type CompanionFs,
   type DockerResult,
   type DockerRunner,
@@ -189,6 +190,16 @@ describe("CompanionLifecycle argv", () => {
       // /feed. Reads only — it cannot fetch (see extensions/tui-view.ts).
       "--extension",
       `${CONTAINER.workspace}/extensions/tui-view.ts`,
+      // (vendor/pi-subagents is exists-guarded like openviking, so it is
+      // absent here — the vendored-copy test below covers the present case.)
+      // 2026-08-25: the bright-line vetoes — frozen seeds, no-GitHub,
+      // no-discard (extensions/companion-guard.ts). Unconditional: it rides
+      // the same mount as every other repo extension.
+      "--extension",
+      `${CONTAINER.workspace}/extensions/companion-guard.ts`,
+      // 2026-08-25: `!{cmd}` inline expansion, vendored from pi's examples.
+      "--extension",
+      `${CONTAINER.workspace}/extensions/inline-bash.ts`,
       "--model",
       COMPANION_DEFAULTS.model,
       "--session-dir",
@@ -794,5 +805,71 @@ describe("companion image", () => {
     // be allowed to; a command line reintroducing it must not.
     const commands = entrypoint.split("\n").filter((l) => !/^\s*#/.test(l));
     expect(commands.join("\n")).not.toContain("exec sleep");
+  });
+});
+
+// 2026-08-25: pi-subagents in the companion — vendored, not image-baked, so it
+// rides /workspace with the exists-guard (degrade to no-subagents, never a pi
+// that won't start) and needs no rebuild. The VM keeps its image clone; the
+// pin is ONE fact in two places and must never drift.
+describe("vendored pi-subagents (companion)", () => {
+  const vendor = resolve(root, "extensions/vendor/pi-subagents");
+  const upstream = JSON.parse(readFileSync(resolve(vendor, "upstream.json"), "utf8")) as {
+    repo: string;
+    commit: string;
+  };
+
+  it("pins the SAME commit the VM image clones (double mirror with group_vars)", () => {
+    const groupVars = readFileSync(resolve(root, "deploy/ansible/group_vars/all.yml"), "utf8");
+    const m = /^pi_subagents_commit:\s*"([0-9a-f]{40})"/m.exec(groupVars);
+    expect(m?.[1]).toBe(upstream.commit);
+    expect(/^pi_subagents_repo:\s*"(.+)"/m.exec(groupVars)?.[1]).toBe(upstream.repo);
+  });
+
+  it("loads via piArgv only when the vendored copy exists on the host", () => {
+    const withVendor: CompanionFs = {
+      exists: (p) => p === `${CFG.repo_dir}/extensions/vendor/pi-subagents/index.ts`,
+      read: () => undefined,
+      mode: () => undefined,
+    };
+    const argv = new CompanionLifecycle(CFG, async () => OK, {}, noDirs, withVendor).piArgv();
+    const at = argv.indexOf(SUBAGENTS.extension);
+    expect(at).toBeGreaterThan(0);
+    expect(argv[at - 1]).toBe("--extension");
+    // In-container path, off the /workspace mount — never an image path.
+    expect(SUBAGENTS.extension).toBe(`${CONTAINER.workspace}/extensions/vendor/pi-subagents/index.ts`);
+    // Absent vendor dir ⇒ absent flag, and pi still starts.
+    const bare = new CompanionLifecycle(CFG, async () => OK, {}, noDirs, { exists: () => false, read: () => undefined, mode: () => undefined }).piArgv();
+    expect(bare).not.toContain(SUBAGENTS.extension);
+  });
+
+  it("carries the companion agent set, not the stock one", () => {
+    const agents = readdirSync(resolve(vendor, "agents")).sort();
+    expect(agents).toEqual(["evidence.md", "explore.md", "study.md"]);
+    for (const file of agents) {
+      const body = readFileSync(resolve(vendor, "agents", file), "utf8");
+      // ChatGPT OAuth is the only credential in the container: an anthropic/
+      // model or a web tool would be's dead weight all over again.
+      expect(body).toMatch(/^model: openai-codex\//m);
+      expect(body).not.toMatch(/anthropic\//);
+      expect(body).not.toMatch(/web_search|web_fetch/);
+      // Read-only leaves: no write/edit, and no nested fan-out.
+      expect(/^tools: .*(write|edit)/m.test(body)).toBe(false);
+      expect(body).not.toMatch(/^tools: .*subagent/m);
+      expect(body).not.toMatch(/^subagent_agents:/m);
+    }
+  });
+
+  it("caps concurrency at 4 for a desktop (the VM runs 6)", () => {
+    const cfg = JSON.parse(readFileSync(resolve(vendor, "config.json"), "utf8")) as { maxConcurrency: number };
+    expect(cfg.maxConcurrency).toBe(4);
+  });
+
+  it("is excluded from the tsc build — jiti loads the source; the legacy scope would break the build", () => {
+    const tsconfig = readFileSync(resolve(root, "tsconfig.json"), "utf8");
+    expect(tsconfig).toContain("extensions/vendor/pi-subagents");
+    // The pinned upstream really does import the legacy scope — if a rebase
+    // ever moves it to @earendil-works, the exclusion (and this test) can go.
+    expect(readFileSync(resolve(vendor, "index.ts"), "utf8")).toContain("@mariozechner/pi-coding-agent");
   });
 });

@@ -264,10 +264,22 @@ Two things the skills assume that you do not have, so adapt as you go:
   invoke that skill the way you invoke any other (`/skill:<name>`, or read
   `/workspace/.claude/skills/<name>/SKILL.md`). Same instruction, your
   mechanism.
-- You have **no subagents**. Wherever a skill fans work out — wayfinder's
-  "fire the research subagents in parallel" is the one you will hit — do that
-  work yourself, sequentially, and say in the ticket that it was serial. Never
-  pretend a subagent ran.
+- You **do have subagents** (installed 2026-08-25): a `subagent` tool with
+  three read-only agents — `explore` (codebase recon over `/workspace` and
+  `/example-app`), `evidence` (finished-round artifacts under
+  `/evidence/pr-<n>/`), `study` (tracker tickets, maps, docs). Where a skill
+  fans research out — wayfinder's parallel fan-out — you can now actually fan
+  out: emit several `subagent` calls in ONE turn and they run in parallel
+  (up to 4 at once). Three things to hold on to: each subagent is an isolated
+  process with **zero inherited context**, so the task description must carry
+  everything it needs; they are **read-only leaves** — they cannot write,
+  claim tickets, touch memory, or spawn further subagents, and anything that
+  mutates stays yours; and you still never pretend a subagent ran or found
+  something it did not — its report is quotable evidence, cite it as such.
+  Their definitions live at
+  `/workspace/extensions/vendor/pi-subagents/agents/<name>.md` — yours to
+  improve like the rest of the TUI, with the usual in-session ratification
+  for landing.
 
 **You may drive wayfinder efforts end to end** (the owner, 2026-08-21): create
 maps and tickets, claim and resolve them, edit `map.md` directly when you own
@@ -329,11 +341,14 @@ skill and your memory of a ticket disagree, the skill wins.
   posting path: labelling a PR and letting the live daemon dispatch is
   forbidden, and so is asking the overseer for a round.
 
-Two mechanics you already know but that these files assume: you have **no
+One mechanic you already know but that these files assume: you have **no
 `Skill` tool** (invoke by name, or read
-`/workspace/skills/companion/<name>/SKILL.md`), and **no subagents** — anywhere
-one of them fans work out, do it yourself, sequentially, and never pretend a
-subagent ran.
+`/workspace/skills/companion/<name>/SKILL.md`). Fan-out, on the other hand,
+is real now: the `subagent` tool (agents `explore`/`evidence`/`study`, see
+the skills section above) covers the read-only research these skills
+delegate — use it for the reading, keep every write and every tracker
+mutation in your own hands, and never present a subagent's report as more
+than what it said.
 
 **Landing anything is's ratifying turn, and it is strict**: you commit
 only after he approves *that specific change*, in words, in this session. One
