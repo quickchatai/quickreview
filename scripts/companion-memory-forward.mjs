@@ -394,10 +394,13 @@ async function probePair(base, key, ns, env, fetchFn, doWrite) {
         body: JSON.stringify({
           // Namespace in the URI, same reason as the read probe: the server
           // confines by URI, not by the X-OpenViking-User header.
-          root_uri: `viking://user/${ns}/memories`,
+          // "batch-write root must be inside a memory type directory" — the
+          // root needs the category level under memories/ (the store's
+          // DEFAULT_CATEGORY, src/openviking/store.ts). Verified live.
+          root_uri: `viking://user/${ns}/memories/experiences`,
           operations: [
             {
-              uri: `viking://user/${ns}/memories/qcr-confinement-probe-${at}.md`,
+              uri: `viking://user/${ns}/memories/experiences/qcr-confinement-probe-${at}.md`,
               content: `confinement probe ${at}\n`,
               // Mandatory on the live 0.4.15: an operation without a
               // precondition is HTTP 400 (mirrors src/openviking/client.ts).
