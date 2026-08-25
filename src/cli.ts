@@ -1,9 +1,9 @@
 // qcr — the operator CLI. Read-only against state/ (status.json + state.db);
 // `attach` wraps tmux/docker-exec. Subcommands land across slices: status and
 // spend here (B1); today/why in B5; checklist/compare in B6.
-import { readFileSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadConfig, sandboxRoot } from "./config.js";
+import { loadConfig, sandboxRoot, type Config, type TuiConfig } from "./config.js";
 import {
   cancelCauseLabel,
   isLoudCancelCause,
@@ -28,6 +28,13 @@ export function renderStatus(snapshot: StatusSnapshot): string {
   lines.push(`quickreview — ${mode} — snapshot ${snapshot.written_at}`);
   if (snapshot.digest_headline) lines.push(`digest: ${snapshot.digest_headline}`);
   lines.push(`rounds running: ${snapshot.running_rounds}   total spend: $${snapshot.total_spend_usd.toFixed(2)}`);
+  if (snapshot.draining) {
+    lines.push(
+      `DRAINING${snapshot.draining_since ? ` since ${snapshot.draining_since}` : ""} — ` +
+        `webhook deliveries dropped: ${snapshot.drained_deliveries ?? 0}; ` +
+        `deploy when rounds running hits 0 (auto-lifts on the next boot's first healthy reconcile; qcr drain off to lift now)`,
+    );
+  }
   lines.push("");
   if (snapshot.prs.length === 0) {
     lines.push("no tracked PRs");
@@ -361,6 +368,116 @@ export async function cmdRegression(rest: string[], json: boolean): Promise<numb
   });
 }
 
+// ---- deploy-window drain (2026-08-25) -------------------------------------
+//
+// `qcr drain on|off` follows the TUI unwedge precedent EXACTLY: ONE validated
+// command file written into the daemon's existing commands/ dir (docker exec
+// over ssh, payload on stdin, tmp+mv), then the daemon's own result file read
+// back. src/commands.ts re-validates against the same whitelist and the same
+// tier gate; nothing here touches GitHub or goes near the MutationGate.
+// `--local` writes the file into THIS machine's sandbox commands/ dir instead
+// (for running inside the container or against a local dev daemon).
+
+/** The exact command payload — built here so this module cannot produce any
+ * other command. */
+export function drainPayload(on: boolean): string {
+  return `${JSON.stringify({ command: "drain", on }, null, 2)}\n`;
+}
+
+/** The documented manual fallback: the exact ssh one-liner that writes the
+ * same command file by hand when the runner path fails. */
+export function drainManualSshCommand(tui: TuiConfig, on: boolean): string {
+  const dir = `${tui.remote_sandbox_root}/commands`;
+  const docker = `${tui.sudo_docker ? "sudo " : ""}docker exec -i ${tui.container}`;
+  return (
+    `printf '%s' '${JSON.stringify({ command: "drain", on })}' | ` +
+    `ssh ${tui.ssh_host} "${docker} sh -c 'cat > ${dir}/drain-manual.json'"`
+  );
+}
+
+export interface DrainRunDeps {
+  cfg: Config;
+  ssh: import("./tui/remote.js").SshRunner;
+  log: (line: string) => void;
+  now?: () => Date;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/** Write the drain command over ssh and wait for the daemon's verdict.
+ * Returns a process exit code; every failure path prints the manual ssh
+ * fallback so the operator is never stuck behind this wrapper. */
+export async function runDrain(on: boolean, deps: DrainRunDeps): Promise<number> {
+  const { commandFileName, commandResultArgv, commandWriteArgv } = await import("./tui/unwedge.js");
+  const tui = deps.cfg.tui;
+  const now = deps.now ?? (() => new Date());
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const name = commandFileName(now(), 0);
+  deps.log(`drain ${on ? "on" : "off"} → ${tui.ssh_host}:${tui.remote_sandbox_root}/commands/${name}`);
+  const write = await deps.ssh(tui.ssh_host, commandWriteArgv(tui, name), { stdin: drainPayload(on) });
+  if (!write.ok) {
+    deps.log(`✖ command write failed (${write.stderr.trim() || `exit ${write.code}`})`);
+    deps.log("manual fallback — run:");
+    deps.log(`  ${drainManualSshCommand(tui, on)}`);
+    return 1;
+  }
+  // Read the daemon's own verdict rather than assuming the write was the
+  // outcome — a refusal (tier belt, unwired dep) is a real answer.
+  const deadline = now().getTime() + tui.msg_timeout_s * 1000;
+  while (now().getTime() < deadline) {
+    await sleep(2000);
+    const probe = await deps.ssh(tui.ssh_host, commandResultArgv(tui, name));
+    if (!probe.ok) continue;
+    const body = probe.stdout.trim();
+    if (body === "pending" || body === "") continue;
+    let result: { ok?: unknown; reason?: unknown; running_rounds?: unknown; dropped_deliveries?: unknown };
+    try {
+      result = JSON.parse(body) as typeof result;
+    } catch {
+      deps.log("✖ unreadable result file");
+      return 1;
+    }
+    if (result.ok === true) {
+      if (on) {
+        const rounds = typeof result.running_rounds === "number" ? result.running_rounds : "?";
+        deps.log(`✓ draining — ${rounds} round(s) still finishing; deploy when \`qcr status\` shows rounds running: 0`);
+        deps.log("  (auto-lifts on the new boot's first healthy reconcile — re-drain before each step of a multi-deploy window)");
+      } else {
+        const dropped = typeof result.dropped_deliveries === "number" ? result.dropped_deliveries : 0;
+        deps.log(`✓ drain lifted — ${dropped} webhook delivery(ies) were dropped; the reconcile poll recovers them`);
+      }
+      return 0;
+    }
+    deps.log(`✖ drain refused: ${String(result.reason ?? "no reason given")}`);
+    return 1;
+  }
+  deps.log("✖ no result before the timeout (daemon down?)");
+  deps.log("manual fallback — run:");
+  deps.log(`  ${drainManualSshCommand(tui, on)}`);
+  return 1;
+}
+
+/** `--local`: same command file, written straight into this machine's
+ * sandbox commands/ dir (in-container use; no ssh). Fire-and-forget — the
+ * local watcher's result lands in commands/results/. */
+function runDrainLocal(on: boolean): number {
+  const dir = join(sandboxRoot(), "commands");
+  mkdirSync(dir, { recursive: true });
+  const name = `${new Date().toISOString().replace(/[:.]/g, "-")}-cli-drain.json`;
+  writeFileSync(join(dir, `.${name}.tmp`), drainPayload(on));
+  renameSync(join(dir, `.${name}.tmp`), join(dir, name));
+  console.log(`drain ${on ? "on" : "off"} command written to ${join(dir, name)} — result lands in commands/results/`);
+  return 0;
+}
+
+async function cmdDrain(rest: string[]): Promise<number> {
+  const sub = rest.find((a) => a === "on" || a === "off");
+  if (!sub) throw new Error("usage: qcr drain <on|off> [--local]");
+  const on = sub === "on";
+  if (rest.includes("--local")) return runDrainLocal(on);
+  const { realSshRunner } = await import("./tui/remote.js");
+  return runDrain(on, { cfg: loadConfig(), ssh: realSshRunner, log: (l) => console.log(l) });
+}
+
 function cmdAttach(target: string): void {
   // Live sessions run inside the quickreview container on the VM; locally the
   // tmux server is direct. Print the right invocation and exec it when local
@@ -507,13 +624,17 @@ export async function main(argv: string[]): Promise<void> {
     }
     case "companion":
       return cmdCompanion(rest[0]);
+    case "drain": {
+      process.exitCode = await cmdDrain(rest);
+      return;
+    }
     case "attach": {
       if (!rest[0]) throw new Error("usage: qcr attach <pr-number|session>");
       return cmdAttach(rest[0]);
     }
     default:
       console.log(
-        "usage: qcr <status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|tui [pr|overseer]|" +
+        "usage: qcr <status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|tui [pr|overseer]|drain <on|off>|" +
           "companion <up|down|status|rebuild>|backfill [--dry-run] [--limit <n>]|checklist|compare <pr...>|" +
           "regression [--set <path>] [--clone <path>] [--change <name>] [--limit <n>] [--out <path>]>",
       );

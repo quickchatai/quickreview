@@ -38,6 +38,7 @@ const CANDIDATE_FIELDS = [
   "note",
   "thread",
   "text",
+  "on",
   "channel",
   "__control_never_valid__",
 ] as const;

@@ -338,6 +338,15 @@ export interface SlackCooldownRow {
   bypassed: number;
 }
 
+/** Deploy-window drain state (2026-08-25) — one persistent row. */
+export interface DrainState {
+  draining: boolean;
+  /** Webhook deliveries dropped while the CURRENT drain window stood. */
+  drained_deliveries: number;
+  /** When the current drain was engaged; null when not draining. */
+  since: string | null;
+}
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS pr_state (
   number INTEGER PRIMARY KEY,
@@ -552,6 +561,19 @@ CREATE TABLE IF NOT EXISTS approval_withheld (
   ci_state   TEXT,
   reason     TEXT,
   created_at TEXT NOT NULL
+);
+-- Deploy-window drain (2026-08-25): ONE row, id = 1. While draining the
+-- webhook drops deliveries (counted here), the pump starts nothing, and
+-- recheck/ping-pong/EOD hold -- in-flight rounds still run to their natural
+-- end. Persistent on purpose: the flag must survive the container restart the
+-- drain exists for; it is lifted by the new boot's first HEALTHY reconcile
+-- pass, or by an explicit 'drain off' command.
+CREATE TABLE IF NOT EXISTS drain_state (
+  id                 INTEGER PRIMARY KEY CHECK (id = 1),
+  draining           INTEGER NOT NULL DEFAULT 0,
+  drained_deliveries INTEGER NOT NULL DEFAULT 0,
+  since              TEXT,
+  updated_at         TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS filed_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1899,6 +1921,48 @@ export class StateStore {
    * (the `detail` field is the audit trail). No sink (bare store, tests, CLI)
    * ⇒ the row is written and nothing wakes, exactly as before.
    */
+  // ---- deploy-window drain (2026-08-25) ----------------------------------
+
+  /** The drain flag + its drop counter. A missing row means "not draining". */
+  drainState(): DrainState {
+    const row = this.db
+      .prepare("SELECT draining, drained_deliveries, since FROM drain_state WHERE id = 1")
+      .get() as { draining: number; drained_deliveries: number; since: string | null } | undefined;
+    if (!row) return { draining: false, drained_deliveries: 0, since: null };
+    return { draining: row.draining === 1, drained_deliveries: row.drained_deliveries, since: row.since };
+  }
+
+  /**
+   * Flip the drain. Turning it ON starts a fresh drop window (counter reset);
+   * turning it OFF returns how many deliveries were dropped while it stood, so
+   * the lift log line can say what the reconcile poll now has to recover.
+   * Idempotent: repeating the current state changes nothing.
+   */
+  setDraining(on: boolean): { changed: boolean; dropped: number } {
+    const prev = this.drainState();
+    if (prev.draining === on) return { changed: false, dropped: prev.drained_deliveries };
+    if (on) {
+      this.db
+        .prepare(
+          `INSERT INTO drain_state (id, draining, drained_deliveries, since, updated_at)
+           VALUES (1, 1, 0, @ts, @ts)
+           ON CONFLICT(id) DO UPDATE SET draining = 1, drained_deliveries = 0, since = @ts, updated_at = @ts`,
+        )
+        .run({ ts: this.ts() });
+      return { changed: true, dropped: 0 };
+    }
+    this.db.prepare("UPDATE drain_state SET draining = 0, updated_at = ? WHERE id = 1").run(this.ts());
+    return { changed: true, dropped: prev.drained_deliveries };
+  }
+
+  /** Count one webhook delivery dropped while draining; returns the new total. */
+  countDrainedDelivery(): number {
+    this.db
+      .prepare("UPDATE drain_state SET drained_deliveries = drained_deliveries + 1, updated_at = ? WHERE id = 1")
+      .run(this.ts());
+    return this.drainState().drained_deliveries;
+  }
+
   logAnomaly(kind: string, pr: number | null, roundNo: number | null, detail: string, injectMessage?: string): void {
     this.logEvent("anomaly", pr, { kind, round_no: roundNo, detail });
     if (this.anomalySink) {
@@ -2287,6 +2351,13 @@ export interface StatusSnapshot {
    * version (drift-checked against the pin), RSS and CPU. Absent in snapshots
    * from a daemon with no supervisor wired — readers must default. */
   openviking?: OpenVikingStatus;
+  /** Deploy-window drain (2026-08-25): present (and true) only while
+   * draining, beside the count of webhook deliveries dropped so far and when
+   * the drain was engaged. Absent in older snapshots — readers default to
+   * "not draining". */
+  draining?: boolean;
+  drained_deliveries?: number;
+  draining_since?: string;
   heartbeat: string;
 }
 
@@ -2309,6 +2380,7 @@ export function buildStatusSnapshot(
   openviking?: OpenVikingStatus,
 ): StatusSnapshot {
   const today = now().toISOString().slice(0, 10);
+  const drain = store.drainState();
   // Expired zombie rounds stay out of the per-PR round COUNTS —
   // but they DO count in every spend aggregate (below).
   const roundStats = store.db
@@ -2340,6 +2412,13 @@ export function buildStatusSnapshot(
     ...(digestHeadline ? { digest_headline: digestHeadline } : {}),
     ...(piAuth ? { pi_auth_expired: piAuth } : {}),
     ...(openviking ? { openviking } : {}),
+    ...(drain.draining
+      ? {
+          draining: true,
+          drained_deliveries: drain.drained_deliveries,
+          ...(drain.since ? { draining_since: drain.since } : {}),
+        }
+      : {}),
     heartbeat: now().toISOString(),
   };
 }

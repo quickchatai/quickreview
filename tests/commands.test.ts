@@ -38,12 +38,14 @@ describe("validateCommand — whitelist", () => {
       { command: "file-improvement-pr", branch: "wip/fix-docs", title: "t", body: "b", slug: "fix-docs" },
       { command: "file-issue", title: "t", body: "b" },
       { command: "slack_reply", thread: "1712345678.123456", text: "on it" },
+      { command: "drain", on: true },
+      { command: "drain", on: false },
     ];
     for (const v of valid) {
       const res = validateCommand(v);
       expect(res.ok, JSON.stringify(v)).toBe(true);
     }
-    expect(COMMAND_WHITELIST).toHaveLength(8); // 9 before mark-escalation-worthy was retired
+    expect(COMMAND_WHITELIST).toHaveLength(9); // 8 after mark-escalation-worthy retired, +1 drain (2026-08-25)
   });
 
   it("slack_reply: strict shape, ts format, and no channel field", () => {

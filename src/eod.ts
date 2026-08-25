@@ -177,6 +177,12 @@ export interface EodTimerDeps {
    * sweep carries them into the digest (the cancellation summary).
    * A throw here never loses the sweep: the prompt just goes out bare. */
   dayContext?: (date: string) => string;
+  /** Deploy-window drain (2026-08-25): when this returns true at fire time
+   * the sweep is SKIPPED for that day — never queued — and `onHeld` fires
+   * instead. A throwing probe counts as "not held": a broken check must not
+   * silently eat the sweep. */
+  shouldHold?: () => boolean;
+  onHeld?: (date: string) => void;
   /** SessionHooks.injectOverseer. */
   injectOverseer: (message: string) => Promise<void>;
   now?: () => Date;
@@ -225,6 +231,18 @@ export function startEodTimer(deps: EodTimerDeps): EodTimer {
       return;
     }
     const date = zoneDateString(target, deps.timeZone);
+    let held = false;
+    try {
+      held = deps.shouldHold?.() === true;
+    } catch {
+      held = false;
+    }
+    if (held) {
+      deps.onHeld?.(date);
+      target = nextEodFire(now(), deps.timeHHMM, deps.timeZone);
+      arm();
+      return;
+    }
     void (async () => {
       try {
         let context = "";

@@ -633,6 +633,21 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         fileIssue(payload) {
           return fileIssue(payload, { cfg, adapter, gate, store: d.store });
         },
+        // Deploy-window drain (2026-08-25). ON = the webhook answers 200 and
+        // drops, the pump starts nothing, recheck/ping-pong/EOD hold —
+        // in-flight rounds finish naturally. OFF is the manual lift; the
+        // automatic one is the next boot's first healthy reconcile pass
+        // (daemon.ts). Never touches GitHub, never goes near the gate.
+        async drain(on) {
+          const res = d.store.setDraining(on);
+          if (on) {
+            if (res.changed) d.store.logEvent("drain_on", null, {});
+            return { ok: true, draining: true, running_rounds: d.store.runningRounds().length };
+          }
+          if (res.changed) d.store.logEvent("drain_off", null, { dropped_deliveries: res.dropped });
+          await d.pump();
+          return { ok: true, draining: false, dropped_deliveries: res.dropped };
+        },
       };
       // The Slack concierge. Off by default; when on it owns its own
       // tier-checked command dir, the socket, and every unprompted post. It is
@@ -681,6 +696,13 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         // the digest actually mentions cancellations (grouped, loud first,
         // "none" explicit).
         dayContext: (date) => eodDigestContext(d.store, date),
+        // Deploy-window drain: the sweep does not fire into a board being
+        // drained for a deploy — skipped for the day, loudly.
+        shouldHold: () => d.store.drainState().draining,
+        onHeld: (date) => {
+          d.store.logEvent("eod_skipped_draining", null, { date });
+          log(`EOD sweep for ${date} skipped — draining`);
+        },
         injectOverseer: pinWatch ? pinWatch.wrapInject(injectEod) : injectEod,
         onFire: (date) => log(`EOD sweep injected for ${date}`),
         onError: (err) => log("EOD injection failed", err),

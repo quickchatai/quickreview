@@ -161,6 +161,12 @@ rejected and logged loudly.
   the header's `thread` value verbatim, matching `^\d{10}\.\d{6}$`. There is no
   `channel` field: the daemon binds the channel, so posting to the wrong place
   is unrepresentable rather than merely forbidden.
+- `drain {on}` — the deploy-window drain valve (2026-08-25), owner-tier
+  only. `on` is a strict boolean. `true`: the webhook answers 200 and DROPS
+  deliveries (counted), the pump starts no rounds, recheck/ping-pong/EOD
+  hold, and in-flight rounds finish naturally — used before a deploy so
+  `running_rounds` converges to 0. `false` lifts it; the daemon also lifts it
+  itself on a rebooted container's first healthy reconcile pass.
 
 ### Drift corrections vs the seeded prompt
 

@@ -256,6 +256,14 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
           // the author message before waking so duplicate deliveries cannot
           // produce duplicate replies or resolutions.
           if (reply.in_reply_to_id === null) return;
+          // Deploy-window drain: no ping-pong wake while draining — and the
+          // claim is deliberately NOT taken, so a redelivery after the lift
+          // can still service the reply. Belt-and-braces in practice: while
+          // draining the webhook drops the delivery before it reaches here.
+          if (store.drainState().draining) {
+            log(`pingpong: #${reply.pr} reply dropped — draining`);
+            return;
+          }
           const event: AuthorReplyEvent = {
             pr: reply.pr,
             comment_id: reply.comment_id,
@@ -341,7 +349,18 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     }
   };
 
+  // Deploy-window drain auto-lift (2026-08-25): only the boot's FIRST
+  // reconcile pass may lift the drain, and only when it completed HEALTHILY —
+  // reconcileOnce resolved AND its per-step `report.errors` is empty. A
+  // failed first pass leaves the drain standing for the rest of this boot (a
+  // broken deploy must not resume work blind); clearing it then takes an
+  // explicit `drain off`. Consequence the owner accepted: in a multi-deploy
+  // window each healthy boot lifts the drain, so the operator re-drains
+  // before each step.
+  let firstReconcileSeen = false;
   const reconcile = async (): Promise<void> => {
+    const bootFirstPass = !firstReconcileSeen;
+    firstReconcileSeen = true;
     await guard("reconcile", async () => {
       const report = await reconcileOnce({
         cfg,
@@ -365,6 +384,11 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
           `closed=${report.closed.length} captured=${report.captured_comments} ` +
           `corrections=${report.corrections} errors=${report.errors.length}`,
       );
+      if (bootFirstPass && report.errors.length === 0 && store.drainState().draining) {
+        const { dropped } = store.setDraining(false);
+        store.logEvent("drain_lifted", null, { dropped_deliveries: dropped });
+        log(`drain_lifted — first reconcile pass healthy; ${dropped} webhook delivery(ies) were dropped while draining`);
+      }
       await pump();
     });
   };

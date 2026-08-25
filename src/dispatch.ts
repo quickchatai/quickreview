@@ -697,6 +697,13 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
   const settledDigest = deps.settledDigest ?? (() => "");
   const log = deps.log ?? (() => {});
 
+  // Deploy-window drain (2026-08-25): the pump starts NOTHING while draining.
+  // In-flight rounds keep running to their natural end; queued rows simply
+  // wait and dispatch when the drain lifts. The refusal stays quiet at the
+  // 15s tick — the drain itself is loud (status.json, qcr status, the board
+  // banner, the drain_on event).
+  if (store.drainState().draining) return [];
+
   const slots = capacity(store, cfg);
   if (slots <= 0) return [];
 

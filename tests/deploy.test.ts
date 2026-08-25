@@ -119,7 +119,7 @@ function makeScratch(opts: {
   return { dir, sandbox, ansible };
 }
 
-function run(e: Env, args: string[]): { code: number; stdout: string; stderr: string } {
+function run(e: Env, args: string[], extraEnv: Record<string, string> = {}): { code: number; stdout: string; stderr: string } {
   try {
     const stdout = execFileSync("bash", [deploySh, ...args], {
       encoding: "utf8",
@@ -128,6 +128,7 @@ function run(e: Env, args: string[]): { code: number; stdout: string; stderr: st
         QC_SANDBOX_DIR: e.sandbox,
         QC_ANSIBLE_DIR: e.ansible,
         QC_INVENTORY: join(e.ansible, "inventory.ini"),
+        ...extraEnv,
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -366,5 +367,69 @@ describe("deploy.sh — OpenViking pin drift", () => {
     // (The `note` itself goes to stderr, which this helper only captures on a
     // non-zero exit.)
     expect(r.stdout).toContain("memory pins  <no [openviking] block");
+  });
+});
+
+// ---- drain advisory (2026-08-25) — WARN only, never a refusal ---------------
+//
+// The heartbeat read is seamed through QC_STATUS_JSON_CMD so no test ever
+// opens an ssh connection. Every case runs --dry-run: the advisory fires
+// before the plan exits, and a warning must never change the exit code.
+describe("deploy.sh drain advisory", () => {
+  function status(e: Env, body: string): string {
+    const p = join(e.dir, "status.json");
+    writeFileSync(p, body);
+    return `cat ${p}`;
+  }
+
+  /** Like run(), but with stderr folded into the captured output — the
+   * advisory speaks on stderr and exits 0, which run() throws away. */
+  function runMerged(e: Env, args: string[], extraEnv: Record<string, string>): { code: number; out: string } {
+    const r = run(e, ["--dry-run", ...args], extraEnv);
+    if (r.code !== 0) return { code: r.code, out: r.stdout + r.stderr };
+    const out = execFileSync("bash", ["-c", `bash '${deploySh}' --dry-run 2>&1`], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        QC_SANDBOX_DIR: e.sandbox,
+        QC_ANSIBLE_DIR: e.ansible,
+        QC_INVENTORY: join(e.ansible, "inventory.ini"),
+        ...extraEnv,
+      },
+    });
+    return { code: 0, out };
+  }
+
+  it("WARNS (exit 0) on an undrained deploy while rounds run", () => {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
+    const cmd = status(env, JSON.stringify({ running_rounds: 3, dry_run: false }));
+    const res = runMerged(env, [], { QC_STATUS_JSON_CMD: cmd });
+    expect(res.code).toBe(0); // WARN only — the owner chose warn over refusal
+    expect(res.out).toContain("WARNING — deploying UNDRAINED while 3 round(s) are running");
+    expect(res.out).toContain("qcr drain on");
+  });
+
+  it("stays quiet when the board is drained and quiet", () => {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
+    const cmd = status(env, JSON.stringify({ running_rounds: 0, draining: true }));
+    const res = runMerged(env, [], { QC_STATUS_JSON_CMD: cmd });
+    expect(res.code).toBe(0);
+    expect(res.out).not.toContain("WARNING");
+    expect(res.out).toContain("good to deploy");
+  });
+
+  it("says the drain is still converging when rounds remain", () => {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
+    const cmd = status(env, JSON.stringify({ running_rounds: 2, draining: true }));
+    const res = runMerged(env, [], { QC_STATUS_JSON_CMD: cmd });
+    expect(res.code).toBe(0);
+    expect(res.out).toContain("drain is ON with 2 round(s) still finishing");
+  });
+
+  it("notes an unreadable heartbeat and proceeds", () => {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
+    const res = runMerged(env, [], { QC_STATUS_JSON_CMD: "false" });
+    expect(res.code).toBe(0);
+    expect(res.out).toContain("heartbeat unreadable");
   });
 });

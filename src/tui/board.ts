@@ -158,8 +158,14 @@ function barSegments(view: BoardView, alerts: boolean): string[] {
   const s = view.snapshot;
   const rounds = s ? `rounds ${s.running_rounds}/${s.max_concurrent_rounds ?? "?"}` : "";
   const spend = s?.today_spend_usd !== undefined ? `today $${s.today_spend_usd.toFixed(2)}` : "";
+  // Deploy-window drain (2026-08-25): while the daemon drains, the bar says
+  // so loudly, with how many rounds still have to finish before a deploy is
+  // safe and how many webhook deliveries were dropped so far.
+  const drainSeg = s?.draining
+    ? `${FG.anomaly}⛔ DRAINING — ${s.running_rounds} round${s.running_rounds === 1 ? "" : "s"} finishing · ${s.drained_deliveries ?? 0} dropped${RESET}`
+    : "";
   const badge = alerts && view.alerts ? alertSegment(view.alerts, view.alertFocus === true) : "";
-  return [`${HEADING}quickreview${DRESET}`, mode, health, rounds, spend, badge].filter((x) => x !== "");
+  return [`${HEADING}quickreview${DRESET}`, mode, health, drainSeg, rounds, spend, badge].filter((x) => x !== "");
 }
 
 export function topBar(view: BoardView, cols: number): string {

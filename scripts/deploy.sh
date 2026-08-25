@@ -305,6 +305,49 @@ VERIFY_CMDS=(
   "cat /opt/quickreview/state/status.json | head -20   # heartbeat for the status collector"
 )
 
+# ---- drain advisory (WARN only — the owner chose warn over refusal) -----------
+# A deploy recreates the container; rounds in flight are orphaned mid-review,
+# burn self-requeue budget, and the cold boot's reconcile eats GitHub rate
+# limit (measured 2026-08-25: three cold boots exhausted the hourly limit).
+# The drain valve (`qcr drain on`) hard-stops the webhook and starts no new
+# work, so running_rounds converges to 0. This reads the heartbeat and WARNS
+# on an undrained deploy while rounds run — it NEVER refuses, and an
+# unreadable heartbeat is noted, not fatal. QC_STATUS_JSON_CMD overrides the
+# ssh read (tests).
+drain_advisory() {
+  [[ "$MODE" == "verify" ]] && return 0
+  local status=""
+  if [[ -n "${QC_STATUS_JSON_CMD:-}" ]]; then
+    status="$(bash -c "$QC_STATUS_JSON_CMD" 2>/dev/null || true)"
+  elif [[ -n "$VM_HOST" ]]; then
+    status="$(ssh -o BatchMode=yes "$VM_HOST" 'sudo cat /opt/quickreview/state/status.json' 2>/dev/null || true)"
+  fi
+  if [[ -z "$status" ]]; then
+    note "drain check: heartbeat unreadable — cannot tell whether rounds are running (WARN-only check, proceeding)"
+    return 0
+  fi
+  local running draining
+  running="$(printf '%s' "$status" | grep -o '"running_rounds"[[:space:]]*:[[:space:]]*[0-9]*' | grep -o '[0-9]*$' || true)"
+  running="${running:-0}"
+  draining=0
+  printf '%s' "$status" | grep -q '"draining"[[:space:]]*:[[:space:]]*true' && draining=1
+  if [[ "$draining" -eq 0 && "$running" -gt 0 ]]; then
+    cat >&2 <<EOF
+$SELF: WARNING — deploying UNDRAINED while $running round(s) are running.
+    Recreating the container orphans them mid-review, burns self-requeue
+    budget, and the cold boot's reconcile eats GitHub rate limit.
+    Prefer:  qcr drain on   ->  wait for running_rounds 0  ->  deploy.
+    (WARN only — proceeding. The drain auto-lifts on the new boot's first
+    healthy reconcile pass; re-drain before each step of a multi-deploy
+    window.)
+EOF
+  elif [[ "$draining" -eq 1 && "$running" -gt 0 ]]; then
+    note "drain is ON with $running round(s) still finishing — wait for running_rounds 0 before deploying"
+  elif [[ "$draining" -eq 1 ]]; then
+    note "drain is ON and the board is quiet — good to deploy (auto-lifts on the new boot's first healthy reconcile)"
+  fi
+}
+
 print_plan() {
   echo "plan — $SELF $MODE"
   echo "  sandbox      $SANDBOX_DIR @ $HEAD_SHA (clean)"
@@ -334,6 +377,8 @@ print_plan() {
     echo "  marker       BUILD_SHA=$HEAD_SHA written before the rsync (gitignored; the qcr tui deploy tab reads it on the VM)"
   fi
 }
+
+drain_advisory
 
 if [[ $DRY_RUN -eq 1 ]]; then
   print_plan

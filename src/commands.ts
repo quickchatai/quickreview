@@ -21,7 +21,8 @@ export type CommandName =
   | "flag-owner-legacy"
   | "file-improvement-pr"
   | "file-issue"
-  | "slack_reply";
+  | "slack_reply"
+  | "drain";
 
 export const COMMAND_WHITELIST: readonly CommandName[] = [
   "rerun-round",
@@ -32,6 +33,7 @@ export const COMMAND_WHITELIST: readonly CommandName[] = [
   "file-improvement-pr",
   "file-issue",
   "slack_reply",
+  "drain",
 ] as const;
 
 export type Command =
@@ -42,7 +44,11 @@ export type Command =
   | { command: "flag-owner-legacy"; message: string }
   | ({ command: "file-improvement-pr" } & ImprovementPayload)
   | ({ command: "file-issue" } & IssuePayload)
-  | { command: "slack_reply"; thread: string; text: string };
+  | { command: "slack_reply"; thread: string; text: string }
+  /** Deploy-window drain (2026-08-25): the valve the TUI unwedge precedent
+   * carries — a hard webhook stop + dispatch/recheck/ping-pong/EOD hold while
+   * in-flight rounds finish naturally. */
+  | { command: "drain"; on: boolean };
 
 /** Context a command file carries with it (its own name, for idempotence). */
 export interface CommandContext {
@@ -59,6 +65,9 @@ export interface CommandDeps {
   flagOwnerLegacy(message: string): Promise<FileOutcome | void> | FileOutcome | void;
   fileImprovementPr(payload: ImprovementPayload): Promise<FileOutcome | void> | FileOutcome | void;
   fileIssue(payload: IssuePayload): Promise<FileOutcome | void> | FileOutcome | void;
+  /** Deploy-window drain valve. Optional like `slackReply`: a daemon wired
+   * without it rejects the command with a reason instead of pretending. */
+  drain?(on: boolean): Promise<FileOutcome | void> | FileOutcome | void;
   /** Optional: absent when Slack is disabled, in which case `slack_reply` is
    * rejected with a reason instead of silently succeeding. */
   slackReply?(
@@ -188,6 +197,14 @@ export function validateCommand(raw: unknown): ValidationResult {
         },
       };
     }
+    case "drain": {
+      const err = fieldError(obj, ["on"]);
+      if (err) return { ok: false, reason: err };
+      if (typeof obj["on"] !== "boolean") {
+        return { ok: false, reason: "'on' must be a boolean (true = engage the drain, false = lift it)" };
+      }
+      return { ok: true, command: { command: "drain", on: obj["on"] } };
+    }
     case "slack_reply": {
       const err = fieldError(obj, ["thread", "text"]);
       if (err) return { ok: false, reason: err };
@@ -237,6 +254,9 @@ const TIER_TABLE: Record<CommandName, { anyone: boolean; author: "own" | boolean
   "file-issue": { anyone: false, author: false, owner_legacy: true },
   // Not user-tiered: gated by channel binding, thread, caps, cooldown, length.
   slack_reply: { anyone: true, author: true, owner_legacy: true },
+  // Deploy-window drain: an OPERATOR lever (same standing as restart-session)
+  // — it stops the whole board, so it is never author-reachable.
+  drain: { anyone: false, author: false, owner_legacy: true },
 };
 
 /** Target PR of a command, when it has one. */
@@ -328,6 +348,10 @@ export async function executeCommand(
     case "slack_reply": {
       if (!deps.slackReply) return { ok: false, reason: "slack_reply is not wired (Slack is disabled)" };
       return normalize(await deps.slackReply({ thread: command.thread, text: command.text, file: ctx.file }));
+    }
+    case "drain": {
+      if (!deps.drain) return { ok: false, reason: "drain is not wired on this daemon" };
+      return normalize(await deps.drain(command.on));
     }
   }
 }

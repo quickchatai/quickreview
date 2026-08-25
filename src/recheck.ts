@@ -279,7 +279,9 @@ export type NoopReason =
   | "empty-delta"
   | "trivial-delta"
   | "already-rechecked"
-  | "no-delta-source" | "delivery-failed";
+  | "no-delta-source" | "delivery-failed"
+  /** Deploy-window drain (2026-08-25): no nudge is generated while draining. */
+  | "draining";
 
 export interface RecheckPlanInput {
   trigger: RecheckTrigger;
@@ -483,6 +485,12 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
     return plan;
   };
 
+  // Deploy-window drain (2026-08-25): generate no recheck nudge at all —
+  // prefer not creating work over hold-then-flush, because the session the
+  // nudge would wake is about to be killed by the deploy. The reconcile
+  // push-backstop re-raises the trigger after the lift.
+  if (store.drainState().draining) return done({ action: "noop", reason: "draining", class: "empty" });
+
   if (!cfg.recheck.enabled || !triggerEnabled(cfg, req.trigger)) return done({ action: "noop", reason: "disabled", class: "empty" });
   // Cheapest refusal first: ping-pong owns the author reply.
   if (req.trigger === "author_reply") return done(planRecheck({ ...emptyPlanInput(req), standing: "APPROVE" }));
@@ -658,6 +666,9 @@ export async function runBaseAdvance(
   const out = new Map<number, RecheckOutcome>();
   const log = deps.log ?? ((): void => {});
   if (!deps.cfg.recheck.enabled || !deps.cfg.recheck.on_base_advance) return out;
+  // Deploy-window drain: skip the whole fan-out before it spends per-PR API
+  // calls (runRecheck would refuse each one anyway).
+  if (deps.store.drainState().draining) return out;
   for (const row of deps.store.allPrs()) {
     if (row.state === "closed") continue;
     if (normalizeVerdict(deps.store.reviewedHead(row.number)?.verdict) !== "APPROVE") continue;
