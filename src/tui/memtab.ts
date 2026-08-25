@@ -891,7 +891,12 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
         // it, so there is no separate scroll to desynchronize from.
         const delta = key.kind === "down" ? 1 : -1;
         if (st.focus === "timeline") st.sel = Math.max(0, Math.min(st.sel + delta, Math.max(0, ordered.length - 1)));
-        else if (st.focus === "tickets") {
+        else if (st.focus === "tickets" && key.wheel) {
+          // The mouse wheel means "read this ticket"; j/k and arrow keys mean
+          // "choose another ticket". App preserves that origin bit when it
+          // translates the SGR mouse event into this key-shaped tab API.
+          st.ticketScroll = Math.max(0, (st.ticketScroll ?? 0) + delta * 3);
+        } else if (st.focus === "tickets") {
           st.ticketSel = Math.max(0, Math.min((st.ticketSel ?? 0) + delta, Math.max(0, visibleTickets.length - 1)));
           st.ticketScroll = 0;
           const next = visibleTickets[st.ticketSel];

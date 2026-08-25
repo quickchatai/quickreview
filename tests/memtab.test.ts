@@ -394,6 +394,32 @@ describe("management verbs", () => {
     expect(mem.applied[0]).toMatchObject({ op: "add", text: "never trust a resolved checkmark" });
   });
 
+  it("mouse wheel scrolls the open ticket body instead of selecting the next ticket", async () => {
+    const { app } = makeApp();
+    const mkTicket = (id: string) => ({
+      id,
+      title: `Ticket ${id}`,
+      status: "open",
+      role: "ready-for-human",
+      category: "—",
+      updated: "2026-08-25T18:00:00Z",
+      path: `/tracker/${id}.md`,
+      body: Array.from({ length: 80 }, (_, i) => `line ${i}`).join("\n"),
+    });
+    const st = install(app, new FakeMemory(), { readTickets: () => [mkTicket("FT-0300"), mkTicket("FT-0301")] });
+    app.hooks.digestScreen!(app, 110, 30);
+    await settle();
+    st.view = "memory";
+    st.focus = "tickets";
+    st.ticketSel = 0;
+    st.ticketScroll = 0;
+
+    app.hooks.digestKey!(app, { kind: "down", wheel: true } as never);
+
+    expect(st.ticketSel).toBe(0);
+    expect(st.ticketScroll).toBeGreaterThan(0);
+  });
+
   it("A accepts and R (with reason) rejects the selected proposal", async () => {
     const { app } = makeApp();
     const accept = vi.fn().mockResolvedValue({ ok: true, message: "accepted" });

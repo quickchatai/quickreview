@@ -9,10 +9,25 @@ import { enrichWhy } from "../src/cli.js";
 import type { StatusSnapshot } from "../src/state.js";
 import { renderBoard, type BoardAction, type BoardView } from "../src/tui/board.js";
 import { extractMouseEvents, hitTest, type Zone } from "../src/tui/mouse.js";
-import { displayWidth, stripAnsi } from "../src/tui/paint.js";
+import { Frame, accentFrameRect, displayWidth, stripAnsi } from "../src/tui/paint.js";
 import { FG, fmtAge, legendLine, osc8, prUrl, stateColor, verdictChip } from "../src/tui/theme.js";
 
 const NOW = new Date("2026-08-14T12:00:00Z");
+
+describe("focused pane frame", () => {
+  it("accents the existing square without colouring or moving its content", () => {
+    const frame = new Frame(12, 4);
+    frame.set(0, "┌──────────┐");
+    frame.set(1, "│ content  │");
+    frame.set(2, "│ more     │");
+    frame.set(3, "└──────────┘");
+    accentFrameRect(frame, 0, 0, 11, 3, "\x1b[35m", "\x1b[0m");
+    expect(stripAnsi(frame.lines.join("\n"))).toBe("┌──────────┐\n│ content  │\n│ more     │\n└──────────┘");
+    expect(frame.lines[0]).toContain("\x1b[35m┌");
+    expect(frame.lines[1]).toContain("\x1b[35m│");
+    for (const line of frame.lines) expect(displayWidth(line)).toBe(12);
+  });
+});
 
 const snapshot: StatusSnapshot = {
   written_at: "2026-08-14T12:00:00Z",

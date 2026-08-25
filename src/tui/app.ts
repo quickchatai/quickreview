@@ -12,8 +12,8 @@ import { visiblePrs } from "./filters.js";
 import { formatEvent, moveSelection, reselect, type EventLine } from "./model.js";
 import { TripleCtrlC } from "./chord.js";
 import { MOUSE_OFF, MOUSE_ON, extractMouseEvents, hitTest, type MouseEvent, type Zone } from "./mouse.js";
-import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR, Frame, composeColumn, fit, sliceDisplay, spliceDisplay, stripAnsi } from "./paint.js";
-import { RESET, SELECTION } from "./design.js";
+import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR, Frame, accentFrameRect, composeColumn, fit, sliceDisplay, spliceDisplay, stripAnsi } from "./paint.js";
+import { ACCENT, RESET, SELECTION } from "./design.js";
 import { ClipboardSink } from "./clipboard.js";
 import { PANE_ESCAPE, PiMirror, keysToTmux } from "./pipane.js";
 import { Poller } from "./poll.js";
@@ -695,6 +695,13 @@ export class App {
           }
           return;
         }
+        // Zellij-style spatial focus: clicking a different pane moves focus
+        // there. Ctrl-q remains the keyboard-only escape hatch, not a tax on
+        // mouse users who already pointed at the main TUI.
+        if (this.sidebar.focused) {
+          this.sidebar.blur();
+          this.repaint();
+        }
       }
     }
     // The wheel belongs to the companion column before any tab sees it. The
@@ -720,22 +727,22 @@ export class App {
       // Memory & learning tab: clicks hit the tab's own zones (rows select,
       // buttons act); the wheel moves the selection / scrolls.
       if (ev.kind === "click") this.hooks.digestClick?.(this, ev.x, ev.y);
-      else this.hooks.digestKey?.(this, { kind: ev.kind === "wheel-down" ? "down" : "up" });
+      else this.hooks.digestKey?.(this, { kind: ev.kind === "wheel-down" ? "down" : "up", wheel: true });
       return;
     }
     if (this.tab === "deploy") {
       if (ev.kind === "click") this.hooks.deployClick?.(this, ev.x, ev.y);
-      else this.hooks.deployKey?.(this, { kind: ev.kind === "wheel-down" ? "down" : "up" });
+      else this.hooks.deployKey?.(this, { kind: ev.kind === "wheel-down" ? "down" : "up", wheel: true });
       return;
     }
     if (this.tab === "metrics") {
       if (ev.kind === "click") this.hooks.metricsClick?.(this, ev.x, ev.y);
-      else this.hooks.metricsKey?.(this, { kind: ev.kind === "wheel-down" ? "down" : "up" });
+      else this.hooks.metricsKey?.(this, { kind: ev.kind === "wheel-down" ? "down" : "up", wheel: true });
       return;
     }
     if (this.tab === "changes") {
       if (ev.kind === "click") this.hooks.changesClick?.(this, ev.x, ev.y);
-      else this.hooks.changesKey?.(this, { kind: ev.kind === "wheel-down" ? "down" : "up" });
+      else this.hooks.changesKey?.(this, { kind: ev.kind === "wheel-down" ? "down" : "up", wheel: true });
       return;
     }
     const zoneAt = (x: number, y: number): BoardAction | undefined =>
@@ -1326,6 +1333,17 @@ export class App {
         return;
       }
       const frame = this.withSidebar(screen, cols, rows);
+      // Zellij-style spatial focus: exactly one pane owns the accent square.
+      // The sidebar and board pi are terminals; otherwise the main TUI pane
+      // owns focus. Colour existing frame glyphs only, never the content.
+      const mainRight = sw === 0 ? frame.cols - 1 : inner - 1;
+      if (sw > 0 && this.sidebar?.focused) {
+        accentFrameRect(frame, inner - 1, 0, frame.cols - 1, rows - 1, ACCENT, RESET);
+      } else if (this.tab === "board" && this.view.piFocus && frame.meta["piTop"] !== undefined) {
+        accentFrameRect(frame, 0, frame.meta["piTop"]!, mainRight, rows - 1, ACCENT, RESET);
+      } else {
+        accentFrameRect(frame, 0, 0, mainRight, rows - 1, ACCENT, RESET);
+      }
       // Selection first, prompt second: the modal must sit ON TOP of a
       // highlight, never under it.
       this.paintSelection(frame, cols, rows);

@@ -2,8 +2,8 @@
 // attach mode is a raw passthrough with a single chord scan (attach.ts) —
 // nothing here runs while attached.
 export type BoardKey =
-  | { kind: "up"; arrow?: boolean }
-  | { kind: "down"; arrow?: boolean }
+  | { kind: "up"; arrow?: boolean; wheel?: boolean }
+  | { kind: "down"; arrow?: boolean; wheel?: boolean }
   | { kind: "enter" }
   | { kind: "attach" }
   | { kind: "alt-enter" }

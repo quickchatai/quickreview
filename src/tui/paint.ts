@@ -397,6 +397,46 @@ export function spliceDisplay(line: string, at: number, overlay: string): string
   return out;
 }
 
+const FRAME_GLYPHS = new Set(["┌", "┐", "└", "┘", "│", "─", "━", "┬", "┴", "├", "┤", "┼"]);
+
+/** Accent only the existing frame glyphs on one rectangle. Content and labels
+ * keep their own styling; the visible coloured square is focus chrome, not a
+ * background wash over what the operator is reading. Coordinates are
+ * zero-based display cells, inclusive. */
+export function accentFrameRect(frame: Frame, x1: number, y1: number, x2: number, y2: number, accent: string, reset: string): void {
+  const left = Math.max(0, Math.min(x1, frame.cols - 1));
+  const right = Math.max(left, Math.min(x2, frame.cols - 1));
+  const top = Math.max(0, Math.min(y1, frame.rows - 1));
+  const bottom = Math.max(top, Math.min(y2, frame.rows - 1));
+  for (let y = top; y <= bottom; y++) {
+    const line = frame.lines[y] ?? "";
+    const horizontal = y === top || y === bottom;
+    let out = "";
+    let activeSgr = "";
+    let col = 0;
+    let i = 0;
+    // ONE pass per row. The first implementation called spliceDisplay once
+    // per horizontal-rule cell, making every repaint quadratic in terminal
+    // width and timing out the metrics interaction tests.
+    while (i < line.length) {
+      const seq = /^\x1b\[[0-9;:?]*[A-Za-z]/.exec(line.slice(i))?.[0];
+      if (seq !== undefined) {
+        out += seq;
+        if (seq.endsWith("m")) activeSgr = seq === `${ESC}0m` ? "" : `${activeSgr}${seq}`;
+        i += seq.length;
+        continue;
+      }
+      const ch = String.fromCodePoint(line.codePointAt(i)!);
+      const width = displayWidth(ch);
+      const onEdge = horizontal ? col >= left && col <= right : col === left || col === right;
+      out += onEdge && FRAME_GLYPHS.has(ch) ? `${accent}${ch}${reset}${activeSgr}` : ch;
+      col += width;
+      i += ch.length;
+    }
+    frame.set(y, out);
+  }
+}
+
 export const ALT_SCREEN_ON = `${ESC}?1049h${ESC}?25l`;
 export const ALT_SCREEN_OFF = `${ESC}?25h${ESC}?1049l`;
 export const CLEAR = `${ESC}2J${ESC}H`;

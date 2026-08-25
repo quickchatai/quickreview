@@ -319,6 +319,16 @@ describe("the focused companion column is a TERMINAL, not a text box", () => {
     await h.running;
   });
 
+  it("clicking the main TUI releases companion focus without Ctrl-q", async () => {
+    const h = harness();
+    h.app.sidebar!.focus();
+    h.type("\x1b[<0;10;10M"); // left/main pane, outside the companion column
+    await settle();
+    expect(h.app.sidebar!.focused).toBe(false);
+    h.app.quit();
+    await h.running;
+  });
+
   it("Ctrl-q is the ONE byte that never travels — it releases focus", async () => {
     const h = harness();
     h.app.sidebar!.focus();
@@ -374,7 +384,8 @@ describe("the wheel scrolls the companion column, not the tab behind it", () => 
     input.resume = (() => input) as never;
     input.pause = (() => input) as never;
     const tabNotches: string[] = [];
-    const key = (_a: App, k: { kind: string }) => (tabNotches.push(k.kind), true);
+    const tabKeys: Array<{ kind: string; wheel?: boolean }> = [];
+    const key = (_a: App, k: { kind: string; wheel?: boolean }) => (tabKeys.push(k), tabNotches.push(k.kind), true);
     const app = new App(TUI_DEFAULTS, async () => ({ ok: true, stdout: "", stderr: "", code: 0 }), out, input, {
       digestKey: key,
       deployKey: key,
@@ -402,7 +413,7 @@ describe("the wheel scrolls the companion column, not the tab behind it", () => 
     // 140 cols → a 70-column companion column occupying x 71…140.
     const wheel = (up: boolean, x: number) =>
       (input as unknown as EventEmitter).emit("data", Buffer.from(`\x1b[<${up ? 64 : 65};${x};10M`));
-    return { app, tabNotches, wheel, running: app.run() };
+    return { app, tabNotches, tabKeys, wheel, running: app.run() };
   }
   const settle = () => new Promise((r) => setTimeout(r, 10));
 
@@ -460,6 +471,7 @@ describe("the wheel scrolls the companion column, not the tab behind it", () => 
       h.wheel(false, 10);
       await settle();
       expect(h.tabNotches).toEqual(["down"]);
+      expect(h.tabKeys[0]).toMatchObject({ kind: "down", wheel: true });
       h.app.sidebar!.focus();
       h.wheel(true, 10);
       await settle();
