@@ -384,6 +384,99 @@ export function settledThreadViolations(findings: Finding[], settled: SettledEnt
   return out;
 }
 
+// ---- the dry-run attestation -------------------------------------------------
+//
+// The report used to end on the unconditional sentence "dry_run stayed true —
+// nothing was posted". No code backed it: it printed identically in a run where
+// the gate was live (and rule 1 has had `dry_run = false` on the VM since
+// 2026-08-14). A harness that asserts a safety property it never checked is
+// worse than one that says nothing, so the sentence is now an OBSERVATION of
+// the gate's own record, and the harness says so loudly when it cannot make it.
+//
+// Nothing here can change `dry_run` — it is the owner's alone (rule 1). This only
+// reports what the gate did.
+
+/** What the caller actually observed of the gate this comparison ran through.
+ * Both fields are `null` when the caller could not observe it at all — which is
+ * an UNVERIFIED attestation, never a passing one. */
+export interface DryRunObservation {
+  /** `MutationGate.isDryRun` of the gate the round ran through. */
+  gateIsDryRun: boolean | null;
+  /** How many `GateResult`s came back `executed: true` during the run. */
+  executedMutations: number | null;
+}
+
+export type DryRunStatus =
+  /** The gate reported dry-run, nothing executed, no forceLive record. */
+  | "observed-dry"
+  /** No gate was observed — collect-only. The claim cannot be made. */
+  | "unobserved"
+  /** The gate reported dry_run = false. Mutations in this run were REAL. */
+  | "live-gate"
+  /** At least one mutation was executed for real. */
+  | "executed"
+  /** A record carries forceLive, which executes even in dry-run. */
+  | "force-live";
+
+export interface DryRunAttestation {
+  status: DryRunStatus;
+  /** True only for `observed-dry`. */
+  substantiated: boolean;
+  detail: string;
+}
+
+/** The one place the "nothing was posted" claim is decided. Order matters:
+ * the loudest disproof wins, and absence of evidence is never a pass. */
+export function attestDryRun(obs: DryRunObservation, records: DryrunRecord[]): DryRunAttestation {
+  const forced = records.filter((r) => (r as { forceLive?: unknown }).forceLive === true);
+  if (obs.gateIsDryRun === false) {
+    return {
+      status: "live-gate",
+      substantiated: false,
+      detail: "the gate this run went through reported `dry_run = false` — every mutation it accepted was executed against GitHub for real.",
+    };
+  }
+  if ((obs.executedMutations ?? 0) > 0) {
+    return {
+      status: "executed",
+      substantiated: false,
+      detail: `${obs.executedMutations} mutation(s) came back from the gate as EXECUTED — this run posted.`,
+    };
+  }
+  if (forced.length) {
+    return {
+      status: "force-live",
+      substantiated: false,
+      detail: `${forced.length} record(s) carry \`forceLive\` (${[...new Set(forced.map((r) => r.kind))].join(", ")}), which executes even in dry-run.`,
+    };
+  }
+  if (obs.gateIsDryRun === null) {
+    return {
+      status: "unobserved",
+      substantiated: false,
+      detail:
+        "no gate was observed for this run — the records were collected off disk after the fact, so the harness cannot tell whether the round that produced them posted. Say nothing rather than reassure.",
+    };
+  }
+  return {
+    status: "observed-dry",
+    substantiated: true,
+    detail: `the gate reported \`dry_run = true\`, ${records.length} intent(s) were recorded to \`state/dryrun/\` instead of being executed, ${obs.executedMutations ?? 0} were executed, and no record carries \`forceLive\`.`,
+  };
+}
+
+/** The report's closing block — one line when the claim holds, a loud warning
+ * when it does not. */
+export function renderDryRunAttestation(a: DryRunAttestation): string[] {
+  if (a.substantiated) return [`**Dry run VERIFIED** — ${a.detail}`];
+  return [
+    `> ⚠ **DRY RUN NOT SUBSTANTIATED (\`${a.status}\`).** ${a.detail}`,
+    ">",
+    "> This report makes **no claim** that nothing was posted. Treat every",
+    "> would-be mutation below as possibly real until you have checked.",
+  ];
+}
+
 // ---- report ------------------------------------------------------------------
 
 export interface ComparePrInput {
@@ -393,6 +486,8 @@ export interface ComparePrInput {
   records: DryrunRecord[];
   patches: ChangedFilePatch[];
   ledgerMd: string;
+  /** Omitted = nothing observed = the claim is not made (`unobserved`). */
+  dryRun?: DryRunObservation;
 }
 
 export interface CompareResult {
@@ -403,6 +498,9 @@ export interface CompareResult {
   settled: SettledViolation[];
   /** (a)–(d) clean. (e), tone, is the human's. */
   gatesPass: boolean;
+  /** What the harness could actually establish about dry-run. Never inferred
+   * from `config.toml`, and never assumed. */
+  dryRun: DryRunAttestation;
   markdown: string;
 }
 
@@ -421,6 +519,7 @@ export function comparePr(input: ComparePrInput): CompareResult {
   const missed = parity.filter((r) => r.status === "missed-by-sandbox");
   const badAnchors = anchors.filter((a) => a.status !== "on-changed-line");
   const gatesPass = missed.length === 0 && violations.length === 0 && badAnchors.length === 0 && settled.length === 0 && input.sandboxReview !== null;
+  const dryRun = attestDryRun(input.dryRun ?? { gateIsDryRun: null, executedMutations: null }, input.records);
 
   const L: string[] = [];
   L.push(`# PR #${input.pr} — old flow vs sandbox (dry run)`);
@@ -501,10 +600,12 @@ export function comparePr(input: ComparePrInput): CompareResult {
   L.push("");
   L.push(`---`);
   L.push("");
-  L.push(`**Mechanical gates (a)–(d): ${gatesPass ? "PASS" : "FAIL"}.** dry_run stayed true — nothing was posted.`);
+  L.push(`**Mechanical gates (a)–(d): ${gatesPass ? "PASS" : "FAIL"}.**`);
+  L.push("");
+  for (const line of renderDryRunAttestation(dryRun)) L.push(line);
   L.push("");
 
-  return { pr: input.pr, parity, violations, anchors, settled, gatesPass, markdown: L.join("\n") };
+  return { pr: input.pr, parity, violations, anchors, settled, gatesPass, dryRun, markdown: L.join("\n") };
 }
 
 // ---- the run -----------------------------------------------------------------
@@ -521,6 +622,10 @@ export interface CompareDeps {
   fetchPatches: (pr: number) => Promise<ChangedFilePatch[]>;
   /** Archived ledger markdown for the PR ("" when there is none). */
   readLedger: (pr: number) => Promise<string> | string;
+  /** What the gate that ran this PR's round reported. Omitted = the caller
+   * observed no gate, and the report will say the dry-run claim is UNVERIFIED
+   * rather than assert it. A caller must never synthesize a `true` here. */
+  observeDryRun?: (pr: number) => DryRunObservation | Promise<DryRunObservation>;
   outDir: string;
 }
 
@@ -539,18 +644,28 @@ export function renderIndex(results: CompareResult[]): string {
   L.push("(d) settled-thread discipline are hard gates; (e) tone/format is judgment.");
   L.push("Pass = (a)–(d) clean on all five PRs. The flip itself stays manual.");
   L.push("");
-  L.push("| PR | gates (a)–(d) | missed blockers | invariant violations | bad anchors | re-raised threads | report |");
-  L.push("| --- | --- | --- | --- | --- | --- | --- |");
+  L.push("| PR | gates (a)–(d) | missed blockers | invariant violations | bad anchors | re-raised threads | dry run | report |");
+  L.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
   for (const r of results) {
     L.push(
       `| #${r.pr} | ${r.gatesPass ? "PASS" : "**FAIL**"} | ${r.parity.filter((p) => p.status === "missed-by-sandbox").length} | ${
         r.violations.length
-      } | ${r.anchors.filter((a) => a.status !== "on-changed-line").length} | ${r.settled.length} | [\`${r.pr}-compare.md\`](./${r.pr}-compare.md) |`,
+      } | ${r.anchors.filter((a) => a.status !== "on-changed-line").length} | ${r.settled.length} | ${
+        r.dryRun.substantiated ? "verified" : `**${r.dryRun.status}**`
+      } | [\`${r.pr}-compare.md\`](./${r.pr}-compare.md) |`,
     );
   }
   L.push("");
   const failing = results.filter((r) => !r.gatesPass);
   L.push(failing.length === 0 ? `All ${results.length} PR(s) clean on the mechanical gates.` : `${failing.length} PR(s) fail a mechanical gate: ${failing.map((r) => `#${r.pr}`).join(", ")}.`);
+  L.push("");
+  const unverified = results.filter((r) => !r.dryRun.substantiated);
+  if (unverified.length === 0) {
+    L.push(`Dry run VERIFIED on all ${results.length} PR(s): the gate recorded intents and executed none.`);
+  } else {
+    L.push(`⚠ **Dry run NOT substantiated on ${unverified.length} PR(s):** ${unverified.map((r) => `#${r.pr} (\`${r.dryRun.status}\`)`).join(", ")}.`);
+    L.push("This report does not claim nothing was posted for those PRs.");
+  }
   L.push("");
   return L.join("\n");
 }
@@ -569,16 +684,24 @@ export async function runCompare(prs: number[], deps: CompareDeps, print: (s: st
       await deps.fetchPatches(pr),
       await deps.readLedger(pr),
     ];
-    const result = comparePr({ pr, oldReview, sandboxReview: sandboxReviewFrom(records, pr), records, patches, ledgerMd });
+    const dryRun = (await deps.observeDryRun?.(pr)) ?? { gateIsDryRun: null, executedMutations: null };
+    const result = comparePr({ pr, oldReview, sandboxReview: sandboxReviewFrom(records, pr), records, patches, ledgerMd, dryRun });
     const file = join(deps.outDir, `${pr}-compare.md`);
     writeFileSync(file, result.markdown);
     reportPaths.push(file);
     results.push(result);
     print(`#${pr}: gates ${result.gatesPass ? "PASS" : "FAIL"} -> ${file}`);
+    if (!result.dryRun.substantiated) print(`#${pr}: ⚠ dry run NOT substantiated (${result.dryRun.status}) — ${result.dryRun.detail}`);
   }
 
   const indexPath = join(deps.outDir, "index.md");
   writeFileSync(indexPath, renderIndex(results));
   print(`index -> ${indexPath}`);
-  return { results, reportPaths, indexPath, exitCode: results.every((r) => r.gatesPass) ? 0 : 1 };
+  // A DISPROVED dry-run claim (the gate was live, something executed, or a
+  // record carries forceLive) fails the run outright: the comparison evidence
+  // is void if the "comparison" posted. `unobserved` is loud in the report and
+  // in the printed lines, but collect-only is a legitimate way to run this, so
+  // it does not on its own decide the exit code.
+  const disproved = results.filter((r) => r.dryRun.status === "live-gate" || r.dryRun.status === "executed" || r.dryRun.status === "force-live");
+  return { results, reportPaths, indexPath, exitCode: results.every((r) => r.gatesPass) && disproved.length === 0 ? 0 : 1 };
 }

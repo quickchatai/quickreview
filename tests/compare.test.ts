@@ -8,6 +8,7 @@ import { join } from "node:path";
 import {
   ALLOWED_MUTATION_KINDS,
   addedLineNumbers,
+  attestDryRun,
   blockerParity,
   checkAnchors,
   comparePr,
@@ -276,8 +277,33 @@ describe("report rendering", () => {
     }
     expect(r.markdown).toContain(oldReview.body.split("\n")[2]!);
     expect(r.markdown).toContain("src/anchors.ts");
-    expect(r.markdown).toContain("dry_run stayed true — nothing was posted");
     expect(r.markdown).toContain("**Mechanical gates (a)–(d): PASS.**");
+  });
+
+  // part A. The old report ended on the unconditional sentence
+  // "dry_run stayed true — nothing was posted" with no check behind it. The
+  // string must not come back, in any form, unless something observed it.
+  it("never asserts dry-run it did not observe", () => {
+    const r = comparePr(input); // no `dryRun` observation at all
+    expect(r.dryRun.substantiated).toBe(false);
+    expect(r.dryRun.status).toBe("unobserved");
+    expect(r.markdown).toContain("DRY RUN NOT SUBSTANTIATED");
+    expect(r.markdown).not.toContain("dry_run stayed true");
+    expect(r.markdown).not.toContain("Dry run VERIFIED");
+  });
+
+  it("states the claim only on an observed dry-run gate", () => {
+    const r = comparePr({ ...input, dryRun: { gateIsDryRun: true, executedMutations: 0 } });
+    expect(r.dryRun.substantiated).toBe(true);
+    expect(r.markdown).toContain("**Dry run VERIFIED**");
+    expect(r.markdown).toContain("recorded to `state/dryrun/`");
+  });
+
+  it("shouts when the gate was live", () => {
+    const r = comparePr({ ...input, dryRun: { gateIsDryRun: false, executedMutations: 0 } });
+    expect(r.dryRun.status).toBe("live-gate");
+    expect(r.markdown).toContain("⚠ **DRY RUN NOT SUBSTANTIATED (`live-gate`)");
+    expect(r.markdown).toContain("makes **no claim**");
   });
 
   it("fails the gates when the sandbox misses a blocker", () => {
@@ -292,6 +318,25 @@ describe("report rendering", () => {
     expect(r.gatesPass).toBe(false);
     expect(r.markdown).toContain("(b) Invariant scan — FAIL");
     expect(r.markdown).toContain("revoke_approval");
+  });
+
+  it("attestDryRun: a disproof beats a claim, and absence of evidence is never a pass", () => {
+    const none: DryrunRecord[] = [];
+    expect(attestDryRun({ gateIsDryRun: true, executedMutations: 0 }, none).status).toBe("observed-dry");
+    expect(attestDryRun({ gateIsDryRun: false, executedMutations: 0 }, none).status).toBe("live-gate");
+    expect(attestDryRun({ gateIsDryRun: true, executedMutations: 2 }, none).status).toBe("executed");
+    expect(attestDryRun({ gateIsDryRun: null, executedMutations: null }, none).status).toBe("unobserved");
+    // forceLive executes even under dry-run (rule 1's sole exception), so a
+    // record carrying it disproves "nothing was posted".
+    const forced = [{ kind: "supersede_own_review", method: "PUT", path: "/x", forceLive: true } as unknown as DryrunRecord];
+    expect(attestDryRun({ gateIsDryRun: true, executedMutations: 0 }, forced).status).toBe("force-live");
+    for (const a of [
+      attestDryRun({ gateIsDryRun: false, executedMutations: 0 }, none),
+      attestDryRun({ gateIsDryRun: null, executedMutations: null }, none),
+      attestDryRun({ gateIsDryRun: true, executedMutations: 0 }, forced),
+    ]) {
+      expect(a.substantiated).toBe(false);
+    }
   });
 
   it("index summarizes every PR and the gate verdict", () => {
@@ -327,6 +372,28 @@ describe("runCompare", () => {
     expect(readFileSync(join(outDir, "501-compare.md"), "utf8")).toContain("PR #501");
     expect(readFileSync(run.indexPath, "utf8")).toContain("| #501 |");
     expect(out.join("\n")).toContain("gates PASS");
+  });
+
+  it("fails the run when the dry-run claim is DISPROVED, even with clean gates", async () => {
+    const outDir = join(scratch(), "reports");
+    const out: string[] = [];
+    const run = await runCompare(
+      [501],
+      {
+        dispatchDryRun: async () => {},
+        readRecords: () => sandboxRecords,
+        fetchOldReview: async () => oldReview,
+        fetchPatches: async () => patches,
+        readLedger: () => "",
+        observeDryRun: () => ({ gateIsDryRun: false, executedMutations: 1 }),
+        outDir,
+      },
+      (s) => out.push(s),
+    );
+    expect(run.results[0]!.gatesPass).toBe(true);
+    expect(run.exitCode).toBe(1);
+    expect(out.join("\n")).toContain("dry run NOT substantiated");
+    expect(readFileSync(run.indexPath, "utf8")).toContain("Dry run NOT substantiated on 1 PR(s)");
   });
 
   it("creates the output directory when missing", async () => {

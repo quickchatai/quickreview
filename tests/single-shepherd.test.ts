@@ -29,8 +29,16 @@ describe("daemon topology", () => {
   const src = join(import.meta.dirname, "..", "src");
 
   it("S1: only sessions.ts and the smoke script may birth a pi session", () => {
+    // sessions.ts owns the two DAEMON-OWNED kinds. smoke-session.ts and
+    // replay.ts are operator one-shots, not daemon topology: both
+    // run only under an explicit `qcr`/`npm run` invocation, spawn a session
+    // whose name is outside the `pr-<n>`/`overseer` namespace (so `adopt()`
+    // can never pick one up — pinned in tests/replay.test.ts), and kill it
+    // before returning. The replay's session additionally owns no PR, holds no
+    // gate and posts nothing; its whole contract is "read a scratch tree,
+    // write one JSON file".
     const offenders = srcFiles(src)
-      .filter((f) => !["sessions.ts", "smoke-session.ts"].includes(f.slice(f.lastIndexOf("/") + 1)))
+      .filter((f) => !["sessions.ts", "smoke-session.ts", "replay.ts"].includes(f.slice(f.lastIndexOf("/") + 1)))
       .filter((f) => /\bspawnSession\s*\(/.test(readFileSync(f, "utf8")));
     expect(offenders).toEqual([]);
   });
@@ -129,7 +137,10 @@ describe("S4: every PR-session wake goes through wakes.ts", () => {
     // Allowed: wakes.ts itself; the two call sites that hand it an inject seam
     // (daemon author replies, verdict/anomaly flush); wire.ts's pass-through
     // decorator. Anything else is a second instruction channel to the one main
-    // pi — exactly what S4 forbids.
+    // pi — exactly what S4 forbids. (src/replay.ts delivers ONE order to a
+    // throwaway replay session and deliberately does not spell that
+    // `inject(pr, …)`: a replay session owns no PR, runs no round and can
+    // therefore never be mid-round, so there is nothing for wakes.ts to hold.)
     const allowed = new Set(["wakes.ts", "daemon.ts", "verdicts.ts", "wire.ts"]);
     const offenders = srcFiles(src)
       .filter((f) => !allowed.has(f.slice(f.lastIndexOf("/") + 1)))
