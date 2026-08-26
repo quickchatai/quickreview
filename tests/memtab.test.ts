@@ -182,6 +182,14 @@ describe("feedback adjudication inbox", () => {
     "#adjudication #feedback pr=5372 episode=comment-3000000202 attribution=review-defect changed=no adjudicated=2026-08-25\nAttribution: review-defect — severity exceeded reachability\nChanged: nothing",
     "2026-08-25 12:00:00",
   );
+  const needsAttention = memoryEntry(
+    "#feedback-review #feedback pr=5372 episode=comment-3000000202 status=needs-attention reviewed=2026-08-25\nReason: Exact finding cannot be mapped from the archived evidence; the owner must decide whether rarity makes it non-actionable.",
+    "2026-08-25 11:00:00",
+  );
+  const actedOn = memoryEntry(
+    "#feedback-action #feedback pr=5372 episode=comment-3000000202 action=landed acted=2026-08-25\nResult: commit abc123 adds reachability evidence to the finding record.",
+    "2026-08-25 13:00:00",
+  );
 
   it("generates a concrete title, summary, raw text and cautious candidate lesson", () => {
     const card = feedbackPresentation(raw, [raw]);
@@ -197,14 +205,30 @@ describe("feedback adjudication inbox", () => {
 
   it("marks only an exact episode as processed and reads the recorded outcome", () => {
     const card = feedbackPresentation(raw, [raw, adjudication]);
-    expect(card!.processed).toBe(true);
+    expect(card).toMatchObject({ processed: true, status: "settled" });
     expect(card!.learning).toContain("review-defect — severity exceeded reachability");
     expect(card!.learning).toContain("Changed: nothing");
   });
 
-  it("makes #feedback an inbox by hiding its adjudication records", () => {
-    expect(feedbackInbox([raw, adjudication], "feedback")).toEqual([raw]);
-    expect(feedbackInbox([raw, adjudication], null)).toHaveLength(2);
+  it("distinguishes reviewed-but-inconclusive feedback from both unprocessed and settled", () => {
+    const card = feedbackPresentation(raw, [raw, needsAttention]);
+    expect(card).toMatchObject({ processed: true, status: "needs-attention" });
+    expect(card!.learning).toContain("the owner must decide");
+  });
+
+  it("makes #feedback an inbox by hiding its disposition records", () => {
+    expect(feedbackInbox([raw, adjudication, needsAttention], "feedback")).toEqual([raw]);
+    expect(feedbackInbox([raw, adjudication, needsAttention], null)).toHaveLength(3);
+    expect(feedbackPresentation(adjudication, [raw, adjudication])).toBeUndefined();
+    expect(feedbackPresentation(needsAttention, [raw, needsAttention])).toBeUndefined();
+    expect(feedbackPresentation(actedOn, [raw, actedOn])).toBeUndefined();
+  });
+
+  it("archives acted-on feedback from the inbox without deleting its record", () => {
+    expect(feedbackPresentation(raw, [raw, adjudication, actedOn])).toMatchObject({ processed: true, status: "acted-on" });
+    expect(feedbackInbox([raw, adjudication, actedOn], "feedback")).toEqual([]);
+    expect(feedbackInbox([raw, adjudication, actedOn], "feedback", true)).toEqual([raw]);
+    expect(feedbackInbox([raw, adjudication, actedOn], null)).toHaveLength(3);
   });
 
   it("renders date + generated title on the left and the structured card on the right", () => {
@@ -225,11 +249,32 @@ describe("feedback adjudication inbox", () => {
     };
     const screen = stripAnsi(renderMemoryView(st, false, undefined, 180, 52).render());
     expect(screen).toContain("2026-08-25 ○ #5372 · Narrow edge case judged non-actionable");
-    expect(screen).toContain("UNPROCESSED — needs adjudication");
+    expect(screen).toContain("UNPROCESSED — needs review");
     expect(screen).toContain("TITLE");
     expect(screen).toContain("SUMMARY");
     expect(screen).toContain("RAW FEEDBACK");
     expect(screen).toContain("WHAT WE CAN LEARN");
+  });
+
+  it("renders reviewed feedback needing the owner separately from settled feedback", () => {
+    const st: MemTabState = {
+      view: "memory",
+      digest: { files: [], back: 0, scroll: 0, awaitingSelected: 0, loaded: true },
+      entries: [raw, needsAttention],
+      memLoaded: true,
+      focus: "timeline",
+      sel: 0,
+      propSel: 0,
+      scroll: 0,
+      proposals: [],
+      improvements: [],
+      propLoaded: true,
+      filedTotal: 0,
+      memFilter: "feedback",
+    };
+    const screen = stripAnsi(renderMemoryView(st, false, undefined, 180, 52).render());
+    expect(screen).toContain("2026-08-25 ! #5372 · Narrow edge case judged non-actionable");
+    expect(screen).toContain("PROCESSED · NEEDS ATTENTION");
   });
 
   it("opens actionable feedback-effort tickets with their complete body", () => {
@@ -315,6 +360,20 @@ describe("management verbs", () => {
     expect(st.view).toBe("digest");
     app.hooks.digestKey!(app, { kind: "char", ch: "v" });
     expect(st.view).toBe("memory");
+  });
+
+  it("a toggles acted-on records in the feedback view", async () => {
+    const { app } = makeApp();
+    const st = install(app, new FakeMemory());
+    app.hooks.digestScreen!(app, 110, 30);
+    await settle();
+    st.view = "memory";
+    st.memFilter = "feedback";
+    expect(st.feedbackShowArchived).toBeFalsy();
+    app.hooks.digestKey!(app, { kind: "attach" }); // decoded `a`
+    expect(st.feedbackShowArchived).toBe(true);
+    app.hooks.digestKey!(app, { kind: "attach" });
+    expect(st.feedbackShowArchived).toBe(false);
   });
 
   it("retire needs x twice; the first only arms", async () => {

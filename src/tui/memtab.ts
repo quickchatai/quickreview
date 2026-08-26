@@ -84,6 +84,9 @@ export interface MemTabState {
   /**: active timeline tag filter (companion `memory_filter` verb;
    * F clears). Render AND verbs derive ordering through it — one list. */
   memFilter?: string | null;
+  /** The active feedback inbox hides acted-on episodes by default; `a`
+   * reveals their original signal rows without exposing disposition records. */
+  feedbackShowArchived?: boolean;
   /**: where the memory forward stands. The tab paints it because the
    * forward is the ONE reason an otherwise healthy store reads as
    * unreachable — and because the Studio link is only live while it is up. */
@@ -104,10 +107,14 @@ export function entryLine(e: MemoryEntry, width: number, highlightDay: string | 
   return pinned;
 }
 
+export type FeedbackStatus = "unprocessed" | "settled" | "needs-attention" | "acted-on";
+
 export interface FeedbackPresentation {
   pr?: string;
   episode: string;
+  /** Looked-at is independent of whether the episode reached a verdict. */
   processed: boolean;
+  status: FeedbackStatus;
   listTitle: string;
   title: string;
   summary: string;
@@ -117,13 +124,18 @@ export interface FeedbackPresentation {
 
 const hasTag = (e: MemoryEntry, tag: string): boolean => e.tags.some((t) => t.replace(/^#+/, "").toLowerCase() === tag);
 
-/** The #feedback filter is an inbox: adjudication records describe processing
+/** The #feedback filter is an inbox: disposition records describe processing
  * of a signal, but are not themselves another signal row. They still remain in
- * `all` so the selected card can prove its PROCESSED badge. */
-export function feedbackInbox(entries: MemoryEntry[], filter: string | null | undefined): MemoryEntry[] {
+ * `all` so the selected card can prove its settled/needs-attention badge. */
+export function feedbackInbox(entries: MemoryEntry[], filter: string | null | undefined, showArchived = false): MemoryEntry[] {
   const filtered = applyMemoryFilter(timelineOrder(entries), filter);
   if ((filter ?? "").replace(/^#+/, "").toLowerCase() !== "feedback") return filtered;
-  return filtered.filter((e) => !hasTag(e, "adjudication"));
+  return filtered.filter((e) => {
+    if (hasTag(e, "adjudication") || hasTag(e, "feedback-review") || hasTag(e, "feedback-action")) return false;
+    // An explicit action receipt is the archive transition: the original
+    // signal remains durable in memory, but leaves the active feedback inbox.
+    return showArchived || feedbackPresentation(e, entries)?.status !== "acted-on";
+  });
 }
 
 function feedbackRaw(text: string): string {
@@ -144,13 +156,25 @@ function feedbackEpisode(e: MemoryEntry, signal: string): string {
   return `${signal || "feedback"}-${e.day}`;
 }
 
-function adjudicationFor(e: MemoryEntry, all: MemoryEntry[], pr: string | undefined, episode: string): MemoryEntry | undefined {
+function dispositionFor(
+  all: MemoryEntry[],
+  pr: string | undefined,
+  episode: string,
+): { status: Exclude<FeedbackStatus, "unprocessed">; entry: MemoryEntry } | undefined {
   if (!pr) return undefined;
-  return all.find((candidate) => {
-    if (!hasTag(candidate, "adjudication")) return false;
+  const exact = (candidate: MemoryEntry): boolean => {
     const tags = parseEventTags(candidate.text);
     return tags["pr"] === pr && tags["episode"] === episode;
-  });
+  };
+  // An action receipt supersedes every intermediate disposition. A reached
+  // verdict supersedes an earlier needs-attention marker.
+  const action = all.find((candidate) => hasTag(candidate, "feedback-action") && exact(candidate));
+  if (action) return { status: "acted-on", entry: action };
+  const adjudication = all.find((candidate) => hasTag(candidate, "adjudication") && exact(candidate));
+  if (adjudication) return { status: "settled", entry: adjudication };
+  const reviewed = all.find((candidate) => hasTag(candidate, "feedback-review") && exact(candidate));
+  if (reviewed) return { status: "needs-attention", entry: reviewed };
+  return undefined;
 }
 
 /** A deterministic, inspectable presentation over the raw memory signal. It
@@ -158,14 +182,21 @@ function adjudicationFor(e: MemoryEntry, all: MemoryEntry[], pr: string | undefi
  * processed cards quote the attribution and Changed fields from the actual
  * #adjudication entry. */
 export function feedbackPresentation(e: MemoryEntry, all: MemoryEntry[]): FeedbackPresentation | undefined {
-  if (!hasTag(e, "feedback") || hasTag(e, "adjudication")) return undefined;
+  if (
+    !hasTag(e, "feedback") ||
+    hasTag(e, "adjudication") ||
+    hasTag(e, "feedback-review") ||
+    hasTag(e, "feedback-action")
+  )
+    return undefined;
   const tags = parseEventTags(e.text);
   const pr = tags["pr"] ?? /\bPR\s+#?(\d+)\b/i.exec(e.text)?.[1];
   const signal = tags["signal"] ?? (e.text.includes("merged while") ? "merged_over_block" : "feedback");
   const raw = feedbackRaw(e.text);
   const lower = raw.toLowerCase();
   const episode = feedbackEpisode(e, signal);
-  const adjudication = adjudicationFor(e, all, pr, episode);
+  const disposition = dispositionFor(all, pr, episode);
+  const status: FeedbackStatus = disposition?.status ?? "unprocessed";
   const actor = /human \[feedback\] by ([^\s]+) on PR/i.exec(e.text)?.[1];
 
   let title: string;
@@ -201,16 +232,23 @@ export function feedbackPresentation(e: MemoryEntry, all: MemoryEntry[]): Feedba
     learning = "Compare the human claim, the posted finding, and the reviewed code before assigning fault or changing the rubric.";
   }
 
-  if (adjudication) {
-    const attribution = /^Attribution:\s*(.+)$/im.exec(adjudication.text)?.[1]?.trim() ?? "recorded in adjudication";
-    const changed = /^Changed:\s*(.+)$/im.exec(adjudication.text)?.[1]?.trim() ?? "see adjudication";
+  if (status === "settled" && disposition) {
+    const attribution = /^Attribution:\s*(.+)$/im.exec(disposition.entry.text)?.[1]?.trim() ?? "recorded in adjudication";
+    const changed = /^Changed:\s*(.+)$/im.exec(disposition.entry.text)?.[1]?.trim() ?? "see adjudication";
     learning = `Adjudicated as ${attribution}. Changed: ${changed}.`;
+  } else if (status === "needs-attention" && disposition) {
+    const reason = /^Reason:\s*(.+)$/im.exec(disposition.entry.text)?.[1]?.trim() ?? "The review was inconclusive and needs the owner.";
+    learning = `Reviewed; needs attention. ${reason}`;
+  } else if (status === "acted-on" && disposition) {
+    const result = /^Result:\s*(.+)$/im.exec(disposition.entry.text)?.[1]?.trim() ?? "The resulting action is recorded in memory.";
+    learning = `Acted on. ${result}`;
   }
 
   return {
     pr,
     episode,
-    processed: adjudication !== undefined,
+    processed: status !== "unprocessed",
+    status,
     listTitle: `${pr ? `#${pr} · ` : ""}${title}`,
     title,
     summary,
@@ -220,8 +258,8 @@ export function feedbackPresentation(e: MemoryEntry, all: MemoryEntry[]): Feedba
 }
 
 export function feedbackEntryLine(e: MemoryEntry, presentation: FeedbackPresentation, width: number, highlightDay: string | undefined): string {
-  const status = presentation.processed ? "✓" : "○";
-  const line = truncate(`  ${e.day} ${status} ${presentation.listTitle}`, width);
+  const marker = presentation.status === "settled" ? "✓" : presentation.status === "needs-attention" ? "!" : presentation.status === "acted-on" ? "◆" : "○";
+  const line = truncate(`  ${e.day} ${marker} ${presentation.listTitle}`, width);
   return highlightDay && e.day === highlightDay ? `${STRONG}${line}${RESET}` : line;
 }
 
@@ -320,7 +358,8 @@ export function renderMemoryView(
   const rightW = cols - 4 - leftW; // │ + (leftW+1) + │ + rightW + │ = cols
   const bodyRows = rows - 4; // top bar + command bar (2 rows) + bottom border
 
-  const ordered = feedbackInbox(st.entries, st.memFilter);
+  const ordered = feedbackInbox(st.entries, st.memFilter, st.feedbackShowArchived);
+  const feedbackFiltered = (st.memFilter ?? "").replace(/^#+/, "").toLowerCase() === "feedback";
   const left: string[] = [];
   const leftActions: Array<MemAction | undefined> = [];
   if (!st.memLoaded) left.push(`${MUTED}loading memory…${RESET}`);
@@ -334,12 +373,14 @@ export function renderMemoryView(
     left.push("");
     left.push(`${MUTED}nothing below is memory — the store did not answer.${RESET}`);
     left.push(`${MUTED}r retries; verbs will refuse until it is back.${RESET}`);
-  } else if (ordered.length === 0) left.push(`${MUTED}none yet — memory holds no entries${RESET}`);
-  else {
+  } else if (ordered.length === 0) {
+    left.push(`${MUTED}${feedbackFiltered && !st.feedbackShowArchived ? "none active — a shows archived" : "none yet — memory holds no entries"}${RESET}`);
+  } else {
     const budget = pinnedBudget(ordered);
     const budgetNote = budget.over ? ` ${WARN}⚠ pinned ${budget.chars}ch${RESET}` : "";
     const fl = memoryFilterLabel(st.memFilter);
-    left.push(`${sectionTitle(`MEMORY (${ordered.length})`)}${budgetNote}${fl !== "" ? ` ${fl}` : ""}`);
+    const archiveNote = feedbackFiltered ? ` ${MUTED}[a ${st.feedbackShowArchived ? "hide archived" : "show archived"}]${RESET}` : "";
+    left.push(`${sectionTitle(`MEMORY (${ordered.length})`)}${budgetNote}${fl !== "" ? ` ${fl}` : ""}${archiveNote}`);
     leftActions.push(undefined);
     if (st.memWarn) {
       left.push(`${WARN}⚠ ${truncate(sanitizeText(st.memWarn), leftW - 5)}${RESET}`);
@@ -410,9 +451,17 @@ export function renderMemoryView(
       // actionable queue visible instead of letting a long raw entry bury it.
       const detailCap = Math.max(5, bodyRows - 18 - st.proposals.length * 2 - Math.min(4, st.improvements.length));
       const feedback = feedbackPresentation(selected, st.entries);
+      const feedbackState =
+        feedback?.status === "settled"
+          ? "✓ PROCESSED · SETTLED"
+          : feedback?.status === "needs-attention"
+            ? "! PROCESSED · NEEDS ATTENTION"
+            : feedback?.status === "acted-on"
+              ? "◆ ACTED ON · ARCHIVED"
+              : "○ UNPROCESSED — needs review";
       const detailText = feedback
         ? [
-            `${feedback.processed ? "✓ PROCESSED" : "○ UNPROCESSED — needs adjudication"}  episode=${feedback.episode}`,
+            `${feedbackState}  episode=${feedback.episode}`,
             "",
             `TITLE\n${feedback.title}`,
             "",
@@ -543,7 +592,7 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
   /** THE timeline ordering — render (renderMemoryView computes the same
    * expression from st) and every verb below share it, so x/p/e can never
    * address an entry the filter hides. */
-  const orderedNow = (): MemoryEntry[] => feedbackInbox(st.entries, st.memFilter);
+  const orderedNow = (): MemoryEntry[] => feedbackInbox(st.entries, st.memFilter, st.feedbackShowArchived);
 
   const loadTickets = (): void => {
     try {
@@ -984,11 +1033,18 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
           default:
             return true; // memory view swallows stray chars — nothing falls to the board
         }
+      case "attach":
+        // `a` is attach in the digest's awaiting-PR list, but in the feedback
+        // timeline it is the spatially local archive toggle the owner asked for.
+        if ((st.memFilter ?? "").replace(/^#+/, "").toLowerCase() === "feedback") {
+          st.feedbackShowArchived = !st.feedbackShowArchived;
+          st.sel = 0;
+          theApp.repaint();
+        }
+        return true;
       case "enter":
       // Decoded board verbs must not leak through to the board while the
-      // memory view is up (`a` attaching an invisible board selection is one
-      // shift-miss from `A` accept). Tabs, quit, and help still fall through.
-      case "attach":
+      // memory view is up. Tabs, quit, and help still fall through.
       case "message":
       case "detail":
       case "github":

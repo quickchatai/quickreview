@@ -123,6 +123,26 @@ Say what each source says, say what would settle it, and stop.
 
 ## Step 7 — The record
 
+There are three durable receipts, and they mean different things. The feedback
+inbox derives its state from them; writing the wrong one makes work disappear
+or look undone.
+
+### Investigated, but no verdict: needs attention
+
+When totality was attempted but a missing source or genuine ambiguity prevents
+an adjudication, write exactly one reviewer-memory `note` for the exact episode:
+
+```
+#feedback-review #feedback pr=1234 episode=<stable-episode> status=needs-attention reviewed=2026-08-25
+Reason: <what was examined, exactly what is missing or conflicted, and what the owner must decide or supply>
+```
+
+This is NOT an adjudication and never substitutes for one. It changes the inbox
+from `UNPROCESSED` to `PROCESSED · NEEDS ATTENTION`; a later exact
+`#adjudication` supersedes it.
+
+### Reached verdict: settled
+
 **Every adjudication gets a structured memory entry** in the **reviewer**
 namespace, written as a `note` (a machine writer's entry, stored verbatim with
 its own tags — never as `add`, which marks an entry as the owner's own words).
@@ -165,6 +185,25 @@ Writing to reviewer memory is otherwise only done on the owner's explicit ask �
 here, the ask to adjudicate is the ask to record. Say what you wrote. A write
 refused on `expect_hash` means someone else edited that entry: re-read and
 re-decide, never force.
+
+### Actually landed and live: acted on
+
+An adjudication with `Changed: …` stays in the active inbox while the change is
+only proposed, ticketed, committed locally, or waiting to deploy. Archive it
+ONLY after the exact improvement reached its target surface and was verified
+there. Then write one additional reviewer-memory `note` for each exact episode:
+
+```
+#feedback-action #feedback pr=1234 episode=<stable-episode> action=landed acted=2026-08-25
+Result: <commit/ticket outcome and the verification that proves it is live>
+```
+
+That receipt changes the card to `ACTED ON · ARCHIVED` and removes the original
+signal from the active `#feedback` inbox without deleting any record. Never
+mint it for a filed ticket, an unratified diff, a local-only commit, a failed or
+unverified deploy, or an action on a different episode. If one change settles
+several episodes, each episode gets its own exact receipt only after the shared
+change is live.
 
 ## Step 8 — Landing follows the ratifying turn
 
