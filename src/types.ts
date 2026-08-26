@@ -183,6 +183,9 @@ export interface VerdictPassEntry {
   /** Tier/model variant the pass actually ran at (raises included),
    * e.g. "sol-med". Null when the session did not report one. */
   tier?: string | null;
+  /** Required for a pass launched through this round's add protocol; absent
+   * on deterministic planned passes and legacy verdicts. */
+  reason?: string | null;
   /** Candidate findings the pass returned. */
   findings?: number | null;
   /** Validator outcome counts (meaningful on pass-validate): candidates that

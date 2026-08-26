@@ -837,8 +837,14 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // computing it here and again inside buildRoundOrder yields the same
       // tiers; taking the lens list off it keeps the round row and the order
       // from ever disagreeing.
-      const plannedPasses = buildPassPlan(cfg, files, { body: prBody }).pass_plan;
+      const passPolicy = buildPassPlan(cfg, files, { body: prBody });
+      const plannedPasses = passPolicy.pass_plan;
       const lenses = plannedPasses.map((p) => p.lens);
+      const riskPasses = new Set(cfg.models.risk_passes);
+      const addablePasses = passPolicy.addable_lenses.map((lens) => ({
+        lens,
+        tier: riskPasses.has(lens) ? "sol-high" : "sol-med",
+      }));
       const validateTier = plannedPasses.find((p) => p.lens === VALIDATE_PASS)?.tier ?? cfg.models.validate_tier;
 
       // Diffstat comes free off the files list dispatch already fetched — no
@@ -851,6 +857,8 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         ...diffstat,
         trigger_ts: row.trigger_ts,
         validate_tier: validateTier,
+        pass_plan: plannedPasses,
+        addable_passes: addablePasses,
       });
       provisionalRoundId = roundId;
       const roundNo = (store.db.prepare("SELECT round_no FROM rounds WHERE id = ?").get(roundId) as { round_no: number })

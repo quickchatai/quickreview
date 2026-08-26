@@ -582,6 +582,7 @@ The verdict shape:
   "summary": "<3-4 plain sentences for the owner>",
   "passes": [
     { "name": "pass-baseline", "tier": "sol-med", "findings": 3 },
+    { "name": "pass-concurrency", "tier": "sol-med", "reason": "added: read-then-write race in claim ownership", "findings": 1 },
     { "name": "pass-validate", "tier": "sol-med", "findings": 0,
       "survived": 2, "killed": 1, "downgraded": 0,
       "merged": 1, "folded": 1 }
@@ -612,7 +613,10 @@ validator kills, so `killed` alone never understates it. A pass
 that never returned gets NO entry. If no passes ran, write `"passes": []` —
 the empty array is the honest record of a solo round, and it must agree with
 the body's `Lenses applied: none — reviewed solo (degraded round)` line: both
-derive from the same real returns.
+derive from the same real returns. A pass launched through the add protocol
+MUST also carry `reason`: the same one-line concrete reason stated when adding
+it. Planned passes omit `reason`. This structured field is how the daemon
+separates a sanctioned addition from an unexplained plan violation.
 
 `pr` and `round_no` are numbers. `summary` is optional — but always write it: 3-4 plain
 sentences telling the owner what is going on with this PR right now (what the

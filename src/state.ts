@@ -5,7 +5,7 @@ import Database from "better-sqlite3";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { OpenVikingStatus } from "./openviking/types.js";
-import type { VerdictPassEntry } from "./types.js";
+import type { PassPlanEntry, VerdictPassEntry } from "./types.js";
 
 export type PrLifecycleState =
   | "tracked"
@@ -86,6 +86,9 @@ export interface RoundRow {
    * from `lenses`, which is the daemon's PLAN. Null = unknown (round predates
    * the field, or the session ran an older prompt and reported nothing). */
   executed_passes: string | null;
+  /** Exact dispatch-time policy for classifying reasoned added passes. */
+  pass_plan: string | null;
+  addable_passes: string | null;
   /** hardening: when the lost-prompt net FIRST observed this round
    * fully silent (prompt consumed, session alive, no JSONL activity). The net
    * fires only on the SECOND consecutive silent sweep; any non-silent
@@ -748,6 +751,8 @@ export interface RoundStartMeta {
   trigger_ts?: string | null;
   /** The tier the round's validator runs at. */
   validate_tier?: string | null;
+  pass_plan?: PassPlanEntry[];
+  addable_passes?: Array<{ lens: string; tier: string }>;
 }
 
 export class StateStore {
@@ -793,6 +798,9 @@ export class StateStore {
       "ALTER TABLE rounds ADD COLUMN validate_tier TEXT",
       // Executed-pass telemetry — JSON array, nullable, additive.
       "ALTER TABLE rounds ADD COLUMN executed_passes TEXT",
+      // immutable dispatched policy for sanctioned added passes.
+      "ALTER TABLE rounds ADD COLUMN pass_plan TEXT",
+      "ALTER TABLE rounds ADD COLUMN addable_passes TEXT",
       // Trigger provenance — "human" | "system", nullable, additive.
       // Null = legacy/unknown, which dispatch treats as human (full round).
       "ALTER TABLE pr_state ADD COLUMN trigger_provenance TEXT",
@@ -963,8 +971,8 @@ export class StateStore {
     const info = this.db
       .prepare(
         `INSERT INTO rounds (pr, round_no, round_type, lenses, started_at, deadline_at, status,
-                             additions, deletions, changed_files, trigger_ts, validate_tier)
-         VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)`,
+                             additions, deletions, changed_files, trigger_ts, validate_tier, pass_plan, addable_passes)
+         VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         pr,
@@ -978,6 +986,8 @@ export class StateStore {
         meta.changed_files ?? null,
         meta.trigger_ts ?? null,
         meta.validate_tier ?? null,
+        meta.pass_plan ? JSON.stringify(meta.pass_plan) : null,
+        meta.addable_passes ? JSON.stringify(meta.addable_passes) : null,
       );
     return Number(info.lastInsertRowid);
   }
@@ -990,6 +1000,12 @@ export class StateStore {
       if (meta[key] !== undefined) {
         sets.push(`${key} = ?`);
         args.push(meta[key] as number | string | null);
+      }
+    }
+    for (const key of ["pass_plan", "addable_passes"] as const) {
+      if (meta[key] !== undefined) {
+        sets.push(`${key} = ?`);
+        args.push(JSON.stringify(meta[key]));
       }
     }
     if (sets.length === 0) return;

@@ -142,6 +142,7 @@ export function normalizePasses(raw: unknown): { passes?: VerdictPassEntry[]; no
     passes.push({
       name,
       tier: typeof e.tier === "string" && e.tier.trim() ? e.tier.trim() : null,
+      ...(typeof e.reason === "string" && e.reason.trim() ? { reason: e.reason.trim() } : {}),
       findings: count(e.findings) ?? count(e.candidates) ?? count(e.candidate_findings),
       survived: count(e.survived),
       killed: count(e.killed),
@@ -593,35 +594,78 @@ export class VerdictWatcher {
         return;
       }
       store.recordExecutedPasses(round.id, v.passes);
-      const planned = round.lenses ? round.lenses.split(",").filter(Boolean) : [];
       const executed = v.passes.map((p) => p.name);
-      const missing = planned.filter((l) => !executed.includes(l));
-      const added = [...new Set(executed.filter((l) => !planned.includes(l)))];
-      if (missing.length === 0 && added.length === 0) return;
+      const legacyPlanned = round.lenses ? round.lenses.split(",").filter(Boolean) : [];
+      let planned = legacyPlanned;
+      let missing: string[];
+      let unknownAdditions: string[] = [];
+      let missingReason: string[] = [];
+      let wrongTier: string[] = [];
+      let allowedAdditions: Array<{ name: string; tier: string | null; reason: string }> = [];
+
+      if (round.pass_plan && round.addable_passes) {
+        const plan = JSON.parse(round.pass_plan) as Array<{ lens: string; tier: string; raisable_to?: string[] }>;
+        const addable = JSON.parse(round.addable_passes) as Array<{ lens: string; tier: string }>;
+        planned = plan.map((p) => p.lens);
+        missing = planned.filter((lens) => !executed.includes(lens));
+        const byAddable = new Map(addable.map((p) => [p.lens, p]));
+        const byPlan = new Map(plan.map((p) => [p.lens, p]));
+        for (const pass of v.passes) {
+          const plannedPass = byPlan.get(pass.name);
+          if (plannedPass) {
+            const tiers = [plannedPass.tier, ...(plannedPass.raisable_to ?? []).map((agent) => agent.split("--").at(-1)!)];
+            if (!pass.tier || !tiers.includes(pass.tier)) wrongTier.push(pass.name);
+            continue;
+          }
+          const policy = byAddable.get(pass.name);
+          if (!policy) {
+            unknownAdditions.push(pass.name);
+            continue;
+          }
+          if (!pass.tier || pass.tier !== policy.tier) wrongTier.push(pass.name);
+          if (!pass.reason) missingReason.push(pass.name);
+          if (pass.tier === policy.tier && pass.reason) {
+            allowedAdditions.push({ name: pass.name, tier: pass.tier, reason: pass.reason });
+          }
+        }
+      } else {
+        // In-flight/pre-migration rows retain's name-only behavior.
+        missing = planned.filter((lens) => !executed.includes(lens));
+        unknownAdditions = [...new Set(executed.filter((lens) => !planned.includes(lens)))];
+      }
+
+      if (allowedAdditions.length > 0) {
+        store.logEvent("pass_plan_conformant_addition", v.pr, {
+          round_id: round.id, round_no: v.round_no, additions: allowedAdditions,
+        });
+      }
+      const violations = missing.length + unknownAdditions.length + missingReason.length + wrongTier.length;
+      if (violations === 0) return;
       store.logEvent("pass_plan_mismatch", v.pr, {
-        round_id: round.id,
-        round_no: v.round_no,
-        planned,
-        executed,
-        missing,
-        added,
+        round_id: round.id, round_no: v.round_no, planned, executed, missing,
+        added: unknownAdditions,
+        unknown_additions: unknownAdditions, missing_reason: missingReason,
+        wrong_tier: wrongTier, allowed_additions: allowedAdditions,
       });
-      this.log(`verdicts: #${v.pr} round ${v.round_no} pass plan mismatch`, { planned, executed, missing, added });
-      // Durable anomaly row + (WAKE class) the overseer inject, both
-      // through the one logAnomaly funnel.
+      this.log(`verdicts: #${v.pr} round ${v.round_no} pass plan mismatch`, {
+        planned, executed, missing, unknownAdditions, missingReason, wrongTier,
+      });
       store.logAnomaly(
-        "pass_plan_mismatch",
-        v.pr,
-        v.round_no,
-        `plan≠executed — planned [${planned.join(",")}] vs executed [${executed.join(",")}]` +
-          `${missing.length > 0 ? `; missing ${missing.join(",")}` : ""}${added.length > 0 ? `; added ${added.join(",")}` : ""}`,
+        "pass_plan_mismatch", v.pr, v.round_no,
+        `pass policy violated` +
+          `${missing.length ? `; missing ${missing.join(",")}` : ""}` +
+          `${unknownAdditions.length ? `; unknown ${unknownAdditions.join(",")}` : ""}` +
+          `${missingReason.length ? `; no reason ${missingReason.join(",")}` : ""}` +
+          `${wrongTier.length ? `; wrong tier ${wrongTier.join(",")}` : ""}`,
         [
           `PASS-PLAN MISMATCH — PR #${v.pr} round ${v.round_no}`,
           `Planned: ${planned.join(", ") || "(none)"}`,
-          `Executed (session-reported): ${executed.join(", ") || "(none — solo/degraded round)"}`,
-          ...(missing.length > 0 ? [`Missing (planned but never returned): ${missing.join(", ")}`] : []),
-          ...(added.length > 0 ? [`Added beyond the plan: ${added.join(", ")} (sanctioned only via the add protocol, with a stated reason in the summary)`] : []),
-          "The verdict stands — this is telemetry, not a veto. Check the session if planned passes silently never ran (the posted review must not claim them).",
+          `Executed: ${executed.join(", ") || "(none — solo/degraded round)"}`,
+          ...(missing.length ? [`Missing planned passes: ${missing.join(", ")}`] : []),
+          ...(unknownAdditions.length ? [`Not in the dispatched addable set: ${unknownAdditions.join(", ")}`] : []),
+          ...(missingReason.length ? [`Allowed additions missing structured reason: ${missingReason.join(", ")}`] : []),
+          ...(wrongTier.length ? [`Passes at a non-authorized tier: ${wrongTier.join(", ")}`] : []),
+          "The verdict stands — this is telemetry, not a veto.",
         ].join("\n"),
       );
     } catch (err) {

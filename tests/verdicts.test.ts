@@ -80,6 +80,23 @@ function reviewingRound(pr: number): number {
   return store.startRound(pr, "first", ["pass-baseline", "pass-validate"], cfg.daemon.round_deadline_min);
 }
 
+function policyRound(pr: number): number {
+  store.upsertPr({
+    number: pr, state: "reviewing", head_sha: "abc123", title: `PR ${pr}`,
+    author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0,
+  });
+  return store.startRound(pr, "first", ["pass-baseline", "pass-validate"], cfg.daemon.round_deadline_min, {
+    pass_plan: [
+      { lens: "pass-baseline", agent: "pass-baseline--sol-med", tier: "sol-med", raisable_to: ["pass-baseline--sol-high"] },
+      { lens: "pass-validate", agent: "pass-validate--sol-high", tier: "sol-high", raisable_to: [] },
+    ],
+    addable_passes: [
+      { lens: "pass-concurrency", tier: "sol-med" },
+      { lens: "pass-security", tier: "sol-high" },
+    ],
+  });
+}
+
 function write(pr: number, round: number, body: unknown): string {
   const name = `pr-${pr}-round-${round}.json`;
   writeFileSync(join(dir, name), typeof body === "string" ? body : JSON.stringify(body));
@@ -677,6 +694,46 @@ describe("executed-pass telemetry", () => {
     expect(overseer[0]).toContain("PASS-PLAN MISMATCH — PR #201 round 1");
     expect(overseer[0]).toContain("pass-validate");
     expect(overseer[0]).toContain("The verdict stands");
+  });
+
+  it("accepts a reasoned allowlisted addition at its dispatched tier", async () => {
+    const { hooks, overseer } = recordingHooks();
+    policyRound(204);
+    await watcher({}, hooks).handleFile(write(204, 1, verdictFile({
+      pr: 204,
+      passes: [
+        { name: "pass-baseline", tier: "sol-high", findings: 0 },
+        { name: "pass-concurrency", tier: "sol-med", reason: "added: read-then-write claim race", findings: 1 },
+        { name: "pass-validate", tier: "sol-high", findings: 1 },
+      ],
+    })));
+    expect(store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'pass_plan_mismatch'").get()).toMatchObject({ c: 0 });
+    const event = store.db.prepare("SELECT payload FROM events WHERE kind = 'pass_plan_conformant_addition'").get() as { payload: string };
+    expect(JSON.parse(event.payload).additions).toEqual([
+      { name: "pass-concurrency", tier: "sol-med", reason: "added: read-then-write claim race" },
+    ]);
+    expect(overseer).toEqual([]);
+  });
+
+  it("flags unknown, wrong-tier, and unexplained additions under the dispatched policy", async () => {
+    const { hooks } = recordingHooks();
+    policyRound(205);
+    await watcher({}, hooks).handleFile(write(205, 1, verdictFile({
+      pr: 205,
+      passes: [
+        { name: "pass-baseline", tier: "sol-med", findings: 0 },
+        { name: "pass-concurrency", tier: "sol-high", findings: 0 },
+        { name: "pass-mystery", tier: "sol-med", reason: "because", findings: 0 },
+        { name: "pass-validate", tier: "sol-high", findings: 0 },
+      ],
+    })));
+    const event = store.db.prepare("SELECT payload FROM events WHERE kind = 'pass_plan_mismatch'").get() as { payload: string };
+    expect(JSON.parse(event.payload)).toMatchObject({
+      missing: [],
+      unknown_additions: ["pass-mystery"],
+      missing_reason: ["pass-concurrency"],
+      wrong_tier: ["pass-concurrency"],
+    });
   });
 
   it("an empty passes array is a solo round: persisted as [], every planned lens reported missing", async () => {

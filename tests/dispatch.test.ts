@@ -178,6 +178,10 @@ describe("recording at round start", () => {
     const planned = orders[0]!.order.pass_plan.find((p) => p.lens === "pass-validate")!;
     expect(round.validate_tier).toBe(planned.tier);
     expect(round.validate_tier).toBe("sol-high");
+    expect(JSON.parse(round.pass_plan!)).toEqual(orders[0]!.order.pass_plan);
+    const addable = JSON.parse(round.addable_passes!) as Array<{ lens: string; tier: string }>;
+    expect(addable).toContainEqual({ lens: "pass-concurrency", tier: "sol-med" });
+    expect(addable.filter((p) => baseCfg.models.risk_passes.includes(p.lens as never)).every((p) => p.tier === "sol-high")).toBe(true);
     const dispatched = store.recentEvents(50).find((e) => e.kind === "round_dispatched")!;
     expect(JSON.parse(dispatched.payload ?? "{}").validate_tier).toBe("sol-high");
   });
