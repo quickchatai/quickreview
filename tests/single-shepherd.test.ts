@@ -330,24 +330,19 @@ describe("wakeOrHold / flushHeldWakes", () => {
     expect(store.recentEvents(50).some((e) => e.kind === "wake_dropped")).toBe(true);
   });
 
-  it("keeps flushing when one delivery fails", async () => {
+  it("retains a failed oldest wake and retries it before later messages", async () => {
     store.startRound(7, "first", ["pass-baseline"], 75);
     await wakeOrHold(deps(), 7, "a", "author_reply");
     await wakeOrHold(deps(), 7, "b", "author_reply");
-    let calls = 0;
-    const delivered = await flushHeldWakes(
-      {
-        store,
-        inject: async (pr, message) => {
-          calls++;
-          if (calls === 1) throw new Error("session dead");
-          injected.push({ pr, message });
-        },
-      },
+    const failed = await flushHeldWakes(
+      { store, inject: async () => { throw new Error("session dead"); } },
       7,
     );
-    expect(delivered).toBe(1);
-    expect(injected.map((i) => i.message)).toEqual(["b"]);
+    expect(failed).toBe(0);
+    expect(store.heldWakes(7).map((w) => [w.payload, w.attempts])).toEqual([["a", 1], ["b", 0]]);
+
+    expect(await flushHeldWakes(deps(), 7)).toBe(2);
+    expect(injected.map((i) => i.message)).toEqual(["a", "b"]);
     expect(store.heldWakes(7)).toHaveLength(0);
   });
 });

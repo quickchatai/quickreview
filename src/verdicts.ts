@@ -804,7 +804,7 @@ export class VerdictWatcher {
       if (store.getPr(pr)?.state === "closed") {
         // The session is archived — there is nothing to wake. Drop them rather
         // than leave rows nothing will ever read.
-        const dropped = store.takeHeldWakes(pr).length;
+        const dropped = store.dropHeldWakes(pr);
         if (dropped > 0) store.logEvent("wakes_dropped_closed", pr, { dropped });
         continue;
       }

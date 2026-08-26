@@ -523,7 +523,10 @@ CREATE TABLE IF NOT EXISTS pending_wakes (
   pr         INTEGER NOT NULL,
   payload    TEXT NOT NULL,
   reason     TEXT NOT NULL,
-  held_at    TEXT NOT NULL
+  held_at    TEXT NOT NULL,
+  claim_token TEXT,
+  claimed_at TEXT,
+  attempts INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS pending_wakes_pr ON pending_wakes(pr, id);
 -- The reviewed-head mark: one row per PR, the head this system last
@@ -718,6 +721,9 @@ export interface PendingWakeRow {
   payload: string;
   reason: string;
   held_at: string;
+  claim_token: string | null;
+  claimed_at: string | null;
+  attempts: number;
 }
 
 /** Per-PR ceiling on held wakes. A PR whose author writes more than this while
@@ -813,6 +819,10 @@ export class StateStore {
       // Null on every non-cancelled round; the boot migration classifies the
       // historical cancellations from their prose summary once.
       "ALTER TABLE rounds ADD COLUMN cancel_cause TEXT",
+      // held wakes are leased and acked only after delivery.
+      "ALTER TABLE pending_wakes ADD COLUMN claim_token TEXT",
+      "ALTER TABLE pending_wakes ADD COLUMN claimed_at TEXT",
+      "ALTER TABLE pending_wakes ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
     ]) {
       try {
         this.db.exec(ddl);
@@ -1393,15 +1403,37 @@ export class StateStore {
     return this.db.prepare("SELECT * FROM pending_wakes WHERE pr = ? ORDER BY id").all(pr) as PendingWakeRow[];
   }
 
-  /** Take every held wake for a PR, oldest first, removing them atomically so
-   * a concurrent flush cannot deliver the same wake twice. */
-  takeHeldWakes(pr: number): PendingWakeRow[] {
-    const take = this.db.transaction((n: number): PendingWakeRow[] => {
-      const rows = this.db.prepare("SELECT * FROM pending_wakes WHERE pr = ? ORDER BY id").all(n) as PendingWakeRow[];
-      if (rows.length > 0) this.db.prepare("DELETE FROM pending_wakes WHERE pr = ?").run(n);
-      return rows;
+  /** Lease only the oldest held wake. A live lease blocks later rows so
+   * concurrent flushers cannot reorder author messages. */
+  claimNextHeldWake(pr: number, token: string, leaseBefore: string): PendingWakeRow | null {
+    const claim = this.db.transaction((n: number): PendingWakeRow | null => {
+      const row = this.db.prepare("SELECT * FROM pending_wakes WHERE pr = ? ORDER BY id LIMIT 1").get(n) as PendingWakeRow | undefined;
+      if (!row) return null;
+      if (row.claim_token && row.claimed_at && row.claimed_at > leaseBefore) return null;
+      const now = this.now().toISOString();
+      const changed = this.db.prepare(
+        `UPDATE pending_wakes SET claim_token=?, claimed_at=?, attempts=attempts+1
+          WHERE id=? AND (claim_token IS NULL OR claimed_at IS NULL OR claimed_at <= ?)`,
+      ).run(token, now, row.id, leaseBefore).changes;
+      if (changed !== 1) return null;
+      return this.db.prepare("SELECT * FROM pending_wakes WHERE id = ?").get(row.id) as PendingWakeRow;
     });
-    return take(pr);
+    return claim(pr);
+  }
+
+  ackHeldWake(id: number, token: string): boolean {
+    return this.db.prepare("DELETE FROM pending_wakes WHERE id = ? AND claim_token = ?").run(id, token).changes === 1;
+  }
+
+  releaseHeldWake(id: number, token: string): boolean {
+    return this.db.prepare(
+      "UPDATE pending_wakes SET claim_token=NULL, claimed_at=NULL WHERE id = ? AND claim_token = ?",
+    ).run(id, token).changes === 1;
+  }
+
+  /** Explicit destructive cleanup for a closed PR; never use for delivery. */
+  dropHeldWakes(pr: number): number {
+    return this.db.prepare("DELETE FROM pending_wakes WHERE pr = ?").run(pr).changes;
   }
 
   roundsOn(dateIso: string): RoundRow[] {
