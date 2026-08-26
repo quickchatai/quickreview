@@ -725,6 +725,19 @@ export class ThreadDecisionWatcher {
           next_attempt_at: opened.open_until,
         });
       } else {
+        // A half-open probe proved GitHub is answering. Its decision may still
+        // fail for a local/per-thread reason (ownership, auth shape, missing
+        // thread), but that must not leave the installation-wide breaker in
+        // half-open. Close globally and retry only this decision on its bounded
+        // schedule.
+        if (this.deps.ledger.breaker().state === "half_open") {
+          this.deps.ledger.closeBreaker(now);
+          this.deps.store.logEvent("pingpong_breaker_closed", pr, {
+            comment_id: commentId,
+            reason: "non-rate probe failure",
+            error: String(err),
+          });
+        }
         const retryState = this.deps.ledger.recordRetry(commentId, now, String(err));
         if (retryState.terminal) {
           this.quarantineTerminal(name, pr, Number(match[2]), commentId, retryState.attempts);

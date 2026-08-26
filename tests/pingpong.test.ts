@@ -274,6 +274,40 @@ describe("structured thread decision", () => {
     expect(resolveOwnReviewThread).toHaveBeenCalledTimes(2);
   });
 
+  it("closes a half-open global breaker when the probe fails for a non-rate reason", async () => {
+    let now = new Date("2026-08-26T09:00:00Z");
+    const resolveOwnReviewThread = vi.fn()
+      .mockRejectedValueOnce(new Error('graphql errors: [{"code":"graphql_rate_limit"}]'))
+      .mockRejectedValueOnce(new Error("refusing to resolve thread: root author is example-review"))
+      .mockResolvedValue({ skipped: null });
+    const store = { registerBotComment: vi.fn(), logEvent: vi.fn(), logAnomaly: vi.fn() };
+    const watcher = new ThreadDecisionWatcher({
+      adapter: { createReviewCommentReply: vi.fn(), resolveOwnReviewThread, requestEscalationReview: vi.fn() },
+      store, ledger, verdictDir: root, now: () => now,
+    });
+    for (const comment of [6000, 6001, 6002]) {
+      ledger.claimAuthorMessage({ ...event, comment_id: comment });
+      writeFileSync(join(root, `pr-77-thread-4000-comment-${comment}.json`), JSON.stringify({
+        pr: 77, thread_id: 4000, comment_id: comment, resolution: "resolve", reply: "",
+      }));
+    }
+
+    await watcher.sweep();
+    expect(watcher.status().breaker_state).toBe("open");
+    now = new Date("2026-08-26T09:01:01Z");
+    await watcher.sweep();
+
+    expect(watcher.status().breaker_state).toBe("closed");
+    expect(ledger.retry(6001)).toMatchObject({ attempts: 1, terminal: false });
+    expect(store.logEvent).toHaveBeenCalledWith(
+      "pingpong_breaker_closed", 77, expect.objectContaining({ reason: "non-rate probe failure" }),
+    );
+    now = new Date("2026-08-26T09:01:06Z");
+    await watcher.sweep();
+    expect(resolveOwnReviewThread).toHaveBeenCalledTimes(3);
+    watcher.stop();
+  });
+
   it("bounds non-rate retries and preserves an exhausted decision under failed", async () => {
     ledger.claimAuthorMessage(event);
     let now = new Date("2026-08-26T09:00:00Z");
