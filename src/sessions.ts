@@ -155,6 +155,7 @@ export class PiSessionManager implements SessionHooks {
   private readonly piHome: string;
   private readonly ovSessions: OvSessionLifecycle | undefined;
   private readonly now: () => Date;
+  private readonly prSessionBirths = new Map<number, Promise<string>>();
   private injectSeq = 0;
 
   constructor(opts: PiSessionManagerOptions) {
@@ -416,8 +417,21 @@ export class PiSessionManager implements SessionHooks {
     }
   }
 
-  /** Birth on first trigger; a live session is left strictly alone. */
+  /** Birth on first trigger; concurrent callers for one PR share the complete
+   * has→prepare→spawn flight. Unrelated PRs remain independent. */
   async ensurePrSession(pr: number, title: string, worktree: string): Promise<string> {
+    const existing = this.prSessionBirths.get(pr);
+    if (existing) return existing;
+    const birth = this.birthPrSession(pr, title, worktree);
+    this.prSessionBirths.set(pr, birth);
+    try {
+      return await birth;
+    } finally {
+      if (this.prSessionBirths.get(pr) === birth) this.prSessionBirths.delete(pr);
+    }
+  }
+
+  private async birthPrSession(pr: number, title: string, worktree: string): Promise<string> {
     const session = prSessionName(pr);
     if (await this.tmux.hasSession(session)) return session;
     // The PR's raw-notes tier, created BEFORE pi starts so the extension has
@@ -426,11 +440,19 @@ export class PiSessionManager implements SessionHooks {
     await this.ensureOvSession(pr);
     const template = readFileSync(join(this.root, "prompts", "conversation-system.md"), "utf8");
     const body = renderConversationSystemPrompt(template, { pr, title, worktree });
-    await this.spawnSession(session, body, this.cfg.models.conversation, {
-      QCR_PR: String(pr),
-      QCR_PR_META: `PR #${pr} — ${title} (worktree ${worktree})`,
-      QCR_WORKTREE: worktree,
-    });
+    try {
+      await this.spawnSession(session, body, this.cfg.models.conversation, {
+        QCR_PR: String(pr),
+        QCR_PR_META: `PR #${pr} — ${title} (worktree ${worktree})`,
+        QCR_WORKTREE: worktree,
+      });
+    } catch (err) {
+      // A creator outside this manager instance may win after our first check.
+      // Adopt only when exact tmux state proves that winner exists; otherwise
+      // preserve the original failure.
+      if (await this.tmux.hasSession(session)) return session;
+      throw err;
+    }
     return session;
   }
 

@@ -213,6 +213,17 @@ describe("birth", () => {
     expect(existsSync(join(m.injectDir("pr-42"), ".done"))).toBe(true);
   });
 
+  it("single-flights concurrent births for the same PR", async () => {
+    const m = manager();
+    const [a, b] = await Promise.all([
+      m.ensurePrSession(42, "T", "wt/pr-42"),
+      m.ensurePrSession(42, "T", "wt/pr-42"),
+    ]);
+    expect([a, b]).toEqual(["pr-42", "pr-42"]);
+    expect(tmuxArgs().filter((args) => args[0] === "new-session")).toHaveLength(1);
+    expect(ovCalls.filter((call) => call === "create pr-42")).toHaveLength(1);
+  });
+
   it("does not respawn a session that is already live", async () => {
     const m = manager();
     liveSessions.add("pr-42");
