@@ -676,7 +676,16 @@ export class GitHubAdapter {
     } while (after);
 
     if (!found) throw new Error(`comment ${rootCommentId} is not a review-thread root on #${n}`);
-    if (found.author !== this.cfg.github.bot_login) {
+    // GitHub exposes the same App actor with two spellings: review-author
+    // filters use the `[bot]` login, while review-thread GraphQL actors use the
+    // bare App slug. Both values are independently configured; recognize
+    // exactly that pair here and nowhere else. Every unrelated identity stays
+    // structurally refused.
+    const bareAppActor = this.cfg.github.bot_login === `${this.cfg.github.app_slug}[bot]`
+      ? this.cfg.github.app_slug
+      : undefined;
+    const ownActors = new Set([this.cfg.github.bot_login, bareAppActor].filter((v): v is string => v !== undefined));
+    if (!ownActors.has(found.author)) {
       throw new Error(`refusing to resolve thread ${rootCommentId} on #${n}: root author is ${found.author || "unknown"}`);
     }
     // addendum (the owner, 2026-08-19): a "[check this]" thread exists to

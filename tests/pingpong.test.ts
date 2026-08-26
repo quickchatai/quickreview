@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import Database from "better-sqlite3";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -333,6 +333,50 @@ describe("structured thread decision", () => {
     );
     expect(watcher.retryFailed(5001)).toMatchObject({ ok: true, file: name });
     expect(watcher.status()).toMatchObject({ pending: 1, failed: 0 });
+    watcher.stop();
+  });
+
+  it("restores only exhausted App-alias decisions without reposting their reply", async () => {
+    const h = harness();
+    const failed = join(root, "failed");
+    mkdirSync(failed);
+    for (const [comment, owner] of [[5001, "example-review"], [5002, "alice"]] as const) {
+      ledger.claimAuthorMessage({ ...event, comment_id: comment });
+      const name = `pr-77-thread-4000-comment-${comment}.json`;
+      writeFileSync(join(failed, name), JSON.stringify({ pr: 77, thread_id: 4000, comment_id: comment, resolution: "resolve", reply: "Already posted." }));
+      ledger.markDecisionStep(comment, "reply_posted");
+      for (let attempt = 0; attempt < 3; attempt++) {
+        ledger.recordRetry(comment, new Date(`2026-08-26T09:0${attempt}:00Z`), `Error: refusing to resolve thread 4000 on #77: root author is ${owner}`);
+      }
+    }
+
+    expect(h.watcher.recoverOwnerAliasFailures("example-review")).toEqual({ restored: 1, refused: 0 });
+    expect(h.watcher.status()).toMatchObject({ pending: 1, failed: 1 });
+    expect(ledger.retry(5001)).toMatchObject({ attempts: 0, terminal: false });
+    expect(ledger.retry(5002)).toMatchObject({ attempts: 3, terminal: true });
+    expect(await h.watcher.handleFile("pr-77-thread-4000-comment-5001.json")).toBe(true);
+    expect(h.createReviewCommentReply).not.toHaveBeenCalled();
+    expect(h.resolveOwnReviewThread).toHaveBeenCalledTimes(1);
+    h.watcher.stop();
+  });
+
+  it("converges an interrupted alias replay in one startup", () => {
+    const comment = 5001;
+    ledger.claimAuthorMessage({ ...event, comment_id: comment });
+    const name = "pr-77-thread-4000-comment-5001.json";
+    writeFileSync(join(root, name), JSON.stringify({ pr: 77, thread_id: 4000, comment_id: comment, resolution: "resolve", reply: "" }));
+    for (let attempt = 0; attempt < 3; attempt++) {
+      ledger.recordRetry(comment, new Date(`2026-08-26T09:0${attempt}:00Z`), "Error: refusing to resolve thread 4000 on #77: root author is example-review");
+    }
+    const store = { registerBotComment: vi.fn(), logEvent: vi.fn(), logAnomaly: vi.fn() };
+    const watcher = new ThreadDecisionWatcher({
+      adapter: { createReviewCommentReply: vi.fn(), resolveOwnReviewThread: vi.fn(), requestEscalationReview: vi.fn() },
+      store, ledger, verdictDir: root, ownerActorAlias: "example-review",
+    });
+
+    watcher.start();
+    expect(watcher.status()).toMatchObject({ pending: 1, failed: 0 });
+    expect(ledger.retry(comment)).toMatchObject({ attempts: 0, terminal: false });
     watcher.stop();
   });
 

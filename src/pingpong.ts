@@ -189,12 +189,16 @@ export class PingPongLedger {
     ).run(now.toISOString());
   }
 
-  retry(commentId: number): { attempts: number; next_attempt_at?: string; terminal: boolean } {
+  retry(commentId: number): { attempts: number; next_attempt_at?: string; last_error?: string; terminal: boolean } {
     const row = this.db.prepare(
-      "SELECT attempts, next_attempt_at, terminal FROM pingpong_decision_retries WHERE comment_id = ?",
-    ).get(commentId) as { attempts: number; next_attempt_at: string | null; terminal: number } | undefined;
-    return row ? { attempts: row.attempts, ...(row.next_attempt_at ? { next_attempt_at: row.next_attempt_at } : {}), terminal: row.terminal === 1 }
-      : { attempts: 0, terminal: false };
+      "SELECT attempts, next_attempt_at, last_error, terminal FROM pingpong_decision_retries WHERE comment_id = ?",
+    ).get(commentId) as { attempts: number; next_attempt_at: string | null; last_error: string | null; terminal: number } | undefined;
+    return row ? {
+      attempts: row.attempts,
+      ...(row.next_attempt_at ? { next_attempt_at: row.next_attempt_at } : {}),
+      ...(row.last_error ? { last_error: row.last_error } : {}),
+      terminal: row.terminal === 1,
+    } : { attempts: 0, terminal: false };
   }
 
   recordRetry(commentId: number, now: Date, error: string): { attempts: number; next_attempt_at?: string; terminal: boolean } {
@@ -428,6 +432,8 @@ export interface ThreadDecisionDeps extends ReplyDeps {
   onHumanRequested?: (decision: ThreadDecision) => void | Promise<void>;
   now?: () => Date;
   isDraining?: () => boolean;
+  /** Bare GitHub App actor spelling used by review-thread GraphQL roots. */
+  ownerActorAlias?: string;
   log?: (message: string, extra?: unknown) => void;
   /** A session writes JSON in place, so fs.watch can fire before its final
    * byte. An unchanged invalid body is only condemned after this delay. */
@@ -455,6 +461,62 @@ export class ThreadDecisionWatcher {
   constructor(private readonly deps: ThreadDecisionDeps) {
     this.processedDir = join(deps.verdictDir, "processed");
     this.failedDir = join(deps.verdictDir, "failed");
+  }
+
+  private recoverInterruptedReplays(): void {
+    if (!existsSync(this.deps.verdictDir)) return;
+    for (const name of readdirSync(this.deps.verdictDir).filter((entry) => THREAD_DECISION_RE.test(entry))) {
+      const match = THREAD_DECISION_RE.exec(name)!;
+      const retry = this.deps.ledger.retry(Number(match[3]));
+      if (retry.terminal) {
+        this.quarantineTerminal(name, Number(match[1]), Number(match[2]), Number(match[3]), retry.attempts);
+      }
+    }
+  }
+
+  recoverOwnerAliasFailures(alias: string): { restored: number; refused: number } {
+    if (!alias || !existsSync(this.failedDir)) return { restored: 0, refused: 0 };
+    let restored = 0;
+    let refused = 0;
+    for (const name of readdirSync(this.failedDir).filter((entry) => THREAD_DECISION_RE.test(entry)).sort()) {
+      try {
+        const match = THREAD_DECISION_RE.exec(name)!;
+        const pr = Number(match[1]);
+        const threadId = Number(match[2]);
+        const commentId = Number(match[3]);
+        const retry = this.deps.ledger.retry(commentId);
+        const expected = `Error: refusing to resolve thread ${threadId} on #${pr}: root author is ${alias}`;
+        if (!retry.terminal || retry.last_error !== expected) continue;
+        const parsed = validateThreadDecision(JSON.parse(readFileSync(join(this.failedDir, name), "utf8")));
+        if (!parsed.ok || parsed.value.pr !== pr || parsed.value.thread_id !== threadId ||
+            parsed.value.comment_id !== commentId || !this.deps.ledger.hasClaim(pr, threadId, commentId)) {
+          refused += 1;
+          continue;
+        }
+        const destination = join(this.deps.verdictDir, name);
+        if (existsSync(destination)) {
+          refused += 1;
+          continue;
+        }
+        // Same crash-recoverable ordering as explicit replay: terminal metadata
+        // remains until after the move, so startup can put an interrupted move
+        // back under failed/ rather than processing it ambiguously.
+        renameSync(join(this.failedDir, name), destination);
+        this.deps.ledger.resetRetry(commentId);
+        this.deps.store.logEvent("pingpong_owner_alias_failure_restored", pr, {
+          file: name, thread_id: threadId, comment_id: commentId, alias,
+        });
+        restored += 1;
+      } catch (err) {
+        refused += 1;
+        this.deps.log?.(`pingpong: could not restore owner-alias failure ${name}`, err);
+      }
+    }
+    if (restored > 0) {
+      this.deps.store.logEvent("pingpong_owner_alias_backlog_restored", null, { alias, restored, refused });
+      this.requestSweep();
+    }
+    return { restored, refused };
   }
 
   retryFailed(commentId: number): { ok: boolean; reason?: string; file?: string } {
@@ -500,6 +562,13 @@ export class ThreadDecisionWatcher {
 
   start(): void {
     mkdirSync(this.deps.verdictDir, { recursive: true });
+    // Complete either side of an interrupted failed→pending recovery before
+    // applying the one-time alias migration. A terminal row beside a pending
+    // file means the prior process died after moving the file but before
+    // clearing metadata; put it back under failed/ so this same startup can
+    // reconsider it.
+    this.recoverInterruptedReplays();
+    if (this.deps.ownerActorAlias) this.recoverOwnerAliasFailures(this.deps.ownerActorAlias);
     this.requestSweep();
     this.watcher = watch(this.deps.verdictDir, (_event, filename) => {
       const name = filename ? String(filename) : "";

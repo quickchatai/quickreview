@@ -48,11 +48,12 @@ afterEach(() => {
   rmSync(dryrunDir, { recursive: true, force: true });
 });
 
-function build(handler: (url: string, init: RequestInit) => unknown, dryRun = true) {
+function build(handler: (url: string, init: RequestInit) => unknown, dryRun = true, githubOverride: Partial<Config["github"]> = {}) {
   const rec = recorder(handler);
   let adapter!: GitHubAdapter;
   const gate = new MutationGate(dryRun, dryrunDir, (intent) => adapter.executeMutation(intent));
-  adapter = new GitHubAdapter(cfg, minter, gate, rec.fetchFn, "https://api.github.com");
+  const adapterCfg: Config = { ...cfg, github: { ...cfg.github, ...githubOverride } };
+  adapter = new GitHubAdapter(adapterCfg, minter, gate, rec.fetchFn, "https://api.github.com");
   return { adapter, calls: rec.calls };
 }
 
@@ -246,6 +247,18 @@ describe("resolveOwnReviewThread ownership gate", () => {
       pr: 3,
       body: { variables: { threadId: "PRRT_node" } },
     });
+  });
+
+  it("accepts the configured bare App actor spelling for the same bot-owned root", async () => {
+    const { adapter } = build(() => threadPayload(cfg.github.app_slug));
+    expect((await adapter.resolveOwnReviewThread(3, 555)).skipped).toBeNull();
+    expect(dryrunRecords()[0]).toMatchObject({ kind: "resolve_own_review_thread", pr: 3 });
+  });
+
+  it("does not trust an independently drifted app_slug as an owner alias", async () => {
+    const drifted = build(() => threadPayload("alice"), true, { app_slug: "alice" });
+    await expect(drifted.adapter.resolveOwnReviewThread(3, 555)).rejects.toThrow("root author is alice");
+    expect(dryrunRecords()).toHaveLength(0);
   });
 
   it("refuses another identity's thread and skips an already-resolved own thread", async () => {

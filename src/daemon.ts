@@ -194,6 +194,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     verdictDir,
     log,
     isDraining: () => store.drainState().draining,
+    ownerActorAlias: cfg.github.bot_login === `${cfg.github.app_slug}[bot]` ? cfg.github.app_slug : undefined,
     // The author asked for a person. Park the PR locally — no reviewer is
     // requested on GitHub (escalation mechanics scrapped 2026-08-18).
     onHumanRequested: async (decision) => {
