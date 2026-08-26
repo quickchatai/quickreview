@@ -39,6 +39,7 @@ const CANDIDATE_FIELDS = [
   "thread",
   "text",
   "on",
+  "comment_id",
   "channel",
   "__control_never_valid__",
 ] as const;

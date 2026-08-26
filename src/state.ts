@@ -2358,6 +2358,13 @@ export interface StatusSnapshot {
   draining?: boolean;
   drained_deliveries?: number;
   draining_since?: string;
+  /** watcher-global breaker and durable backlog health. */
+  thread_decisions?: {
+    breaker_state: "closed" | "open" | "half_open";
+    open_until?: string;
+    pending: number;
+    failed: number;
+  };
   heartbeat: string;
 }
 
@@ -2378,6 +2385,7 @@ export function buildStatusSnapshot(
   maxConcurrentRounds?: number,
   piAuth?: { last_at: string; hits: number },
   openviking?: OpenVikingStatus,
+  threadDecisions?: StatusSnapshot["thread_decisions"],
 ): StatusSnapshot {
   const today = now().toISOString().slice(0, 10);
   const drain = store.drainState();
@@ -2412,6 +2420,7 @@ export function buildStatusSnapshot(
     ...(digestHeadline ? { digest_headline: digestHeadline } : {}),
     ...(piAuth ? { pi_auth_expired: piAuth } : {}),
     ...(openviking ? { openviking } : {}),
+    ...(threadDecisions ? { thread_decisions: threadDecisions } : {}),
     ...(drain.draining
       ? {
           draining: true,

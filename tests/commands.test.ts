@@ -23,6 +23,7 @@ function makeDeps() {
     flagOwnerLegacy: vi.fn(async () => undefined),
     fileImprovementPr: vi.fn(async () => ({ ok: true, branch: "bot/improve-x" })),
     fileIssue: vi.fn(async () => ({ ok: true, issue: 7 })),
+    retryThreadDecision: vi.fn(async () => ({ ok: true, file: "x.json" })),
   };
 }
 
@@ -40,12 +41,13 @@ describe("validateCommand — whitelist", () => {
       { command: "slack_reply", thread: "1712345678.123456", text: "on it" },
       { command: "drain", on: true },
       { command: "drain", on: false },
+      { command: "retry-thread-decision", comment_id: 3856996601 },
     ];
     for (const v of valid) {
       const res = validateCommand(v);
       expect(res.ok, JSON.stringify(v)).toBe(true);
     }
-    expect(COMMAND_WHITELIST).toHaveLength(9); // 8 after mark-escalation-worthy retired, +1 drain (2026-08-25)
+    expect(COMMAND_WHITELIST).toHaveLength(10); // + drain and bounded thread-decision replay
   });
 
   it("slack_reply: strict shape, ts format, and no channel field", () => {
@@ -90,6 +92,8 @@ describe("validateCommand — whitelist", () => {
     expect(validateCommand({ command: "resume-pr", pr: 1, reason: "x" }).ok).toBe(false); // unknown field
     expect(validateCommand({ command: "flag-owner-legacy", reason: "wrong field name" }).ok).toBe(false);
     expect(validateCommand({ command: "file-improvement-pr", branch: "b", title: "t", body: "y", slug: "Bad Slug" }).ok).toBe(false);
+    expect(validateCommand({ command: "retry-thread-decision", comment_id: "5001" }).ok).toBe(false);
+    expect(validateCommand({ command: "retry-thread-decision", comment_id: 5001, force: true }).ok).toBe(false);
     expect(validateCommand("nope").ok).toBe(false);
     // The overseer's frozen system prompt still advertises the retired
     // command, so the rejection must say WHY, not just "unknown".
@@ -128,6 +132,8 @@ describe("executeCommand", () => {
       { file: "c9" },
     );
     expect(deps.slackReply).toHaveBeenCalledWith({ thread: "1712345678.123456", text: "on it", file: "c9" });
+    await executeCommand({ command: "retry-thread-decision", comment_id: 5001 }, deps);
+    expect(deps.retryThreadDecision).toHaveBeenCalledWith(5001);
   });
 
   it("rejects slack_reply when Slack is not wired", async () => {

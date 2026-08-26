@@ -164,8 +164,12 @@ function barSegments(view: BoardView, alerts: boolean): string[] {
   const drainSeg = s?.draining
     ? `${FG.anomaly}⛔ DRAINING — ${s.running_rounds} round${s.running_rounds === 1 ? "" : "s"} finishing · ${s.drained_deliveries ?? 0} dropped${RESET}`
     : "";
+  const td = s?.thread_decisions;
+  const breakerSeg = td && (td.breaker_state !== "closed" || td.failed > 0)
+    ? `${FG.anomaly}⛔ THREAD RETRY ${td.breaker_state.toUpperCase()}${td.open_until ? ` until ${td.open_until.slice(11, 19)}Z` : ""} · ${td.pending} pending · ${td.failed} failed${RESET}`
+    : "";
   const badge = alerts && view.alerts ? alertSegment(view.alerts, view.alertFocus === true) : "";
-  return [`${HEADING}quickreview${DRESET}`, mode, health, drainSeg, rounds, spend, badge].filter((x) => x !== "");
+  return [`${HEADING}quickreview${DRESET}`, mode, health, drainSeg, breakerSeg, rounds, spend, badge].filter((x) => x !== "");
 }
 
 export function topBar(view: BoardView, cols: number): string {

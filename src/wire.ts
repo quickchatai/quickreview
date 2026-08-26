@@ -638,6 +638,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         // in-flight rounds finish naturally. OFF is the manual lift; the
         // automatic one is the next boot's first healthy reconcile pass
         // (daemon.ts). Never touches GitHub, never goes near the gate.
+        retryThreadDecision(commentId) {
+          return d.retryThreadDecision(commentId);
+        },
         async drain(on) {
           const res = d.store.setDraining(on);
           if (on) {
@@ -645,6 +648,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
             return { ok: true, draining: true, running_rounds: d.store.runningRounds().length };
           }
           if (res.changed) d.store.logEvent("drain_off", null, { dropped_deliveries: res.dropped });
+          d.wakeThreadDecisions();
           await d.pump();
           return { ok: true, draining: false, dropped_deliveries: res.dropped };
         },

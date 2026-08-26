@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildWakeMessage,
+  classifyThreadDecisionError,
   MAX_EXCHANGES_PER_FINDING,
   PingPongLedger,
   postReply,
@@ -228,17 +229,95 @@ describe("structured thread decision", () => {
 
   it("does not duplicate the reply when thread resolution retries", async () => {
     ledger.claimAuthorMessage(event);
-    const h = harness();
-    h.resolveOwnReviewThread.mockRejectedValueOnce(new Error("graphql timeout")).mockResolvedValueOnce({ skipped: null });
+    let now = new Date("2026-08-26T09:00:00Z");
+    const createReviewCommentReply = vi.fn().mockResolvedValue({ executed: true, response: { id: 6001 } });
+    const resolveOwnReviewThread = vi.fn().mockRejectedValueOnce(new Error("graphql timeout")).mockResolvedValueOnce({ skipped: null });
+    const store = { registerBotComment: vi.fn(), logEvent: vi.fn(), logAnomaly: vi.fn() };
+    const watcher = new ThreadDecisionWatcher({
+      adapter: { createReviewCommentReply, resolveOwnReviewThread, requestEscalationReview: vi.fn() },
+      store, ledger, verdictDir: root, now: () => now,
+    });
     const name = "pr-77-thread-4000-comment-5001.json";
     writeFileSync(join(root, name), JSON.stringify({
       pr: 77, thread_id: 4000, comment_id: 5001, resolution: "resolve", reply: "That addresses it.",
     }));
 
-    expect(await h.watcher.handleFile(name)).toBe(false);
-    expect(await h.watcher.handleFile(name)).toBe(true);
-    expect(h.createReviewCommentReply).toHaveBeenCalledTimes(1);
-    expect(h.resolveOwnReviewThread).toHaveBeenCalledTimes(2);
+    expect(await watcher.handleFile(name)).toBe(false);
+    now = new Date("2026-08-26T09:00:31Z");
+    expect(await watcher.handleFile(name)).toBe(true);
+    expect(createReviewCommentReply).toHaveBeenCalledTimes(1);
+    expect(resolveOwnReviewThread).toHaveBeenCalledTimes(2);
+  });
+
+  it("opens one global breaker on rate limit and preserves every later decision", async () => {
+    let now = new Date("2026-08-26T09:00:00Z");
+    const resolveOwnReviewThread = vi.fn().mockRejectedValue(new Error('graphql errors: [{"code":"graphql_rate_limit"}]'));
+    const store = { registerBotComment: vi.fn(), logEvent: vi.fn(), logAnomaly: vi.fn() };
+    const watcher = new ThreadDecisionWatcher({
+      adapter: { createReviewCommentReply: vi.fn(), resolveOwnReviewThread, requestEscalationReview: vi.fn() },
+      store, ledger, verdictDir: root, now: () => now,
+    });
+    for (let i = 0; i < 44; i++) {
+      const comment = 6000 + i;
+      ledger.claimAuthorMessage({ ...event, comment_id: comment });
+      writeFileSync(join(root, `pr-77-thread-4000-comment-${comment}.json`), JSON.stringify({
+        pr: 77, thread_id: 4000, comment_id: comment, resolution: "resolve", reply: "",
+      }));
+    }
+
+    await watcher.sweep();
+    await watcher.sweep();
+    expect(resolveOwnReviewThread).toHaveBeenCalledTimes(1);
+    expect(watcher.status()).toMatchObject({ breaker_state: "open", pending: 44, failed: 0 });
+    now = new Date("2026-08-26T09:01:01Z");
+    await watcher.sweep();
+    expect(resolveOwnReviewThread).toHaveBeenCalledTimes(2);
+  });
+
+  it("bounds non-rate retries and preserves an exhausted decision under failed", async () => {
+    ledger.claimAuthorMessage(event);
+    let now = new Date("2026-08-26T09:00:00Z");
+    const resolveOwnReviewThread = vi.fn().mockRejectedValue(new Error("graphql timeout"));
+    const store = { registerBotComment: vi.fn(), logEvent: vi.fn(), logAnomaly: vi.fn() };
+    const watcher = new ThreadDecisionWatcher({
+      adapter: { createReviewCommentReply: vi.fn(), resolveOwnReviewThread, requestEscalationReview: vi.fn() },
+      store, ledger, verdictDir: root, now: () => now,
+    });
+    const name = "pr-77-thread-4000-comment-5001.json";
+    writeFileSync(join(root, name), JSON.stringify({ pr: 77, thread_id: 4000, comment_id: 5001, resolution: "resolve", reply: "" }));
+
+    expect(await watcher.handleFile(name)).toBe(false);
+    now = new Date("2026-08-26T09:00:31Z");
+    expect(await watcher.handleFile(name)).toBe(false);
+    now = new Date("2026-08-26T09:02:32Z");
+    expect(await watcher.handleFile(name)).toBe(false);
+
+    expect(resolveOwnReviewThread).toHaveBeenCalledTimes(3);
+    expect(watcher.status()).toMatchObject({ pending: 0, failed: 1 });
+    expect(store.logAnomaly).toHaveBeenCalledWith(
+      "pingpong_decision_retry_exhausted", 77, null, expect.stringContaining("comment 5001"), expect.any(String),
+    );
+    expect(watcher.retryFailed(5001)).toMatchObject({ ok: true, file: name });
+    expect(watcher.status()).toMatchObject({ pending: 1, failed: 0 });
+    watcher.stop();
+  });
+
+  it("pauses pending decisions during deployment drain", async () => {
+    ledger.claimAuthorMessage(event);
+    let draining = true;
+    const h = harness();
+    const watcher = new ThreadDecisionWatcher({
+      adapter: { createReviewCommentReply: h.createReviewCommentReply, resolveOwnReviewThread: h.resolveOwnReviewThread, requestEscalationReview: vi.fn() },
+      store: h.store, ledger, verdictDir: root, isDraining: () => draining,
+    });
+    const name = "pr-77-thread-4000-comment-5001.json";
+    writeFileSync(join(root, name), JSON.stringify({ pr: 77, thread_id: 4000, comment_id: 5001, resolution: "resolve", reply: "" }));
+
+    await watcher.sweep();
+    expect(h.resolveOwnReviewThread).not.toHaveBeenCalled();
+    draining = false;
+    await watcher.sweep();
+    expect(h.resolveOwnReviewThread).toHaveBeenCalledTimes(1);
   });
 
   it("rejects a session file that does not match a claimed author message", async () => {
@@ -251,6 +330,19 @@ describe("structured thread decision", () => {
     expect(h.createReviewCommentReply).not.toHaveBeenCalled();
     expect(h.resolveOwnReviewThread).not.toHaveBeenCalled();
     expect(h.store.logEvent).toHaveBeenCalledWith("pingpong_decision_rejected", 77, expect.any(Object));
+  });
+});
+
+describe("thread decision failure classification", () => {
+  it.each([
+    ["graphql → 429", "rate_limit"],
+    ['graphql errors: [{"type":"RATE_LIMIT","code":"graphql_rate_limit"}]', "rate_limit"],
+    ["github → 403: secondary rate limit", "rate_limit"],
+    ["github → 403: forbidden", "non_rate"],
+    ["comment 429 no longer exists", "non_rate"],
+    ["graphql timeout", "non_rate"],
+  ] as const)("classifies %s", (message, expected) => {
+    expect(classifyThreadDecisionError(new Error(message))).toBe(expected);
   });
 });
 

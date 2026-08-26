@@ -167,6 +167,11 @@ rejected and logged loudly.
   hold, and in-flight rounds finish naturally — used before a deploy so
   `running_rounds` converges to 0. `false` lifts it; the daemon also lifts it
   itself on a rebooted container's first healthy reconcile pass.
+- `retry-thread-decision {comment_id}` — owner-tier recovery for one
+  ping-pong decision that exhausted its bounded retries. `comment_id` is the
+  positive integer named by the exhaustion anomaly. The command restores the
+  preserved file to the ordinary globally-paced watcher; it never calls
+  GitHub itself and cannot bypass thread ownership or mutation guards.
 
 ### Drift corrections vs the seeded prompt
 

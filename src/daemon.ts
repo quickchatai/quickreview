@@ -124,6 +124,8 @@ export interface Daemon {
   stop(): Promise<void>;
   reconcile(): Promise<void>;
   pump(): Promise<void>;
+  wakeThreadDecisions(): void;
+  retryThreadDecision(commentId: number): { ok: boolean; reason?: string; file?: string };
   readonly store: StateStore;
   readonly cfg: Config;
 }
@@ -191,6 +193,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     ledger: pingpong,
     verdictDir,
     log,
+    isDraining: () => store.drainState().draining,
     // The author asked for a person. Park the PR locally — no reviewer is
     // requested on GitHub (escalation mechanics scrapped 2026-08-18).
     onHumanRequested: async (decision) => {
@@ -388,6 +391,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         const { dropped } = store.setDraining(false);
         store.logEvent("drain_lifted", null, { dropped_deliveries: dropped });
         log(`drain_lifted — first reconcile pass healthy; ${dropped} webhook delivery(ies) were dropped while draining`);
+        threadDecisions.requestSweep();
       }
       await pump();
     });
@@ -462,6 +466,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
           cfg.daemon.max_concurrent_rounds,
           piAuthWatch?.status(),
           openviking,
+          threadDecisions.status(),
         ),
       );
     } catch (err) {
@@ -480,6 +485,8 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     cfg,
     reconcile,
     pump,
+    wakeThreadDecisions: () => threadDecisions.requestSweep(),
+    retryThreadDecision: (commentId) => threadDecisions.retryFailed(commentId),
 
     async start(): Promise<void> {
       log(`starting — ${cfg.dry_run ? "DRY-RUN" : "LIVE"} — repo ${cfg.github.repo}`);

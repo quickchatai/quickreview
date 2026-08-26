@@ -22,7 +22,8 @@ export type CommandName =
   | "file-improvement-pr"
   | "file-issue"
   | "slack_reply"
-  | "drain";
+  | "drain"
+  | "retry-thread-decision";
 
 export const COMMAND_WHITELIST: readonly CommandName[] = [
   "rerun-round",
@@ -34,6 +35,7 @@ export const COMMAND_WHITELIST: readonly CommandName[] = [
   "file-issue",
   "slack_reply",
   "drain",
+  "retry-thread-decision",
 ] as const;
 
 export type Command =
@@ -48,7 +50,8 @@ export type Command =
   /** Deploy-window drain (2026-08-25): the valve the TUI unwedge precedent
    * carries — a hard webhook stop + dispatch/recheck/ping-pong/EOD hold while
    * in-flight rounds finish naturally. */
-  | { command: "drain"; on: boolean };
+  | { command: "drain"; on: boolean }
+  | { command: "retry-thread-decision"; comment_id: number };
 
 /** Context a command file carries with it (its own name, for idempotence). */
 export interface CommandContext {
@@ -68,6 +71,7 @@ export interface CommandDeps {
   /** Deploy-window drain valve. Optional like `slackReply`: a daemon wired
    * without it rejects the command with a reason instead of pretending. */
   drain?(on: boolean): Promise<FileOutcome | void> | FileOutcome | void;
+  retryThreadDecision?(commentId: number): Promise<FileOutcome | void> | FileOutcome | void;
   /** Optional: absent when Slack is disabled, in which case `slack_reply` is
    * rejected with a reason instead of silently succeeding. */
   slackReply?(
@@ -86,6 +90,10 @@ function fieldError(obj: Record<string, unknown>, allowed: string[]): string | n
 
 function isPrNumber(v: unknown): v is number {
   return typeof v === "number" && Number.isInteger(v) && v > 0;
+}
+
+function isGitHubId(v: unknown): v is number {
+  return typeof v === "number" && Number.isSafeInteger(v) && v > 0;
 }
 
 function isNonEmptyString(v: unknown): v is string {
@@ -205,6 +213,12 @@ export function validateCommand(raw: unknown): ValidationResult {
       }
       return { ok: true, command: { command: "drain", on: obj["on"] } };
     }
+    case "retry-thread-decision": {
+      const err = fieldError(obj, ["comment_id"]);
+      if (err) return { ok: false, reason: err };
+      if (!isGitHubId(obj["comment_id"])) return { ok: false, reason: "'comment_id' must be a positive safe integer" };
+      return { ok: true, command: { command: "retry-thread-decision", comment_id: obj["comment_id"] } };
+    }
     case "slack_reply": {
       const err = fieldError(obj, ["thread", "text"]);
       if (err) return { ok: false, reason: err };
@@ -257,6 +271,7 @@ const TIER_TABLE: Record<CommandName, { anyone: boolean; author: "own" | boolean
   // Deploy-window drain: an OPERATOR lever (same standing as restart-session)
   // — it stops the whole board, so it is never author-reachable.
   drain: { anyone: false, author: false, owner_legacy: true },
+  "retry-thread-decision": { anyone: false, author: false, owner_legacy: true },
 };
 
 /** Target PR of a command, when it has one. */
@@ -352,6 +367,10 @@ export async function executeCommand(
     case "drain": {
       if (!deps.drain) return { ok: false, reason: "drain is not wired on this daemon" };
       return normalize(await deps.drain(command.on));
+    }
+    case "retry-thread-decision": {
+      if (!deps.retryThreadDecision) return { ok: false, reason: "retry-thread-decision is not wired on this daemon" };
+      return normalize(await deps.retryThreadDecision(command.comment_id));
     }
   }
 }

@@ -56,6 +56,23 @@ CREATE TABLE IF NOT EXISTS pingpong_decisions (
   thread_resolved INTEGER NOT NULL DEFAULT 0,
   updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS pingpong_decision_retries (
+  comment_id INTEGER PRIMARY KEY,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TEXT,
+  last_error TEXT,
+  terminal INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS pingpong_decision_breaker (
+  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+  state TEXT NOT NULL CHECK (state IN ('closed', 'open', 'half_open')),
+  open_until TEXT,
+  rate_limit_streak INTEGER NOT NULL DEFAULT 0,
+  probe_started_at TEXT,
+  last_error TEXT,
+  updated_at TEXT NOT NULL
+);
 `;
 
 export function threadIdOf(event: Pick<AuthorReplyEvent, "comment_id" | "in_reply_to_id">): number {
@@ -126,6 +143,76 @@ export class PingPongLedger {
        VALUES (?, ?, ?, ?)
        ON CONFLICT(comment_id) DO UPDATE SET ${step} = 1, updated_at = excluded.updated_at`,
     ).run(commentId, step === "reply_posted" ? 1 : 0, step === "thread_resolved" ? 1 : 0, this.ts());
+  }
+
+  breaker(): { state: "closed" | "open" | "half_open"; open_until?: string; rate_limit_streak: number } {
+    const row = this.db.prepare(
+      "SELECT state, open_until, rate_limit_streak FROM pingpong_decision_breaker WHERE singleton = 1",
+    ).get() as { state: "closed" | "open" | "half_open"; open_until: string | null; rate_limit_streak: number } | undefined;
+    return row ? { state: row.state, ...(row.open_until ? { open_until: row.open_until } : {}), rate_limit_streak: row.rate_limit_streak }
+      : { state: "closed", rate_limit_streak: 0 };
+  }
+
+  openBreaker(now: Date, error: string): { open_until: string; streak: number } {
+    const streak = this.breaker().rate_limit_streak + 1;
+    const delays = [60, 120, 240, 480, 900];
+    const openUntil = new Date(now.getTime() + delays[Math.min(streak - 1, delays.length - 1)]! * 1000).toISOString();
+    this.db.prepare(
+      `INSERT INTO pingpong_decision_breaker (singleton, state, open_until, rate_limit_streak, last_error, updated_at)
+       VALUES (1, 'open', ?, ?, ?, ?)
+       ON CONFLICT(singleton) DO UPDATE SET state='open', open_until=excluded.open_until,
+         rate_limit_streak=excluded.rate_limit_streak, last_error=excluded.last_error, updated_at=excluded.updated_at`,
+    ).run(openUntil, streak, error, now.toISOString());
+    return { open_until: openUntil, streak };
+  }
+
+  halfOpen(now: Date): void {
+    this.db.prepare(
+      `INSERT INTO pingpong_decision_breaker (singleton, state, open_until, rate_limit_streak, probe_started_at, updated_at)
+       VALUES (1, 'half_open', NULL, 0, ?, ?)
+       ON CONFLICT(singleton) DO UPDATE SET state='half_open', probe_started_at=excluded.probe_started_at, updated_at=excluded.updated_at`,
+    ).run(now.toISOString(), now.toISOString());
+  }
+
+  recoverHalfOpen(now: Date): void {
+    this.db.prepare(
+      "UPDATE pingpong_decision_breaker SET state='open', probe_started_at=NULL, updated_at=? WHERE singleton=1 AND state='half_open'",
+    ).run(now.toISOString());
+  }
+
+  closeBreaker(now: Date): void {
+    this.db.prepare(
+      `INSERT INTO pingpong_decision_breaker (singleton, state, open_until, rate_limit_streak, updated_at)
+       VALUES (1, 'closed', NULL, 0, ?)
+       ON CONFLICT(singleton) DO UPDATE SET state='closed', open_until=NULL, rate_limit_streak=0,
+         last_error=NULL, updated_at=excluded.updated_at`,
+    ).run(now.toISOString());
+  }
+
+  retry(commentId: number): { attempts: number; next_attempt_at?: string; terminal: boolean } {
+    const row = this.db.prepare(
+      "SELECT attempts, next_attempt_at, terminal FROM pingpong_decision_retries WHERE comment_id = ?",
+    ).get(commentId) as { attempts: number; next_attempt_at: string | null; terminal: number } | undefined;
+    return row ? { attempts: row.attempts, ...(row.next_attempt_at ? { next_attempt_at: row.next_attempt_at } : {}), terminal: row.terminal === 1 }
+      : { attempts: 0, terminal: false };
+  }
+
+  recordRetry(commentId: number, now: Date, error: string): { attempts: number; next_attempt_at?: string; terminal: boolean } {
+    const attempts = this.retry(commentId).attempts + 1;
+    const terminal = attempts >= 3;
+    const delays = [30, 120];
+    const next = terminal ? undefined : new Date(now.getTime() + delays[attempts - 1]! * 1000).toISOString();
+    this.db.prepare(
+      `INSERT INTO pingpong_decision_retries (comment_id, attempts, next_attempt_at, last_error, terminal, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(comment_id) DO UPDATE SET attempts=excluded.attempts, next_attempt_at=excluded.next_attempt_at,
+         last_error=excluded.last_error, terminal=excluded.terminal, updated_at=excluded.updated_at`,
+    ).run(commentId, attempts, next ?? null, error, terminal ? 1 : 0, now.toISOString());
+    return { attempts, ...(next ? { next_attempt_at: next } : {}), terminal };
+  }
+
+  resetRetry(commentId: number): void {
+    this.db.prepare("DELETE FROM pingpong_decision_retries WHERE comment_id = ?").run(commentId);
   }
 
   /** Whether a reply may be posted in this thread, and whether it is the last. */
@@ -325,11 +412,22 @@ export function validateThreadDecision(raw: unknown): { ok: true; value: ThreadD
   return { ok: true, value: v as unknown as ThreadDecision };
 }
 
+export type ThreadDecisionFailureClass = "rate_limit" | "non_rate";
+
+export function classifyThreadDecisionError(error: unknown): ThreadDecisionFailureClass {
+  const text = String(error);
+  if (/(?:graphql|github|http|status)[^\n]{0,24}\b429\b/i.test(text) || /graphql_rate_limit|\bRATE_LIMIT\b/.test(text)) return "rate_limit";
+  if (/\b403\b/.test(text) && /rate.?limit|secondary.?rate|abuse.?detect/i.test(text)) return "rate_limit";
+  return "non_rate";
+}
+
 export interface ThreadDecisionDeps extends ReplyDeps {
   adapter: Pick<GitHubAdapter, "createReviewCommentReply" | "resolveOwnReviewThread">;
+  store: ReplyDeps["store"] & Partial<Pick<StateStore, "logAnomaly">>;
   verdictDir: string;
   onHumanRequested?: (decision: ThreadDecision) => void | Promise<void>;
   now?: () => Date;
+  isDraining?: () => boolean;
   log?: (message: string, extra?: unknown) => void;
   /** A session writes JSON in place, so fs.watch can fire before its final
    * byte. An unchanged invalid body is only condemned after this delay. */
@@ -345,41 +443,159 @@ export class ThreadDecisionWatcher {
   private readonly invalidReads = new Map<string, string>();
   private readonly retryTimers = new Map<string, NodeJS.Timeout>();
   private readonly processedDir: string;
+  private readonly failedDir: string;
+  private pauseLogged = false;
+  private sweeping = false;
+  private schedulerTimer?: NodeJS.Timeout;
+  private schedulerDeadline = 0;
+  private lastGitHubStart = 0;
+  private processing = false;
+  private cursor = 0;
 
   constructor(private readonly deps: ThreadDecisionDeps) {
     this.processedDir = join(deps.verdictDir, "processed");
+    this.failedDir = join(deps.verdictDir, "failed");
+  }
+
+  retryFailed(commentId: number): { ok: boolean; reason?: string; file?: string } {
+    try {
+      if (!existsSync(this.failedDir)) return { ok: false, reason: `no failed thread decision for comment ${commentId}` };
+      const matches = readdirSync(this.failedDir).filter((name) => {
+        const m = THREAD_DECISION_RE.exec(name);
+        return m && Number(m[3]) === commentId;
+      });
+      if (matches.length !== 1) return { ok: false, reason: matches.length === 0
+        ? `no failed thread decision for comment ${commentId}` : `ambiguous failed decisions for comment ${commentId}` };
+      const name = matches[0]!;
+      const parsed = validateThreadDecision(JSON.parse(readFileSync(join(this.failedDir, name), "utf8")));
+      if (!parsed.ok || parsed.value.comment_id !== commentId || !this.deps.ledger.retry(commentId).terminal) {
+        return { ok: false, reason: `failed decision ${name} does not match terminal retry state` };
+      }
+      const destination = join(this.deps.verdictDir, name);
+      if (existsSync(destination)) return { ok: false, reason: `pending destination already exists for ${name}` };
+      // File first, metadata second. If the process dies between them, the
+      // startup sweep sees terminal metadata beside a pending file and moves it
+      // back to failed; the operator can safely request replay again.
+      renameSync(join(this.failedDir, name), destination);
+      this.deps.ledger.resetRetry(commentId);
+      this.deps.store.logEvent("pingpong_decision_retry_requested", parsed.value.pr, { file: name, comment_id: commentId });
+      this.requestSweep();
+      return { ok: true, file: name };
+    } catch (err) {
+      return { ok: false, reason: `could not restore failed thread decision ${commentId}: ${String(err)}` };
+    }
+  }
+
+  status(): { breaker_state: "closed" | "open" | "half_open"; open_until?: string; pending: number; failed: number } {
+    const breaker = this.deps.ledger.breaker();
+    const count = (dir: string): number => existsSync(dir)
+      ? readdirSync(dir).filter((name) => THREAD_DECISION_RE.test(name)).length : 0;
+    return {
+      breaker_state: breaker.state,
+      ...(breaker.open_until ? { open_until: breaker.open_until } : {}),
+      pending: count(this.deps.verdictDir),
+      failed: count(this.failedDir),
+    };
   }
 
   start(): void {
     mkdirSync(this.deps.verdictDir, { recursive: true });
-    void this.sweep();
+    this.requestSweep();
     this.watcher = watch(this.deps.verdictDir, (_event, filename) => {
       const name = filename ? String(filename) : "";
-      if (THREAD_DECISION_RE.test(name)) void this.handleFile(name);
+      if (THREAD_DECISION_RE.test(name)) this.requestSweep();
     });
+  }
+
+  /** Wake the one paced scheduler; filesystem and daemon callers never process directly. */
+  requestSweep(delayMs = 0): void {
+    const deadline = Date.now() + Math.max(0, delayMs);
+    if (this.schedulerTimer && this.schedulerDeadline <= deadline) return;
+    if (this.schedulerTimer) clearTimeout(this.schedulerTimer);
+    this.schedulerDeadline = deadline;
+    this.schedulerTimer = setTimeout(() => {
+      this.schedulerTimer = undefined;
+      this.schedulerDeadline = 0;
+      void this.sweep().catch((err) => this.deps.log?.("pingpong scheduler failed", err));
+    }, delayMs);
+    this.schedulerTimer.unref?.();
   }
 
   stop(): void {
     this.watcher?.close();
     this.watcher = null;
+    if (this.schedulerTimer) clearTimeout(this.schedulerTimer);
+    this.schedulerTimer = undefined;
+    this.schedulerDeadline = 0;
     for (const timer of this.retryTimers.values()) clearTimeout(timer);
     this.retryTimers.clear();
   }
 
   async sweep(): Promise<string[]> {
-    if (!existsSync(this.deps.verdictDir)) return [];
-    const done: string[] = [];
-    for (const name of readdirSync(this.deps.verdictDir).sort()) {
-      if (THREAD_DECISION_RE.test(name) && await this.handleFile(name)) done.push(name);
+    if (this.sweeping || !existsSync(this.deps.verdictDir)) return [];
+    this.sweeping = true;
+    try {
+      if (this.deps.isDraining?.()) {
+        if (!this.pauseLogged) {
+          this.deps.store.logEvent("pingpong_decisions_paused_draining", null, { pending: this.status().pending });
+          this.pauseLogged = true;
+        }
+        return [];
+      }
+      this.pauseLogged = false;
+      const now = (this.deps.now ?? (() => new Date()))();
+      if (this.lastGitHubStart > 0 && now.getTime() - this.lastGitHubStart < 5_000) {
+        this.requestSweep(5_000 - (now.getTime() - this.lastGitHubStart));
+        return [];
+      }
+      const breaker = this.deps.ledger.breaker();
+      if (breaker.state === "open") {
+        if (!breaker.open_until || Date.parse(breaker.open_until) > now.getTime()) {
+          if (breaker.open_until) this.requestSweep(Math.max(1, Date.parse(breaker.open_until) - now.getTime()));
+          return [];
+        }
+        this.deps.ledger.halfOpen(now);
+        this.deps.store.logEvent("pingpong_breaker_half_open", null, {});
+      } else if (breaker.state === "half_open") {
+        // A live probe owns `sweeping`; observing persisted half-open here means
+        // the prior process died before recording its result. Recover without
+        // charging a synthetic rate-limit failure to the cooldown ladder.
+        this.deps.ledger.recoverHalfOpen(now);
+        this.requestSweep(1);
+        return [];
+      }
+      const files = readdirSync(this.deps.verdictDir).filter((name) => THREAD_DECISION_RE.test(name)).sort();
+      if (files.length === 0) return [];
+      const rotated = [...files.slice(this.cursor % files.length), ...files.slice(0, this.cursor % files.length)];
+      let earliestRetry = Number.POSITIVE_INFINITY;
+      for (const name of rotated) {
+        const match = THREAD_DECISION_RE.exec(name)!;
+        const retry = this.deps.ledger.retry(Number(match[3]));
+        if (retry.terminal) {
+          this.quarantineTerminal(name, Number(match[1]), Number(match[2]), Number(match[3]), retry.attempts);
+          continue;
+        }
+        if (retry.next_attempt_at && Date.parse(retry.next_attempt_at) > now.getTime()) {
+          earliestRetry = Math.min(earliestRetry, Date.parse(retry.next_attempt_at));
+          continue;
+        }
+        this.cursor = (files.indexOf(name) + 1) % files.length;
+        const done = await this.handleFile(name);
+        if (this.status().pending > 0) this.requestSweep(5_000);
+        return done ? [name] : [];
+      }
+      if (Number.isFinite(earliestRetry)) this.requestSweep(Math.max(1, earliestRetry - now.getTime()));
+      return [];
+    } finally {
+      this.sweeping = false;
     }
-    return done;
   }
 
   private retryAfterSettle(name: string): void {
     if (this.retryTimers.has(name)) return;
     const timer = setTimeout(() => {
       this.retryTimers.delete(name);
-      void this.handleFile(name);
+      this.requestSweep();
     }, this.deps.malformedSettleMs ?? 250);
     this.retryTimers.set(name, timer);
   }
@@ -404,7 +620,18 @@ export class ThreadDecisionWatcher {
 
   async handleFile(name: string): Promise<boolean> {
     const match = THREAD_DECISION_RE.exec(name);
-    if (!match || this.inFlight.has(name)) return false;
+    if (!match || this.processing || this.inFlight.has(name) || this.deps.isDraining?.()) return false;
+    const now = (this.deps.now ?? (() => new Date()))();
+    if (this.lastGitHubStart > 0 && now.getTime() - this.lastGitHubStart < 5_000) return false;
+    const breaker = this.deps.ledger.breaker();
+    if (breaker.state === "open" && (!breaker.open_until || Date.parse(breaker.open_until) > now.getTime())) return false;
+    if (breaker.state === "open") {
+      this.deps.ledger.halfOpen(now);
+      this.deps.store.logEvent("pingpong_breaker_half_open", null, {});
+    }
+    const retry = this.deps.ledger.retry(Number(match[3]));
+    if (retry.terminal || (retry.next_attempt_at && Date.parse(retry.next_attempt_at) > now.getTime())) return false;
+    this.processing = true;
     this.inFlight.add(name);
     try {
       const path = join(this.deps.verdictDir, name);
@@ -449,10 +676,17 @@ export class ThreadDecisionWatcher {
 
       const progress = this.deps.ledger.decisionProgress(d.comment_id);
       if (!progress.reply_posted) {
-        if (d.reply.trim()) await postReply(this.deps, { pr: d.pr, thread_id: d.thread_id, body: d.reply.trim() });
+        if (this.deps.isDraining?.()) return false;
+        if (d.reply.trim()) {
+          this.lastGitHubStart = now.getTime();
+          await postReply(this.deps, { pr: d.pr, thread_id: d.thread_id, body: d.reply.trim() });
+        }
         this.deps.ledger.markDecisionStep(d.comment_id, "reply_posted");
+        this.deps.ledger.resetRetry(d.comment_id);
       }
       if (d.resolution === "resolve" && !progress.thread_resolved) {
+        if (this.deps.isDraining?.()) return false;
+        this.lastGitHubStart = now.getTime();
         const resolution = await this.deps.adapter.resolveOwnReviewThread(d.pr, d.thread_id);
         this.deps.ledger.markDecisionStep(d.comment_id, "thread_resolved");
         this.deps.store.logEvent("pingpong_thread_resolved", d.pr, {
@@ -463,6 +697,11 @@ export class ThreadDecisionWatcher {
         });
       }
       if (d.human_requested) await this.deps.onHumanRequested?.(d);
+      this.deps.ledger.resetRetry(d.comment_id);
+      if (this.deps.ledger.breaker().state === "half_open") {
+        this.deps.ledger.closeBreaker(now);
+        this.deps.store.logEvent("pingpong_breaker_closed", d.pr, { comment_id: d.comment_id });
+      }
       this.deps.store.logEvent("pingpong_decision_applied", d.pr, {
         thread_id: d.thread_id,
         comment_id: d.comment_id,
@@ -473,10 +712,60 @@ export class ThreadDecisionWatcher {
       return true;
     } catch (err) {
       this.deps.log?.(`pingpong: ${name} failed`, err);
-      this.deps.store.logEvent("pingpong_decision_failed", Number(match[1]), { file: name, error: String(err) });
+      const classification = classifyThreadDecisionError(err);
+      const pr = Number(match[1]);
+      const commentId = Number(match[3]);
+      if (classification === "rate_limit") {
+        const opened = this.deps.ledger.openBreaker(now, String(err));
+        this.deps.store.logEvent("pingpong_breaker_opened", pr, {
+          file: name, streak: opened.streak, open_until: opened.open_until, error: String(err),
+        });
+        this.deps.store.logEvent("pingpong_decision_failed", pr, {
+          file: name, error: String(err), classification, attempt: this.deps.ledger.retry(commentId).attempts,
+          next_attempt_at: opened.open_until,
+        });
+      } else {
+        const retryState = this.deps.ledger.recordRetry(commentId, now, String(err));
+        if (retryState.terminal) {
+          this.quarantineTerminal(name, pr, Number(match[2]), commentId, retryState.attempts);
+        } else {
+          this.deps.store.logEvent("pingpong_decision_retry_scheduled", pr, {
+            file: name, comment_id: commentId, attempt: retryState.attempts, next_attempt_at: retryState.next_attempt_at,
+          });
+        }
+        this.deps.store.logEvent("pingpong_decision_failed", pr, {
+          file: name, error: String(err), classification, attempt: retryState.attempts,
+          next_attempt_at: retryState.next_attempt_at ?? null,
+        });
+      }
       return false;
     } finally {
       this.inFlight.delete(name);
+      this.processing = false;
+    }
+  }
+
+  private quarantineTerminal(name: string, pr: number, threadId: number, commentId: number, attempts: number): boolean {
+    try {
+      mkdirSync(this.failedDir, { recursive: true });
+      const source = join(this.deps.verdictDir, name);
+      if (!existsSync(source)) return true;
+      const failedPath = join(this.failedDir, name);
+      if (existsSync(failedPath)) return false;
+      renameSync(source, failedPath);
+      this.deps.store.logEvent("pingpong_decision_retry_exhausted", pr, {
+        file: name, comment_id: commentId, attempts, failed_path: failedPath,
+      });
+      this.deps.store.logAnomaly?.(
+        "pingpong_decision_retry_exhausted", pr, null,
+        `thread ${threadId} comment ${commentId} exhausted ${attempts} attempts; preserved at ${failedPath}`,
+        `PING-PONG DECISION FAILED — PR #${pr}, thread ${threadId}, comment ${commentId}\nThe decision exhausted ${attempts} attempts and is preserved at ${failedPath}. Use retry-thread-decision after fixing the cause.`,
+      );
+      return true;
+    } catch (err) {
+      this.deps.store.logEvent("pingpong_decision_quarantine_failed", pr, { file: name, comment_id: commentId, error: String(err) });
+      this.requestSweep(5_000);
+      return false;
     }
   }
 }
