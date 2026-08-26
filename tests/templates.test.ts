@@ -270,18 +270,18 @@ describe("renderDirectiveEscalationNote", () => {
     expect(renderDirectiveEscalationNote({ ...order, first_party_directives: { files: [], mention: "x" } })).toBe("");
   });
 
-  it("names the files, the @-mention, the single-comment cap and the double-check routing", () => {
+  it("names the files, evidence burden, ordinary blocker routing and one @-mention", () => {
     const note = renderDirectiveEscalationNote({ ...order, first_party_directives: fpd });
     expect(note).toContain("FIRST-PARTY DIRECTIVES");
     expect(note).toContain("`.claude/skills/a/SKILL.md`");
     expect(note).toContain("`CLAUDE.md`");
     expect(note).toContain("@alex");
-    expect(note).toContain("EXACTLY ONE short escalation comment");
-    expect(note).toContain("For a human to double-check");
-    // Rule 10: a comment @-mention, never a reviewer nomination.
+    expect(note).toContain("EXACTLY ONE short security-attention comment");
+    expect(note).toContain("Routine directive text");
+    expect(note).toContain("produces NO injection");
+    expect(note).toContain("first-party location does not soften it");
+    expect(note).toContain("ordinary severity/reachability tag and merits verdict");
     expect(note).toContain("never request a reviewer on");
-    // Third-party keeps the bright line.
-    expect(note).toContain("keep the P1 bright line unchanged");
   });
 
   it("degrades to a descriptive addressee when no login was resolvable", () => {
@@ -295,10 +295,10 @@ describe("renderDirectiveEscalationNote", () => {
       const tpl = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile(rt)), "utf8");
       expect(tpl).toContain("{{directive_note}}");
       const armed = renderRoundPrompt(tpl, { ...order, round_type: rt, first_party_directives: fpd });
-      expect(armed).toContain("FIRST-PARTY DIRECTIVES — flag and escalate, never block.");
+      expect(armed).toContain("FIRST-PARTY DIRECTIVES — concrete evidence decides.");
       expect(armed).toContain("@alex");
       const unarmed = renderRoundPrompt(tpl, { ...order, round_type: rt });
-      expect(unarmed).not.toContain("FIRST-PARTY DIRECTIVES — flag and escalate");
+      expect(unarmed).not.toContain("FIRST-PARTY DIRECTIVES — concrete evidence decides");
       // The carve-out itself is stated in the template regardless.
       expect(unarmed).toContain("first-party carve-out");
     }

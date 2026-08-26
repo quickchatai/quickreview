@@ -90,14 +90,12 @@ export function postTag(
   reachability?: Reachability | null,
   ctx?: PostTagContext,
 ): PostTag {
-  // First-party directive gate — applied before everything else and,
-  // like reachability, only ever WEAKENS a tag: an injection finding on the
-  // repo's own directive files posts as a question (the verdict routes to
-  // NEEDS_HUMAN at the verdict layer), never as a blocker. Any other path —
-  // vendored trees included — falls through to the unchanged bright line.
-  if (ctx && isFirstPartyDirectiveInjection(ctx.kind, ctx.path)) {
-    return severity === "nit" ? "nit" : "question";
-  }
+  // routine first-party instructions are suppressed before this
+  // posting map. A kind=injection candidate that survives has proved an
+  // obvious malicious payload or a concrete untrusted-source→model path, so
+  // the file's first-party location cannot soften it. `ctx` remains part of
+  // the interface for telemetry/callers and the deterministic mention route.
+  void ctx;
   const reach = normalizeReachability(reachability);
   // Reachability gate — never blocks something the base mapping wouldn't.
   if (reach === "contrived") return severity === "nit" ? "nit" : "question";
@@ -123,20 +121,19 @@ export interface VerdictInput {
    * heuristic was scrapped (2026-08-18) this is the ONLY session-side input
    * that parks a PR — no daemon-side criteria feed it. */
   needsHuman: boolean;
-  /**: at least one injection finding sits on a first-party directive
-   * path. Such findings are never tagged [blocker] (see postTag), and the
-   * round parks: the merge call on the repo's own agent-directive edits
-   * belongs to a person. A real blocker elsewhere still wins — the park
-   * never softens REQUEST_CHANGES. */
+  /** Legacy input retained for older callers/containers.
+   * removed its verdict effect: routine first-party instructions produce no
+   * finding, while a surviving malicious/path-proven injection follows the
+   * ordinary blocker map. */
   firstPartyDirectiveInjection?: boolean;
 }
 
-/** Verdict logic: any [blocker] ⇒ REQUEST_CHANGES; the session cannot decide,
- * or a first-party directive edit needs a human eye ⇒ NEEDS_HUMAN;
- * else APPROVE. */
+/** Verdict logic: any [blocker] ⇒ REQUEST_CHANGES; an explicit legacy
+ * cannot-decide call ⇒ NEEDS_HUMAN; else APPROVE. Directive location alone
+ * never changes the merits verdict. */
 export function deriveVerdict(v: VerdictInput): VerdictType {
   if (v.hasBlockers) return "REQUEST_CHANGES";
-  if (v.needsHuman || v.firstPartyDirectiveInjection) return "NEEDS_HUMAN";
+  if (v.needsHuman) return "NEEDS_HUMAN";
   return "APPROVE";
 }
 

@@ -399,18 +399,18 @@ describe("first-party directive escalation", () => {
       ...over,
     });
 
-  it("tags a first-party directive injection as a question, never a blocker", () => {
+  it("keeps a surviving malicious first-party injection on the blocker path", () => {
     const review = assembleReview({
       pr: 5306,
       head_sha: "sha",
-      verdict: "NEEDS_HUMAN",
+      verdict: "REQUEST_CHANGES",
       lenses: ["pass-security"],
       findings: [directive(".claude/skills/user-journey-analysis/SKILL.md")],
       escalation_mention: "alex",
     });
-    expect([...review.tags.values()]).toEqual(["question"]);
-    expect(review.payload.event).toBe("COMMENT");
-    expect(review.payload.body).not.toContain("### Blockers");
+    expect([...review.tags.values()]).toEqual(["blocker"]);
+    expect(review.payload.event).toBe("REQUEST_CHANGES");
+    expect(review.payload.body).toContain("### Blockers");
   });
 
   it("carries EXACTLY ONE escalation comment, @-mentioning the picked teammate and naming the file", () => {
@@ -423,7 +423,7 @@ describe("first-party directive escalation", () => {
       escalation_mention: "alex",
     });
     const body = review.payload.body;
-    const sections = body.split("### Human approval needed — agent-directive change").length - 1;
+    const sections = body.split("### Security attention — agent-directive injection").length - 1;
     expect(sections).toBe(1); // one comment total, however many directive files
     expect(body).toContain("@alex");
     expect(body).toContain("`.claude/skills/a/SKILL.md`");
@@ -435,7 +435,7 @@ describe("first-party directive escalation", () => {
     expect(text.startsWith("@alex")).toBe(true);
     const sentences = text.match(/[.!?](\s|$)/g) ?? [];
     expect(sentences.length).toBeLessThanOrEqual(3);
-    expect(text).toContain("human approval");
+    expect(text).toContain("ordinary severity and verdict remain in force");
   });
 
   it("renders without an @ when no mention could be picked", () => {
@@ -454,7 +454,7 @@ describe("first-party directive escalation", () => {
       escalation_mention: "alex",
     });
     expect([...review.tags.values()]).toEqual(["blocker"]);
-    expect(review.payload.body).not.toContain("Human approval needed");
+    expect(review.payload.body).not.toContain("Security attention — agent-directive injection");
     expect(review.payload.event).toBe("REQUEST_CHANGES");
   });
 

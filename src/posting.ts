@@ -88,9 +88,9 @@ export interface ReviewInput {
   escalation_mention?: string;
 }
 
-/** The first-party directive paths this review's injection findings sit on,
- * in finding order, deduplicated. Non-empty ⇒ the review parks
- * (NEEDS_HUMAN) and carries exactly one escalation comment. */
+/** The first-party directive paths this review's surviving injection findings
+ * sit on, in finding order, deduplicated. means these are proven
+ * malicious/source-to-sink cases, not routine directive prose. */
 export function directiveEscalationFiles(findings: readonly Finding[]): string[] {
   const files: string[] = [];
   for (const f of findings) {
@@ -101,7 +101,7 @@ export function directiveEscalationFiles(findings: readonly Finding[]): string[]
 
 /**
  * The ONE escalation comment: max three sentences, an explicit
- * @-mention, and the named part needing extra human approval. One comment
+ * @-mention, and the named files containing the proved injection. One comment
  * total, however many directive files the PR touches. It is a comment inside
  * the gated review — never a GitHub reviewer nomination (`request_reviewer`
  * stays a rejected non-kind; CLAUDE.md rule 10).
@@ -112,8 +112,8 @@ export function renderDirectiveEscalationComment(mention: string, files: readonl
   const part = files.length === 1 ? `the agent-directive file ${list}` : `the agent-directive files ${list}`;
   return (
     `${at} — this PR edits ${part}, which instructs the team's own automated agents, ` +
-    "so the automated review will not decide it alone. " +
-    "Please give that part an explicit human approval (the rest of the review is posted as usual and nothing here blocks the merge)."
+    "and the review found a concrete malicious or untrusted-source injection path there. " +
+    "Please inspect that security finding before merge; its ordinary severity and verdict remain in force."
   );
 }
 
@@ -310,13 +310,12 @@ export function renderBody(
     );
   }
 
-  // EXACTLY ONE escalation comment per review carrying first-party
-  // directive injection findings — rendered once here, however many directive
-  // files the PR touches. It rides the one gated review mutation (dry-run
-  // records it in state/dryrun/ with the rest of the payload).
+  // EXACTLY ONE security-attention comment per review carrying a
+  // surviving first-party directive injection — rendered once here, however
+  // many files it touches. It never softens the ordinary merits verdict.
   const directiveFiles = directiveEscalationFiles(input.findings);
   if (directiveFiles.length > 0) {
-    section("Human approval needed — agent-directive change", [
+    section("Security attention — agent-directive injection", [
       renderDirectiveEscalationComment(input.escalation_mention ?? "", directiveFiles),
     ]);
   }

@@ -138,13 +138,15 @@ describe("first-party directive gate", () => {
     expect(isFirstPartyDirectiveInjection("injection", "node_modules/pkg/CLAUDE.md")).toBe(false);
   });
 
-  it("an injection finding on a first-party directive path never blocks, at any severity", () => {
+  it("does not soften a surviving malicious injection merely because its path is first-party", () => {
+    // suppresses routine first-party instructions before posting. A
+    // candidate that still reaches the posting map has proved maliciousness or
+    // a concrete untrusted-source path, so path alone cannot soften it.
     const ctx = { kind: "injection", path: ".claude/skills/x/SKILL.md" };
-    for (const sev of ["P0", "P1", "P2", "P3"] as Severity[]) {
-      expect(postTag(sev, 1, "routine", ctx)).toBe("question");
-      expect(postTag(sev, 0.5, undefined, ctx)).toBe("question");
-    }
-    expect(postTag("nit", 1, "routine", ctx)).toBe("nit");
+    expect(postTag("P0", 1, "routine", ctx)).toBe("blocker");
+    expect(postTag("P1", 1, "routine", ctx)).toBe("blocker");
+    expect(postTag("P2", 0.9, "routine", ctx)).toBe("blocker");
+    expect(postTag("P3", 1, "routine", ctx)).toBe("question");
   });
 
   it("keeps the P1 bright line for third-party/vendored and non-directive paths", () => {
@@ -159,12 +161,11 @@ describe("first-party directive gate", () => {
     expect(postTag("P2", 0.9, "routine", { path: ".claude/skills/x/SKILL.md" })).toBe("blocker");
   });
 
-  it("routes the verdict to NEEDS_HUMAN — never REQUEST_CHANGES — and a real blocker elsewhere still wins", () => {
-    expect(deriveVerdict({ hasBlockers: false, needsHuman: false, firstPartyDirectiveInjection: true })).toBe("NEEDS_HUMAN");
+  it("does not let directive location change the merits verdict", () => {
+    expect(deriveVerdict({ hasBlockers: false, needsHuman: false, firstPartyDirectiveInjection: true })).toBe("APPROVE");
     expect(deriveVerdict({ hasBlockers: false, needsHuman: true, firstPartyDirectiveInjection: true })).toBe("NEEDS_HUMAN");
-    // The park never softens a genuine blocker on another surface.
     expect(deriveVerdict({ hasBlockers: true, needsHuman: false, firstPartyDirectiveInjection: true })).toBe("REQUEST_CHANGES");
-    // Absent flag: legacy behaviour exactly.
+    // Absent flag: ordinary behaviour exactly.
     expect(deriveVerdict({ hasBlockers: false, needsHuman: false })).toBe("APPROVE");
   });
 });
