@@ -636,6 +636,14 @@ describe("the built pass contract (rules)", () => {
     const lens = bodies.get("pass-baseline--sol-med") as string;
     expect(lens).toContain("detail: <one short paragraph");
     expect(lens).toContain("the invariant a fix must restore");
+    expect(lens).toContain("lead with the general defect or violated invariant");
+    expect(lens).toContain("`https://mcp.example.com:443/mcp`");
+    expect(lens).toContain("misses the curated profile and fails open to all discovered tools");
+    expect(lens).toContain("BAD: `This URL does not work; use parsed.hostname.`");
+    expect(lens).toContain("GOOD: `Validation should canonicalize equivalent URLs before profile matching");
+    expect(lens).toContain("falls back to enabling all discovered tools");
+    expect(lens).toContain("never prescribe `parsed.hostname`");
+    expect(lens).toContain("When one exact literal really is the contract");
     expect(lens).toContain("`P3` and `nit` candidates are exempt");
   });
 
@@ -649,6 +657,9 @@ describe("the built pass contract (rules)", () => {
     }
     const [, validator] = [...bodies].find(([name]) => name.startsWith(`${VALIDATE_PASS}--`))!;
     expect(validator).toContain("**preserve it verbatim on every survivor**");
+    expect(validator).toContain("correct the claim to the broader invariant");
+    expect(validator).toContain("example-led claim");
+    expect(validator).toContain("canonical-equivalent URL validation");
     expect(validator).toContain("is not killable for that");
   });
 

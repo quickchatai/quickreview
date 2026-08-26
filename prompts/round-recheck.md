@@ -88,7 +88,8 @@ opening paragraph in plain language. Blocker bodies are self-sufficient
 agent working from it alone — so carry the mechanism, the concrete failing
 scenario, the evidence refs, and the invariant a fix must restore, in complete
 sentences; a single sentence is correct only when it genuinely carries all of
-that. The script enforces the posting-time guards and its answer is final.
+that. Lead with the general defect or violated invariant; the concrete
+reproducer is proof beneath it, not the scope of the requested fix. The script enforces the posting-time guards and its answer is final.
 Never post an APPROVE from this mode; never touch anyone's existing review.
 
 **The tag grammar is closed here too.** A finding posts under exactly

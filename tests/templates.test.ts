@@ -576,6 +576,9 @@ describe("shipped round templates", () => {
       expect(text).toMatch(/the invariant a fix must restore/);
       expect(text).toMatch(/a single\s*\n?sentence is CORRECT when it genuinely carries all of that/);
       expect(text).toMatch(/Sufficiency is the\s*\n?test, padding is noise/);
+      expect(text).toContain("lead with the general defect or violated invariant");
+      expect(text).toContain("concrete reproducer is proof beneath it");
+      expect(text).toContain("not the scope of the requested fix");
       // It extends, never replaces, the consequence-first rule.
       expect(text.indexOf("**Blocker comments lead with the consequence.**")).toBeLessThan(
         text.indexOf("**Blocker bodies are self-sufficient.**"),
@@ -728,6 +731,12 @@ describe("shipped recheck template", () => {
   it("keeps posting on the gated script route", () => {
     expect(text).toContain("scripts/post-review.sh");
     expect(text).not.toMatch(/gh api .*-X (POST|PATCH|PUT|DELETE)/);
+  });
+
+  it("keeps recheck findings at the invariant rather than one example", () => {
+    expect(text).toContain("Lead with the general defect or violated invariant");
+    expect(text).toContain("concrete\nreproducer is proof beneath it");
+    expect(text).toContain("not the scope of the requested fix");
   });
 
   // the nit-scope rule holds on the recheck path too, and here it is

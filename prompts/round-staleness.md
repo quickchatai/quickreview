@@ -374,7 +374,12 @@ prescribed rewrite — remedy size is a signal). The pass's `detail:` field is
 your material here: carry it into the comment rather than compressing it
 away. One or two short paragraphs is the ceiling, not the target — a single
 sentence is CORRECT when it genuinely carries all of that. Sufficiency is the
-test, padding is noise. Questions and nits stay as short as they read best.
+test, padding is noise. They **lead with the general defect or violated invariant**
+when the evidence establishes one; the concrete reproducer is proof beneath it,
+not the scope of the requested fix. Keep the example and traced consequence,
+but ask for the invariant to hold rather than prescribing a one-case rewrite.
+When one exact literal really is the contract, keep it exact. Questions and nits
+stay as short as they read best.
 
 **A nit asks for something, or it is not posted.** Nearly two thirds
 of this reviewer's nits ask for nothing: a paragraph observing that something is
