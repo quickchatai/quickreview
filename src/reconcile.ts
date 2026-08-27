@@ -244,35 +244,84 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
   // ---- 2. triggered-set derivation (both searches) ------------------------
   await step("triggered-set", async () => {
     const [labelled, teamed] = await Promise.all([adapter.searchLabelTriggered(), adapter.searchTeamTriggered()]);
-    const seen = new Set<number>();
-    for (const [source, items] of [
-      ["label", labelled],
-      ["team_request", teamed],
-    ] as const) {
-      for (const item of items) {
-        if (seen.has(item.number)) continue;
-        seen.add(item.number);
+    const kinds = ["label", "team_request"] as const;
+    const searches = { label: labelled, team_request: teamed };
+    const current = {
+      label: new Set(labelled.map((item) => item.number)),
+      team_request: new Set(teamed.map((item) => item.number)),
+    };
+
+    // Snapshot BEFORE writing this poll. GitHub searches expose current levels,
+    // not the edge that created them; this durable previous observation is what
+    // distinguishes a new human request from residue left by an older round.
+    const previous = new Map<string, boolean | undefined>();
+    for (const pr of open.keys()) {
+      if (!store.getPr(pr)) continue; // untriggered PRs acquire observations when first triggered
+      for (const kind of kinds) previous.set(`${pr}:${kind}`, store.triggerLevel(pr, kind));
+    }
+
+    const grouped = new Map<number, { item: ReconcileSearchItem; kinds: Array<(typeof kinds)[number]> }>();
+    for (const kind of kinds) {
+      for (const item of searches[kind]) {
         if (isBotAuthor(item.user?.login ?? "", botLogin) || item.user?.type === "Bot") continue;
-        const ref = open.get(item.number);
-        const local = store.getPr(item.number);
-        const meta = {
-          title: ref?.title ?? item.title,
-          head_sha: ref?.head_sha ?? local?.head_sha ?? "",
-          author: ref?.author ?? item.user?.login ?? "",
-          trigger_ts: local?.trigger_ts ?? item.updated_at ?? now().toISOString(),
-        };
-        report.triggered.push(item.number);
-        if (local?.paused) continue; // overseer pause-pr: no re-trigger until resumed
-        if (local?.state === "queued" || local?.state === "reviewing") continue; // already handled
-        // Dry-run never consumes triggers on GitHub, so an already-reviewed
-        // head would re-queue forever; suppress until the head moves.
-        if (cfg.dry_run && meta.head_sha && store.lastVerdictHead(item.number) === meta.head_sha) {
-          deps.log?.(`dry-run: suppressing re-trigger of #${item.number} at reviewed head ${meta.head_sha.slice(0, 10)}`);
-          continue;
-        }
-        correction(deps, item.number, "triggered-not-queued", { local: local?.state ?? null, source }, report);
-        applyEvent(store, item.number, { type: "trigger", source: "reconcile" }, meta, { botLogin, now, reason: `reconcile:${source}` });
+        const group = grouped.get(item.number) ?? { item, kinds: [] };
+        group.kinds.push(kind);
+        grouped.set(item.number, group);
       }
+    }
+
+    // Record both presence and absence. Remove→re-add is a fresh edge even
+    // when its webhook was lost; rows survive daemon restarts.
+    for (const pr of open.keys()) {
+      if (!store.getPr(pr) && !grouped.has(pr)) continue;
+      for (const kind of kinds) store.observeTriggerLevel(pr, kind, current[kind].has(pr));
+    }
+
+    for (const [pr, group] of grouped) {
+      const ref = open.get(pr);
+      const local = store.getPr(pr);
+      const meta = {
+        title: ref?.title ?? group.item.title,
+        head_sha: ref?.head_sha ?? local?.head_sha ?? "",
+        author: ref?.author ?? group.item.user?.login ?? "",
+        trigger_ts: local?.trigger_ts ?? group.item.updated_at ?? now().toISOString(),
+      };
+      report.triggered.push(pr);
+      if (local?.paused) continue; // overseer pause-pr: no re-trigger until resumed
+      if (local?.state === "queued" || local?.state === "reviewing") continue; // already handled
+
+      // Only an observed absent→present transition is a fresh edge. Undefined
+      // is bootstrap history for an existing row (the table is additive on
+      // deploy), not proof a person just acted. A PR never tracked before is
+      // different: its first trigger is the human ask that brings it in.
+      const freshKind =
+        local === undefined
+          ? group.kinds[0]
+          : group.kinds.find((kind) => previous.get(`${pr}:${kind}`) === false);
+      const reviewed = store.reviewedHead(pr);
+      const pushHandled =
+        !freshKind &&
+        reviewed?.verdict === "APPROVE" &&
+        reviewed.head_sha !== meta.head_sha &&
+        store.hasRecheck(pr, recheckFingerprint({ trigger: "push" }, meta.head_sha));
+      if (pushHandled) {
+        // The targeted APPROVE path already owns this head. A standing label or
+        // team request is residue, not a second blank-slate review. A genuinely
+        // new edge still bypasses this branch and keeps's full review.
+        store.logEvent("standing_trigger_suppressed", pr, { head_sha: meta.head_sha, kinds: group.kinds });
+        deps.log?.(`reconcile: suppressed standing trigger for #${pr} at rechecked head ${meta.head_sha.slice(0, 10)}`);
+        continue;
+      }
+
+      // Dry-run never consumes triggers on GitHub, so an already-reviewed
+      // head would re-queue forever; suppress until the head moves.
+      if (cfg.dry_run && meta.head_sha && store.lastVerdictHead(pr) === meta.head_sha) {
+        deps.log?.(`dry-run: suppressing re-trigger of #${pr} at reviewed head ${meta.head_sha.slice(0, 10)}`);
+        continue;
+      }
+      const source = freshKind ?? "reconcile";
+      correction(deps, pr, "triggered-not-queued", { local: local?.state ?? null, source, kinds: group.kinds }, report);
+      applyEvent(store, pr, { type: "trigger", source }, meta, { botLogin, now, reason: `reconcile:${source}` });
     }
   });
 

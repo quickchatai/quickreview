@@ -172,6 +172,59 @@ describe("reconcileOnce", () => {
     expect(row.trigger_ts).toBe("2026-08-13T09:05:00Z");
   });
 
+  it("does not turn standing trigger residue into a full round after a push recheck claimed the head", async () => {
+    const { hooks } = recordingHooks();
+    seed(37, "reviewing", { head: "approved-sha" });
+    store.recordReviewedHead(37, { head_sha: "approved-sha", verdict: "APPROVE", round_no: 1 });
+    gh.open = [ref(37, { head_sha: "approved-sha" })];
+    gh.labelTriggered = [item(37)];
+
+    // Establish that the label was already present while the prior review was
+    // in flight. Its continued presence is a level, not a new human edge.
+    await reconcileOnce({ cfg, store, adapter: gh, hooks });
+
+    seed(37, "tracked", { head: "layout-sha" });
+    store.claimRecheck(37, "push:layout-sha::", { head_sha: "layout-sha", trigger: "push" });
+    gh.open = [ref(37, { head_sha: "layout-sha" })];
+    await reconcileOnce({ cfg, store, adapter: gh, hooks });
+
+    expect(store.getPr(37)!.state).toBe("tracked");
+    expect(store.db.prepare("SELECT COUNT(*) AS n FROM events WHERE pr = 37 AND kind = 'standing_trigger_suppressed'").get()).toEqual({ n: 1 });
+  });
+
+  it("suppresses standing trigger residue across the additive-table bootstrap", async () => {
+    const { hooks } = recordingHooks();
+    seed(39, "tracked", { head: "layout-sha" });
+    store.recordReviewedHead(39, { head_sha: "approved-sha", verdict: "APPROVE", round_no: 1 });
+    store.claimRecheck(39, "push:layout-sha::", { head_sha: "layout-sha", trigger: "push" });
+    gh.open = [ref(39, { head_sha: "layout-sha" })];
+    gh.labelTriggered = [item(39)];
+    gh.teamTriggered = [item(39)];
+
+    // No trigger-level rows exist: this is the first reconcile after a build
+    // which added the table to an existing database. Unknown history is not a
+    // fresh human edge and must not recreate #5372 during rollout.
+    await reconcileOnce({ cfg, store, adapter: gh, hooks });
+
+    expect(store.getPr(39)!.state).toBe("tracked");
+    expect(store.db.prepare("SELECT COUNT(*) AS n FROM events WHERE pr = 39 AND kind = 'standing_trigger_suppressed'").get()).toEqual({ n: 1 });
+  });
+
+  it("still treats a newly appearing trigger as a human full-review request", async () => {
+    const { hooks } = recordingHooks();
+    seed(38, "tracked", { head: "layout-sha" });
+    store.recordReviewedHead(38, { head_sha: "approved-sha", verdict: "APPROVE", round_no: 1 });
+    store.claimRecheck(38, "push:layout-sha::", { head_sha: "layout-sha", trigger: "push" });
+    gh.open = [ref(38, { head_sha: "layout-sha" })];
+
+    await reconcileOnce({ cfg, store, adapter: gh, hooks }); // observed absent
+    gh.teamTriggered = [item(38)];
+    await reconcileOnce({ cfg, store, adapter: gh, hooks });
+
+    expect(store.getPr(38)!.state).toBe("queued");
+    expect(store.getPr(38)!.trigger_provenance).toBe("human");
+  });
+
   // push-trigger backstop (live gap 2026-08-19, #5307): with webhooks
   // dead, a post-review push was never rechecked and a withheld approval had
   // no path forward — reconcile must hand detected pushes to the same recheck

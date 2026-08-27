@@ -556,6 +556,16 @@ CREATE TABLE IF NOT EXISTS rechecks (
   created_at   TEXT NOT NULL,
   PRIMARY KEY (pr, fingerprint)
 );
+-- GitHub exposes label/team requests as levels, while review intent
+-- is an edge. Persist the previous reconcile observation so a level already
+-- present before a push cannot masquerade as a fresh human re-review request.
+CREATE TABLE IF NOT EXISTS trigger_levels (
+  pr          INTEGER NOT NULL,
+  kind        TEXT NOT NULL,
+  present     INTEGER NOT NULL,
+  observed_at TEXT NOT NULL,
+  PRIMARY KEY (pr, kind)
+);
 -- Approval withheld for red CI: one row per PR, the head whose
 -- approval was withheld and why. Presence of a row is the promise the gate
 -- makes to the author — "this is waiting on CI alone" — and the thing the
@@ -1741,6 +1751,24 @@ export class StateStore {
   /** Drop the mark — the verdict is about to be decided again. */
   clearApprovalWithheld(pr: number): void {
     this.db.prepare("DELETE FROM approval_withheld WHERE pr = ?").run(pr);
+  }
+
+  // ---- trigger-level observations ----------------------------
+
+  triggerLevel(pr: number, kind: "label" | "team_request"): boolean | undefined {
+    const row = this.db.prepare("SELECT present FROM trigger_levels WHERE pr = ? AND kind = ?").get(pr, kind) as
+      | { present: number }
+      | undefined;
+    return row === undefined ? undefined : row.present === 1;
+  }
+
+  observeTriggerLevel(pr: number, kind: "label" | "team_request", present: boolean): void {
+    this.db
+      .prepare(
+        `INSERT INTO trigger_levels (pr, kind, present, observed_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT(pr, kind) DO UPDATE SET present=excluded.present, observed_at=excluded.observed_at`,
+      )
+      .run(pr, kind, present ? 1 : 0, this.ts());
   }
 
   // ---- post-approval delta rechecks ---------------------------
