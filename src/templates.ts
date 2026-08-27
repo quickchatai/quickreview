@@ -112,7 +112,7 @@ export function renderRecheckPrompt(templateText: string, order: RecheckOrder): 
 // data-safety signal: it still forces the sol-med tier and still tells the
 // session the DDL must be judged. Only the "escalate unless…" framing is gone.
 const GATE_ON =
-  "MIGRATION GATE: this PR touches migrations — pass-data-safety must judge the real DDL (ALGORITHM, ordering against the base branch, backfill safety, rolling-deploy ordering). A migration you cannot prove safe is a blocker, never an approve.";
+  "MIGRATION GATE: this PR touches migrations — pass-data-safety must judge the ORM operations and any supplied generated SQL for destructive mutation, concrete rebuild/locking risk, backfill safety, and rolling-deploy ordering. Ordinary Django ORM operations are acceptable and must not be rewritten as handwritten SQL merely for reviewability. Only a concrete migration hazard blocks; missing generated SQL or an unproven database algorithm does not.";
 const GATE_OFF = "no migration gate on this round";
 
 /**

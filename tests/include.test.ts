@@ -785,6 +785,14 @@ describe("the built pass contract (rules)", () => {
     // Migration numbering / dependencies ordering is explicitly unchanged.
     expect(text).toContain("Migration numbering and `dependencies` ordering against the base branch are untouched by this section");
     expect(text).toContain("## Migration numbering against the base branch is handled daemon-side");
+    // Ordinary ORM operations remain the source of truth. Generated SQL is
+    // evidence, never a reason to force executable handwritten SQL into the
+    // migration merely to make the review easier.
+    expect(text).toContain("## Django migrations: ORM first, concrete hazards only");
+    expect(text).toContain("must not demand `RunSQL` or `SeparateDatabaseAndState`");
+    expect(text).toContain("Generated SQL is review evidence, not executable migration source");
+    expect(text).toContain("Absence of generated SQL is not itself a finding");
+    expect(text).toContain("Block only a concrete hazard established by the diff or supplied generated SQL");
     // The addendum lands AFTER the seed rule it supersedes.
     expect(text.indexOf("run `sqlmigrate` in the worktree")).toBeLessThan(
       text.indexOf("## Data safety: no execution"),

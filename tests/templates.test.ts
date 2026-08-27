@@ -86,6 +86,9 @@ describe("roundVars", () => {
     expect(v.pass_plan).toContain("| pass-delivery | `pass-delivery--sol-med` | sol-med | `pass-delivery--sol-high` |");
     expect(v.addable_lenses).toBe("pass-ui, pass-contracts");
     expect(v.migration_gate_note).toMatch(/MIGRATION GATE/);
+    expect(v.migration_gate_note).toContain("Ordinary Django ORM operations are acceptable");
+    expect(v.migration_gate_note).toContain("Only a concrete migration hazard blocks");
+    expect(v.migration_gate_note).not.toContain("cannot prove safe is a blocker");
     expect(v.settled_digest).toBe("T1: author fixed at abc123");
     expect(v.round_type).toBe("re-review");
   });
