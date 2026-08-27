@@ -39,6 +39,15 @@ export function whyArgv(cfg: TuiConfig, pr: number): string[] {
   return [...dockerPrefix(cfg), cfg.container, "node", "dist/src/cli.js", "why", String(pr), "--json"];
 }
 
+/**
+ * The selected PR's ephemeral parent/lens activity. Like status.json this is
+ * on the host-mounted state volume, so the hot path is one read-only cat — no
+ * container exec and, importantly, no repeated GitHub enrichment fetch.
+ */
+export function progressArgv(cfg: TuiConfig, pr: number): string[] {
+  return ["cat", `${cfg.remote_state_dir}/round-progress/pr-${pr}.json`];
+}
+
 /** In-container `qcr events --tail <k> --json`. */
 export function eventsArgv(cfg: TuiConfig, tail: number): string[] {
   return [...dockerPrefix(cfg), cfg.container, "node", "dist/src/cli.js", "events", "--tail", String(tail), "--json"];

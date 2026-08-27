@@ -197,6 +197,10 @@ export class PiSessionManager implements SessionHooks {
       join(this.root, "extensions", "inject-bridge.ts"),
       join(this.root, "extensions", "ledger-pin.ts"),
       join(this.root, "extensions", "muted-theme.ts"),
+      // Publishes the parent + lens lifecycle as an ephemeral read-only
+      // sidecar for the operator TUI. It observes pi events only; no session
+      // scheduling or daemon state passes through it.
+      join(this.root, "extensions", "round-progress.ts"),
       // Registers the built state/agents lens passes with pi-subagents via its
       // globalThis hook (live finding 2026-08-18: the extension's agents dir is
       // hardcoded, our old .pi/subagents.config.json was inert). Rides argv on

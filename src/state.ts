@@ -2384,6 +2384,9 @@ export interface StatusSnapshot {
       Partial<Pick<PrStateRow, "trigger_ts" | "updated_at" | "author" | "paused">> & {
         rounds?: number;
         last_verdict?: string | null;
+        /** The authoritative running plan/timing. Live lens activity is a
+         * separate ephemeral sidecar; neither source impersonates the other. */
+        current_round?: Pick<RoundRow, "round_no" | "round_type" | "status" | "started_at" | "deadline_at" | "lenses" | "validate_tier">;
       }
   >;
   running_rounds: number;
@@ -2443,12 +2446,26 @@ export function buildStatusSnapshot(
     .prepare("SELECT pr, COUNT(*) AS c, (SELECT verdict FROM rounds r2 WHERE r2.pr = rounds.pr AND verdict IS NOT NULL ORDER BY round_no DESC LIMIT 1) AS v FROM rounds WHERE status != 'expired' GROUP BY pr")
     .all() as Array<{ pr: number; c: number; v: string | null }>;
   const byPr = new Map(roundStats.map((r) => [r.pr, r]));
+  const runningByPr = new Map(store.runningRounds().map((r) => [r.pr, r]));
   return {
     written_at: now().toISOString(),
     dry_run: dryRun,
     prs: store.allPrs().map((p) => ({
       rounds: byPr.get(p.number)?.c ?? 0,
       last_verdict: byPr.get(p.number)?.v ?? null,
+      ...(runningByPr.get(p.number)
+        ? {
+            current_round: {
+              round_no: runningByPr.get(p.number)!.round_no,
+              round_type: runningByPr.get(p.number)!.round_type,
+              status: runningByPr.get(p.number)!.status,
+              started_at: runningByPr.get(p.number)!.started_at,
+              deadline_at: runningByPr.get(p.number)!.deadline_at,
+              lenses: runningByPr.get(p.number)!.lenses,
+              validate_tier: runningByPr.get(p.number)!.validate_tier,
+            },
+          }
+        : {}),
       number: p.number,
       state: p.state,
       title: p.title,

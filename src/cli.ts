@@ -117,7 +117,24 @@ export interface WhyPayload {
   stale_recheck?: boolean;
   updated_at?: string;
   spend_usd: number;
-  rounds: Array<{ round_no: number; round_type: string; status: string; verdict: string | null; started_at: string; finished_at: string | null; spend_usd: number | null; est_usd?: number | null; tokens_in?: number | null; tokens_out?: number | null; lenses: string; summary?: string | null; cancel_cause?: string | null }>;
+  rounds: Array<{
+    round_no: number;
+    round_type: string;
+    status: string;
+    verdict: string | null;
+    started_at: string;
+    deadline_at?: string;
+    finished_at: string | null;
+    spend_usd: number | null;
+    est_usd?: number | null;
+    tokens_in?: number | null;
+    tokens_out?: number | null;
+    lenses: string;
+    validate_tier?: string | null;
+    executed_passes?: unknown[] | null;
+    summary?: string | null;
+    cancel_cause?: string | null;
+  }>;
   threads: { open: number; total: number };
   ledger?: string;
   archive?: string[];
@@ -163,12 +180,23 @@ export function whyJson(store: StateStore, n: number, archiveDir: string): WhyPa
       status: r.status,
       verdict: r.verdict ?? null,
       started_at: r.started_at,
+      deadline_at: r.deadline_at,
       finished_at: r.finished_at ?? null,
       spend_usd: r.spend_usd ?? null,
       est_usd: r.est_usd ?? null,
       tokens_in: r.tokens_in ?? null,
       tokens_out: r.tokens_out ?? null,
       lenses: r.lenses,
+      validate_tier: r.validate_tier ?? null,
+      executed_passes: (() => {
+        if (typeof r.executed_passes !== "string") return null;
+        try {
+          const parsed = JSON.parse(r.executed_passes) as unknown;
+          return Array.isArray(parsed) ? parsed : null;
+        } catch {
+          return null;
+        }
+      })(),
       summary: r.summary ?? null,
       // Why a cancelled round was cancelled — null on every other
       // status. The TUI's detail pane reads this beside the prose summary.

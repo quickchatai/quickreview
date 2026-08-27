@@ -5,7 +5,7 @@ import type { StatusSnapshot } from "../src/state.js";
 import { piPaneSize, piRows, renderBoard, topBar, detailLines, type BoardView } from "../src/tui/board.js";
 import { decodeKey, decodeInputKey } from "../src/tui/keys.js";
 import { displayWidth, fit, rule, sanitizeText, stripAnsi, truncate, wrap } from "../src/tui/paint.js";
-import { captureArgv, statusArgv, whyArgv, eventsArgv, attachArgv, type SshRunner } from "../src/tui/remote.js";
+import { captureArgv, statusArgv, whyArgv, eventsArgv, progressArgv, attachArgv, type SshRunner } from "../src/tui/remote.js";
 import { PiMirror } from "../src/tui/pipane.js";
 import { TUI_DEFAULTS } from "../src/config.js";
 
@@ -107,6 +107,65 @@ describe("detailLines", () => {
   it("shows a loading line until the payload matches the selection", () => {
     const lines = detailLines(undefined, snapshot.prs[0], 60).map(stripAnsi);
     expect(lines[1]).toBe("loading detail…");
+  });
+
+  it("shows round timing, parent activity, every planned lens, and verdict progress", () => {
+    const live: WhyPayload = {
+      ...why,
+      rounds: [{
+        round_no: 14,
+        round_type: "re-review",
+        status: "running",
+        verdict: null,
+        started_at: "2026-08-27T09:34:54Z",
+        deadline_at: "2026-08-27T10:49:54Z",
+        finished_at: null,
+        spend_usd: null,
+        lenses: "pass-baseline,pass-security,pass-validate",
+        validate_tier: "sol-high",
+      }],
+    };
+    const lines = detailLines(
+      live,
+      snapshot.prs[0],
+      76,
+      new Date("2026-08-27T10:04:54Z"),
+      {
+        version: 1,
+        pr: 5012,
+        session: "pr-5012",
+        run_started_at: "2026-08-27T09:34:55Z",
+        updated_at: "2026-08-27T10:04:53Z",
+        parent_status: "active",
+        last_activity_at: "2026-08-27T10:04:50Z",
+        last_activity: "pass-security · grep: bearer",
+        active_tool: "subagent: pass-security",
+        agents: [
+          { agent: "pass-baseline", status: "completed", duration_ms: 120_000, tool_count: 7 },
+          { agent: "pass-security", status: "running", duration_ms: 30_000, tool_count: 2, current_tool: "grep: bearer" },
+          { agent: "pass-architecture", status: "completed", duration_ms: 60_000, tool_count: 5 },
+        ],
+      },
+    ).map(stripAnsi);
+    expect(lines).toContain("▍CURRENT REVIEW round 14 · 30m elapsed · 45m left");
+    expect(lines).toContain("  parent ACTIVE · signal 1s ago · subagent: pass-security");
+    expect(lines).toContain("  ✓ pass-baseline · done in 2m · 7 tools");
+    expect(lines).toContain("  ⟳ pass-security · running 30s · grep: bearer");
+    expect(lines).toContain("  ○ pass-validate · pending · sol-high");
+    expect(lines).toContain("  ✓ pass-architecture · done in 1m · 5 tools · added");
+    expect(lines).toContain("  ○ final verdict · pending");
+    expect(lines).toContain("  last activity 4s ago · pass-security · grep: bearer");
+  });
+
+  it("never invents pending agent state when the progress signal is absent", () => {
+    const live: WhyPayload = {
+      ...why,
+      rounds: [{ ...why.rounds[1]!, deadline_at: "2026-08-27T10:49:54Z", lenses: "pass-baseline,pass-validate" }],
+    };
+    const lines = detailLines(live, snapshot.prs[0], 76, new Date("2026-08-27T10:04:54Z")).map(stripAnsi);
+    expect(lines).toContain("  ? parent · live progress unavailable");
+    expect(lines).toContain("  ? pass-baseline · unknown");
+    expect(lines).toContain("  ? pass-validate · unknown");
   });
 
   // a cancelled round used to render as a bare "—", identical to
@@ -426,6 +485,7 @@ describe("remote argv builders", () => {
   it("runs read-only CLI calls inside the container with sudo docker", () => {
     expect(whyArgv(TUI_DEFAULTS, 5012)).toEqual(["sudo", "docker", "exec", "quickreview-sandbox", "node", "dist/src/cli.js", "why", "5012", "--json"]);
     expect(eventsArgv(TUI_DEFAULTS, 20)).toContain("--tail");
+    expect(progressArgv(TUI_DEFAULTS, 5012)).toEqual(["cat", "/opt/quickreview/state/round-progress/pr-5012.json"]);
   });
 
   it("drops sudo when configured off", () => {

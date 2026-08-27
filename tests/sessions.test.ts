@@ -168,6 +168,14 @@ describe("buildPiCommand", () => {
     expect(argv.join(" ")).not.toMatch(/update/i);
   });
 
+  it("loads the live round-progress reporter in every parent session", () => {
+    const paths = manager().extensionPaths();
+    expect(paths).toContain(join(root, "extensions", "round-progress.ts"));
+    expect(paths.indexOf(join(root, "extensions", "round-progress.ts"))).toBeLessThan(
+      paths.indexOf(join(root, "extensions", "register-lens-agents.ts")),
+    );
+  });
+
   it("loads the vendored OpenViking fork, after ledger-pin", () => {
     const paths = manager().extensionPaths();
     const ov = join(root, "extensions", "vendor", "openviking-pi", "index.ts");

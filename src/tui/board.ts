@@ -13,6 +13,7 @@ import { ACCENT, ACCENT_BG, HEADING, MUTED, OK, RESET as DRESET, STRONG, WARN, m
 import { Frame, displayWidth, fit, rule, sanitizeText, stripAnsi, truncate, wrap } from "./paint.js";
 import type { PiPaneView } from "./pipane.js";
 import type { Health } from "./poll.js";
+import type { LiveAgentProgress, RoundProgressSnapshot } from "../round-progress.js";
 import { FG, RESET, fmtAge, legendLine, osc8, prUrl, stateColor, verdictChip } from "./theme.js";
 
 /** Every clickable thing the board declares. */
@@ -42,6 +43,8 @@ export interface BoardView {
   confirmQuit?: boolean;
   /** Live mirror of the selected PR's pi session (board's lower region). */
   pi?: PiPaneView;
+  /** Structured parent/lens activity for the selected running round. */
+  progress?: RoundProgressSnapshot;
   /** The PR the pane is showing. Defaults to the selection; while the pane is
    * focused it is LOCKED to the session being typed into, so a poll that
    * reorders the list cannot yank the keyboard to another PR. */
@@ -215,7 +218,99 @@ function section(title: string, subtitle: string): string {
   return sectionTitle(title, subtitle);
 }
 
-export function detailLines(detail: WhyPayload | undefined, pr: SnapshotPr | undefined, width: number, now: Date = new Date(0)): string[] {
+function durationLabel(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1_000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h${minutes % 60 > 0 ? ` ${minutes % 60}m` : ""}`;
+}
+
+function oneLine(value: string): string {
+  return sanitizeText(value).replace(/\s+/g, " ").trim();
+}
+
+type CurrentRound = Pick<WhyPayload["rounds"][number], "round_no" | "status" | "started_at" | "deadline_at" | "lenses" | "validate_tier">;
+
+function currentProgressLines(
+  round: CurrentRound,
+  progress: RoundProgressSnapshot | undefined,
+  width: number,
+  now: Date,
+): string[] {
+  const lines: string[] = [];
+  const started = Date.parse(round.started_at);
+  const deadline = round.deadline_at ? Date.parse(round.deadline_at) : Number.NaN;
+  const nowMs = now.getTime();
+  const elapsed = Number.isFinite(started) ? durationLabel(nowMs - started) : "?";
+  const deadlineText = Number.isFinite(deadline)
+    ? deadline >= nowMs
+      ? `${durationLabel(deadline - nowMs)} left`
+      : `${durationLabel(nowMs - deadline)} OVERDUE`
+    : "deadline unavailable";
+  lines.push(truncate(section("CURRENT REVIEW", `round ${round.round_no} · ${elapsed} elapsed · ${deadlineText}`), width));
+
+  // A sticky session may have processed another wake before this round. Only a
+  // run born at/after the round start is evidence about THIS round.
+  const current = progress && progress.pr > 0 && Number.isFinite(started) && Date.parse(progress.run_started_at) >= started - 2_000
+    ? progress
+    : undefined;
+  const planned = round.lenses.split(",").map((x) => x.trim()).filter(Boolean);
+  const byName = new Map((current?.agents ?? []).map((agent) => [agent.agent, agent]));
+
+  if (!current) {
+    lines.push(truncate(`  ${FG.dim}? parent · live progress unavailable${RESET}`, width));
+    for (const name of planned) {
+      const tier = name === "pass-validate" && round.validate_tier ? ` · ${round.validate_tier}` : "";
+      lines.push(truncate(`  ${FG.dim}? ${name} · unknown${tier}${RESET}`, width));
+    }
+    lines.push(truncate(`  ${FG.dim}? final verdict · unknown${RESET}`, width));
+    return lines;
+  }
+
+  const signalAge = Math.max(0, nowMs - Date.parse(current.updated_at));
+  const signal = signalAge >= 60_000 ? `SILENT ${durationLabel(signalAge)}` : `signal ${durationLabel(signalAge)} ago`;
+  const parentColor = signalAge >= 120_000 ? FG.anomaly : current.parent_status === "active" ? FG.accent : FG.dim;
+  const active = current.active_tool ? ` · ${oneLine(current.active_tool)}` : "";
+  lines.push(truncate(`  ${parentColor}parent ${current.parent_status.toUpperCase()} · ${signal}${active}${RESET}`, width));
+
+  const agentLine = (name: string, agent: LiveAgentProgress | undefined): string => {
+    const tier = name === "pass-validate" && round.validate_tier ? ` · ${round.validate_tier}` : "";
+    if (!agent) return `  ${FG.dim}○ ${name} · pending${tier}${RESET}`;
+    if (agent.status === "running") {
+      const tool = agent.current_tool ? ` · ${oneLine(agent.current_tool)}` : "";
+      return `  ${FG.accent}⟳ ${name} · running ${durationLabel(agent.duration_ms)}${tool}${RESET}`;
+    }
+    if (agent.status === "failed") {
+      const error = agent.error ? ` · ${oneLine(agent.error)}` : "";
+      return `  ${FG.anomaly}✗ ${name} · failed after ${durationLabel(agent.duration_ms)}${error}${RESET}`;
+    }
+    return `  ${FG.approve}✓ ${name} · done in ${durationLabel(agent.duration_ms)} · ${agent.tool_count} tools${tier}${RESET}`;
+  };
+  for (const name of planned) lines.push(truncate(agentLine(name, byName.get(name)), width));
+  // The parent may justify and add a lens outside the dispatch plan. Those
+  // agents are real work too; omitting them would make "all agents" false.
+  for (const agent of current.agents.filter((item) => !planned.includes(item.agent))) {
+    const rendered = agentLine(agent.agent, agent).replace(`${RESET}`, ` · added${RESET}`);
+    lines.push(truncate(rendered, width));
+  }
+  lines.push(truncate(`  ${FG.dim}○ final verdict · pending${RESET}`, width));
+  const activityAge = Math.max(0, nowMs - Date.parse(current.last_activity_at));
+  lines.push(truncate(`  ${FG.dim}last activity ${durationLabel(activityAge)} ago · ${oneLine(current.last_activity)}${RESET}`, width));
+  if (signalAge >= 120_000) {
+    lines.push(truncate(`  ${FG.anomaly}⚠ no live signal for ${durationLabel(signalAge)} — inspect raw PI below${RESET}`, width));
+  }
+  return lines;
+}
+
+export function detailLines(
+  detail: WhyPayload | undefined,
+  pr: SnapshotPr | undefined,
+  width: number,
+  now: Date = new Date(0),
+  progress?: RoundProgressSnapshot,
+): string[] {
   const lines: string[] = [];
   if (!pr) return ["no PR selected"];
   lines.push(`${stateColor(pr.state)}${STRONG}#${pr.number}${RESET} ${STRONG}${truncate(sanitizeText(pr.title), width - 8 - String(pr.number).length)}${RESET}`);
@@ -223,7 +318,7 @@ export function detailLines(detail: WhyPayload | undefined, pr: SnapshotPr | und
     lines.push(`${FG.dim}loading detail…${RESET}`);
     return lines;
   }
-  const round = detail.rounds.length > 0 ? detail.rounds[detail.rounds.length - 1]?.round_no : undefined;
+  const round = pr.current_round?.round_no ?? (detail.rounds.length > 0 ? detail.rounds[detail.rounds.length - 1]?.round_no : undefined);
   const facts: string[] = [`${stateColor(detail.state ?? pr.state)}${detail.state ?? pr.state}${RESET}`];
   if (round !== undefined) facts.push(`round ${round}`);
   if (detail.author) facts.push(`by ${FG.author}${detail.author}${RESET}`);
@@ -234,6 +329,11 @@ export function detailLines(detail: WhyPayload | undefined, pr: SnapshotPr | und
     lines.push(truncate(detail.labels.map((l) => `${FG.accent}[${sanitizeText(l)}]${RESET}`).join(" "), width));
   }
   lines.push(`${FG.dim}${"─".repeat(Math.max(0, width))}${RESET}`);
+  // status.json advances every poll and therefore owns CURRENT timing/plan;
+  // `why` is enriched and deliberately cached, so it is only the fallback for
+  // an older daemon that has not shipped current_round yet.
+  const runningRound = pr.current_round ?? [...detail.rounds].reverse().find((r) => r.status === "running");
+  if (runningRound) lines.push(...currentProgressLines(runningRound, progress, width, now));
   const lastSummary = [...detail.rounds].reverse().find((r) => r.summary && r.summary.trim().length > 0)?.summary;
   if (lastSummary) {
     lines.push(truncate(section("NOW", "the session's own 3-4 sentence read"), width));
@@ -414,7 +514,7 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
   }
 
   if (view.detailFull) {
-    const lines = detailLines(view.detail, selectedPr, cols - 4, now);
+    const lines = detailLines(view.detail, selectedPr, cols - 4, now, view.progress?.pr === selectedPr?.number ? view.progress : undefined);
     for (let r = 0; r < rows - 4; r++) {
       frame.boxRow(1 + r, [{ text: ` ${lines[r] ?? ""}`, width: cols - 2 }]);
     }
@@ -437,7 +537,7 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
     frame.zones.push({ x1: 2, y1: y, x2: listW, y2: y, action: { t: "select-pr", pr: pr.number } satisfies BoardAction });
     frame.zones.push({ x1: 4, y1: y, x2: 4 + String(pr.number).length + 1, y2: y, action: { t: "open-github", pr: pr.number } satisfies BoardAction });
   });
-  const dLines = detailLines(view.detail, selectedPr, detailW - 2, now);
+  const dLines = detailLines(view.detail, selectedPr, detailW - 2, now, view.progress?.pr === selectedPr?.number ? view.progress : undefined);
   for (let r = 0; r < bodyRows; r++) {
     const isLegendRow = r === bodyRows - 1;
     frame.boxRow(1 + r, [

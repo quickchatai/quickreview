@@ -104,6 +104,19 @@ describe("recentEvents", () => {
 });
 
 describe("buildStatusSnapshot enrichment", () => {
+  it("carries the running round plan and deadline for live board progress", () => {
+    seedPr(5408);
+    store.startRound(5408, "re-review", ["pass-baseline", "pass-validate"], 75, { validate_tier: "sol-high" });
+    const pr = buildStatusSnapshot(store, true).prs.find((row) => row.number === 5408)!;
+    expect(pr.current_round).toMatchObject({
+      round_no: 1,
+      status: "running",
+      lenses: "pass-baseline,pass-validate",
+      validate_tier: "sol-high",
+    });
+    expect(pr.current_round?.deadline_at).toMatch(/Z$/);
+  });
+
   it("carries the rounds cap, today spend and per-PR TUI fields", () => {
     seedPr(5012);
     const r = store.startRound(5012, "initial", ["pass-baseline"], 45);

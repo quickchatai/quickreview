@@ -84,6 +84,23 @@ describe("usage-aware spend reporting", () => {
     }
   });
 
+  it("whyJson exposes the running round plan, timing and executed-pass telemetry", () => {
+    const store = new StateStore(":memory:");
+    try {
+      const id = store.startRound(5408, "re-review", ["pass-baseline", "pass-validate"], 75, { validate_tier: "sol-high" });
+      store.db.prepare("UPDATE rounds SET executed_passes = ? WHERE id = ?").run(
+        JSON.stringify([{ name: "pass-baseline", status: "completed" }]),
+        id,
+      );
+      const round = whyJson(store, 5408, "/nonexistent-archive").rounds[0]!;
+      expect(round.deadline_at).toMatch(/Z$/);
+      expect(round.validate_tier).toBe("sol-high");
+      expect(round.executed_passes).toEqual([{ name: "pass-baseline", status: "completed" }]);
+    } finally {
+      store.close();
+    }
+  });
+
   it("todayJson sums est-preferred spend and tokens", () => {
     const store = seededStore();
     try {

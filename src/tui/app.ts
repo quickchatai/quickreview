@@ -17,9 +17,10 @@ import { ACCENT, RESET, SELECTION } from "./design.js";
 import { ClipboardSink } from "./clipboard.js";
 import { PANE_ESCAPE, PiMirror, keysToTmux } from "./pipane.js";
 import { Poller } from "./poll.js";
+import { parseRoundProgress } from "../round-progress.js";
 import { prUrl } from "./theme.js";
 import { CompanionSidebar, paintSidebar, SIDEBAR_SPINE, sidebarHit, sidebarResizeHit, sidebarWidth } from "./sidebar.js";
-import { eventsArgv, sendKeysArgv, whyArgv, type SshRunner } from "./remote.js";
+import { eventsArgv, progressArgv, sendKeysArgv, whyArgv, type SshRunner } from "./remote.js";
 
 export interface AppHooks {
   /**: attach the given tmux session full-screen; resolves on detach. */
@@ -123,6 +124,7 @@ export class App {
   rawEvents: Array<{ ts: string; kind: string; pr: number | null; payload: string | null }> = [];
   private selectedPr: number | undefined;
   private detailSeq = 0;
+  private progressSeq = 0;
   /** Stale-while-revalidate detail cache: paint the last known payload
    * instantly on selection, refresh over ssh behind it. */
   private readonly detailCache = new Map<number, { payload: WhyPayload; fetched_at: number }>();
@@ -381,6 +383,7 @@ export class App {
     this.input.on("data", this.onData);
     this.out.write(CLEAR + MOUSE_ON);
     void this.refreshDetail();
+    void this.refreshProgress();
     void this.pi.refresh(this.panePr()); // the mirror caught up while attached
     this.repaint();
   }
@@ -417,6 +420,9 @@ export class App {
     this.view.health = this.poller.health();
     void this.refreshEvents();
     if (this.view.detail?.pr !== this.selectedPr) void this.refreshDetail();
+    // Live progress is a cheap host-volume read, separate from `why` because
+    // refreshing the enriched detail would call GitHub on every poll.
+    if (this.tab === "board" && !this.suspended) void this.refreshProgress();
     // The mirror only costs an ssh while the board is the visible tab.
     this.syncPiPane();
     if (this.tab === "board" && !this.suspended) void this.pi.refresh(this.panePr());
@@ -477,6 +483,24 @@ export class App {
     }
   }
 
+  private async refreshProgress(): Promise<void> {
+    const pr = this.selectedPr;
+    if (pr === undefined) return;
+    const seq = ++this.progressSeq;
+    const res = await this.ssh(this.cfg.ssh_host, progressArgv(this.cfg, pr), { timeoutMs: 3_000 });
+    if (seq !== this.progressSeq || pr !== this.selectedPr) return;
+    if (!res.ok) {
+      // Keep a same-PR snapshot: its age becomes the visible SILENT signal.
+      // A different PR must never inherit it while its own read is pending.
+      if (this.view.progress?.pr !== pr) this.view.progress = undefined;
+      this.repaint();
+      return;
+    }
+    const parsed = parseRoundProgress(res.stdout);
+    this.view.progress = parsed?.pr === pr ? parsed : undefined;
+    this.repaint();
+  }
+
   /** Drop a PR's cached detail (a new verdict/round event makes it stale). */
   invalidateDetail(pr: number): void {
     this.detailCache.delete(pr);
@@ -489,7 +513,9 @@ export class App {
     this.selectedPr = pr;
     const sorted = visiblePrs(this.view);
     this.view.selected = reselect(sorted, pr, this.view.selected);
+    if (this.view.progress?.pr !== pr) this.view.progress = undefined;
     void this.refreshDetail();
+    void this.refreshProgress();
     this.followSelection();
   }
 
