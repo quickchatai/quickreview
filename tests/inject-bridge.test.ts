@@ -4,21 +4,19 @@
 // round then sat "running" until its deadline.
 //
 // The contract under test, in three layers — each covering a different half:
-//   1. a file is consumed (archived) only after the injection was attempted,
-//      never on pickup;
-//   2. while the agent RUN is believed in flight the delivery is deferred, and
-//      only `agent_settled` drains it (#5362: `turn_end` is an INNER-loop
-//      event and clearing on it re-opens the window between every tool call);
-//   3. every send carries `deliverAs: "followUp"`, so a delivery that reaches
-//      a streaming agent anyway is queued rather than refused — the bridge
-//      cannot detect a refusal, because pi's extension-facing sendUserMessage
-//      is fire-and-forget.
+//   1. a file remains pending after fire-and-forget submission and is consumed
+//      only when the run-start message correlates its injected marker;
+//   2. while that run is active no successor submits, and only a deferred
+//      `agent_settled` drain may advance the queue (#5362: `turn_end` is an
+//      INNER-loop event and clearing on it re-opens every tool-call gap);
+//   3. every send still carries `deliverAs: "followUp"` as a belt, while a
+//      missing start acknowledgement expires loudly and preserves the file.
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Pi } from "@earendil-works/pi-coding-agent";
-import activate, { BUSY_MAX_HOLD_MS } from "../extensions/inject-bridge.js";
+import activate, { RETRY_BASE_MS, START_ACK_TIMEOUT_MS } from "../extensions/inject-bridge.js";
 
 let dir: string;
 let handlers: Map<string, Array<(...args: unknown[]) => unknown>>;
@@ -43,8 +41,18 @@ function fakePi(): Pi {
   } as unknown as Pi;
 }
 
-function fire(event: string): void {
-  for (const h of handlers.get(event) ?? []) h({});
+function fire(event: string, payload: unknown = {}): void {
+  for (const h of handlers.get(event) ?? []) h(payload);
+}
+
+function sentBody(index: number): string {
+  return sends[index]!.content.replace(/\n\n<!-- qcr-inject:[^\n]+ -->$/, "");
+}
+
+function acknowledgeLatest(): void {
+  const content = sends.at(-1)!.content;
+  fire("agent_start");
+  fire("message_start", { message: { role: "user", content: [{ type: "text", text: content }] } });
 }
 
 const sleep = (ms: number) => new Promise((ok) => setTimeout(ok, ms));
@@ -68,7 +76,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  fire("session_shutdown"); // closes the watcher and cancels retry timers
+  fire("session_shutdown"); // closes the watcher and cancels bridge timers
+  vi.useRealTimers();
   vi.restoreAllMocks();
   if (savedEnv.inject === undefined) delete process.env.QCR_INJECT_DIR;
   else process.env.QCR_INJECT_DIR = savedEnv.inject;
@@ -77,20 +86,58 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe("inject-bridge — consume only on delivery", () => {
-  it("archives after the fire-and-forget submission attempt, not an invented acceptance promise", async () => {
+describe("inject-bridge — start-acknowledged single flight", () => {
+  it("retains a submitted file until its correlated run-start message", async () => {
     writeFileSync(join(dir, "2026-08-20T11-23-20-0000.md"), "ROUND 2 prompt");
 
     activate(fakePi());
     fire("session_start");
 
     await vi.waitFor(() => expect(sends).toHaveLength(1));
+    expect(pending()).toHaveLength(1);
+    expect(done()).toHaveLength(0);
+
+    acknowledgeLatest();
     await vi.waitFor(() => expect(done()).toHaveLength(1));
     expect(pending()).toHaveLength(0);
-    expect(sends[0]!.content).toBe("ROUND 2 prompt");
   });
 
-  it("a synchronous adapter failure leaves the file pending and a settle retries it until it lands", async () => {
+  it("does not let an unrelated agent run acknowledge the submitted wake", async () => {
+    writeFileSync(join(dir, "2026-08-20T11-23-21-0000.md"), "daemon prompt");
+    activate(fakePi());
+    fire("session_start");
+    await vi.waitFor(() => expect(sends).toHaveLength(1));
+
+    fire("agent_start");
+    fire("message_start", {
+      message: { role: "user", content: [{ type: "text", text: "interactive operator prompt" }] },
+    });
+    expect(pending()).toHaveLength(1);
+    expect(done()).toHaveLength(0);
+
+    fire("message_start", {
+      message: { role: "user", content: [{ type: "text", text: sends[0]!.content }] },
+    });
+    await vi.waitFor(() => expect(done()).toHaveLength(1));
+  });
+
+  it("treats auto-retry agent_start events as one outer run with one settlement", async () => {
+    activate(fakePi());
+    fire("session_start");
+    fire("agent_start");
+    fire("agent_start"); // pinned Pi emits this again for agent.continue retry
+    writeFileSync(join(dir, "2026-08-20T11-23-22-0000.md"), "pending");
+    await sleep(150);
+    expect(sends).toHaveLength(0);
+
+    fire("agent_settled"); // one settlement covers the whole retrying run
+    await vi.waitFor(() => expect(sends).toHaveLength(1));
+    expect(sentBody(0)).toBe("pending");
+  });
+
+  it("a synchronous adapter failure retries on its timer and still requires correlated acceptance", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, "error").mockImplementation(() => {});
     let calls = 0;
     sendImpl = () => {
       calls++;
@@ -101,119 +148,193 @@ describe("inject-bridge — consume only on delivery", () => {
     activate(fakePi());
     fire("session_start");
 
-    await vi.waitFor(() => expect(sends.length).toBeGreaterThanOrEqual(1));
-    // The failed delivery consumed nothing.
-    expect(done()).toHaveLength(0);
+    expect(sends).toHaveLength(1);
     expect(pending()).toHaveLength(1);
+    expect(done()).toHaveLength(0);
 
-    fire("agent_settled"); // the run settled — drain retries the pending file
-    await vi.waitFor(() => expect(done()).toHaveLength(1));
+    await vi.advanceTimersByTimeAsync(RETRY_BASE_MS);
     expect(sends).toHaveLength(2);
+    expect(pending()).toHaveLength(1);
+    acknowledgeLatest();
+    expect(done()).toHaveLength(1);
   });
 
-  it("cannot observe a generic asynchronous Pi rejection after the void submission returns", async () => {
-    const extensionErrors: string[] = [];
+  it("an invisible asynchronous rejection expires loudly and preserves recoverable evidence", async () => {
+    vi.useFakeTimers();
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     sendImpl = () => {
-      // This mirrors Pi's runtime wrapper: it starts an internal Promise,
-      // reports rejection on a separate UI/error channel, and returns void to
-      // the extension caller.
-      void Promise.reject(new Error("prompt preflight failed")).catch((error: Error) => {
-        extensionErrors.push(error.message);
-      });
+      void Promise.reject(new Error("prompt preflight failed")).catch(() => {});
     };
     writeFileSync(join(dir, "2026-08-20T12-42-03-0000.md"), "lost round prompt");
 
     activate(fakePi());
     fire("session_start");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sends).toHaveLength(1);
+    expect(pending()).toHaveLength(1);
+    expect(done()).toHaveLength(0);
 
-    await vi.waitFor(() => expect(extensionErrors).toEqual(["prompt preflight failed"]));
+    await vi.advanceTimersByTimeAsync(START_ACK_TIMEOUT_MS);
+    expect(errors).toHaveBeenCalledWith(expect.stringContaining("FAILED_LOUD"));
+    expect(errors).toHaveBeenCalledWith(expect.stringContaining("2026-08-20T12-42-03-0000.md"));
+    expect(pending()).toHaveLength(1);
+    expect(done()).toHaveLength(0);
+    expect(sends).toHaveLength(1); // no blind retry storm
+  });
+
+  it("defers while a run is active, then waits for start acknowledgement after settle", async () => {
+    activate(fakePi());
+    fire("session_start");
+    fire("turn_start");
+
+    writeFileSync(join(dir, "2026-08-20T11-23-20-0001.md"), "held round prompt");
+    await sleep(150);
+    expect(sends).toHaveLength(0);
+    expect(pending()).toHaveLength(1);
+
+    fire("agent_settled");
+    await vi.waitFor(() => expect(sends).toHaveLength(1));
+    expect(done()).toHaveLength(0);
+    acknowledgeLatest();
+    await vi.waitFor(() => expect(done()).toHaveLength(1));
+  });
+
+  it("settlement schedules the next submission after event dispatch, never re-entrantly", async () => {
+    activate(fakePi());
+    fire("session_start");
+    fire("agent_start");
+    writeFileSync(join(dir, "2026-08-20T11-23-20-0002.md"), "deferred prompt");
+    await sleep(150);
+    expect(sends).toHaveLength(0);
+
+    fire("agent_settled");
+    expect(sends).toHaveLength(0); // the callback returned before Pi submission
+    await vi.waitFor(() => expect(sends).toHaveLength(1));
+  });
+
+  it("does not let an older settlement release a run that starts before the deferred drain", async () => {
+    activate(fakePi());
+    fire("session_start");
+    fire("agent_start");
+    writeFileSync(join(dir, "2026-08-20T11-23-20-0003.md"), "deferred prompt");
+    await sleep(150);
+
+    fire("agent_settled");
+    fire("agent_start"); // a newer run begins before the zero-delay drain
+    await sleep(20);
+    expect(sends).toHaveLength(0);
+
+    fire("agent_settled");
+    await vi.waitFor(() => expect(sends).toHaveLength(1));
+  });
+
+  it("retains a newer settlement that arrives before the older deferred drain", async () => {
+    activate(fakePi());
+    fire("session_start");
+    fire("agent_start");
+    writeFileSync(join(dir, "2026-08-20T11-23-20-0004.md"), "deferred prompt");
+    await sleep(150);
+
+    fire("agent_settled");
+    fire("agent_start");
+    fire("agent_settled");
+    expect(sends).toHaveLength(0); // never re-entrant
+    await vi.waitFor(() => expect(sends).toHaveLength(1));
+  });
+
+  it("never overrides an active run merely because the old 15-minute hold elapsed", async () => {
+    const t0 = Date.now();
+    const now = vi.spyOn(Date, "now").mockReturnValue(t0);
+    activate(fakePi());
+    fire("session_start");
+    fire("agent_start");
+
+    writeFileSync(join(dir, "2026-08-20T13-00-00-0000.md"), "wake A");
+    await sleep(150);
+    now.mockReturnValue(t0 + 15 * 60_000 + 1);
+    writeFileSync(join(dir, "2026-08-20T13-00-01-0000.md"), "wake B");
+    await sleep(150);
+
+    expect(sends).toHaveLength(0);
+    expect(pending()).toHaveLength(2);
+    expect(done()).toHaveLength(0);
+  });
+
+  it("submits at most one wake, then waits for its acknowledged run to settle", async () => {
+    writeFileSync(join(dir, "2026-08-20T14-00-00-0000.md"), "first");
+    writeFileSync(join(dir, "2026-08-20T14-00-01-0000.md"), "second");
+    activate(fakePi());
+    fire("session_start");
+
+    await vi.waitFor(() => expect(sends).toHaveLength(1));
+    expect(sentBody(0)).toBe("first");
+    expect(pending()).toHaveLength(2);
+
+    acknowledgeLatest();
+    await vi.waitFor(() => expect(done()).toHaveLength(1));
+    expect(sends).toHaveLength(1); // acknowledged, but its run is active
+
+    fire("agent_settled");
+    await vi.waitFor(() => expect(sends).toHaveLength(2));
+    expect(sentBody(1)).toBe("second");
+    expect(pending()).toHaveLength(1);
+    acknowledgeLatest();
+    await vi.waitFor(() => expect(done()).toHaveLength(2));
+  });
+
+  it("orders three author replies before a round prompt without loss or interleaving", async () => {
+    const messages = ["reply A", "reply B", "reply C", "ROUND 20 prompt"];
+    for (const [index, message] of messages.entries()) {
+      writeFileSync(join(dir, `2026-08-20T14-01-0${index}-0000.md`), message);
+    }
+    activate(fakePi());
+    fire("session_start");
+
+    for (let index = 0; index < messages.length; index++) {
+      await vi.waitFor(() => expect(sends).toHaveLength(index + 1));
+      expect(sentBody(index)).toBe(messages[index]);
+      expect(done()).toHaveLength(index);
+      acknowledgeLatest();
+      await vi.waitFor(() => expect(done()).toHaveLength(index + 1));
+      expect(sends).toHaveLength(index + 1);
+      fire("agent_settled");
+    }
+    await sleep(20);
+    expect(sends).toHaveLength(messages.length);
+    expect(pending()).toHaveLength(0);
+  });
+
+  it("retries an acknowledged archive failure on settlement before advancing", async () => {
+    const file = "2026-08-20T14-01-09-0000.md";
+    writeFileSync(join(dir, file), "prompt");
+    mkdirSync(join(dir, ".done", file), { recursive: true });
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    activate(fakePi());
+    fire("session_start");
+    await vi.waitFor(() => expect(sends).toHaveLength(1));
+
+    acknowledgeLatest();
+    expect(errors).toHaveBeenCalledWith(expect.stringContaining("FAILED_LOUD"));
+    expect(pending()).toHaveLength(1);
+
+    rmSync(join(dir, ".done", file), { recursive: true });
+    fire("agent_settled");
     await vi.waitFor(() => expect(done()).toHaveLength(1));
     expect(pending()).toHaveLength(0);
   });
 
-  it("defers delivery while a turn is in flight and drains on agent_settled", async () => {
+  it("handles correlated run events emitted during the submission call", async () => {
+    sendImpl = (content) => {
+      fire("agent_start");
+      fire("message_start", { message: { role: "user", content: [{ type: "text", text: content }] } });
+    };
+    writeFileSync(join(dir, "2026-08-20T14-02-00-0000.md"), "prompt");
     activate(fakePi());
     fire("session_start");
-    fire("turn_start"); // a recheck turn begins
 
-    writeFileSync(join(dir, "2026-08-20T11-23-20-0001.md"), "held round prompt");
-    await sleep(150); // give fs.watch time to fire the deferred attempt
-    expect(sends).toHaveLength(0);
-    expect(pending()).toHaveLength(1);
-    expect(done()).toHaveLength(0);
-
-    fire("agent_settled"); // the recheck finished
     await vi.waitFor(() => expect(sends).toHaveLength(1));
     await vi.waitFor(() => expect(done()).toHaveLength(1));
-    expect(sends[0]!.content).toBe("held round prompt");
-  });
-
-  it("a wake arriving mid-turn is HELD on its own window — never measured from turn start", async () => {
-    // Regression (P1, 2026-08-20 adversarial review): the override used to
-    // count from busySince, so a wake landing >15 min into a long turn was
-    // delivered INSTANTLY into the live turn — the documented drop mechanism
-    // — archived, and lost.
-    const t0 = Date.now();
-    const now = vi.spyOn(Date, "now").mockReturnValue(t0);
-    activate(fakePi());
-    fire("session_start");
-    fire("turn_start");
-    now.mockReturnValue(t0 + BUSY_MAX_HOLD_MS + 5 * 60_000); // wake arrives 20 min into the turn
-
-    writeFileSync(join(dir, "2026-08-20T13-20-00-0000.md"), "round prompt");
-    await sleep(150);
-    expect(sends).toHaveLength(0); // held, NOT delivered into the live turn
-    expect(pending()).toHaveLength(1);
-    expect(done()).toHaveLength(0);
-
-    fire("agent_settled"); // delivered on settle/drain
-    await vi.waitFor(() => expect(sends).toHaveLength(1));
-    await vi.waitFor(() => expect(done()).toHaveLength(1));
-    expect(sends[0]!.content).toBe("round prompt");
-  });
-
-  it("overrides only after THIS delivery held a full BUSY_MAX_HOLD_MS — and re-arms busy for the next wake", async () => {
-    const t0 = Date.now();
-    const now = vi.spyOn(Date, "now").mockReturnValue(t0);
-    activate(fakePi());
-    fire("session_start");
-    fire("turn_start");
-
-    writeFileSync(join(dir, "2026-08-20T13-00-00-0000.md"), "wake A");
-    await sleep(150);
-    expect(sends).toHaveLength(0); // deferred; A's own hold window armed at t0
-
-    now.mockReturnValue(t0 + BUSY_MAX_HOLD_MS + 1); // A held its full window
-    writeFileSync(join(dir, "2026-08-20T13-00-01-0000.md"), "wake B"); // watch → drain
-    await vi.waitFor(() => expect(sends).toHaveLength(1));
-    expect(sends[0]!.content).toBe("wake A"); // oldest-first, delivered by override
-    await vi.waitFor(() => expect(done()).toHaveLength(1));
-
-    // Regression (P1): the override used to CLEAR busy permanently, so every
-    // later wake in the turn was dropped. It must re-arm instead: B defers on
-    // its own fresh window.
-    await sleep(150);
-    expect(sends).toHaveLength(1);
-    expect(pending()).toHaveLength(1);
-
-    fire("agent_settled"); // a real settle still drains
-    await vi.waitFor(() => expect(sends).toHaveLength(2));
-    expect(sends[1]!.content).toBe("wake B");
-  });
-
-  it("submits and archives both files before any lifecycle acknowledgement under the void contract", async () => {
-    activate(fakePi());
-    fire("session_start");
-
-    writeFileSync(join(dir, "2026-08-20T14-00-00-0000.md"), "first");
-    writeFileSync(join(dir, "2026-08-20T14-00-01-0000.md"), "second");
-
-    await vi.waitFor(() => expect(sends).toHaveLength(2));
-    await vi.waitFor(() => expect(done()).toHaveLength(2));
-    expect(sends.map((send) => send.content)).toEqual(["first", "second"]);
-    // No lifecycle acknowledgement occurred between the submissions. This is
-    // characterization of the production race, not the desired bridge rule;
-    // replaces it with start-acknowledged single flight.
+    expect(pending()).toHaveLength(0);
   });
 
   it("consumes an empty wake without a send", async () => {
@@ -224,13 +345,13 @@ describe("inject-bridge — consume only on delivery", () => {
     expect(sends).toHaveLength(0);
   });
 
-  it("drains files oldest-first on start (names are ISO timestamps)", async () => {
+  it("selects files oldest-first on start", async () => {
     writeFileSync(join(dir, "2026-08-20T10-00-01-0000.md"), "second");
     writeFileSync(join(dir, "2026-08-20T10-00-00-0000.md"), "first");
     activate(fakePi());
     fire("session_start");
-    await vi.waitFor(() => expect(sends).toHaveLength(2));
-    expect(sends.map((s) => s.content)).toEqual(["first", "second"]);
+    await vi.waitFor(() => expect(sends).toHaveLength(1));
+    expect(sentBody(0)).toBe("first");
   });
 });
 
@@ -257,8 +378,10 @@ describe("inject-bridge — the busy span is the agent RUN, not one turn (#5362)
 
     fire("agent_settled"); // NOW the run is fully settled
     await vi.waitFor(() => expect(sends).toHaveLength(1));
+    expect(done()).toHaveLength(0);
+    acknowledgeLatest();
     await vi.waitFor(() => expect(done()).toHaveLength(1));
-    expect(sends[0]!.content).toBe("ROUND 2 prompt");
+    expect(sentBody(0)).toBe("ROUND 2 prompt");
   });
 
   it("agent_start alone arms the hold — a run with no inner turn still defers", async () => {
@@ -293,9 +416,9 @@ describe("inject-bridge — a delivery is QUEUED, never refused (#5362)", () => 
   it("every send passes deliverAs:followUp so a streaming agent queues it instead of throwing", async () => {
     // The bridge cannot detect a refusal: pi's extension-facing
     // sendUserMessage is declared `: void` and its runtime binding swallows
-    // every rejection into an error banner, so `await` here always resolves
-    // and the file is archived regardless. The only way a refusal cannot cost
-    // us the order is for pi not to refuse — which is what deliverAs buys.
+    // every rejection into an error banner. Start acknowledgement is the
+    // correctness boundary; followUp remains a belt that asks Pi to queue if
+    // our observed run state was stale.
     writeFileSync(join(dir, "2026-08-21T15-00-00-0000.md"), "round prompt");
     activate(fakePi());
     fire("session_start");
@@ -304,22 +427,4 @@ describe("inject-bridge — a delivery is QUEUED, never refused (#5362)", () => 
     expect(sends[0]!.options?.deliverAs).toBe("followUp");
   });
 
-  it("still passes deliverAs on an override delivery into a live run", async () => {
-    const t0 = Date.now();
-    const now = vi.spyOn(Date, "now").mockReturnValue(t0);
-    activate(fakePi());
-    fire("session_start");
-    fire("agent_start");
-
-    writeFileSync(join(dir, "2026-08-21T15-01-00-0000.md"), "wake");
-    await sleep(150);
-    expect(sends).toHaveLength(0);
-
-    now.mockReturnValue(t0 + BUSY_MAX_HOLD_MS + 1);
-    writeFileSync(join(dir, "2026-08-21T15-01-01-0000.md"), "nudge"); // watch → drain
-    await vi.waitFor(() => expect(sends).toHaveLength(1));
-    // This is the one delivery that knowingly lands inside a live run — it is
-    // exactly where a refusal would cost the most.
-    expect(sends[0]!.options?.deliverAs).toBe("followUp");
-  });
 });

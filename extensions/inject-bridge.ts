@@ -1,22 +1,25 @@
 // inject-bridge — the daemon→session wake channel (spec §4, brief B3 step 3).
 //
 // Modelled on pi's shipped examples/extensions/file-trigger.ts (findings §3
-// option 2): fs.watch a directory, and on every new *.md file read it, hand
-// the content to pi.sendUserMessage(), and — only once that submission
-// resolved — move the file into .done/ so it cannot fire twice (:
-// consumption means delivery, never mere pickup). The daemon writes those
-// files atomically (tmp + rename), so a watch event always sees a complete
-// file.
+// option 2): fs.watch a directory and offer the oldest pending *.md file to
+// pi.sendUserMessage(). Pi's extension API is fire-and-forget, so the file
+// remains pending until the next `agent_start` acknowledges that Pi accepted
+// a run. Only then is it moved to .done/ (consumption means
+// accepted delivery, never pickup or attempted submission). The daemon writes
+// files atomically (tmp + rename), so a watch event sees a complete file.
 //
 // #5362 (2026-08-21) proved that "resolved" is not "accepted": pi's
 // extension-facing sendUserMessage is fire-and-forget and swallows every
 // failure into an error banner, so a drop cannot be detected from here at all.
-// Three things changed as a result, each covering a different half:
-//   1. a delivery that reaches a streaming agent is QUEUED, not refused
+// Four things cover different halves of that loss:
+//   1. only one unacknowledged wake may exist per PR session,
+//   2. a marker-correlated user `message_start` after `agent_start` is the
+//      acceptance acknowledgement, and the busy flag brackets the whole RUN,
+//      not one assistant turn,
+//   3. a delivery that still reaches a streaming agent is QUEUED, not refused
 //      (`DELIVER_AS`),
-//   2. the busy flag brackets the agent RUN, not one assistant turn,
-//   3. the daemon stopped trusting delivery and reads a receipt out of the
-//      session's own JSONL (`SessionHooks.roundPromptAccepted`).
+//   4. the daemon independently reads the prompt receipt out of the session's
+//      own JSONL (`SessionHooks.roundPromptAccepted`).
 //
 // pi is not installed here — everything touching the pi API is VERIFY-ON-PIN.
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, watch } from "node:fs";
@@ -61,15 +64,16 @@ export function pendingFiles(dir: string): string[] {
     .sort();
 }
 
-/** Retry cadence while a delivery cannot be made (busy session / a failed
- * send). Bounded backoff: base doubles up to the cap, reset on success. */
+/** Retry cadence for the only submission failure visible at this seam: a
+ * synchronous adapter throw. Bounded backoff, reset after a start ack. */
 export const RETRY_BASE_MS = 2_000;
 export const RETRY_MAX_MS = 30_000;
-/** How long the busy flag may defer deliveries before it is overridden. If
- * the run-boundary events never fire (or fire under other names on the
- * pinned pi), busy-tracking must degrade to the old behaviour — not to a
- * bridge that never delivers anything again. */
-export const BUSY_MAX_HOLD_MS = 15 * 60_000;
+/** A submitted wake should start a Pi run almost immediately. This bound is
+ * deliberately generous for local preflight while remaining far below the
+ * old 75-minute round deadline. Expiry never retries or consumes the wake: it
+ * emits one FAILED_LOUD record and leaves the pending file as recovery
+ * evidence for the daemon/operator watchdogs. */
+export const START_ACK_TIMEOUT_MS = 2 * 60_000;
 
 /**
  * How a message that reaches pi while the agent is STREAMING is handled
@@ -95,129 +99,114 @@ export const DELIVER_AS = "followUp" as const;
 export const activate: (pi: Pi) => void = (pi) => {
   const dir = resolveInjectDir(pi);
   const doneDir = join(dir, ".done");
-  const inFlight = new Set<string>();
   let watcher: ReturnType<typeof watch> | undefined;
   let closed = false;
-  // Best-effort RUN tracking (corrected 2026-08-21 after #5362).
-  // pi.sendUserMessage() while the agent is streaming dropped the message on
-  // the floor (#5317 round 2, #5257 round 8, #5362 round 2). While a run is
-  // believed in flight, deliveries are DEFERRED, the file stays where it is,
-  // and the settle event drains.
-  //
   // The span that matters is the AGENT RUN, not one assistant turn:
-  // `turn_start`/`turn_end` fire once per turn INSIDE a run (pi increments
-  // turnIndex per turn and resets it at agent_start), so clearing `busy` on
-  // `turn_end` declared the session idle in the gap between every tool call
-  // while the run was still streaming. #5362's round-2 order landed in one of
-  // those gaps — 6.5s before the session finished — and was thrown away.
+  // `turn_start`/`turn_end` fire once per turn INSIDE a run. #5362's order
+  // landed in one of those gaps. `agent_settled` is the only event that may
+  // make the session available for another wake.
   let busy = false;
-  let busySince = 0;
-  // Per-file first-deferred timestamp: the BUSY_MAX_HOLD_MS override window
-  // counts from when THIS delivery first deferred, never from turn start.
-  // Measuring from busySince meant a wake arriving >15 min into a long turn
-  // was "overridden" instantly — delivered straight into the live turn (the
-  // exact drop mechanism this extension exists to prevent), archived, lost;
-  // and the override cleared `busy` permanently, so every later wake in the
-  // same turn was dropped too.
-  const firstDeferredAt = new Map<string, number>();
+  let runGeneration = 0;
+  interface SubmittedWake {
+    file: string;
+    full: string;
+    marker: string;
+    submittedAt: number;
+    accepted: boolean;
+  }
+  let submitted: SubmittedWake | undefined;
   let retryTimer: NodeJS.Timeout | undefined;
   let retryDelay = RETRY_BASE_MS;
+  let startAckTimer: NodeJS.Timeout | undefined;
+  let settleDrainTimer: NodeJS.Timeout | undefined;
+  let latestSettledGeneration: number | undefined;
+
+  const clearStartAckTimer = (): void => {
+    if (startAckTimer) clearTimeout(startAckTimer);
+    startAckTimer = undefined;
+  };
 
   const scheduleRetry = (): void => {
-    if (closed || retryTimer) return;
+    if (closed || retryTimer || busy || submitted) return;
     retryTimer = setTimeout(() => {
       retryTimer = undefined;
       retryDelay = Math.min(retryDelay * 2, RETRY_MAX_MS);
-      void drain();
+      drain();
     }, retryDelay);
   };
 
-  const deliver = async (file: string): Promise<void> => {
-    const full = join(dir, file);
-    if (closed || inFlight.has(full) || !existsSync(full)) return;
-    // Busy hold with a PER-DELIVERY override window. Only after THIS file has
-    // been deferred a full BUSY_MAX_HOLD_MS do we conclude the turn-boundary
-    // events are not what we think they are on this pi build and deliver
-    // anyway (the legacy behaviour) rather than hold wakes forever.
-    let override = false;
-    if (busy) {
-      const nowMs = Date.now();
-      const since = firstDeferredAt.get(full) ?? nowMs;
-      firstDeferredAt.set(full, since);
-      if (nowMs - since < BUSY_MAX_HOLD_MS) {
-        scheduleRetry();
-        return;
-      }
+  const armStartAckTimeout = (wake: SubmittedWake): void => {
+    clearStartAckTimer();
+    startAckTimer = setTimeout(() => {
+      startAckTimer = undefined;
+      if (closed || submitted?.full !== wake.full) return;
       console.error(
-        `[inject-bridge] ${file} held ${nowMs - since}ms against a busy session — overriding the hold and delivering`,
+        `[inject-bridge] FAILED_LOUD ${wake.file} was submitted ${Date.now() - wake.submittedAt}ms ago without its correlated run message; preserving the pending file and refusing successor delivery`,
       );
-      override = true;
-    }
-    inFlight.add(full);
+    }, START_ACK_TIMEOUT_MS);
+  };
+
+  const archive = (wake: SubmittedWake): boolean => {
     try {
-      const content = readFileSync(full, "utf8").trim();
-      if (content.length === 0) {
-        // An empty wake carries nothing to lose — consume it outright.
-        mkdirSync(doneDir, { recursive: true });
-        renameSync(full, join(doneDir, basename(full)));
-        firstDeferredAt.delete(full);
-        return;
-      }
-      // Send FIRST, archive only after the submission resolved.
-      // The old order (archive, then send) meant a send that failed — or was
-      // silently dropped by a busy session — had already consumed the file,
-      // so the round prompt was gone for good. The trade is deliberate: a
-      // crash between send and rename re-fires the same wake on restart,
-      // and a duplicated wake is benign where a dropped round is not.
-      // The same trade is accepted for NON-round wakes: a replayed
-      // author-reply wake double-charges the ping-pong exchange budget
-      // (pingpong.ts, ≤3 exchanges) — a duplicate reply costs one budget
-      // slot where a dropped round costs the whole review, so the round
-      // side of the trade wins. (Reviewer's note, 2026-08-20: if replayed
-      // non-round wakes ever get expensive, dedupe belongs daemon-side on
-      // the wake content, never here — this extension stays drop-proof.)
-      // A resolved sendUserMessage() does NOT mean the message was accepted.
-      // Tag burned 2026-08-21 on the pinned 0.84.1 (#5362): the
-      // extension-facing API is declared `sendUserMessage(...): void` and its
-      // runtime binding is
-      //     this.sendUserMessage(...).catch((err) => runner.emitError(…))
-      // so `await` here awaits `undefined` and ALWAYS resolves; every failure
-      // — "Agent is already processing" included — surfaces as a UI error
-      // banner and never as a rejection. The send-then-archive ordering below
-      // therefore cannot detect a drop on its own, which is why `DELIVER_AS`
-      // (queue instead of throw) and the daemon-side prompt receipt
-      // (`SessionHooks.roundPromptAccepted`) both exist. Keep the ordering
-      // anyway: it still covers a synchronous throw, and a replayed wake is
-      // cheap where a dropped round is not.
-      await pi.sendUserMessage(content, { deliverAs: DELIVER_AS });
       mkdirSync(doneDir, { recursive: true });
-      renameSync(full, join(doneDir, basename(full)));
-      firstDeferredAt.delete(full);
-      retryDelay = RETRY_BASE_MS;
-      if (override) {
-        // The override delivery itself starts a turn — RE-ARM the hold (do
-        // not clear it): the next wake defers on its own fresh window instead
-        // of being dropped into whatever this delivery started. A real settle
-        // event still clears `busy` the moment one fires.
-        busy = true;
-        busySince = Date.now();
-      }
+      renameSync(wake.full, join(doneDir, basename(wake.full)));
+      return true;
     } catch (err) {
-      // The file stays in place — retried until it lands or shutdown.
-      console.error(`[inject-bridge] failed to deliver ${file}: ${String(err)}`);
-      scheduleRetry();
-    } finally {
-      inFlight.delete(full);
+      console.error(`[inject-bridge] FAILED_LOUD could not acknowledge ${wake.file}: ${String(err)}`);
+      return false;
     }
   };
 
-  // The ONE serialized drain queue: every trigger (start sweep, watch event,
-  // retry timer, settle) funnels through here, oldest-first. Concurrent
-  // triggers coalesce into a re-run instead of interleaving deliveries —
-  // per-file watch deliveries used to race the sweep and could reorder.
+  /** Returns true only when drain may immediately inspect another file. */
+  const deliver = (file: string): boolean => {
+    const full = join(dir, file);
+    if (closed || busy || submitted || !existsSync(full)) return false;
+    try {
+      const content = readFileSync(full, "utf8").trim();
+      if (content.length === 0) {
+        mkdirSync(doneDir, { recursive: true });
+        renameSync(full, join(doneDir, basename(full)));
+        return true;
+      }
+
+      // Install the single-flight barrier BEFORE invoking Pi: a pinned-Pi
+      // adapter may emit agent_start synchronously from inside this call.
+      const marker = `<!-- qcr-inject:${file} -->`;
+      const wake = { file, full, marker, submittedAt: Date.now(), accepted: false };
+      if (retryTimer) clearTimeout(retryTimer);
+      retryTimer = undefined;
+      submitted = wake;
+      armStartAckTimeout(wake);
+      try {
+        pi.sendUserMessage(`${content}\n\n${marker}`, { deliverAs: DELIVER_AS });
+      } catch (err) {
+        // Only a synchronous proxy/adapter throw is observable here. If a
+        // synchronous agent_start already acknowledged the wake, do not turn
+        // the post-ack throw into a duplicate submission.
+        if (submitted?.full === full) {
+          submitted = undefined;
+          clearStartAckTimer();
+          console.error(`[inject-bridge] failed to submit ${file}: ${String(err)}`);
+          scheduleRetry();
+        } else {
+          console.error(`[inject-bridge] submission for acknowledged ${file} threw: ${String(err)}`);
+        }
+      }
+      return false;
+    } catch (err) {
+      console.error(`[inject-bridge] failed to read or consume ${file}: ${String(err)}`);
+      scheduleRetry();
+      return false;
+    }
+  };
+
+  // Every trigger funnels through this one synchronous drain. It may consume
+  // empty files, but a non-empty submission always stops the drain until its
+  // start is acknowledged and its run settles.
   let draining = false;
   let drainAgain = false;
-  const drain = async (): Promise<void> => {
+  const drain = (): void => {
+    if (closed) return;
     if (draining) {
       drainAgain = true;
       return;
@@ -226,28 +215,33 @@ export const activate: (pi: Pi) => void = (pi) => {
     try {
       do {
         drainAgain = false;
-        for (const file of pendingFiles(dir)) await deliver(file);
-      } while (drainAgain && !closed);
+        for (const file of pendingFiles(dir)) {
+          if (!deliver(file)) break;
+        }
+      } while (drainAgain && !closed && !busy && !submitted);
     } finally {
       draining = false;
     }
   };
 
   const start = (): void => {
+    if (watcher || closed) return;
     mkdirSync(dir, { recursive: true });
     mkdirSync(doneDir, { recursive: true });
-    void drain(); // anything dropped while the session was down
+    // Register before sweeping: a daemon rename between sweep and watch
+    // registration would otherwise remain pending until an unrelated event.
     watcher = watch(dir, (_event, filename) => {
       if (!filename) {
-        void drain();
+        drain();
         return;
       }
       // Route EVERY event through the one drain queue (never a per-file
       // deliver): concurrent watch events cannot interleave or reorder —
       // pendingFiles() sorts, so delivery is strictly oldest-first.
       const name = String(filename);
-      if (name.endsWith(".md")) void drain();
+      if (name.endsWith(".md")) drain();
     });
+    drain(); // anything dropped before or during watch registration
     console.error(`[inject-bridge] watching ${dir}`);
   };
 
@@ -256,7 +250,12 @@ export const activate: (pi: Pi) => void = (pi) => {
   pi.on("session_shutdown", () => {
     closed = true;
     if (retryTimer) clearTimeout(retryTimer);
+    if (startAckTimer) clearTimeout(startAckTimer);
+    if (settleDrainTimer) clearTimeout(settleDrainTimer);
     retryTimer = undefined;
+    startAckTimer = undefined;
+    settleDrainTimer = undefined;
+    latestSettledGeneration = undefined;
     watcher?.close();
     watcher = undefined;
   });
@@ -267,25 +266,83 @@ export const activate: (pi: Pi) => void = (pi) => {
   // run has FULLY SETTLED and no automatic retry, compaction, or queued
   // continuation will run", `turn_start`/`turn_end` = "at the start/end of
   // EACH TURN".
-  const markBusy = (): void => {
+  pi.on("agent_start", () => {
+    // Auto-retry/continue emits another agent_start inside the SAME outer run,
+    // but only one agent_settled after the whole run. Do not count inner loop
+    // starts as separate runs or the mailbox would remain busy forever.
+    if (!busy) runGeneration++;
     busy = true;
-    busySince = Date.now();
-  };
-  pi.on("agent_start", markBusy);
-  // A turn cannot start outside a run, so this only ever re-affirms `busy`.
-  // Kept as a belt: if `agent_start` is ever missed, the flag is still set.
-  pi.on("turn_start", markBusy);
+  });
+  // A turn cannot start outside a run, so this reaffirms `busy` but is NOT a
+  // correlated acceptance ack.
+  pi.on("turn_start", () => {
+    // Belt for a missed agent_start. Further turns belong to the same run.
+    if (!busy) runGeneration++;
+    busy = true;
+  });
+
+  // Raw agent_start carries no prompt identity. The following user
+  // message_start is still part of the run-start sequence and contains the
+  // deterministic marker appended above, so unrelated interactive prompts
+  // cannot consume the daemon wake. Defensive payload parsing is intentional:
+  // everything touching Pi events is VERIFY-ON-PIN.
+  pi.on("message_start", (event) => {
+    const wake = submitted;
+    if (!wake) return;
+    const message = event && typeof event === "object" ? (event as { message?: unknown }).message : undefined;
+    if (!message || typeof message !== "object") return;
+    const record = message as { role?: unknown; content?: unknown };
+    if (record.role !== "user" || !Array.isArray(record.content)) return;
+    const matched = record.content.some((part) => {
+      if (!part || typeof part !== "object") return false;
+      const text = (part as { type?: unknown; text?: unknown });
+      return text.type === "text" && typeof text.text === "string" && text.text.includes(wake.marker);
+    });
+    if (!matched) return;
+    if (!busy) {
+      // Belt for missed run-start events: a correlated user message can only
+      // be emitted from an active run.
+      runGeneration++;
+      busy = true;
+    }
+    wake.accepted = true;
+    clearStartAckTimer();
+    if (!archive(wake)) return;
+    submitted = undefined;
+    retryDelay = RETRY_BASE_MS;
+  });
   // `agent_settled` is the ONLY clear. `turn_end` must not clear it (that was
   // the #5362 bug) and neither may `agent_end`: pi emits `agent_settled`
-  // strictly later, once retries/compaction/queued continuations are done, and
-  // that is the first moment a send cannot be refused. If it somehow never
-  // fires, BUSY_MAX_HOLD_MS overrides per delivery — the bridge degrades to
-  // delivering, never to holding forever.
+  // strictly later, once retries/compaction/queued continuations are done.
+  // Never override a missing settle by submitting into a run: daemon-side
+  // bounded recovery owns that failure. Delivery is scheduled onto a later
+  // event-loop turn so this extension cannot call prompt preflight re-entrantly
+  // from Pi's own settlement event dispatch.
   pi.on("agent_settled", () => {
+    if (closed) return;
+    // Always retain the newest settlement even when a deferred drain is
+    // already scheduled. A complete newer run can start and settle during
+    // another extension's event dispatch; dropping that second settle would
+    // leave the bridge busy forever after the old callback sees generation
+    // drift.
+    latestSettledGeneration = runGeneration;
     busy = false;
-    // The moment the session can accept a turn again is the moment deferred
-    // wakes should go in — event-driven, with the retry timer as backstop.
-    void drain();
+    if (settleDrainTimer) return;
+    settleDrainTimer = setTimeout(() => {
+      settleDrainTimer = undefined;
+      const settledGeneration = latestSettledGeneration;
+      latestSettledGeneration = undefined;
+      // A newer run started but has not settled. Auto-retry starts do not
+      // change generation because they belong to one outer run and share its
+      // final settlement.
+      if (busy || settledGeneration === undefined || runGeneration !== settledGeneration) return;
+      const wake = submitted;
+      if (wake?.accepted && archive(wake)) {
+        submitted = undefined;
+        retryDelay = RETRY_BASE_MS;
+      }
+      drain();
+    }, 0);
   });
 };
 
