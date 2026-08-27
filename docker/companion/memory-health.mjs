@@ -18,7 +18,7 @@
 // It is deliberately a plain .mjs with zero imports beyond node builtins: it
 // runs as a background process of the container entrypoint, long before (and
 // independently of) any repo build.
-import { mkdirSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -27,6 +27,31 @@ import { pathToFileURL } from "node:url";
 export const FAIL_THRESHOLD = 3;
 export const DEFAULT_INTERVAL_S = 60;
 export const DEFAULT_TIMEOUT_MS = 4000;
+
+/** A deploy recreates the VM container and restarts the host forward, so the
+ * memory chain is EXPECTED down for a few minutes — long enough that the
+ * 3×60s threshold fired on every single deploy (the owner, 2026-08-27: "on
+ * EVERY deploy"). deploy.sh stamps this marker into the alerts dir (a live
+ * bind mount, so it appears here instantly) when its disruptive phase starts
+ * and deletes it once the chain answers again; while the marker's mtime is
+ * younger than the grace, a "down" transition is HELD rather than announced.
+ * The marker only absorbs the deploy window: an outage that outlives the
+ * grace alerts on the next failed probe, and with no marker nothing changes.
+ * Dotfile on purpose — AlertConsumer skips dotfiles, so the marker can never
+ * be mistaken for an alert. */
+export const DEPLOY_MARKER = ".deploy-window.json";
+export const DEPLOY_GRACE_MS = 10 * 60 * 1000;
+
+/** Is a deploy window open? Never throws: no marker (or an unreadable one)
+ * means no grace. mtime is the signal — the stamp refreshes it. */
+export function deployGraceActive(dir, nowMs, graceMs = DEPLOY_GRACE_MS, statFn = statSync) {
+  try {
+    const age = nowMs - statFn(join(dir, DEPLOY_MARKER)).mtimeMs;
+    return age >= 0 && age < graceMs;
+  } catch {
+    return false;
+  }
+}
 
 export const CAUSE_DOWN = "companion-memory-unreachable";
 export const CAUSE_UP = "companion-memory-restored";
@@ -43,17 +68,22 @@ export function initialState() {
  * Only TRANSITIONS are announced: a memory engine that stays down produces one
  * alert, not one per minute (and the policy's cooldown is a second net).
  *
+ * A deploy-grace window (`inGrace`) holds the "down" announcement without
+ * touching the failure count: the threshold stays crossed, so the moment the
+ * grace lapses a still-dead chain announces on the very next failed sample.
+ *
  * @param {WatchState} state
  * @param {Sample} sample
+ * @param {boolean} [inGrace]
  * @returns {{ state: WatchState, emit: "down" | "up" | null }}
  */
-export function decide(state, sample) {
+export function decide(state, sample, inGrace = false) {
   if (sample.ok) {
     const emit = state.announced === "down" ? "up" : null;
     return { state: { fails: 0, announced: emit === "up" ? "up" : state.announced }, emit };
   }
   const fails = state.fails + 1;
-  if (fails >= FAIL_THRESHOLD && state.announced !== "down") {
+  if (fails >= FAIL_THRESHOLD && state.announced !== "down" && !inGrace) {
     return { state: { fails, announced: "down" }, emit: "down" };
   }
   return { state: { fails, announced: state.announced }, emit: null };
@@ -155,8 +185,12 @@ export async function runWatcher(cfg, opts = {}) {
   let state = initialState();
   const tick = async () => {
     const sample = await probe(cfg.endpoint, cfg.timeoutMs, fetchFn);
-    const next = decide(state, sample);
+    const inGrace = !sample.ok && deployGraceActive(cfg.alertsDir, now().getTime());
+    const next = decide(state, sample, inGrace);
     state = next.state;
+    if (inGrace && state.fails >= FAIL_THRESHOLD && state.announced !== "down") {
+      log(`unreachable ×${state.fails} (${sample.reason}) — deploy window open, holding the alert`);
+    }
     if (next.emit) {
       const at = now().toISOString();
       const body = alertBody(next.emit, { endpoint: cfg.endpoint, reason: sample.reason, at, fails: state.fails });

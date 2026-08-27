@@ -412,6 +412,55 @@ describe("memory health watcher", () => {
     expect(health.decide(blip.state, { ok: true, reason: "ready" }).emit).toBe(null);
   });
 
+  it("a deploy-grace window holds the alert; an outage that outlives it alerts on the NEXT failed probe", () => {
+    // The deploy window: five failed probes, all in grace — silence.
+    let state = health.initialState();
+    for (let i = 0; i < 5; i++) {
+      const step = health.decide(state, { ok: false, reason: "timeout" }, true);
+      expect(step.emit).toBe(null);
+      state = step.state;
+    }
+    // Grace lapses with the chain still dead: the very next probe announces —
+    // the count kept climbing under the hold, nothing restarts from zero.
+    const after = health.decide(state, { ok: false, reason: "timeout" }, false);
+    expect(after.emit).toBe("down");
+    // And recovery still announces exactly once.
+    expect(health.decide(after.state, { ok: true, reason: "ready" }).emit).toBe("up");
+  });
+
+  it("a deploy that recovers inside the grace announces NOTHING — no down, so no up notice either", () => {
+    let state = health.initialState();
+    for (let i = 0; i < 4; i++) state = health.decide(state, { ok: false, reason: "timeout" }, true).state;
+    const back = health.decide(state, { ok: true, reason: "ready" });
+    expect(back.emit).toBe(null);
+    expect(back.state.fails).toBe(0);
+  });
+
+  it("deployGraceActive: fresh marker opens it, stale or missing or future-dated does not", () => {
+    const now = 1_000_000_000;
+    const statAt = (mtimeMs: number) => () => ({ mtimeMs }) as ReturnType<typeof import("node:fs").statSync>;
+    expect(health.deployGraceActive("/a", now, health.DEPLOY_GRACE_MS, statAt(now - 60_000))).toBe(true);
+    expect(health.deployGraceActive("/a", now, health.DEPLOY_GRACE_MS, statAt(now - health.DEPLOY_GRACE_MS))).toBe(false);
+    // A future mtime is corruption, and corruption must fail toward alerting
+    // (noisy), never toward an open-ended mute (silent).
+    expect(health.deployGraceActive("/a", now, health.DEPLOY_GRACE_MS, statAt(now + 60_000))).toBe(false);
+    const missing = () => {
+      throw new Error("ENOENT");
+    };
+    expect(health.deployGraceActive("/a", now, health.DEPLOY_GRACE_MS, missing)).toBe(false);
+    // Dotfile — AlertConsumer skips dotfiles, so the marker can never be
+    // parsed as an alert.
+    expect(health.DEPLOY_MARKER.startsWith(".")).toBe(true);
+  });
+
+  it("deploy.sh opens and closes the SAME marker the watcher reads (name parity is the contract)", () => {
+    const deploysh = readFileSync(resolve(root, "scripts/deploy.sh"), "utf8");
+    expect(deploysh).toContain(health.DEPLOY_MARKER);
+    // Stamped before the disruptive phase, removed once the chain answers.
+    expect(deploysh.indexOf(health.DEPLOY_MARKER)).toBeLessThan(deploysh.indexOf('"${ANSIBLE_CMD[@]}"'));
+    expect(deploysh).toContain('rm -f "$DEPLOY_MARKER_FILE"');
+  });
+
   it("writes an alert file the EXISTING alert policy can parse and route", async () => {
     const dir = mkdtempSync(join(tmpdir(), "qcr-memalert-"));
     const endpoint = "http://198.51.100.1:1933";

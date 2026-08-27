@@ -392,6 +392,19 @@ fi
 print_plan >&2
 echo >&2
 
+# The companion's memory-health watcher (docker/companion/memory-health.mjs)
+# alerts after 3 failed probes — and a deploy's container recreate takes the
+# memory chain down for longer than that, so the "memory unreachable" alert
+# fired on EVERY deploy (the owner, 2026-08-27). The marker below opens the
+# watcher's deploy-grace window: it rides the alerts bind mount into the
+# companion container, the watcher holds the alert while the marker is
+# younger than 10 min, and refresh_memory_forward deletes it the moment the
+# chain answers again. Dotfile on purpose — AlertConsumer skips dotfiles.
+# (Path matches the config.ts default; an alerts_dir override in config.toml
+# would bypass the grace, visibly — the alert would simply return.)
+COMPANION_ALERTS_DIR="$SANDBOX_DIR/state/companion/alerts"
+DEPLOY_MARKER_FILE="$COMPANION_ALERTS_DIR/.deploy-window.json"
+
 if [[ "$MODE" != "verify" ]]; then
   command -v ansible-playbook >/dev/null 2>&1 || die "ansible-playbook not on PATH — run this from the controller machine"
   [[ -f "$INVENTORY" ]] || die "no inventory at $INVENTORY (cp inventory.example.ini inventory.ini, then edit; or set QC_INVENTORY)"
@@ -407,6 +420,9 @@ if [[ "$MODE" != "verify" ]]; then
   # (the qcr tui deploy tab diffs local HEAD against it). Gitignored, so the
   # clean-tree guard above stays meaningful.
   printf '%s %s %s\n' "$HEAD_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$MODE" > "$SANDBOX_DIR/BUILD_SHA"
+  # Open the deploy-grace window BEFORE the disruptive phase starts.
+  mkdir -p "$COMPANION_ALERTS_DIR"
+  printf '{"since":"%s","by":"deploy.sh","mode":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$MODE" > "$DEPLOY_MARKER_FILE"
   note "running: ${ANSIBLE_CMD[*]}"
   "${ANSIBLE_CMD[@]}"
 fi
@@ -449,6 +465,9 @@ refresh_memory_forward() {
   command -v systemctl >/dev/null 2>&1 || return 0
   if ! systemctl --user is-active --quiet qcr-memory-forward 2>/dev/null; then
     note "memory forward: systemd unit not active (TUI-owned or absent) — not restarted"
+    # Still close the grace window if the chain already answers (a TUI-owned
+    # forward recovers by itself); otherwise the marker expires on its own.
+    curl -s -m 5 -o /dev/null "http://198.51.100.1:1933/health" && rm -f "$DEPLOY_MARKER_FILE"
     return 0
   fi
   note "memory forward: restarting qcr-memory-forward (its ssh state predates this deploy's container)"
@@ -456,12 +475,22 @@ refresh_memory_forward() {
     note "WARNING — memory forward restart failed; memory stays degraded until 'systemctl --user restart qcr-memory-forward' succeeds"
     return 0
   fi
-  sleep 3
-  if curl -s -m 15 -o /dev/null "http://198.51.100.1:1933/health"; then
-    note "memory forward: restarted and answering on the qcr-memory bridge"
-  else
-    note "WARNING — memory forward restarted but /health did not answer on 198.51.100.1:1933; check 'journalctl --user -u qcr-memory-forward -n 20'"
-  fi
+  # Poll, don't probe once: right after the ansible run the VM container is
+  # still booting OpenViking (~40s) and the forward's first relays die against
+  # it — the old single probe here raced that boot and WARNed on every deploy
+  # even when the chain came up fine a minute later. Up to 3 min covers the
+  # boot plus relay churn; only then is a WARN believable.
+  local waited=0
+  while (( waited < 180 )); do
+    if curl -s -m 5 -o /dev/null "http://198.51.100.1:1933/health"; then
+      note "memory forward: answering on the qcr-memory bridge (${waited}s after restart)"
+      rm -f "$DEPLOY_MARKER_FILE"
+      return 0
+    fi
+    sleep 10
+    waited=$((waited + 10))
+  done
+  note "WARNING — memory forward still not answering after ${waited}s; check 'journalctl --user -u qcr-memory-forward -n 20' (deploy-grace marker left to expire so a real outage still alerts)"
 }
 refresh_memory_forward
 
