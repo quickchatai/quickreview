@@ -490,6 +490,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       openviking = new OpenVikingSupervisor({ cfg: cfg.openviking, log });
       openviking.start();
 
+      // Bind the daemon's durable command slot before any PR session is
+      // adopted or born. Pending rows reconstruct their exact inject bytes;
+      // running rows retain their prior owner until bounded recovery.
+      sessions.setCommandStore(d.store);
       // Out-of-round wakes (recheck, ping-pong) can now respawn a sticky
       // session the last restart killed — the title comes from the registry.
       sessions.setTitleResolver((pr) => d.store.getPr(pr)?.title);

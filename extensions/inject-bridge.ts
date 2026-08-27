@@ -25,6 +25,8 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, watch } from "node:fs";
 import { basename, join } from "node:path";
 import type { Pi } from "@earendil-works/pi-coding-agent";
+import { sessionCommandMarker } from "../src/session-command.js";
+import { SessionCommandLedger } from "./session-command-ledger.js";
 
 /**
  * Session name resolution, in order:
@@ -101,6 +103,18 @@ export const activate: (pi: Pi) => void = (pi) => {
   const doneDir = join(dir, ".done");
   let watcher: ReturnType<typeof watch> | undefined;
   let closed = false;
+  const stateDb = process.env.QCR_STATE_DB?.trim();
+  const session = resolveSessionName(pi);
+  const root = process.env.QCR_SANDBOX_ROOT?.trim() || process.cwd();
+  const ledgerRequired = Boolean(stateDb && /^pr-\d+$/.test(session));
+  let ledger: SessionCommandLedger | undefined;
+  if (ledgerRequired) {
+    try {
+      ledger = new SessionCommandLedger(stateDb!, root, session);
+    } catch (err) {
+      console.error(`[inject-bridge] FAILED_LOUD could not open durable command ledger: ${String(err)}`);
+    }
+  }
   // The span that matters is the AGENT RUN, not one assistant turn:
   // `turn_start`/`turn_end` fire once per turn INSIDE a run. #5362's order
   // landed in one of those gaps. `agent_settled` is the only event that may
@@ -113,8 +127,10 @@ export const activate: (pi: Pi) => void = (pi) => {
     marker: string;
     submittedAt: number;
     accepted: boolean;
+    commandId?: string;
   }
   let submitted: SubmittedWake | undefined;
+  let activeWake: SubmittedWake | undefined;
   let retryTimer: NodeJS.Timeout | undefined;
   let retryDelay = RETRY_BASE_MS;
   let startAckTimer: NodeJS.Timeout | undefined;
@@ -127,7 +143,7 @@ export const activate: (pi: Pi) => void = (pi) => {
   };
 
   const scheduleRetry = (): void => {
-    if (closed || retryTimer || busy || submitted) return;
+    if (closed || retryTimer || busy || submitted || activeWake) return;
     retryTimer = setTimeout(() => {
       retryTimer = undefined;
       retryDelay = Math.min(retryDelay * 2, RETRY_MAX_MS);
@@ -140,8 +156,13 @@ export const activate: (pi: Pi) => void = (pi) => {
     startAckTimer = setTimeout(() => {
       startAckTimer = undefined;
       if (closed || submitted?.full !== wake.full) return;
+      const failure = `${wake.file} was submitted ${Date.now() - wake.submittedAt}ms ago without its correlated run message`;
+      // Do NOT terminalize the durable reservation here. A stale busy reading
+      // can make Pi queue `followUp`; that queued command cannot be withdrawn.
+      // Leaving the short running lease expired lets reconcile JSONL/
+      // liveness and kill the old session before any safe retry.
       console.error(
-        `[inject-bridge] FAILED_LOUD ${wake.file} was submitted ${Date.now() - wake.submittedAt}ms ago without its correlated run message; preserving the pending file and refusing successor delivery`,
+        `[inject-bridge] FAILED_LOUD ${failure}; preserving the pending file and refusing successor delivery`,
       );
     }, START_ACK_TIMEOUT_MS);
   };
@@ -160,10 +181,22 @@ export const activate: (pi: Pi) => void = (pi) => {
   /** Returns true only when drain may immediately inspect another file. */
   const deliver = (file: string): boolean => {
     const full = join(dir, file);
-    if (closed || busy || submitted || !existsSync(full)) return false;
+    if (closed || busy || submitted || activeWake || !existsSync(full)) return false;
+    if (ledgerRequired && !ledger) return false;
     try {
-      const content = readFileSync(full, "utf8").trim();
-      if (content.length === 0) {
+      const payload = readFileSync(full);
+      const content = payload.toString("utf8");
+      const link = ledger?.linkOrAdopt(full, payload);
+      if (link && !link.ok) {
+        console.error(`[inject-bridge] FAILED_LOUD refusing ${file}: ${link.reason}`);
+        return false;
+      }
+      if (content.trim().length === 0) {
+        if (link?.ok && ledger) {
+          ledger.failPending(link.command.id, "empty command payload");
+          console.error(`[inject-bridge] FAILED_LOUD refusing empty command ${link.command.id}; preserving its file`);
+          return false;
+        }
         mkdirSync(doneDir, { recursive: true });
         renameSync(full, join(doneDir, basename(full)));
         return true;
@@ -171,19 +204,36 @@ export const activate: (pi: Pi) => void = (pi) => {
 
       // Install the single-flight barrier BEFORE invoking Pi: a pinned-Pi
       // adapter may emit agent_start synchronously from inside this call.
-      const marker = `<!-- qcr-inject:${file} -->`;
-      const wake = { file, full, marker, submittedAt: Date.now(), accepted: false };
+      if (link?.ok && ledger && !ledger.reserve(link.command.id)) {
+        console.error(`[inject-bridge] FAILED_LOUD refusing ${file}: command ${link.command.id} could not be reserved`);
+        return false;
+      }
+      const marker = link?.ok
+        ? sessionCommandMarker(link.command.id, link.command.payload_sha256)
+        : `<!-- qcr-inject:${file} -->`;
+      const wake: SubmittedWake = {
+        file,
+        full,
+        marker,
+        submittedAt: Date.now(),
+        accepted: false,
+        ...(link?.ok ? { commandId: link.command.id } : {}),
+      };
       if (retryTimer) clearTimeout(retryTimer);
       retryTimer = undefined;
       submitted = wake;
       armStartAckTimeout(wake);
       try {
-        pi.sendUserMessage(`${content}\n\n${marker}`, { deliverAs: DELIVER_AS });
+        const separator = content.endsWith("\n") ? "\n" : "\n\n";
+        pi.sendUserMessage(`${content}${separator}${marker}`, { deliverAs: DELIVER_AS });
       } catch (err) {
         // Only a synchronous proxy/adapter throw is observable here. If a
         // synchronous agent_start already acknowledged the wake, do not turn
         // the post-ack throw into a duplicate submission.
         if (submitted?.full === full) {
+          if (submitted.commandId && ledger && !ledger.releasePending(submitted.commandId)) {
+            console.error(`[inject-bridge] FAILED_LOUD could not release command ${submitted.commandId} after synchronous throw`);
+          }
           submitted = undefined;
           clearStartAckTimer();
           console.error(`[inject-bridge] failed to submit ${file}: ${String(err)}`);
@@ -218,7 +268,7 @@ export const activate: (pi: Pi) => void = (pi) => {
         for (const file of pendingFiles(dir)) {
           if (!deliver(file)) break;
         }
-      } while (drainAgain && !closed && !busy && !submitted);
+      } while (drainAgain && !closed && !busy && !submitted && !activeWake);
     } finally {
       draining = false;
     }
@@ -256,6 +306,8 @@ export const activate: (pi: Pi) => void = (pi) => {
     startAckTimer = undefined;
     settleDrainTimer = undefined;
     latestSettledGeneration = undefined;
+    ledger?.close();
+    ledger = undefined;
     watcher?.close();
     watcher = undefined;
   });
@@ -305,10 +357,16 @@ export const activate: (pi: Pi) => void = (pi) => {
       runGeneration++;
       busy = true;
     }
+    if (wake.commandId && ledger && !ledger.markAccepted(wake.commandId)) {
+      clearStartAckTimer();
+      console.error(`[inject-bridge] FAILED_LOUD command ${wake.commandId} reached Pi but a stale owner cannot mark it accepted`);
+      return;
+    }
     wake.accepted = true;
     clearStartAckTimer();
     if (!archive(wake)) return;
     submitted = undefined;
+    activeWake = wake;
     retryDelay = RETRY_BASE_MS;
   });
   // `agent_settled` is the ONLY clear. `turn_end` must not clear it (that was
@@ -339,8 +397,15 @@ export const activate: (pi: Pi) => void = (pi) => {
       const wake = submitted;
       if (wake?.accepted && archive(wake)) {
         submitted = undefined;
+        activeWake = wake;
         retryDelay = RETRY_BASE_MS;
       }
+      const completed = activeWake;
+      if (completed?.commandId && ledger && !ledger.ack(completed.commandId)) {
+        console.error(`[inject-bridge] FAILED_LOUD stale owner cannot ack command ${completed.commandId}`);
+        return;
+      }
+      activeWake = undefined;
       drain();
     }, 0);
   });

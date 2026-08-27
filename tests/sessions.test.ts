@@ -1,6 +1,7 @@
 // Session manager tests. Every process invocation goes through a fake exec
 // that records commands — no tmux, no pi, no git is ever spawned. Filesystem
 // work happens inside a temp sandbox root.
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +10,7 @@ import type { Config } from "../src/config.js";
 import { PiSessionManager, OVERSEER_SESSION, buildPiCommand, isSandboxSession, prOfSession, prSessionName } from "../src/sessions.js";
 import { Tmux } from "../src/tmux.js";
 import type { ExecFn } from "../src/tmux.js";
+import { StateStore } from "../src/state.js";
 import { roundPromptMarker } from "../src/types.js";
 import type { RoundOrder } from "../src/types.js";
 import { WorktreeManager } from "../src/worktrees.js";
@@ -80,7 +82,7 @@ const ovSessions = {
   },
 };
 
-function manager(now = () => new Date("2026-08-13T10:00:00Z")): PiSessionManager {
+function manager(now = () => new Date("2026-08-13T10:00:00Z"), store?: StateStore): PiSessionManager {
   return new PiSessionManager({
     cfg: cfg(),
     root,
@@ -89,6 +91,7 @@ function manager(now = () => new Date("2026-08-13T10:00:00Z")): PiSessionManager
     piHome: join(root, "pihome"),
     ovSessions,
     now,
+    ...(store ? { commandStore: store } : {}),
   });
 }
 
@@ -511,6 +514,95 @@ describe("injection", () => {
     await m.inject(42, "two");
     const files = readdirSync(m.injectDir("pr-42")).filter((f) => f.endsWith(".md"));
     expect(new Set(files).size).toBe(2);
+  });
+});
+
+describe("durable command ownership", () => {
+  it("records round dispatch and ordinary wakes in the same exact-byte command slot", async () => {
+    const dbPath = join(root, "state", "state.db");
+    const store = new StateStore(dbPath, () => new Date("2026-08-13T10:00:00Z"));
+    try {
+      const m = manager(undefined, store);
+      await m.dispatchRound(order, "ROUND PROMPT BODY");
+
+      const row = store.activeSessionCommand("pr-42")!;
+      const bytes = readFileSync(row.inject_path);
+      expect(row).toMatchObject({ pr: 42, session: "pr-42", kind: "round", round_no: 1, status: "pending", attempt: 0 });
+      expect(row.payload_sha256).toBe(createHash("sha256").update(bytes).digest("hex"));
+      expect(readFileSync(row.payload_path)).toEqual(bytes);
+      expect(row.inject_path).toContain(`--cmd-${row.id}.md`);
+      expect(m.buildEnv("pr-42").QCR_STATE_DB).toBe(dbPath);
+
+      liveSessions.add("pr-42");
+      await expect(m.inject(42, "author replied")).rejects.toThrow(/session command .* is pending/);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("redelivery reuses the same command id and byte-identical durable payload", async () => {
+    const store = new StateStore(join(root, "state", "state.db"), () => new Date("2026-08-13T10:00:00Z"));
+    try {
+      const m = manager(undefined, store);
+      await m.dispatchRound(order, "ROUND PROMPT BODY");
+      const original = store.activeSessionCommand("pr-42")!;
+      const bytes = readFileSync(original.payload_path);
+      store.claimSessionCommand(original.id, "bridge", "2026-08-13T10:30:00Z");
+      store.finishSessionCommand(original.id, "bridge", "failed", "no start");
+      rmSync(original.inject_path);
+
+      expect(await m.redeliverRound(42, 1)).toBe(true);
+      const retried = store.activeSessionCommand("pr-42")!;
+      expect(retried.id).toBe(original.id);
+      expect(retried.attempt).toBe(1);
+      expect(readFileSync(retried.inject_path)).toEqual(bytes);
+      expect(readFileSync(retried.payload_path)).toEqual(bytes);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("adopts legacy pending files one at a time without inventing acknowledgement", () => {
+    const inject = join(root, "inject", "pr-42");
+    mkdirSync(inject, { recursive: true });
+    const firstPath = join(inject, "2026-08-13T09-00-00-0000.md");
+    const secondPath = join(inject, "2026-08-13T09-00-01-0000.md");
+    writeFileSync(firstPath, "first legacy\n");
+    writeFileSync(secondPath, "second legacy\n");
+    const store = new StateStore(join(root, "state", "state.db"), () => new Date("2026-08-13T10:00:00Z"));
+    try {
+      const m = manager(undefined, store);
+      const first = store.blockingSessionCommand("pr-42")!;
+      expect(first).toMatchObject({ kind: "legacy", status: "pending", inject_path: firstPath });
+      expect(store.getSessionCommandByInjectPath(secondPath)).toBeUndefined();
+
+      store.claimSessionCommand(first.id, "bridge", "2026-08-13T10:30:00Z");
+      store.markSessionCommandStarted(first.id, "bridge", "2026-08-13T10:30:00Z");
+      store.finishSessionCommand(first.id, "bridge", "acked");
+      rmSync(firstPath);
+      m.restorePendingSessionCommands();
+      expect(store.blockingSessionCommand("pr-42")).toMatchObject({ kind: "legacy", status: "pending", inject_path: secondPath });
+    } finally {
+      store.close();
+    }
+  });
+
+  it("reconstructs a missing pending inject file after manager restart without creating a second command", async () => {
+    const dbPath = join(root, "state", "state.db");
+    const store = new StateStore(dbPath, () => new Date("2026-08-13T10:00:00Z"));
+    try {
+      const first = manager(undefined, store);
+      await first.dispatchRound(order, "ROUND PROMPT BODY");
+      const command = store.activeSessionCommand("pr-42")!;
+      rmSync(command.inject_path);
+
+      const restarted = manager(undefined, store);
+      restarted.restorePendingSessionCommands();
+      expect(readFileSync(command.inject_path)).toEqual(readFileSync(command.payload_path));
+      expect(store.db.prepare("SELECT COUNT(*) AS c FROM session_commands").get()).toEqual({ c: 1 });
+    } finally {
+      store.close();
+    }
   });
 });
 

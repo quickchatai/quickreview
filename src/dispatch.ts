@@ -709,7 +709,13 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
 
   const dispatched: RoundOrder[] = [];
   const running = new Set(store.runningRounds().map((r) => r.pr));
-  for (const row of queuedInOrder(store).slice(0, slots)) {
+  const commandEligible = queuedInOrder(store).filter((row) => {
+    const active = store.blockingSessionCommand(`pr-${row.number}`);
+    if (!active) return true;
+    log(`dispatch: #${row.number} skipped — session command ${active.id} is ${active.status}`);
+    return false;
+  });
+  for (const row of commandEligible.slice(0, slots)) {
     // One PR = one worktree = at most one round in flight. A queued row with a
     // round still running (requeue raced the verdict) waits for the next pump —
     // two rounds sharing wt/pr-<n> fight over the git index.

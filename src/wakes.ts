@@ -28,9 +28,18 @@ export type WakeDisposition = "injected" | "held";
 export async function wakeOrHold(deps: WakeDeps, pr: number, message: string, reason: string): Promise<WakeDisposition> {
   const { store } = deps;
   const log = deps.log ?? ((): void => {});
-  if (!store.hasRunningRound(pr)) {
-    await deps.inject(pr, message);
-    return "injected";
+  if (!store.hasRunningRound(pr) && !store.blockingSessionCommand(`pr-${pr}`)) {
+    try {
+      await deps.inject(pr, message);
+      return "injected";
+    } catch (err) {
+      // Another path may have won the partial-UNIQUE slot after our check.
+      // Once durable ownership exists, this wake becomes the ordered backlog;
+      // any other injection error still propagates normally.
+      const raced = store.blockingSessionCommand(`pr-${pr}`);
+      if (!raced) throw err;
+      store.logEvent("wake_slot_raced", pr, { reason, active_command: raced.id, error: String(err) });
+    }
   }
   const dropped = store.holdWake(pr, message, reason);
   store.logEvent("wake_held", pr, { reason, dropped: dropped.length, held: store.heldWakes(pr).length });
@@ -55,6 +64,7 @@ export async function flushHeldWakes(deps: WakeDeps, pr: number): Promise<number
   let attempted = 0;
   const leaseMs = 5 * 60_000;
   while (true) {
+    if (store.blockingSessionCommand(`pr-${pr}`)) break;
     const token = randomUUID();
     const wake = store.claimNextHeldWake(pr, token, new Date(Date.now() - leaseMs).toISOString());
     if (!wake) break;
@@ -67,6 +77,10 @@ export async function flushHeldWakes(deps: WakeDeps, pr: number): Promise<number
         break;
       }
       delivered++;
+      // `inject` transferred exact-byte ownership into the one durable
+      // session-command slot. Stop here: deleting the upstream held row is
+      // safe, but a second inject before the slot acks would violate S4.
+      if (store.blockingSessionCommand(`pr-${pr}`)) break;
     } catch (err) {
       store.releaseHeldWake(wake.id, token);
       log(`wakes: #${pr} failed to deliver held wake ${wake.id}`, err);

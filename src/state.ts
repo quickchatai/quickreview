@@ -518,6 +518,34 @@ CREATE UNIQUE INDEX IF NOT EXISTS round_findings_identity
 CREATE INDEX IF NOT EXISTS round_findings_pr ON round_findings (pr, round_no);
 CREATE INDEX IF NOT EXISTS round_findings_lens ON round_findings (lens, disposition);
 CREATE INDEX IF NOT EXISTS events_kind_pr ON events(kind, pr, id);
+-- Durable daemon→Pi command slot. Commands are historical rows, but
+-- the partial UNIQUE index permits exactly one pending/running owner per PR
+-- session. Payload bytes live at payload_path; the row is ownership + finite
+-- lease evidence and is shared by round dispatch and ordinary wakes.
+CREATE TABLE IF NOT EXISTS session_commands (
+  id             TEXT PRIMARY KEY,
+  pr             INTEGER NOT NULL,
+  session        TEXT NOT NULL,
+  kind           TEXT NOT NULL,
+  round_no       INTEGER,
+  payload_sha256 TEXT NOT NULL,
+  payload_path   TEXT NOT NULL,
+  inject_path    TEXT NOT NULL,
+  status         TEXT NOT NULL CHECK (status IN ('pending', 'running', 'acked', 'failed')),
+  owner_token    TEXT,
+  attempt        INTEGER NOT NULL DEFAULT 0,
+  created_at     TEXT NOT NULL,
+  updated_at     TEXT NOT NULL,
+  next_check_at  TEXT NOT NULL,
+  started_at     TEXT,
+  settled_at     TEXT,
+  failed_at      TEXT,
+  failure        TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS session_commands_one_active
+  ON session_commands(session) WHERE status IN ('pending', 'running');
+CREATE UNIQUE INDEX IF NOT EXISTS session_commands_inject_path ON session_commands(inject_path);
+CREATE INDEX IF NOT EXISTS session_commands_pr_created ON session_commands(pr, created_at);
 -- Wakes held while their PR's round was in flight (single-shepherd invariant
 -- S4: the PR's ONE main pi is never given two instructions at once). Flushed
 -- in insertion order once the round ends.
@@ -727,6 +755,45 @@ export interface AnomalyRecord {
   detail: string;
 }
 
+/** Durable command lifecycle at the daemon→Pi boundary. */
+export type SessionCommandStatus = "pending" | "running" | "acked" | "failed";
+export type SessionCommandKind = "round" | "wake" | "legacy";
+
+/** One durable daemon→Pi command. `next_check_at` is non-null in every state so
+ * no active command can exist without a finite supervisor obligation. */
+export interface SessionCommandRow {
+  id: string;
+  pr: number;
+  session: string;
+  kind: SessionCommandKind;
+  round_no: number | null;
+  payload_sha256: string;
+  payload_path: string;
+  inject_path: string;
+  status: SessionCommandStatus;
+  owner_token: string | null;
+  attempt: number;
+  created_at: string;
+  updated_at: string;
+  next_check_at: string;
+  started_at: string | null;
+  settled_at: string | null;
+  failed_at: string | null;
+  failure: string | null;
+}
+
+export interface CreateSessionCommand {
+  id: string;
+  pr: number;
+  session: string;
+  kind: SessionCommandKind;
+  round_no: number | null;
+  payload_sha256: string;
+  payload_path: string;
+  inject_path: string;
+  next_check_at: string;
+}
+
 /** A wake held while its PR's round was in flight (single-shepherd S4). */
 export interface PendingWakeRow {
   id: number;
@@ -768,7 +835,7 @@ export interface RoundStartMeta {
 export class StateStore {
   readonly db: Database.Database;
 
-  constructor(path: string, private readonly now: () => Date = () => new Date()) {
+  constructor(readonly path: string, private readonly now: () => Date = () => new Date()) {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
     this.db = new Database(path);
     this.db.pragma("journal_mode = WAL");
@@ -1407,6 +1474,113 @@ export class StateStore {
   hasRunningRound(pr: number): boolean {
     const row = this.db.prepare("SELECT COUNT(*) AS c FROM rounds WHERE pr = ? AND status = 'running'").get(pr) as { c: number };
     return row.c > 0;
+  }
+
+  // ---- durable PR-session command slot ------------------------
+
+  createSessionCommand(input: CreateSessionCommand): SessionCommandRow {
+    const ts = this.ts();
+    this.db.prepare(
+      `INSERT INTO session_commands
+         (id, pr, session, kind, round_no, payload_sha256, payload_path, inject_path,
+          status, owner_token, attempt, created_at, updated_at, next_check_at)
+       VALUES (@id, @pr, @session, @kind, @round_no, @payload_sha256, @payload_path,
+          @inject_path, 'pending', NULL, 0, @ts, @ts, @next_check_at)`,
+    ).run({ ...input, ts });
+    return this.getSessionCommand(input.id)!;
+  }
+
+  getSessionCommand(id: string): SessionCommandRow | undefined {
+    return this.db.prepare("SELECT * FROM session_commands WHERE id = ?").get(id) as SessionCommandRow | undefined;
+  }
+
+  getSessionCommandByInjectPath(path: string): SessionCommandRow | undefined {
+    return this.db.prepare("SELECT * FROM session_commands WHERE inject_path = ?").get(path) as SessionCommandRow | undefined;
+  }
+
+  activeSessionCommand(session: string): SessionCommandRow | undefined {
+    return this.db
+      .prepare("SELECT * FROM session_commands WHERE session = ? AND status IN ('pending', 'running') LIMIT 1")
+      .get(session) as SessionCommandRow | undefined;
+  }
+
+  /** Work still owed by the session. `failed` is terminal for one attempt but
+   * deliberately blocks successors until recovery retries the same id. */
+  blockingSessionCommand(session: string): SessionCommandRow | undefined {
+    return this.db
+      .prepare("SELECT * FROM session_commands WHERE session = ? AND status != 'acked' ORDER BY created_at DESC LIMIT 1")
+      .get(session) as SessionCommandRow | undefined;
+  }
+
+  activeSessionCommands(): SessionCommandRow[] {
+    return this.db
+      .prepare("SELECT * FROM session_commands WHERE status IN ('pending', 'running') ORDER BY created_at, id")
+      .all() as SessionCommandRow[];
+  }
+
+  sessionCommandForRound(pr: number, roundNo: number): SessionCommandRow | undefined {
+    return this.db
+      .prepare("SELECT * FROM session_commands WHERE pr = ? AND kind = 'round' AND round_no = ? ORDER BY created_at DESC LIMIT 1")
+      .get(pr, roundNo) as SessionCommandRow | undefined;
+  }
+
+  claimSessionCommand(id: string, ownerToken: string, nextCheckAt: string): SessionCommandRow | undefined {
+    const ts = this.ts();
+    const changed = this.db.prepare(
+      `UPDATE session_commands
+          SET status='running', owner_token=@owner, attempt=attempt+1,
+              started_at=NULL, updated_at=@ts, next_check_at=@next
+        WHERE id=@id AND status='pending'`,
+    ).run({ id, owner: ownerToken, ts, next: nextCheckAt }).changes;
+    return changed === 1 ? this.getSessionCommand(id) : undefined;
+  }
+
+  markSessionCommandStarted(id: string, ownerToken: string, nextCheckAt: string): boolean {
+    const ts = this.ts();
+    return this.db.prepare(
+      `UPDATE session_commands
+          SET started_at=COALESCE(started_at, @ts), updated_at=@ts, next_check_at=@next
+        WHERE id=@id AND status='running' AND owner_token=@owner`,
+    ).run({ id, owner: ownerToken, ts, next: nextCheckAt }).changes === 1;
+  }
+
+  finishSessionCommand(
+    id: string,
+    ownerToken: string,
+    status: "acked" | "failed",
+    failure?: string,
+  ): boolean {
+    const ts = this.ts();
+    const changed = this.db.prepare(
+      `UPDATE session_commands
+          SET status=@status, updated_at=@ts, next_check_at=@ts,
+              settled_at=CASE WHEN @status='acked' THEN @ts ELSE settled_at END,
+              failed_at=CASE WHEN @status='failed' THEN @ts ELSE failed_at END,
+              failure=CASE WHEN @status='failed' THEN @failure ELSE NULL END
+        WHERE id=@id AND status='running' AND owner_token=@owner
+          AND (@status='failed' OR started_at IS NOT NULL)`,
+    ).run({ id, owner: ownerToken, status, failure: failure ?? null, ts }).changes;
+    return changed === 1;
+  }
+
+  failPendingSessionCommand(id: string, failure: string): boolean {
+    const ts = this.ts();
+    return this.db.prepare(
+      `UPDATE session_commands
+          SET status='failed', failed_at=@ts, failure=@failure, updated_at=@ts, next_check_at=@ts
+        WHERE id=@id AND status='pending'`,
+    ).run({ id, failure, ts }).changes === 1;
+  }
+
+  retrySessionCommand(id: string, opts: { inject_path: string; next_check_at: string }): boolean {
+    const ts = this.ts();
+    return this.db.prepare(
+      `UPDATE session_commands
+          SET status='pending', owner_token=NULL, inject_path=@inject_path,
+              updated_at=@ts, next_check_at=@next_check_at,
+              started_at=NULL, settled_at=NULL, failed_at=NULL, failure=NULL
+        WHERE id=@id AND status IN ('acked', 'failed')`,
+    ).run({ id, ...opts, ts }).changes === 1;
   }
 
   // ---- held wakes (single-shepherd S4) -----------------------------------

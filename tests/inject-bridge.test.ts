@@ -11,12 +11,14 @@
 //      INNER-loop event and clearing on it re-opens every tool-call gap);
 //   3. every send still carries `deliverAs: "followUp"` as a belt, while a
 //      missing start acknowledgement expires loudly and preserves the file.
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Pi } from "@earendil-works/pi-coding-agent";
 import activate, { RETRY_BASE_MS, START_ACK_TIMEOUT_MS } from "../extensions/inject-bridge.js";
+import { StateStore } from "../src/state.js";
 
 let dir: string;
 let handlers: Map<string, Array<(...args: unknown[]) => unknown>>;
@@ -25,7 +27,7 @@ let sends: Array<{ content: string; options?: { deliverAs?: string } }>;
 // The internal Promise is intentionally unavailable to extensions, so this
 // fake must never offer tests stronger serialization than production has.
 let sendImpl: (content: string) => void;
-let savedEnv: { inject?: string; session?: string };
+let savedEnv: { inject?: string; session?: string; stateDb?: string; root?: string };
 
 function fakePi(): Pi {
   return {
@@ -70,9 +72,16 @@ beforeEach(() => {
   handlers = new Map();
   sends = [];
   sendImpl = () => {};
-  savedEnv = { inject: process.env.QCR_INJECT_DIR, session: process.env.QCR_SESSION_NAME };
+  savedEnv = {
+    inject: process.env.QCR_INJECT_DIR,
+    session: process.env.QCR_SESSION_NAME,
+    stateDb: process.env.QCR_STATE_DB,
+    root: process.env.QCR_SANDBOX_ROOT,
+  };
   process.env.QCR_INJECT_DIR = dir;
   process.env.QCR_SESSION_NAME = "pr-1";
+  delete process.env.QCR_STATE_DB;
+  delete process.env.QCR_SANDBOX_ROOT;
 });
 
 afterEach(() => {
@@ -83,6 +92,10 @@ afterEach(() => {
   else process.env.QCR_INJECT_DIR = savedEnv.inject;
   if (savedEnv.session === undefined) delete process.env.QCR_SESSION_NAME;
   else process.env.QCR_SESSION_NAME = savedEnv.session;
+  if (savedEnv.stateDb === undefined) delete process.env.QCR_STATE_DB;
+  else process.env.QCR_STATE_DB = savedEnv.stateDb;
+  if (savedEnv.root === undefined) delete process.env.QCR_SANDBOX_ROOT;
+  else process.env.QCR_SANDBOX_ROOT = savedEnv.root;
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -352,6 +365,130 @@ describe("inject-bridge — start-acknowledged single flight", () => {
     fire("session_start");
     await vi.waitFor(() => expect(sends).toHaveLength(1));
     expect(sentBody(0)).toBe("first");
+  });
+});
+
+describe("inject-bridge — durable command ownership", () => {
+  function commandStore(): StateStore {
+    const dbPath = join(dir, "state.db");
+    process.env.QCR_STATE_DB = dbPath;
+    process.env.QCR_SANDBOX_ROOT = dir;
+    return new StateStore(dbPath, () => new Date("2026-08-27T20:00:00.000Z"));
+  }
+
+  it("claims the correlated command as running and acks it only on settlement", async () => {
+    const store = commandStore();
+    try {
+      const file = "2026-08-27T20-00-00-0000--cmd-cmd-a.md";
+      const path = join(dir, file);
+      const payload = "durable prompt\n";
+      writeFileSync(path, payload);
+      store.createSessionCommand({
+        id: "cmd-a", pr: 1, session: "pr-1", kind: "round", round_no: 20,
+        payload_sha256: createHash("sha256").update(payload).digest("hex"),
+        payload_path: join(dir, "payload-cmd-a.md"), inject_path: path,
+        next_check_at: "2026-08-27T20:02:00.000Z",
+      });
+      writeFileSync(join(dir, "payload-cmd-a.md"), payload);
+
+      activate(fakePi());
+      fire("session_start");
+      await vi.waitFor(() => expect(sends).toHaveLength(1));
+      expect(store.getSessionCommand("cmd-a")).toMatchObject({ status: "running", attempt: 1, started_at: null });
+
+      acknowledgeLatest();
+      await vi.waitFor(() => expect(store.getSessionCommand("cmd-a")?.started_at).not.toBeNull());
+      expect(store.getSessionCommand("cmd-a")?.status).toBe("running");
+      fire("agent_settled");
+      await vi.waitFor(() => expect(store.getSessionCommand("cmd-a")?.status).toBe("acked"));
+    } finally {
+      fire("session_shutdown");
+      store.close();
+    }
+  });
+
+  it("expires an unaccepted reservation loudly without terminalizing a possibly queued followUp", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const store = commandStore();
+    try {
+      const file = "2026-08-27T20-00-00-5000--cmd-cmd-timeout.md";
+      const path = join(dir, file);
+      const payload = "never accepted\n";
+      writeFileSync(path, payload);
+      writeFileSync(join(dir, "payload-timeout.md"), payload);
+      store.createSessionCommand({
+        id: "cmd-timeout", pr: 1, session: "pr-1", kind: "wake", round_no: null,
+        payload_sha256: createHash("sha256").update(payload).digest("hex"),
+        payload_path: join(dir, "payload-timeout.md"), inject_path: path,
+        next_check_at: "2026-08-27T20:02:00.000Z",
+      });
+
+      activate(fakePi());
+      fire("session_start");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(store.getSessionCommand("cmd-timeout")).toMatchObject({ status: "running", started_at: null, attempt: 1 });
+      await vi.advanceTimersByTimeAsync(START_ACK_TIMEOUT_MS);
+      expect(store.getSessionCommand("cmd-timeout")).toMatchObject({ status: "running", started_at: null });
+      expect(pending()).toContain(file);
+      expect(sends).toHaveLength(1);
+    } finally {
+      fire("session_shutdown");
+      store.close();
+    }
+  });
+
+  it("a stale bridge owner cannot ack an attempt recovered by a newer owner", async () => {
+    const store = commandStore();
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const file = "2026-08-27T20-00-01-0000--cmd-cmd-b.md";
+      const path = join(dir, file);
+      const payload = "durable prompt\n";
+      writeFileSync(path, payload);
+      writeFileSync(join(dir, "payload-cmd-b.md"), payload);
+      store.createSessionCommand({
+        id: "cmd-b", pr: 1, session: "pr-1", kind: "wake", round_no: null,
+        payload_sha256: createHash("sha256").update(payload).digest("hex"),
+        payload_path: join(dir, "payload-cmd-b.md"), inject_path: path,
+        next_check_at: "2026-08-27T20:02:00.000Z",
+      });
+
+      activate(fakePi());
+      fire("session_start");
+      await vi.waitFor(() => expect(sends).toHaveLength(1));
+      acknowledgeLatest();
+      await vi.waitFor(() => expect(store.getSessionCommand("cmd-b")?.status).toBe("running"));
+      store.db.prepare("UPDATE session_commands SET owner_token='recovered-owner', attempt=attempt+1 WHERE id='cmd-b'").run();
+
+      fire("agent_settled");
+      await sleep(20);
+      expect(store.getSessionCommand("cmd-b")).toMatchObject({ status: "running", owner_token: "recovered-owner", attempt: 2 });
+      expect(errors).toHaveBeenCalledWith(expect.stringContaining("stale owner"));
+    } finally {
+      fire("session_shutdown");
+      store.close();
+    }
+  });
+
+  it("adopts an existing untracked inject file as pending without inventing acknowledgement", async () => {
+    const store = commandStore();
+    try {
+      writeFileSync(join(dir, "2026-08-27T20-00-02-0000.md"), "legacy prompt\n");
+      activate(fakePi());
+      fire("session_start");
+      await vi.waitFor(() => expect(sends).toHaveLength(1));
+
+      const adopted = store.db.prepare("SELECT * FROM session_commands").get() as { id: string; status: string; kind: string; started_at: string | null };
+      expect(adopted).toMatchObject({ status: "running", kind: "legacy", started_at: null });
+      acknowledgeLatest();
+      await vi.waitFor(() => expect(store.getSessionCommand(adopted.id)?.started_at).not.toBeNull());
+      fire("agent_settled");
+      await vi.waitFor(() => expect(store.getSessionCommand(adopted.id)?.status).toBe("acked"));
+    } finally {
+      fire("session_shutdown");
+      store.close();
+    }
   });
 });
 

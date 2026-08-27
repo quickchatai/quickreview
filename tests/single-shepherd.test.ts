@@ -300,6 +300,39 @@ describe("wakeOrHold / flushHeldWakes", () => {
     expect(store.heldWakes(7).map((w) => w.payload)).toEqual(["hello"]);
   });
 
+  it("holds behind an existing durable PR-session command even with no round row", async () => {
+    store.createSessionCommand({
+      id: "cmd-active",
+      pr: 7,
+      session: "pr-7",
+      kind: "wake",
+      round_no: null,
+      payload_sha256: "a".repeat(64),
+      payload_path: "/state/cmd-active.md",
+      inject_path: "/inject/pr-7/cmd-active.md",
+      next_check_at: new Date(Date.now() + 120_000).toISOString(),
+    });
+    expect(await wakeOrHold(deps(), 7, "hello", "author_reply")).toBe("held");
+    expect(injected).toHaveLength(0);
+    expect(store.heldWakes(7).map((w) => w.payload)).toEqual(["hello"]);
+  });
+
+  it("turns a concurrent slot-creation race into a durable hold instead of losing the wake", async () => {
+    const racing = {
+      store,
+      inject: async () => {
+        store.createSessionCommand({
+          id: "cmd-racer", pr: 7, session: "pr-7", kind: "wake", round_no: null,
+          payload_sha256: "b".repeat(64), payload_path: "/state/racer.md", inject_path: "/inject/pr-7/racer.md",
+          next_check_at: new Date(Date.now() + 120_000).toISOString(),
+        });
+        throw new Error("UNIQUE constraint failed: session_commands.session");
+      },
+    };
+    expect(await wakeOrHold(racing, 7, "do not lose me", "author_reply")).toBe("held");
+    expect(store.heldWakes(7).map((w) => w.payload)).toEqual(["do not lose me"]);
+  });
+
   it("does not hold a wake for a different PR's round", async () => {
     store.upsertPr({
       number: 8, state: "tracked", head_sha: "d", title: "t", author: "a",
@@ -319,6 +352,36 @@ describe("wakeOrHold / flushHeldWakes", () => {
     expect(injected.map((i) => i.message)).toEqual(["first reply", "second reply"]);
     expect(store.heldWakes(7)).toHaveLength(0);
     expect(await flushHeldWakes(deps(), 7)).toBe(0);
+  });
+
+  it("flushes only one held wake into the durable slot and leaves successors ordered", async () => {
+    const id = store.startRound(7, "first", ["pass-baseline"], 75);
+    await wakeOrHold(deps(), 7, "first reply", "author_reply");
+    await wakeOrHold(deps(), 7, "second reply", "author_reply");
+    store.finishRound(id, "APPROVE", null, null);
+    let seq = 0;
+    const durableDeps = {
+      store,
+      inject: async (pr: number, message: string) => {
+        const command = `cmd-${seq++}`;
+        store.createSessionCommand({
+          id: command, pr, session: `pr-${pr}`, kind: "wake", round_no: null,
+          payload_sha256: message.repeat(64).slice(0, 64),
+          payload_path: `/state/${command}.md`, inject_path: `/inject/pr-${pr}/${command}.md`,
+          next_check_at: new Date(Date.now() + 120_000).toISOString(),
+        });
+      },
+    };
+
+    expect(await flushHeldWakes(durableDeps, 7)).toBe(1);
+    expect(store.heldWakes(7).map((w) => w.payload)).toEqual(["second reply"]);
+    const first = store.activeSessionCommand("pr-7")!;
+    const commandDeadline = new Date(Date.now() + 1_800_000).toISOString();
+    store.claimSessionCommand(first.id, "bridge", commandDeadline);
+    store.markSessionCommandStarted(first.id, "bridge", commandDeadline);
+    store.finishSessionCommand(first.id, "bridge", "acked");
+    expect(await flushHeldWakes(durableDeps, 7)).toBe(1);
+    expect(store.heldWakes(7)).toHaveLength(0);
   });
 
   it("caps held wakes per PR, dropping the oldest with an event", async () => {

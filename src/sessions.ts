@@ -11,6 +11,7 @@
 //
 // pi is not installed in this repo; every assumption about its CLI surface is
 // tagged VERIFY-ON-PIN and confined to buildPiCommand().
+import { createHash, randomUUID } from "node:crypto";
 import {
   copyFileSync,
   existsSync,
@@ -37,12 +38,15 @@ import {
 } from "./memory/ovsession.js";
 import { Tmux } from "./tmux.js";
 import type { ExecFn } from "./tmux.js";
+import type { SessionCommandKind, SessionCommandRow, StateStore } from "./state.js";
 import { roundPromptMarker, stampRoundPrompt } from "./types.js";
 import type { RoundOrder, SessionHooks } from "./types.js";
 import { renderConversationSystemPrompt, renderOverseerSystemPrompt } from "./templates.js";
 import { WorktreeManager } from "./worktrees.js";
 
 export const OVERSEER_SESSION = "overseer";
+export const SESSION_COMMAND_START_LEASE_MS = 2 * 60_000;
+export const SESSION_COMMAND_RUN_LEASE_MS = 30 * 60_000;
 
 /** Environment-variable prefixes that ride the `env K=V … pi …` argv (see
  * spawnSession). `QCR_` is the daemon's routing surface; `OPENVIKING_` is the
@@ -137,6 +141,9 @@ export interface PiSessionManagerOptions {
    * sessions still run, memory-less, which is the standing degradation rule. */
   ovSessions?: OvSessionLifecycle;
   now?: () => Date;
+  /** Durable PR-session command ownership. Optional only for narrow unit
+   * wiring; production binds the daemon's StateStore before sessions start. */
+  commandStore?: StateStore;
 }
 
 export interface AdoptionReport {
@@ -155,6 +162,7 @@ export class PiSessionManager implements SessionHooks {
   private readonly piHome: string;
   private readonly ovSessions: OvSessionLifecycle | undefined;
   private readonly now: () => Date;
+  private commandStore: StateStore | undefined;
   private readonly prSessionBirths = new Map<number, Promise<string>>();
   private injectSeq = 0;
 
@@ -168,6 +176,8 @@ export class PiSessionManager implements SessionHooks {
     this.piHome = opts.piHome ?? join(opts.root, "pihome");
     this.ovSessions = opts.ovSessions;
     this.now = opts.now ?? (() => new Date());
+    this.commandStore = opts.commandStore;
+    if (this.commandStore) this.restorePendingSessionCommands();
   }
 
   // ---- paths -------------------------------------------------------------
@@ -190,6 +200,10 @@ export class PiSessionManager implements SessionHooks {
 
   archiveDir(session: string): string {
     return join(this.root, "archive", session);
+  }
+
+  sessionCommandPayloadPath(id: string): string {
+    return join(this.root, "state", "session-commands", `${id}.md`);
   }
 
   extensionPaths(): string[] {
@@ -320,6 +334,7 @@ export class PiSessionManager implements SessionHooks {
       QCR_LEDGER_FILE: this.ledgerPath(session),
       QCR_SECRETS_DIR: this.cfg.github.secrets_dir,
       QCR_PI_VERSION: this.cfg.pi.version,
+      ...(this.commandStore && this.commandStore.path !== ":memory:" ? { QCR_STATE_DB: this.commandStore.path } : {}),
     };
     const openai = this.secret("openai_api_key");
     if (openai) env.OPENAI_API_KEY = openai;
@@ -495,9 +510,146 @@ export class PiSessionManager implements SessionHooks {
 
   // ---- injection ---------------------------------------------------------
 
-  private injectFileName(): string {
+  /** Late production binding: createDaemon owns the StateStore, while parts
+   * construct the session manager first. Restore pending files immediately;
+   * running rows are never resubmitted by a restart. */
+  setCommandStore(store: StateStore): void {
+    this.commandStore = store;
+    this.restorePendingSessionCommands();
+  }
+
+  /** Recreate only provably-pending inject files from their immutable payload.
+   * A running command belongs to its bridge owner until the bounded recovery
+   * sweep decides otherwise; replaying it here would create two shepherds. */
+  restorePendingSessionCommands(): { restored: string[]; failed: string[] } {
+    const restored: string[] = [];
+    const failed: string[] = [];
+    const store = this.commandStore;
+    if (!store) return { restored, failed };
+    this.adoptLegacyPendingCommands();
+    for (const command of store.activeSessionCommands()) {
+      if (command.status !== "pending" || existsSync(command.inject_path)) continue;
+      try {
+        const payload = readFileSync(command.payload_path);
+        const hash = createHash("sha256").update(payload).digest("hex");
+        if (hash !== command.payload_sha256) throw new Error(`payload hash ${hash} != ${command.payload_sha256}`);
+        this.writeAtomic(command.inject_path, payload.toString("utf8"));
+        restored.push(command.id);
+      } catch (err) {
+        store.failPendingSessionCommand(command.id, `restart reconstruction failed: ${String(err)}`);
+        failed.push(command.id);
+      }
+    }
+    return { restored, failed };
+  }
+
+  /** Adopt at most the oldest legacy file per PR. Later files remain the
+   * filesystem backlog and are adopted after the slot terminalizes; no legacy
+   * file is ever declared accepted merely because it already exists. */
+  private adoptLegacyPendingCommands(): void {
+    const store = this.commandStore;
+    if (!store) return;
+    const injectRoot = join(this.root, "inject");
+    let sessions;
+    try {
+      sessions = readdirSync(injectRoot, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of sessions) {
+      if (!entry.isDirectory() || !/^pr-\d+$/.test(entry.name) || store.blockingSessionCommand(entry.name)) continue;
+      const dir = join(injectRoot, entry.name);
+      let files: string[];
+      try {
+        files = readdirSync(dir).filter((f) => f.endsWith(".md")).sort();
+      } catch {
+        continue;
+      }
+      for (const file of files) {
+        const injectPath = join(dir, file);
+        const existing = store.getSessionCommandByInjectPath(injectPath);
+        if (existing?.status === "acked") {
+          try {
+            const done = join(dir, ".done");
+            mkdirSync(done, { recursive: true });
+            renameSync(injectPath, join(done, file));
+          } catch {
+            return;
+          }
+          continue;
+        }
+        if (existing) break;
+        try {
+          const payload = readFileSync(injectPath);
+          const id = randomUUID();
+          const payloadPath = this.sessionCommandPayloadPath(id);
+          this.writeAtomic(payloadPath, payload.toString("utf8"));
+          store.createSessionCommand({
+            id,
+            pr: prOfSession(entry.name)!,
+            session: entry.name,
+            kind: "legacy",
+            round_no: null,
+            payload_sha256: createHash("sha256").update(payload).digest("hex"),
+            payload_path: payloadPath,
+            inject_path: injectPath,
+            next_check_at: this.commandDeadline(SESSION_COMMAND_START_LEASE_MS),
+          });
+        } catch (err) {
+          console.error(`[quickreviewd] sessions: FAILED_LOUD could not adopt ${injectPath}: ${String(err)}`);
+        }
+        break;
+      }
+    }
+  }
+
+  private injectFileName(commandId?: string): string {
     const ts = this.now().toISOString().replace(/[:.]/g, "-");
-    return `${ts}-${String(this.injectSeq++).padStart(4, "0")}.md`;
+    const prefix = `${ts}-${String(this.injectSeq++).padStart(4, "0")}`;
+    return commandId ? `${prefix}--cmd-${commandId}.md` : `${prefix}.md`;
+  }
+
+  private commandDeadline(ms: number): string {
+    return new Date(this.now().getTime() + ms).toISOString();
+  }
+
+  private queuePrCommand(
+    pr: number,
+    kind: SessionCommandKind,
+    message: string,
+    roundNo: number | null,
+  ): SessionCommandRow | undefined {
+    const store = this.commandStore;
+    if (!store) {
+      this.injectFile(prSessionName(pr), message);
+      return undefined;
+    }
+    const session = prSessionName(pr);
+    const blocking = store.blockingSessionCommand(session);
+    if (blocking) throw new Error(`session command ${blocking.id} is ${blocking.status}`);
+    const id = randomUUID();
+    const payload = message.endsWith("\n") ? message : `${message}\n`;
+    const payloadPath = this.sessionCommandPayloadPath(id);
+    const injectPath = join(this.injectDir(session), this.injectFileName(id));
+    this.writeAtomic(payloadPath, payload);
+    const command = store.createSessionCommand({
+      id,
+      pr,
+      session,
+      kind,
+      round_no: roundNo,
+      payload_sha256: createHash("sha256").update(payload).digest("hex"),
+      payload_path: payloadPath,
+      inject_path: injectPath,
+      next_check_at: this.commandDeadline(SESSION_COMMAND_START_LEASE_MS),
+    });
+    try {
+      this.writeAtomic(injectPath, payload);
+    } catch (err) {
+      store.failPendingSessionCommand(id, `inject write failed: ${String(err)}`);
+      throw err;
+    }
+    return command;
   }
 
   /** Drop a wake file the inject-bridge extension will deliver. */
@@ -531,7 +683,7 @@ export class PiSessionManager implements SessionHooks {
     // head, a different memory block, a different nit-scope note), so what the
     // session eventually reads would not be the round the daemon recorded.
     this.saveRoundPrompt(order.pr, order.round_no, stamped);
-    this.injectFile(prSessionName(order.pr), stamped);
+    this.queuePrCommand(order.pr, "round", stamped, order.round_no);
   }
 
   private roundPromptPath(pr: number, roundNo: number): string {
@@ -635,20 +787,51 @@ export class PiSessionManager implements SessionHooks {
    * existed, or a wiped state dir): the caller then falls through to the
    * expensive recovery rather than inventing a prompt. */
   async redeliverRound(pr: number, roundNo: number): Promise<boolean> {
-    const path = this.roundPromptPath(pr, roundNo);
+    const command = this.commandStore?.sessionCommandForRound(pr, roundNo);
     let stamped: string;
     try {
-      stamped = readFileSync(path, "utf8");
+      stamped = command
+        ? readFileSync(command.payload_path, "utf8")
+        : readFileSync(this.roundPromptPath(pr, roundNo), "utf8");
     } catch {
       return false;
     }
     if (stamped.trim().length === 0) return false;
+    const hash = createHash("sha256").update(stamped).digest("hex");
+    if (command && hash !== command.payload_sha256) return false;
     // The session may have died since dispatch; the bridge only delivers to a
     // live one. Rebirth it exactly as `inject` does, so a redelivery into a
     // dead session is not silently swallowed.
     await this.ensureSessionForWake(pr);
-    this.injectFile(prSessionName(pr), stamped);
-    return true;
+    if (!command || !this.commandStore) {
+      this.injectFile(prSessionName(pr), stamped);
+      return true;
+    }
+    if (command.status === "running") {
+      // Never report a no-op as redelivery. A correlated start means the
+      // prompt already landed; an unaccepted owner must expire through the
+      // command lease before the same id can be retried safely.
+      return command.started_at !== null;
+    }
+    if (command.status === "pending") {
+      this.restorePendingSessionCommands();
+      return true;
+    }
+    // Reuse the original path as well as the id. A failed no-start attempt
+    // deliberately leaves that file pending; minting a second filename would
+    // let the old evidence be adopted as a new legacy command on restart.
+    const injectPath = command.inject_path;
+    try {
+      if (!this.commandStore.retrySessionCommand(command.id, {
+        inject_path: injectPath,
+        next_check_at: this.commandDeadline(SESSION_COMMAND_START_LEASE_MS),
+      })) return false;
+      this.writeAtomic(injectPath, stamped);
+      return true;
+    } catch (err) {
+      this.commandStore.failPendingSessionCommand(command.id, `redelivery write failed: ${String(err)}`);
+      return false;
+    }
   }
 
   /** Late-bound title lookup for respawning a dead sticky session (the store
@@ -670,7 +853,7 @@ export class PiSessionManager implements SessionHooks {
    * known (PR never tracked) does the original error stand. */
   async inject(pr: number, message: string): Promise<void> {
     await this.ensureSessionForWake(pr);
-    this.injectFile(prSessionName(pr), message);
+    this.queuePrCommand(pr, "wake", message, null);
   }
 
   /** Rebirth a dead sticky session so a wake has somewhere to land. Shared by

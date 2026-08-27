@@ -573,6 +573,21 @@ describe("dispatchOnce", () => {
     expect(adapter.calls.filter((c) => c.pr === 24)).toHaveLength(0);
   });
 
+  it("never dispatches a round behind an active ordinary session command", async () => {
+    queue(26, "2026-08-13T09:00:00Z");
+    queue(27, "2026-08-13T09:01:00Z");
+    store.createSessionCommand({
+      id: "cmd-26", pr: 26, session: "pr-26", kind: "wake", round_no: null,
+      payload_sha256: "a".repeat(64), payload_path: "/state/cmd-26.md", inject_path: "/inject/pr-26/cmd-26.md",
+      next_check_at: "2026-08-13T09:02:00Z",
+    });
+    const { hooks, orders } = recordingHooks();
+    const dispatched = await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+    expect(dispatched.map((o) => o.pr)).toEqual([27]);
+    expect(orders.map((o) => o.order.pr)).toEqual([27]);
+    expect(adapter.calls.filter((c) => c.pr === 26)).toHaveLength(0);
+  });
+
   it("builds the round order from the files API: lenses and the migration gate", async () => {
     queue(31, "2026-08-13T09:00:00Z", { title: "Terraform the ingest cluster", head: "abc123" });
     adapter.files.set(31, [
