@@ -135,8 +135,11 @@ declare module "@earendil-works/pi-coding-agent" {
      * missing must degrade to registering nothing, never to a pi that will not
      * start (the companion never wedges). */
     registerTool?(definition: PiToolDefinition): void;
-    /** Injects a real user message and always triggers a turn (findings §3). */
-    sendUserMessage(content: string, options?: SendMessageOptions): void | Promise<void>;
+    /** Injects a real user message. Pinned Pi 0.84.1 exposes this to extensions
+     * as fire-and-forget `void`; its internal Promise and rejection are not
+     * observable at this interface (verified against extensions/types.d.ts
+     * and agent-session.js while diagnosing PR #5408). */
+    sendUserMessage(content: string, options?: SendMessageOptions): void;
     sendMessage?(message: unknown, options?: SendMessageOptions): void | Promise<void>;
     /** Persists extension state into the session file (findings §5). */
     appendEntry?(entry: unknown): void | Promise<void>;

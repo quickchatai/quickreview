@@ -23,7 +23,10 @@ import activate, { BUSY_MAX_HOLD_MS } from "../extensions/inject-bridge.js";
 let dir: string;
 let handlers: Map<string, Array<(...args: unknown[]) => unknown>>;
 let sends: Array<{ content: string; options?: { deliverAs?: string } }>;
-let sendImpl: (content: string) => Promise<void>;
+// Production Pi 0.84.1 declares the extension-facing submission as `void`.
+// The internal Promise is intentionally unavailable to extensions, so this
+// fake must never offer tests stronger serialization than production has.
+let sendImpl: (content: string) => void;
 let savedEnv: { inject?: string; session?: string };
 
 function fakePi(): Pi {
@@ -33,9 +36,9 @@ function fakePi(): Pi {
       list.push(handler);
       handlers.set(event, list);
     },
-    sendUserMessage(content: string, options?: { deliverAs?: string }) {
+    sendUserMessage(content: string, options?: { deliverAs?: string }): void {
       sends.push({ content, ...(options ? { options } : {}) });
-      return sendImpl(content);
+      sendImpl(content);
     },
   } as unknown as Pi;
 }
@@ -58,7 +61,7 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "qcr-bridge-"));
   handlers = new Map();
   sends = [];
-  sendImpl = async () => {};
+  sendImpl = () => {};
   savedEnv = { inject: process.env.QCR_INJECT_DIR, session: process.env.QCR_SESSION_NAME };
   process.env.QCR_INJECT_DIR = dir;
   process.env.QCR_SESSION_NAME = "pr-1";
@@ -75,30 +78,23 @@ afterEach(() => {
 });
 
 describe("inject-bridge — consume only on delivery", () => {
-  it("archives a file only AFTER sendUserMessage resolves — never on pickup", async () => {
-    let release!: () => void;
-    sendImpl = () => new Promise<void>((ok) => (release = ok));
+  it("archives after the fire-and-forget submission attempt, not an invented acceptance promise", async () => {
     writeFileSync(join(dir, "2026-08-20T11-23-20-0000.md"), "ROUND 2 prompt");
 
     activate(fakePi());
     fire("session_start");
 
     await vi.waitFor(() => expect(sends).toHaveLength(1));
-    // In flight: the file must still be pending — a crash here re-fires it.
-    expect(pending()).toHaveLength(1);
-    expect(done()).toHaveLength(0);
-
-    release();
     await vi.waitFor(() => expect(done()).toHaveLength(1));
     expect(pending()).toHaveLength(0);
     expect(sends[0]!.content).toBe("ROUND 2 prompt");
   });
 
-  it("a failed send leaves the file pending and a settle retries it until it lands", async () => {
+  it("a synchronous adapter failure leaves the file pending and a settle retries it until it lands", async () => {
     let calls = 0;
-    sendImpl = async () => {
+    sendImpl = () => {
       calls++;
-      if (calls === 1) throw new Error("agent is busy");
+      if (calls === 1) throw new Error("adapter failed synchronously");
     };
     writeFileSync(join(dir, "2026-08-20T12-42-02-0000.md"), "round prompt");
 
@@ -113,6 +109,26 @@ describe("inject-bridge — consume only on delivery", () => {
     fire("agent_settled"); // the run settled — drain retries the pending file
     await vi.waitFor(() => expect(done()).toHaveLength(1));
     expect(sends).toHaveLength(2);
+  });
+
+  it("cannot observe a generic asynchronous Pi rejection after the void submission returns", async () => {
+    const extensionErrors: string[] = [];
+    sendImpl = () => {
+      // This mirrors Pi's runtime wrapper: it starts an internal Promise,
+      // reports rejection on a separate UI/error channel, and returns void to
+      // the extension caller.
+      void Promise.reject(new Error("prompt preflight failed")).catch((error: Error) => {
+        extensionErrors.push(error.message);
+      });
+    };
+    writeFileSync(join(dir, "2026-08-20T12-42-03-0000.md"), "lost round prompt");
+
+    activate(fakePi());
+    fire("session_start");
+
+    await vi.waitFor(() => expect(extensionErrors).toEqual(["prompt preflight failed"]));
+    await vi.waitFor(() => expect(done()).toHaveLength(1));
+    expect(pending()).toHaveLength(0);
   });
 
   it("defers delivery while a turn is in flight and drains on agent_settled", async () => {
@@ -185,37 +201,19 @@ describe("inject-bridge — consume only on delivery", () => {
     expect(sends[1]!.content).toBe("wake B");
   });
 
-  it("watch events funnel through ONE serialized drain — back-to-back files deliver strictly sequentially, oldest-first", async () => {
-    const releases: Array<() => void> = [];
-    let inFlightSends = 0;
-    let maxInFlight = 0;
-    sendImpl = () => {
-      inFlightSends++;
-      maxInFlight = Math.max(maxInFlight, inFlightSends);
-      return new Promise<void>((ok) =>
-        releases.push(() => {
-          inFlightSends--;
-          ok();
-        }),
-      );
-    };
+  it("submits and archives both files before any lifecycle acknowledgement under the void contract", async () => {
     activate(fakePi());
     fire("session_start");
 
     writeFileSync(join(dir, "2026-08-20T14-00-00-0000.md"), "first");
     writeFileSync(join(dir, "2026-08-20T14-00-01-0000.md"), "second");
 
-    await vi.waitFor(() => expect(sends).toHaveLength(1));
-    expect(sends[0]!.content).toBe("first");
-    await sleep(100);
-    expect(sends).toHaveLength(1); // "second" waits for "first" to resolve
-
-    releases[0]!();
     await vi.waitFor(() => expect(sends).toHaveLength(2));
-    expect(sends[1]!.content).toBe("second");
-    releases[1]!();
     await vi.waitFor(() => expect(done()).toHaveLength(2));
-    expect(maxInFlight).toBe(1); // never interleaved
+    expect(sends.map((send) => send.content)).toEqual(["first", "second"]);
+    // No lifecycle acknowledgement occurred between the submissions. This is
+    // characterization of the production race, not the desired bridge rule;
+    // replaces it with start-acknowledged single flight.
   });
 
   it("consumes an empty wake without a send", async () => {
