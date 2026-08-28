@@ -6,6 +6,7 @@ import { COMPANION_DEFAULTS, parseConfig, resolveCompanionPaths, type CompanionC
 import {
   CompanionLifecycle,
   CONTAINER,
+  PUBLIC_DNS,
   SUBAGENTS,
   type CompanionFs,
   type DockerResult,
@@ -218,11 +219,15 @@ describe("CompanionLifecycle argv", () => {
 });
 
 describe("the reviewed repo, read-only", () => {
-  /** `docker inspect` as the real format string renders it. */
-  const inspectWith = (running: boolean, mounts: Record<string, string>) => (argv: string[]) =>
-    argv[0] === "inspect"
-      ? { ...OK, stdout: [String(running), ...Object.entries(mounts).map(([d, s]) => `${d}=${s}`), ""].join("\n") }
-      : undefined;
+  /** `docker inspect` — answers BOTH inspects ensureUp may issue, told apart
+   * by the format argument: status() (running flag + mount lines) and
+   * createdDns() (one server per line). */
+  const inspectWith = (running: boolean, mounts: Record<string, string>, dns: string[] = PUBLIC_DNS) => (argv: string[]) =>
+    argv[0] !== "inspect"
+      ? undefined
+      : String(argv[2]).includes("HostConfig.Dns")
+        ? { ...OK, stdout: dns.map((d) => `${d}\n`).join("") }
+        : { ...OK, stdout: [String(running), ...Object.entries(mounts).map(([d, s]) => `${d}=${s}`), ""].join("\n") };
 
   const BASE: Record<string, string> = {
     [CONTAINER.piHome]: "companion-pihome",
@@ -284,7 +289,7 @@ describe("the reviewed repo, read-only", () => {
       inspectWith(true, { ...BASE, [CONTAINER.reviewedRepo]: "/host/example-app" }),
     ]);
     expect(await lc.ensureUp()).toBe("adopted");
-    expect(containerCalls(calls).map((c) => c[0])).toEqual(["inspect"]);
+    expect(containerCalls(calls).map((c) => c[0])).toEqual(["inspect", "inspect"]); // status + createdDns
   });
 
   it("recreates when the mount points at a different checkout", async () => {
@@ -348,19 +353,25 @@ describe("the reviewed repo, read-only", () => {
 });
 
 describe("mount drift", () => {
-  /** `docker inspect` as the real format string renders it: running flag on
-   * line 1, then one `dest=source` line per mount. */
-  const inspectWith = (running: boolean, mounts: Record<string, string>) => (argv: string[]) =>
-    argv[0] === "inspect"
-      ? {
-          ...OK,
-          stdout: [
-            String(running),
-            ...Object.entries(mounts).map(([dest, source]) => `${dest}=${source}`),
-            "",
-          ].join("\n"),
-        }
-      : undefined;
+  /** `docker inspect` — answers BOTH inspects ensureUp may issue, told apart
+   * by the format argument: status() (running flag on line 1, then one
+   * `dest=source` line per mount) and createdDns() (one server per line).
+   * Takes the dns so drift cases can render a pre-pin container. */
+  const inspectWith =
+    (running: boolean, mounts: Record<string, string>, dns: string[] = PUBLIC_DNS) =>
+    (argv: string[]) =>
+      argv[0] !== "inspect"
+        ? undefined
+        : String(argv[2]).includes("HostConfig.Dns")
+          ? { ...OK, stdout: dns.map((d) => `${d}\n`).join("") }
+          : {
+              ...OK,
+              stdout: [
+                String(running),
+                ...Object.entries(mounts).map(([dest, source]) => `${dest}=${source}`),
+                "",
+              ].join("\n"),
+            };
 
   const CURRENT: Record<string, string> = {
     [CONTAINER.piHome]: "companion-pihome",
@@ -377,7 +388,7 @@ describe("mount drift", () => {
   it("adopts a running container whose mounts already match", async () => {
     const { lc, calls } = lifecycle([inspectWith(true, CURRENT)]);
     expect(await lc.ensureUp()).toBe("adopted");
-    expect(containerCalls(calls).map((c) => c[0])).toEqual(["inspect"]);
+    expect(containerCalls(calls).map((c) => c[0])).toEqual(["inspect", "inspect"]); // status + createdDns
   });
 
   it("recreates a RUNNING container that is missing a mount", async () => {
@@ -426,8 +437,11 @@ describe("mount drift", () => {
     // fresh container ("is not running") and reported the companion down —
     // which is why the sidebar kept vanishing on startup.
     const asDockerReports = (running: boolean) => (argv: string[]) =>
-      argv[0] === "inspect"
-        ? {
+      argv[0] !== "inspect"
+        ? undefined
+        : String(argv[2]).includes("HostConfig.Dns")
+          ? { ...OK, stdout: PUBLIC_DNS.map((d) => `${d}\n`).join("") }
+          : {
             ...OK,
             // The format string asks for `.Name` on volumes, so a correct
             // implementation sees the NAME here.
@@ -442,11 +456,10 @@ describe("mount drift", () => {
               `${CONTAINER.alerts}=/host/alerts`,
               "",
             ].join("\n"),
-          }
-        : undefined;
+          };
     const { lc, calls } = lifecycle([asDockerReports(true)]);
     expect(await lc.ensureUp()).toBe("adopted"); // NOT "recreated"
-    expect(containerCalls(calls).map((c) => c[0])).toEqual(["inspect"]);
+    expect(containerCalls(calls).map((c) => c[0])).toEqual(["inspect", "inspect"]); // status + createdDns
     // And the format string is the mechanism — assert it asks for the name.
     const fmt = calls.find((c) => c[0] === "inspect")![2]!;
     expect(fmt).toContain("{{if .Name}}{{.Name}}{{else}}{{.Source}}{{end}}");
@@ -460,6 +473,64 @@ describe("mount drift", () => {
     expect(await lc.ensureUp()).toBe("adopted");
     expect(containerCalls(calls).map((c) => c[0])).toEqual(["inspect"]);
     expect(lc.mountDrift(new Map())).toEqual([]);
+  });
+
+  describe("pinned DNS (network roaming, 2026-08-28)", () => {
+    // Docker's embedded DNS forwards to the upstream the HOST had at
+    // container creation. That upstream is network-specific, so the first
+    // wifi change after a long-lived start killed every lookup in the
+    // container (pi: "Error: fetch failed" ×N — up 17h).
+    // Pinning public resolvers makes the container network-agnostic.
+    it("runs the container with public DNS pinned", () => {
+      const argv = lifecycle([]).lc.runArgv();
+      for (const ip of PUBLIC_DNS) {
+        const at = argv.indexOf(ip);
+        expect(argv[at - 1]).toBe("--dns");
+      }
+      expect(argv[argv.length - 1]).toBe("qcr-companion"); // image still last
+    });
+
+    it("asks a SEPARATE inspect for the created DNS — never folded into status()", async () => {
+      // On docker 29, `.HostConfig` in the same template as the mounts'
+      // `{{if .Name}}` drops execution to the raw JSON map, where a bind
+      // mount has no "Name" key and the whole inspect errors (verified live
+      // 2026-08-28). Two calls, each with a format that works.
+      const { lc, calls } = lifecycle([inspectWith(true, CURRENT, ["9.9.9.9"])]);
+      expect(await lc.createdDns()).toEqual(["9.9.9.9"]);
+      const fmt = String(calls.find((c) => c[0] === "inspect")![2]);
+      expect(fmt).toContain("{{range .HostConfig.Dns}}");
+      expect(fmt).not.toContain(".Name");
+    });
+
+    it("recreates a container created BEFORE the pin — DNS-less, mounts fine", async () => {
+      // The live pre-pin container: mounts all current, HostConfig.Dns empty.
+      // `docker start` would resurrect the wifi-change failure silently.
+      const { lc, calls } = lifecycle([inspectWith(true, CURRENT, []), okFor("rm"), okFor("image"), okFor("run")]);
+      const progress: string[] = [];
+      expect(await lc.ensureUp((l) => progress.push(l))).toBe("recreated");
+      expect(containerCalls(calls).map((c) => c[0])).toEqual(["inspect", "inspect", "rm", "image", "run"]);
+      expect(progress.some((l) => l.includes(`expected [${PUBLIC_DNS.join(", ")}]`))).toBe(true);
+      // The recreate must actually carry the pin, or it recreates forever.
+      const run = calls.find((c) => c[0] === "run")!;
+      expect(run).toContain("--dns");
+    });
+
+    it("adopts when the created DNS already matches — no recreate loop", async () => {
+      const { lc, calls } = lifecycle([inspectWith(true, CURRENT, PUBLIC_DNS)]);
+      expect(await lc.ensureUp()).toBe("adopted");
+      expect(containerCalls(calls).map((c) => c[0])).toEqual(["inspect", "inspect"]);
+    });
+
+    it("has no DNS opinion when it could not really look", async () => {
+      // Same principle as mountDrift on an empty map: an unreadable answer
+      // means "no opinion", never "destroy the container". Two gates:
+      // ensureUp only asks createdDns() after status() yielded mounts (the
+      // "never concludes 'drifted'" adoption test above pins that), and an
+      // unreadable createdDns() is undefined, which ensureUp treats as clean.
+      const { lc } = lifecycle([]);
+      expect(lc.dnsDrift([])).not.toEqual([]); // the raw check itself flags
+      return lc.createdDns().then((dns) => expect(dns).toBeUndefined());
+    });
   });
 });
 

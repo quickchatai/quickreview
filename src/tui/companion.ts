@@ -36,6 +36,17 @@ export interface ContainerStatus {
   mounts: Map<string, string>;
 }
 
+/**
+ * The companion's resolvers, pinned at `docker run` (2026-08-28). Without
+ * this, docker's embedded DNS forwards to whatever upstream the HOST had at
+ * container creation — and that upstream is network-specific, so the first
+ * wifi change after a long-lived start left every lookup dead (pi: "Error:
+ * fetch failed" on all model calls; container up 17h). Public
+ * resolvers are identical on every network, and the companion needs no LAN
+ * names: it talks to public endpoints and to the memory bridge by IP.
+ */
+export const PUBLIC_DNS = ["1.1.1.1", "8.8.8.8"];
+
 /** The filesystem facts the lifecycle needs. Injectable so argv tests stay
  * hermetic; the real one is plain node:fs. */
 export interface CompanionFs {
@@ -248,6 +259,8 @@ export class CompanionLifecycle {
     // Memory-less is a legitimate mode: no network, no endpoint env, container
     // still starts. It must never be able to wedge the companion.
     if (this.wiring.network !== "") argv.push("--network", this.wiring.network);
+    // Network-roaming survival: see PUBLIC_DNS.
+    for (const ip of PUBLIC_DNS) argv.push("--dns", ip);
     argv.push(
       "--volume",
       `${this.cfg.pihome_volume}:${CONTAINER.piHome}`,
@@ -489,6 +502,28 @@ export class CompanionLifecycle {
     return { exists: true, running: first.trim() === "true", mounts };
   }
 
+  /**
+   * The DNS servers the container was CREATED with, or undefined when docker
+   * could not be asked (no opinion — never drift). Its own inspect call on
+   * purpose: on docker 29, referencing `.HostConfig` in the SAME template as
+   * the mounts' `{{if .Name}}` makes execution fall back to the raw JSON map,
+   * where a bind mount has no "Name" key and the whole inspect errors —
+   * verified live 2026-08-28. Do not fold this back into status().
+   */
+  async createdDns(): Promise<string[] | undefined> {
+    const res = await this.docker([
+      "inspect",
+      "--format",
+      "{{range .HostConfig.Dns}}{{.}}\n{{end}}",
+      this.cfg.container_name,
+    ]);
+    if (!res.ok) return undefined;
+    return res.stdout
+      .split("\n")
+      .map((s) => s.trim())
+      .filter((s) => s !== "");
+  }
+
   /** True when the companion tmux session is already live in the container. */
   async piRunning(): Promise<boolean> {
     const res = await this.docker(["exec", this.cfg.container_name, "tmux", "has-session", "-t", this.cfg.session]);
@@ -623,6 +658,20 @@ export class CompanionLifecycle {
     return drift;
   }
 
+  /**
+   * DNS is frozen at creation exactly like the mounts, so a container created
+   * before PUBLIC_DNS was pinned keeps forwarding lookups to a
+   * network-specific upstream forever — the 2026-08-28 wifi-change outage.
+   * Same remedy as mount drift: recreate. Consulted only after status()
+   * yielded a mount set (see ensureUp) so an unreadable inspect stays
+   * "no opinion", never a recreate.
+   */
+  dnsDrift(actual: string[]): string[] {
+    return actual.join(",") === PUBLIC_DNS.join(",")
+      ? []
+      : [`dns is [${actual.join(", ")}], expected [${PUBLIC_DNS.join(", ")}]`];
+  }
+
   /** `dest -> source` for every mount `runArgv()` declares. */
   expectedMounts(): Map<string, string> {
     const m = new Map<string, string>([
@@ -656,7 +705,14 @@ export class CompanionLifecycle {
     // adopt/start branches, so a stale container never survives a TUI start.
     // The conversation is on the pihome volume and survives the rm.
     if (st.exists) {
-      const drift = this.mountDrift(st.mounts);
+      // DNS drift is only worth asking about when the mounts came back clean
+      // (drifted mounts already force the recreate) AND status() actually
+      // yielded a mount set: a real companion container always reports its
+      // mounts, so an empty set means the answer was unreadable — no opinion,
+      // never a recreate. An unreadable createdDns() is no opinion too.
+      const mountIssues = this.mountDrift(st.mounts);
+      const dns = mountIssues.length === 0 && st.mounts.size > 0 ? await this.createdDns() : undefined;
+      const drift = [...mountIssues, ...(dns === undefined ? [] : this.dnsDrift(dns))];
       if (drift.length > 0) {
         onProgress?.(`companion mounts drifted (${drift.join("; ")}) — recreating`);
         const removed = await this.docker(["rm", "-f", this.cfg.container_name]);
