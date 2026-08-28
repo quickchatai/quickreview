@@ -31,6 +31,12 @@ describe("round progress extension", () => {
     try {
       activate(pi as never);
       await emit("agent_start");
+      await emit("message_start", {
+        message: {
+          role: "user",
+          content: [{ type: "text", text: `round order\n<!-- qcr-command:cmd-5408:${"a".repeat(64)} -->` }],
+        },
+      });
       await emit("tool_execution_start", {
         toolName: "subagent",
         toolCallId: "lens-1",
@@ -62,6 +68,8 @@ describe("round progress extension", () => {
         pr: 5408,
         session: "pr-5408",
         parent_status: "active",
+        command_id: "cmd-5408",
+        command_sha256: "a".repeat(64),
         active_tool: "subagent: pass-security",
       });
       expect(running.agents).toEqual([expect.objectContaining({

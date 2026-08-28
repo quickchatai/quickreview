@@ -32,6 +32,8 @@ import type { DispatchAnnouncer, VerdictAnnouncer } from "./slack/announce.js";
 import { applyEvent } from "./statemachine.js";
 import { buildStatusSnapshot, StateStore, writeStatusJson } from "./state.js";
 import { PiAuthWatch } from "./authwatch.js";
+import { SessionCommandSupervisor } from "./session-command-supervisor.js";
+import { parseRoundProgress } from "./round-progress.js";
 import { stubSessionHooks } from "./stubs.js";
 import type { SessionHooks } from "./types.js";
 import { VerdictWatcher, type VerdictAdapter } from "./verdicts.js";
@@ -184,6 +186,22 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     root, // anchors the default pi-session dir for round usage measurement
     // The durable reasoning record — same dir the round prompts pin.
     findingsDir: join(root, "state", "findings"),
+    log,
+  });
+  const roundStages = new SessionCommandSupervisor({
+    cfg,
+    store,
+    hooks,
+    verdictDir,
+    progress: (pr) => {
+      try {
+        return parseRoundProgress(readFileSync(join(stateDir, "round-progress", `pr-${pr}.json`), "utf8"));
+      } catch {
+        return undefined;
+      }
+    },
+    onRoundFailure: (pr, roundNo, stage, detail) =>
+      verdicts.recoverInfrastructureFailure(pr, roundNo, stage, detail),
     log,
   });
   const pingpong = new PingPongLedger(store.db);
@@ -468,6 +486,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
           piAuthWatch?.status(),
           openviking,
           threadDecisions.status(),
+          roundStages.health(),
         ),
       );
     } catch (err) {
@@ -508,6 +527,16 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
       threadDecisions.start();
       rechecks.start();
       writeStatus();
+      // Start the correctness scan without holding daemon startup. If it
+      // hangs, its attempt lease ages while status.json keeps advancing and
+      // the pipeline reports unhealthy rather than blocking the process.
+      void guard("round stage supervisor", async () => {
+        try {
+          await roundStages.scan();
+        } finally {
+          writeStatus();
+        }
+      });
       // onStart BEFORE the first reconcile: the sweep can nudge a recheck at a
       // dead session immediately (boot after a deploy restart), and the
       // respawn path needs the title resolver wired in onStart. Live failure
@@ -522,7 +551,15 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         await threadDecisions.sweep();
         await rechecks.sweep();
       }));
-      every(DEADLINE_TICK_S, () => void guard("deadline check", async () => {
+      every(DEADLINE_TICK_S, () => {
+        void guard("round stage supervisor", async () => {
+          try {
+            await roundStages.scan();
+          } finally {
+            writeStatus();
+          }
+        });
+        void guard("deadline check", async () => {
         await verdicts.checkDeadlines();
         // Zombie-round expiry: rounds stuck `overdue` past the
         // horizon whose PR has since verdicted/closed become terminal
@@ -552,7 +589,8 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
           );
           log(`stranded round closed: #${r.pr} round ${r.round_no} (overdue since ${r.deadline_at})`);
         }
-      }));
+        });
+      });
       every(STATUS_TICK_S, writeStatus);
       if (piAuthWatch) every(AUTHWATCH_TICK_S, authWatchTick);
     },

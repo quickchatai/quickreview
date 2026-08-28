@@ -27,7 +27,7 @@ import type { VerdictAnnouncer } from "./slack/announce.js";
 import { isLoudCancelCause, type CancelCause, type RoundRow, type StateStore } from "./state.js";
 import { enforceLedgerFreshness } from "./ledgercheck.js";
 import { enforceFindingsRecord } from "./findingsrecord.js";
-import { normalizeVerdict, type SessionHooks, type VerdictFile, type VerdictPassEntry } from "./types.js";
+import { normalizeVerdict, type RoundRecoveryDisposition, type SessionHooks, type VerdictFile, type VerdictPassEntry } from "./types.js";
 import { flushHeldWakes } from "./wakes.js";
 
 /** Self-requeue mode → the cancellation cause it records. Two modes
@@ -35,12 +35,16 @@ import { flushHeldWakes } from "./wakes.js";
  * whether its session had died or was alive and wedged — and that is the ONE
  * loud cause; the rest are the machinery working (a moved head, a delivery
  * fault, a round redone because it executed no passes). */
-const SELF_REQUEUE_CAUSE: Record<"dead" | "alive_stuck" | "needs_human_incomplete" | "lost_prompt" | "head_moved", CancelCause> = {
+type SelfRequeueMode = "dead" | "alive_stuck" | "needs_human_incomplete" | "lost_prompt" | "head_moved" | "infrastructure_active" | "infrastructure_settled";
+
+const SELF_REQUEUE_CAUSE: Record<SelfRequeueMode, CancelCause> = {
   dead: "deadline_overrun",
   alive_stuck: "deadline_overrun",
   needs_human_incomplete: "incomplete_round",
   lost_prompt: "lost_prompt",
   head_moved: "head_moved",
+  infrastructure_active: "infrastructure_failure",
+  infrastructure_settled: "infrastructure_failure",
 };
 
 export interface VerdictAdapter {
@@ -919,6 +923,42 @@ export class VerdictWatcher {
     return this.deps.hooks.killSession ? "alive_stuck" : "not_stuck";
   }
 
+  /**: feed command-stage infrastructure failures into the SAME
+   * capped cancellation→queue lifecycle as overdue/dead rounds. There is no
+   * merits verdict and no GitHub mutation. A transient inability to stop an
+   * active session is retryable; budget exhaustion is distinct durable fact. */
+  async recoverInfrastructureFailure(
+    pr: number,
+    roundNo: number,
+    stage: "command_start" | "settled_without_verdict" | "running_hard_bound",
+    detail: string,
+  ): Promise<RoundRecoveryDisposition> {
+    const round = this.runningRound(pr, roundNo);
+    if (!round || round.status !== "running") return "requeued";
+    this.deps.store.logEvent("round_infrastructure_failure", pr, {
+      round_id: round.id,
+      round_no: roundNo,
+      stage,
+      detail,
+    });
+    const head = this.deps.store.getPr(pr)?.head_sha ?? "";
+    const cap = this.deps.cfg.daemon.max_self_requeues ?? DEFAULT_MAX_SELF_REQUEUES;
+    if (this.deps.store.selfRequeueCount(pr, head) >= cap) {
+      const recovered = await this.selfRequeue(
+        round,
+        stage === "settled_without_verdict" ? "infrastructure_settled" : "infrastructure_active",
+      );
+      if (recovered) return "requeued";
+      return this.runningRound(pr, roundNo)?.status === "running" ? "retryable" : "exhausted";
+    }
+    if (stage !== "settled_without_verdict" && !this.deps.hooks.killSession) return "retryable";
+    const recovered = await this.selfRequeue(
+      round,
+      stage === "settled_without_verdict" ? "infrastructure_settled" : "infrastructure_active",
+    );
+    return recovered ? "requeued" : "retryable";
+  }
+
   /**
    * Self-requeue a stuck round. Returns true when the round was
    * handled here (cancelled + PR re-queued for a fresh dispatch through the
@@ -932,13 +972,15 @@ export class VerdictWatcher {
    * not age the PR). Held wakes stay held: the requeued round is about to
    * dispatch, and its own round-end paths flush them (S4).
    */
-  private async selfRequeue(round: RoundRow, mode: "dead" | "alive_stuck" | "needs_human_incomplete" | "lost_prompt" | "head_moved" = "dead"): Promise<boolean> {
+  private async selfRequeue(round: RoundRow, mode: SelfRequeueMode = "dead"): Promise<boolean> {
     const { store, cfg } = this.deps;
     const row = store.getPr(round.pr);
     const head = row?.head_sha ?? "";
     const cap = cfg.daemon.max_self_requeues ?? DEFAULT_MAX_SELF_REQUEUES;
     const attempt = store.selfRequeueCount(round.pr, head) + 1;
-    if (attempt > cap) {
+    const exhausted = attempt > cap;
+    const infrastructure = mode === "infrastructure_active" || mode === "infrastructure_settled";
+    if (exhausted && !infrastructure) {
       store.logEvent("self_requeue_cap_exhausted", round.pr, {
         round_id: round.id,
         round_no: round.round_no,
@@ -958,11 +1000,61 @@ export class VerdictWatcher {
             ? `round ${round.round_no}'s prompt was consumed from the inject dir but the session shows no activity since the round started (${round.started_at}) — the prompt was dropped in delivery; redispatching`
             : mode === "head_moved"
               ? `round ${round.round_no} ended head_moved (guard 5): the PR advanced mid-round and the session correctly posted nothing — redispatching against the fresh head; the session is healthy and was not killed`
-              : `round ${round.round_no} verdicted NEEDS_HUMAN without executing any passes — the review was not done, so it is redone rather than handed to a person`;
-    if (mode === "alive_stuck" && this.deps.hooks.killSession) {
-      await this.safe(() => this.deps.hooks.killSession!.call(this.deps.hooks, round.pr), `kill wedged session pr-${round.pr}`);
+              : mode === "infrastructure_active" || mode === "infrastructure_settled"
+                ? `round ${round.round_no} failed a bounded daemon→Pi infrastructure stage before any merits verdict — redispatching through the ordinary pump`
+                : `round ${round.round_no} verdicted NEEDS_HUMAN without executing any passes — the review was not done, so it is redone rather than handed to a person`;
+    if (mode === "infrastructure_active" && !this.deps.hooks.killSession) {
+      store.logEvent("session_recovery_kill_unavailable", round.pr, { round_id: round.id, round_no: round.round_no, mode });
+      return false;
+    }
+    if ((mode === "alive_stuck" || mode === "infrastructure_active") && this.deps.hooks.killSession) {
+      try {
+        await this.deps.hooks.killSession.call(this.deps.hooks, round.pr);
+      } catch (error) {
+        store.logEvent("session_recovery_kill_failed", round.pr, { round_id: round.id, round_no: round.round_no, mode, error: String(error) });
+        this.log(`verdicts: refusing ${mode} requeue for #${round.pr}; old session could not be stopped`, error);
+        return false;
+      }
+    }
+    if (infrastructure) {
+      // For active failures the strict kill above makes this check definitive:
+      // no new verdict can appear after the session is gone. For a settled
+      // parent, all writes are already over. A verdict that won this race is
+      // left to the 10s sweep, never cancelled/quarantined here.
+      if (existsSync(join(this.deps.verdictDir, `pr-${round.pr}-round-${round.round_no}.json`))) {
+        store.logEvent("round_stage_verdict_won", round.pr, { round_id: round.id, round_no: round.round_no, mode });
+        return false;
+      }
+      if (this.runningRound(round.pr, round.round_no)?.status !== "running") return true;
     }
     const cause = SELF_REQUEUE_CAUSE[mode];
+    if (exhausted) {
+      store.logEvent("self_requeue_cap_exhausted", round.pr, {
+        round_id: round.id,
+        round_no: round.round_no,
+        head_sha: head,
+        attempts: attempt - 1,
+        cap,
+        mode,
+      });
+      // Capacity must not remain consumed by work whose bounded recovery is
+      // over. promotes this durable cancellation+failed command into
+      // canonical FAILED_LOUD operator state; no quiet tracked transition and
+      // no automatic successor is created here.
+      store.markRoundCancelled(
+        round.id,
+        `infrastructure recovery exhausted after ${cap} self-requeue(s) — ${reason}`,
+        "infrastructure_failure",
+      );
+      store.logEvent("round_infrastructure_recovery_exhausted", round.pr, {
+        round_id: round.id,
+        round_no: round.round_no,
+        head_sha: head,
+        attempts: cap,
+        mode,
+      });
+      return false;
+    }
     store.markRoundCancelled(round.id, `self-requeue ${attempt}/${cap} — ${reason}`, cause);
     if (isLoudCancelCause(cause)) {
       // the durable twin of the inject below. A round that stopped

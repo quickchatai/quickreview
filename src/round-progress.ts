@@ -25,6 +25,11 @@ export interface RoundProgressSnapshot {
   run_started_at: string;
   updated_at: string;
   parent_status: "active" | "settled";
+  /** Exact durable command identity, learned from its correlated user
+   * message. Absent on interactive/legacy runs; absent means telemetry cannot
+   * prove settlement for command recovery. */
+  command_id?: string;
+  command_sha256?: string;
   last_activity_at: string;
   last_activity: string;
   active_tool?: string;
@@ -42,6 +47,9 @@ export function parseRoundProgress(raw: string): RoundProgressSnapshot | undefin
       typeof value.run_started_at !== "string" ||
       typeof value.updated_at !== "string" ||
       (value.parent_status !== "active" && value.parent_status !== "settled") ||
+      ((value.command_id === undefined) !== (value.command_sha256 === undefined)) ||
+      (value.command_id !== undefined && typeof value.command_id !== "string") ||
+      (value.command_sha256 !== undefined && (typeof value.command_sha256 !== "string" || !/^[a-f0-9]{64}$/.test(value.command_sha256))) ||
       typeof value.last_activity_at !== "string" ||
       typeof value.last_activity !== "string" ||
       !Array.isArray(value.agents)

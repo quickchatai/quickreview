@@ -14,6 +14,7 @@ import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Pi, PiEventPayload } from "@earendil-works/pi-coding-agent";
 import type { LiveAgentProgress, LiveAgentStatus, RoundProgressSnapshot } from "../src/round-progress.js";
+import { parseSessionCommandMarker } from "../src/session-command.js";
 
 interface SubagentResultLike {
   agent?: unknown;
@@ -65,6 +66,16 @@ function argPreview(args: Record<string, unknown>): string | undefined {
     if (value) return value.replace(/\s+/g, " ").slice(0, 120);
   }
   return undefined;
+}
+
+function userMessageText(event: PiEventPayload): string | undefined {
+  const message = record(event.message);
+  if (message?.role !== "user" || !Array.isArray(message.content)) return undefined;
+  return message.content
+    .map(record)
+    .filter((part): part is Record<string, unknown> => part !== undefined && part.type === "text" && typeof part.text === "string")
+    .map((part) => part.text as string)
+    .join("\n");
 }
 
 function resultsFrom(event: PiEventPayload, carrier: "partialResult" | "result"): SubagentResultLike[] {
@@ -164,6 +175,16 @@ export default function activate(pi: Pi): void {
       agents: [],
     };
     write();
+  });
+
+  pi.on("message_start", (event) => {
+    if (!snapshot) return;
+    const body = userMessageText(event);
+    const marker = body ? parseSessionCommandMarker(body) : undefined;
+    if (!marker) return;
+    snapshot.command_id = marker.id;
+    snapshot.command_sha256 = marker.payloadSha256;
+    activity(`command ${marker.id} accepted`);
   });
 
   pi.on("turn_start", heartbeat);

@@ -434,6 +434,20 @@ describe("status.json", () => {
     expect(noHeadline.dry_run).toBe(false);
   });
 
+  it("carries correctness-supervisor health separately from the process heartbeat", () => {
+    const health = {
+      healthy: false,
+      stale_after_s: 180,
+      last_attempt_at: "2026-08-27T19:56:00.000Z",
+      last_success_at: "2026-08-27T19:55:00.000Z",
+      last_error_at: null,
+      last_error: null,
+    };
+    const snap = buildStatusSnapshot(store, false, undefined, now, undefined, undefined, undefined, undefined, health);
+    expect(snap.heartbeat).toBe(T0.toISOString());
+    expect(snap.round_stage_supervisor).toEqual(health);
+  });
+
   it("writes atomically — temp file gone, target parses, dir created", () => {
     const target = join(dir, "nested");
     const snap = buildStatusSnapshot(store, true, undefined, now);

@@ -19,6 +19,8 @@ let root: string;
 let secrets: string;
 let calls: { cmd: string; args: string[]; env?: NodeJS.ProcessEnv }[];
 let liveSessions: Set<string>;
+let onKillSession: ((name: string) => void) | undefined;
+let keepKilledSession = false;
 
 const cfg = (): Config =>
   ({
@@ -64,7 +66,11 @@ const fakeExec: ExecFn = async (cmd, args, opts) => {
       return { code: liveSessions.has(name) ? 0 : 1, stdout: "", stderr: "" };
     }
     if (args[0] === "new-session") liveSessions.add(String(args[3]));
-    if (args[0] === "kill-session") liveSessions.delete(String(args[2]).replace(/^=/, ""));
+    if (args[0] === "kill-session") {
+      const name = String(args[2]).replace(/^=/, "");
+      onKillSession?.(name);
+      if (!keepKilledSession) liveSessions.delete(name);
+    }
   }
   return { code: 0, stdout: "", stderr: "" };
 };
@@ -120,6 +126,8 @@ beforeEach(() => {
   calls = [];
   ovCalls = [];
   liveSessions = new Set();
+  onKillSession = undefined;
+  keepKilledSession = false;
   mkdirSync(join(root, "prompts"), { recursive: true });
   mkdirSync(secrets, { recursive: true });
   writeFileSync(join(root, "prompts", "conversation-system.md"), "Shepherd of PR #{{n}} ({{title}}) at {{worktree}}.\n");
@@ -531,7 +539,11 @@ describe("durable command ownership", () => {
       expect(row.payload_sha256).toBe(createHash("sha256").update(bytes).digest("hex"));
       expect(readFileSync(row.payload_path)).toEqual(bytes);
       expect(row.inject_path).toContain(`--cmd-${row.id}.md`);
-      expect(m.buildEnv("pr-42").QCR_STATE_DB).toBe(dbPath);
+      expect(m.buildEnv("pr-42")).toMatchObject({
+        QCR_STATE_DB: dbPath,
+        QCR_SESSION_COMMAND_START_LEASE_MS: "120000",
+        QCR_SESSION_COMMAND_RUNNING_LEASE_MS: "2700000",
+      });
 
       liveSessions.add("pr-42");
       await expect(m.inject(42, "author replied")).rejects.toThrow(/session command .* is pending/);
@@ -557,6 +569,92 @@ describe("durable command ownership", () => {
       expect(retried.attempt).toBe(1);
       expect(readFileSync(retried.inject_path)).toEqual(bytes);
       expect(readFileSync(retried.payload_path)).toEqual(bytes);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("kills the old session before retrying the same unstarted command id and bytes", async () => {
+    const store = new StateStore(join(root, "state", "state.db"), () => new Date("2026-08-13T10:00:00Z"));
+    try {
+      const m = manager(undefined, store);
+      m.setTitleResolver((pr) => (pr === 42 ? order.title : undefined));
+      store.upsertPr({ number: 42, state: "reviewing", head_sha: "abc123", title: order.title, author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+      store.startRound(42, "first", ["pass-baseline"], 45);
+      await m.dispatchRound(order, "ROUND PROMPT BODY");
+      const original = store.activeSessionCommand("pr-42")!;
+      const bytes = readFileSync(original.payload_path);
+      store.claimSessionCommand(original.id, "bridge-old", "2026-08-13T10:02:00Z");
+
+      expect(await m.retrySessionCommand(original.id, "start lease expired")).toBe("retried");
+
+      const retried = store.activeSessionCommand("pr-42")!;
+      expect(retried).toMatchObject({ id: original.id, status: "pending", attempt: 1, owner_token: null });
+      expect(readFileSync(retried.inject_path)).toEqual(bytes);
+      const kill = tmuxArgs().findIndex((a) => a[0] === "kill-session" && a.includes("=pr-42"));
+      const birth = tmuxArgs().findIndex((a, index) => index > kill && a[0] === "new-session" && a.includes("pr-42"));
+      expect(kill).toBeGreaterThanOrEqual(0);
+      expect(birth).toBeGreaterThan(kill);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("refuses replay when the old tmux session survives the kill", async () => {
+    const store = new StateStore(join(root, "state", "state.db"), () => new Date("2026-08-13T10:00:00Z"));
+    try {
+      const m = manager(undefined, store);
+      m.setTitleResolver(() => order.title);
+      store.upsertPr({ number: 42, state: "reviewing", head_sha: "abc123", title: order.title, author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+      store.startRound(42, "first", ["pass-baseline"], 45);
+      await m.dispatchRound(order, "ROUND PROMPT BODY");
+      const command = store.activeSessionCommand("pr-42")!;
+      store.claimSessionCommand(command.id, "bridge-old", "2026-08-13T10:02:00Z");
+      keepKilledSession = true;
+
+      await expect(m.retrySessionCommand(command.id, "expired")).rejects.toThrow(/survived command-recovery kill/);
+      expect(store.getSessionCommand(command.id)).toMatchObject({ status: "running", owner_token: "bridge-old", attempt: 1, started_at: null });
+      expect(tmuxArgs().filter((a) => a[0] === "new-session")).toHaveLength(1);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("refuses replay when correlated acceptance wins during the kill", async () => {
+    const store = new StateStore(join(root, "state", "state.db"), () => new Date("2026-08-13T10:00:00Z"));
+    try {
+      const m = manager(undefined, store);
+      m.setTitleResolver(() => order.title);
+      store.upsertPr({ number: 42, state: "reviewing", head_sha: "abc123", title: order.title, author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+      store.startRound(42, "first", ["pass-baseline"], 45);
+      await m.dispatchRound(order, "ROUND PROMPT BODY");
+      const command = store.activeSessionCommand("pr-42")!;
+      store.claimSessionCommand(command.id, "bridge-old", "2026-08-13T10:02:00Z");
+      onKillSession = () => { store.markSessionCommandStarted(command.id, "bridge-old", "2026-08-13T10:45:00Z"); };
+
+      expect(await m.retrySessionCommand(command.id, "expired")).toBe("accepted_race");
+      expect(store.getSessionCommand(command.id)).toMatchObject({ status: "running", started_at: "2026-08-13T10:00:00.000Z" });
+      expect(tmuxArgs().filter((a) => a[0] === "new-session")).toHaveLength(1);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("does not replay after the verdict lifecycle terminalizes the round during the kill", async () => {
+    const store = new StateStore(join(root, "state", "state.db"), () => new Date("2026-08-13T10:00:00Z"));
+    try {
+      const m = manager(undefined, store);
+      m.setTitleResolver(() => order.title);
+      store.upsertPr({ number: 42, state: "reviewing", head_sha: "abc123", title: order.title, author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+      const roundId = store.startRound(42, "first", ["pass-baseline"], 45);
+      await m.dispatchRound(order, "ROUND PROMPT BODY");
+      const command = store.activeSessionCommand("pr-42")!;
+      store.claimSessionCommand(command.id, "bridge-old", "2026-08-13T10:02:00Z");
+      onKillSession = () => { store.markRoundCancelled(roundId, "verdict won", "unknown"); };
+
+      expect(await m.retrySessionCommand(command.id, "expired")).toBe("round_finished");
+      expect(store.getSessionCommand(command.id)?.status).toBe("running");
+      expect(tmuxArgs().filter((a) => a[0] === "new-session")).toHaveLength(1);
     } finally {
       store.close();
     }

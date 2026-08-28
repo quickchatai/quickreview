@@ -542,6 +542,15 @@ export interface Config {
      * (for a live session) kills it. Optional; readers default to
      * DEFAULT_MAX_PROMPT_REDELIVERIES. */
     max_prompt_redeliveries?: number;
+    /** daemon→Pi stage bounds. Optional only for old configs; the
+     * parser supplies the exported defaults so production always has finite
+     * values. Progress telemetry never changes any of them. */
+    session_command_start_lease_s?: number;
+    session_command_running_max_min?: number;
+    session_command_unknown_grace_s?: number;
+    session_command_unknown_max_checks?: number;
+    session_command_max_start_retries?: number;
+    round_stage_supervisor_stale_s?: number;
     /** Zombie-round expiry horizon: a round stuck `overdue` for
      * longer than this — and whose PR has since verdicted or closed, so a
      * rerun would never touch it — moves to terminal `expired`.
@@ -647,6 +656,16 @@ export const DEFAULT_MAX_SELF_REQUEUES = 2;
  * re-sending the same file forever. */
 export const DEFAULT_MAX_PROMPT_REDELIVERIES = 2;
 
+/** finite daemon→Pi stage bounds. The 45-minute hard run cap is above
+ * the measured 23.4-minute live maximum yet materially below the 75-minute
+ * defense-in-depth round deadline. */
+export const DEFAULT_SESSION_COMMAND_START_LEASE_S = 120;
+export const DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN = 45;
+export const DEFAULT_SESSION_COMMAND_UNKNOWN_GRACE_S = 60;
+export const DEFAULT_SESSION_COMMAND_UNKNOWN_MAX_CHECKS = 1;
+export const DEFAULT_SESSION_COMMAND_MAX_START_RETRIES = 2;
+export const DEFAULT_ROUND_STAGE_SUPERVISOR_STALE_S = 180;
+
 export function sandboxRoot(): string {
   // Robust under both dist/src (built) and src (vitest): walk up to package.json.
   let dir = dirname(fileURLToPath(import.meta.url));
@@ -691,7 +710,17 @@ export function parseConfig(toml: string): Config {
     github,
     server: { ...(req(raw, "server") as Config["server"]) },
 // Both knobs default so legacy configs keep parsing.
-    daemon: { max_self_requeues: DEFAULT_MAX_SELF_REQUEUES, expire_overdue_after_h: 24, ...(req(raw, "daemon") as Partial<Config["daemon"]>) } as Config["daemon"],
+    daemon: {
+      max_self_requeues: DEFAULT_MAX_SELF_REQUEUES,
+      expire_overdue_after_h: 24,
+      session_command_start_lease_s: DEFAULT_SESSION_COMMAND_START_LEASE_S,
+      session_command_running_max_min: DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN,
+      session_command_unknown_grace_s: DEFAULT_SESSION_COMMAND_UNKNOWN_GRACE_S,
+      session_command_unknown_max_checks: DEFAULT_SESSION_COMMAND_UNKNOWN_MAX_CHECKS,
+      session_command_max_start_retries: DEFAULT_SESSION_COMMAND_MAX_START_RETRIES,
+      round_stage_supervisor_stale_s: DEFAULT_ROUND_STAGE_SUPERVISOR_STALE_S,
+      ...(req(raw, "daemon") as Partial<Config["daemon"]>),
+    } as Config["daemon"],
     // heartbeat_time defaults so legacy configs keep parsing.
     eod: {
       heartbeat_time: "09:00",

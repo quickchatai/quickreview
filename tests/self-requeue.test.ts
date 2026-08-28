@@ -130,6 +130,68 @@ function silentSince(id: number): string | null {
   return (store.db.prepare("SELECT silent_since FROM rounds WHERE id = ?").get(id) as { silent_since: string | null }).silent_since;
 }
 
+describe("bounded infrastructure-stage recovery", () => {
+  it("reuses the ordinary capped self-requeue path without producing a merits verdict", async () => {
+    const roundId = reviewingRound(290);
+    const { hooks, overseer } = hooksWith(true);
+    const killed: number[] = [];
+    hooks.killSession = async (pr) => { killed.push(pr); };
+    const v = watcher(hooks);
+
+    expect(await v.recoverInfrastructureFailure(290, 1, "settled_without_verdict", "parent settled with no verdict")).toBe("requeued");
+
+    expect(roundStatus(roundId)).toBe("cancelled");
+    expect(store.getPr(290)).toMatchObject({ state: "queued" });
+    expect(killed).toEqual([]); // a fully settled sticky session is healthy and retained
+    expect(events("round_self_requeued")[0]?.payload).toMatchObject({ mode: "infrastructure_settled", cancel_cause: "infrastructure_failure" });
+    expect(store.roundsFor(290)[0]?.verdict).toBeNull();
+    expect(adapter.calls).toEqual([]);
+    expect(overseer.some((m) => m.includes("SELF-REQUEUE (recovery)"))).toBe(true);
+  });
+
+  it("strictly stops an active timed-out session before requeueing", async () => {
+    reviewingRound(292);
+    const { hooks } = hooksWith(true);
+    const killed: number[] = [];
+    hooks.killSession = async (pr) => { killed.push(pr); };
+    const v = watcher(hooks);
+
+    expect(await v.recoverInfrastructureFailure(292, 1, "running_hard_bound", "fixed bound exhausted")).toBe("requeued");
+    expect(killed).toEqual([292]);
+    expect(events("round_self_requeued")[0]?.payload).toMatchObject({ mode: "infrastructure_active" });
+  });
+
+  it("lets a verdict that wins during strict stop go to the verdict sweep", async () => {
+    reviewingRound(293);
+    const { hooks } = hooksWith(true);
+    hooks.killSession = async () => {
+      writeFileSync(join(dir, "pr-293-round-1.json"), "{}");
+    };
+    const v = watcher(hooks);
+
+    expect(await v.recoverInfrastructureFailure(293, 1, "running_hard_bound", "fixed bound exhausted")).toBe("retryable");
+    expect(store.roundsFor(293)[0]?.status).toBe("running");
+    expect(events("round_stage_verdict_won")).toHaveLength(1);
+    expect(events("round_self_requeued")).toHaveLength(0);
+  });
+
+  it("returns exhausted at the ordinary recovery cap, stops Pi, and frees round capacity", async () => {
+    reviewingRound(291);
+    const { hooks } = hooksWith(true);
+    const killed: number[] = [];
+    hooks.killSession = async (pr) => { killed.push(pr); };
+    for (let i = 0; i < DEFAULT_MAX_SELF_REQUEUES; i++) {
+      store.logEvent("round_self_requeued", 291, { head_sha: "abc123" });
+    }
+    const v = watcher(hooks);
+
+    expect(await v.recoverInfrastructureFailure(291, 1, "running_hard_bound", "fixed bound exhausted")).toBe("exhausted");
+    expect(killed).toEqual([291]);
+    expect(store.roundsFor(291)[0]).toMatchObject({ status: "cancelled", cancel_cause: "infrastructure_failure", verdict: null });
+    expect(store.getPr(291)?.state).toBe("reviewing"); // promotes this to canonical FAILED_LOUD
+  });
+});
+
 describe("stuck-round detection + self-requeue", () => {
   it("requeues an overdue round with no verdict and a dead session — no restart needed", async () => {
     const roundId = reviewingRound(300);

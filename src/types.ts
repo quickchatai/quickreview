@@ -246,6 +246,9 @@ export interface VerdictFile {
 
 /** The daemon↔session boundary. B2 codes against this; B3 implements it; B2
  * ships a disk-logging stub so the daemon runs end-to-end without pi. */
+export type SessionCommandRetryResult = "retried" | "round_finished" | "accepted_race" | "retry_failed";
+export type RoundRecoveryDisposition = "requeued" | "exhausted" | "retryable";
+
 export interface SessionHooks {
   /** Ensure the per-PR session exists (birth on first trigger) and inject the
    * rendered round prompt. */
@@ -314,4 +317,9 @@ export interface SessionHooks {
    * Optional: absent ⇒ the expensive path only, exactly as before.
    */
   redeliverRound?(pr: number, roundNo: number): Promise<boolean>;
+  /**: safely retry one durable command after its start lease expires.
+   * The production manager kills and verifies the old sticky session first,
+   * then reuses the same id/path/bytes and rebirths the session. False means
+   * no replay occurred; callers must fail loud rather than submit a second. */
+  retrySessionCommand?(commandId: string, reason: string): Promise<SessionCommandRetryResult>;
 }

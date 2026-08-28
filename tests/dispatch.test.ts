@@ -840,6 +840,32 @@ describe("dispatchOnce", () => {
     expect(JSON.parse(failure.payload)).toMatchObject({ round_id: 1, error: expect.stringContaining("index.lock") });
   });
 
+  it("retains the round when a durable command exists before bookkeeping fails", async () => {
+    queue(63, "2026-08-13T09:00:00Z");
+    const hooks = recordingHooks().hooks;
+    hooks.dispatchRound = async (order) => {
+      store.createSessionCommand({
+        id: "cmd-retained",
+        pr: order.pr,
+        session: `pr-${order.pr}`,
+        kind: "round",
+        round_no: order.round_no,
+        payload_sha256: "a".repeat(64),
+        payload_path: "/state/cmd-retained.md",
+        inject_path: "/inject/pr-63/cmd-retained.md",
+        next_check_at: "2026-08-13T09:02:00Z",
+      });
+      throw new Error("post-handoff bookkeeping failed");
+    };
+
+    expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toEqual([]);
+    expect(store.getPr(63)?.state).toBe("reviewing");
+    expect(store.runningRounds()).toHaveLength(1);
+    expect(store.blockingSessionCommand("pr-63")?.id).toBe("cmd-retained");
+    const failure = store.db.prepare("SELECT payload FROM events WHERE kind='dispatch_failed' AND pr=63").get() as { payload: string };
+    expect(JSON.parse(failure.payload)).toMatchObject({ retained_command: true });
+  });
+
   it("one failing PR does not stall the pump", async () => {
     queue(61, "2026-08-13T09:00:00Z");
     queue(62, "2026-08-13T09:30:00Z");

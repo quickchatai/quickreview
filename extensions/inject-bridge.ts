@@ -77,6 +77,11 @@ export const RETRY_MAX_MS = 30_000;
  * evidence for the daemon/operator watchdogs. */
 export const START_ACK_TIMEOUT_MS = 2 * 60_000;
 
+function positiveEnvMs(name: string): number | undefined {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
 /**
  * How a message that reaches pi while the agent is STREAMING is handled
  * (`AgentSessionExtensionApi.sendUserMessage` options, mapped internally onto
@@ -110,7 +115,10 @@ export const activate: (pi: Pi) => void = (pi) => {
   let ledger: SessionCommandLedger | undefined;
   if (ledgerRequired) {
     try {
-      ledger = new SessionCommandLedger(stateDb!, root, session);
+      ledger = new SessionCommandLedger(stateDb!, root, session, undefined, {
+        startMs: positiveEnvMs("QCR_SESSION_COMMAND_START_LEASE_MS"),
+        runningMs: positiveEnvMs("QCR_SESSION_COMMAND_RUNNING_LEASE_MS"),
+      });
     } catch (err) {
       console.error(`[inject-bridge] FAILED_LOUD could not open durable command ledger: ${String(err)}`);
     }
@@ -164,7 +172,7 @@ export const activate: (pi: Pi) => void = (pi) => {
       console.error(
         `[inject-bridge] FAILED_LOUD ${failure}; preserving the pending file and refusing successor delivery`,
       );
-    }, START_ACK_TIMEOUT_MS);
+    }, positiveEnvMs("QCR_SESSION_COMMAND_START_LEASE_MS") ?? START_ACK_TIMEOUT_MS);
   };
 
   const archive = (wake: SubmittedWake): boolean => {

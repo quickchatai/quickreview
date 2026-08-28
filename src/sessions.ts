@@ -24,7 +24,11 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Config } from "./config.js";
-import { openVikingBaseUrl } from "./config.js";
+import {
+  DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN,
+  DEFAULT_SESSION_COMMAND_START_LEASE_S,
+  openVikingBaseUrl,
+} from "./config.js";
 import {
   OV_DEFAULT_BASE_URL,
   OV_REVIEWER_KEY_SECRET,
@@ -40,13 +44,11 @@ import { Tmux } from "./tmux.js";
 import type { ExecFn } from "./tmux.js";
 import type { SessionCommandKind, SessionCommandRow, StateStore } from "./state.js";
 import { roundPromptMarker, stampRoundPrompt } from "./types.js";
-import type { RoundOrder, SessionHooks } from "./types.js";
+import type { RoundOrder, SessionCommandRetryResult, SessionHooks } from "./types.js";
 import { renderConversationSystemPrompt, renderOverseerSystemPrompt } from "./templates.js";
 import { WorktreeManager } from "./worktrees.js";
 
 export const OVERSEER_SESSION = "overseer";
-export const SESSION_COMMAND_START_LEASE_MS = 2 * 60_000;
-export const SESSION_COMMAND_RUN_LEASE_MS = 30 * 60_000;
 
 /** Environment-variable prefixes that ride the `env K=V … pi …` argv (see
  * spawnSession). `QCR_` is the daemon's routing surface; `OPENVIKING_` is the
@@ -334,7 +336,13 @@ export class PiSessionManager implements SessionHooks {
       QCR_LEDGER_FILE: this.ledgerPath(session),
       QCR_SECRETS_DIR: this.cfg.github.secrets_dir,
       QCR_PI_VERSION: this.cfg.pi.version,
-      ...(this.commandStore && this.commandStore.path !== ":memory:" ? { QCR_STATE_DB: this.commandStore.path } : {}),
+      ...(this.commandStore && this.commandStore.path !== ":memory:"
+        ? {
+            QCR_STATE_DB: this.commandStore.path,
+            QCR_SESSION_COMMAND_START_LEASE_MS: String(this.sessionCommandStartLeaseMs()),
+            QCR_SESSION_COMMAND_RUNNING_LEASE_MS: String(this.sessionCommandRunningLeaseMs()),
+          }
+        : {}),
     };
     const openai = this.secret("openai_api_key");
     if (openai) env.OPENAI_API_KEY = openai;
@@ -536,7 +544,14 @@ export class PiSessionManager implements SessionHooks {
         this.writeAtomic(command.inject_path, payload.toString("utf8"));
         restored.push(command.id);
       } catch (err) {
-        store.failPendingSessionCommand(command.id, `restart reconstruction failed: ${String(err)}`);
+        const failure = `restart reconstruction failed: ${String(err)}`;
+        store.failPendingSessionCommand(command.id, failure);
+        store.logAnomaly(
+          "session_command_failed",
+          command.pr,
+          command.round_no,
+          `${failure}; command ${command.id} remains failed and blocks successors until bounded recovery/operator action`,
+        );
         failed.push(command.id);
       }
     }
@@ -593,7 +608,7 @@ export class PiSessionManager implements SessionHooks {
             payload_sha256: createHash("sha256").update(payload).digest("hex"),
             payload_path: payloadPath,
             inject_path: injectPath,
-            next_check_at: this.commandDeadline(SESSION_COMMAND_START_LEASE_MS),
+            next_check_at: this.commandDeadline(this.sessionCommandStartLeaseMs()),
           });
         } catch (err) {
           console.error(`[quickreviewd] sessions: FAILED_LOUD could not adopt ${injectPath}: ${String(err)}`);
@@ -611,6 +626,14 @@ export class PiSessionManager implements SessionHooks {
 
   private commandDeadline(ms: number): string {
     return new Date(this.now().getTime() + ms).toISOString();
+  }
+
+  private sessionCommandStartLeaseMs(): number {
+    return (this.cfg.daemon.session_command_start_lease_s ?? DEFAULT_SESSION_COMMAND_START_LEASE_S) * 1000;
+  }
+
+  private sessionCommandRunningLeaseMs(): number {
+    return (this.cfg.daemon.session_command_running_max_min ?? DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN) * 60_000;
   }
 
   private queuePrCommand(
@@ -641,7 +664,7 @@ export class PiSessionManager implements SessionHooks {
       payload_sha256: createHash("sha256").update(payload).digest("hex"),
       payload_path: payloadPath,
       inject_path: injectPath,
-      next_check_at: this.commandDeadline(SESSION_COMMAND_START_LEASE_MS),
+      next_check_at: this.commandDeadline(this.sessionCommandStartLeaseMs()),
     });
     try {
       this.writeAtomic(injectPath, payload);
@@ -824,13 +847,72 @@ export class PiSessionManager implements SessionHooks {
     try {
       if (!this.commandStore.retrySessionCommand(command.id, {
         inject_path: injectPath,
-        next_check_at: this.commandDeadline(SESSION_COMMAND_START_LEASE_MS),
+        next_check_at: this.commandDeadline(this.sessionCommandStartLeaseMs()),
       })) return false;
       this.writeAtomic(injectPath, stamped);
       return true;
     } catch (err) {
       this.commandStore.failPendingSessionCommand(command.id, `redelivery write failed: ${String(err)}`);
       return false;
+    }
+  }
+
+  /**: retry an unstarted durable command without ever leaving the
+   * possibly-queued copy alive. The old tmux session is killed and absence is
+   * verified BEFORE ownership returns to pending; only then is the same
+   * id/path/payload exposed to a freshly born bridge. */
+  async retrySessionCommand(commandId: string, _reason: string): Promise<SessionCommandRetryResult> {
+    const store = this.commandStore;
+    const command = store?.getSessionCommand(commandId);
+    if (!store || !command || (command.status !== "pending" && command.status !== "running") || command.started_at !== null) return "retry_failed";
+
+    let payload: Buffer;
+    try {
+      payload = readFileSync(command.payload_path);
+      if (createHash("sha256").update(payload).digest("hex") !== command.payload_sha256) return "retry_failed";
+    } catch {
+      return "retry_failed";
+    }
+
+    const session = prSessionName(command.pr);
+    if (await this.tmux.hasSession(session)) {
+      await this.tmux.killSession(session);
+      if (await this.tmux.hasSession(session)) {
+        throw new Error(`session ${session} survived command-recovery kill; refusing replay`);
+      }
+    }
+
+    // Nothing can write a new verdict after the old tmux session is proven
+    // absent. Check filesystem first, then let SQLite atomically fence a
+    // verdict watcher / bridge acceptance that won during the kill.
+    if (command.kind === "round" && command.round_no !== null) {
+      if (existsSync(join(this.root, "verdict", `pr-${command.pr}-round-${command.round_no}.json`))) return "round_finished";
+      const round = store.roundsFor(command.pr).find((row) => row.round_no === command.round_no);
+      if (!round || round.status !== "running") return "round_finished";
+    }
+    if (!store.retryUnstartedSessionCommand(
+      command.id,
+      command.attempt,
+      this.commandDeadline(this.sessionCommandStartLeaseMs()),
+    )) {
+      const current = store.getSessionCommand(command.id);
+      if (current?.started_at !== null && current?.started_at !== undefined) return "accepted_race";
+      if (command.kind === "round" && command.round_no !== null) {
+        const round = store.roundsFor(command.pr).find((row) => row.round_no === command.round_no);
+        if (!round || round.status !== "running") return "round_finished";
+      }
+      return "retry_failed";
+    }
+    try {
+      this.writeAtomic(command.inject_path, payload.toString("utf8"));
+      await this.ensureSessionForWake(command.pr);
+      return "retried";
+    } catch (error) {
+      // The pending row + immutable payload remain a finite obligation. The
+      // next supervisor scan retries rebirth; declaring terminal failure here
+      // would remove the only due item before round recovery ran.
+      console.log(`[quickreviewd] sessions: command ${command.id} recovery rebirth failed: ${String(error)}`);
+      return "retry_failed";
     }
   }
 
@@ -1013,7 +1095,12 @@ export class PiSessionManager implements SessionHooks {
    * rebirths it fresh (live-but-stuck recovery). The ledger on disk is the
    * continuity that matters and survives the kill by design. */
   async killSession(pr: number): Promise<void> {
-    await this.tmux.killSession(prSessionName(pr)).catch(() => {});
+    const session = prSessionName(pr);
+    if (!(await this.tmux.hasSession(session))) return;
+    await this.tmux.killSession(session);
+    if (await this.tmux.hasSession(session)) {
+      throw new Error(`session ${session} survived kill; recovery must not dispatch beside it`);
+    }
   }
 
   /** SessionHooks: PR merged/closed — archive, drop the worktree, kill tmux. */

@@ -11,7 +11,13 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-export const BRIDGE_RUNNING_LEASE_MS = 30 * 60_000;
+const DEFAULT_START_LEASE_MS = 2 * 60_000;
+const DEFAULT_RUNNING_LEASE_MS = 45 * 60_000;
+
+export interface SessionCommandLedgerLeases {
+  startMs?: number;
+  runningMs?: number;
+}
 
 interface CommandRow {
   id: string;
@@ -51,6 +57,7 @@ export class SessionCommandLedger {
     private readonly root: string,
     private readonly session: string,
     private readonly now: () => Date = () => new Date(),
+    private readonly leases: SessionCommandLedgerLeases = {},
   ) {
     this.db = new Database(path, { fileMustExist: true });
     this.db.pragma("busy_timeout = 2000");
@@ -97,7 +104,7 @@ export class SessionCommandLedger {
           injectPath,
           ts,
           ts,
-          new Date(this.now().getTime() + 2 * 60_000).toISOString(),
+          new Date(this.now().getTime() + this.startLeaseMs()).toISOString(),
         );
       } catch (error) {
         row = this.byInjectPath(injectPath);
@@ -124,7 +131,7 @@ export class SessionCommandLedger {
   reserve(id: string): boolean {
     return this.totalUpdate(() => {
       const ts = this.now().toISOString();
-      const next = new Date(this.now().getTime() + 2 * 60_000).toISOString();
+      const next = new Date(this.now().getTime() + this.startLeaseMs()).toISOString();
       const changed = this.db.prepare(
         `UPDATE session_commands
             SET status='running', owner_token=?, attempt=attempt+1,
@@ -140,7 +147,7 @@ export class SessionCommandLedger {
   markAccepted(id: string): boolean {
     return this.totalUpdate(() => {
       const ts = this.now().toISOString();
-      const next = new Date(this.now().getTime() + BRIDGE_RUNNING_LEASE_MS).toISOString();
+      const next = new Date(this.now().getTime() + this.runningLeaseMs()).toISOString();
       return this.db.prepare(
         `UPDATE session_commands
             SET started_at=COALESCE(started_at, ?), updated_at=?, next_check_at=?
@@ -155,7 +162,7 @@ export class SessionCommandLedger {
   releasePending(id: string): boolean {
     return this.totalUpdate(() => {
       const ts = this.now().toISOString();
-      const next = new Date(this.now().getTime() + 2 * 60_000).toISOString();
+      const next = new Date(this.now().getTime() + this.startLeaseMs()).toISOString();
       return this.db.prepare(
         `UPDATE session_commands
             SET status='pending', owner_token=NULL, updated_at=?, next_check_at=?
@@ -184,6 +191,14 @@ export class SessionCommandLedger {
           WHERE id=? AND status='pending'`,
       ).run(ts, failure, ts, ts, id).changes === 1;
     });
+  }
+
+  private startLeaseMs(): number {
+    return this.leases.startMs && this.leases.startMs > 0 ? this.leases.startMs : DEFAULT_START_LEASE_MS;
+  }
+
+  private runningLeaseMs(): number {
+    return this.leases.runningMs && this.leases.runningMs > 0 ? this.leases.runningMs : DEFAULT_RUNNING_LEASE_MS;
   }
 
   private totalUpdate(fn: () => boolean): boolean {

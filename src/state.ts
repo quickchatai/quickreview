@@ -146,6 +146,9 @@ export type CancelCause =
   /** The round verdicted without executing any passes — redone rather than
    * handed to a person. */
   | "incomplete_round"
+  /** The daemon→Pi parent failed a finite start/finish stage before a merits
+   * verdict existed. Loud: infrastructure failed, review still owed. */
+  | "infrastructure_failure"
   /** A newer round on the same PR outlived this one. The benign explanation
    * the diagnosis refuted as the DOMINANT one: 6.5%, not the story. */
   | "superseded"
@@ -161,6 +164,7 @@ export const CANCEL_CAUSES: readonly CancelCause[] = [
   "lost_prompt",
   "head_moved",
   "incomplete_round",
+  "infrastructure_failure",
   "superseded",
   "operator",
   "unknown",
@@ -175,7 +179,7 @@ export const CANCEL_CAUSES: readonly CancelCause[] = [
  * exact inversion found. `head_moved` and `superseded` are the system
  * working. What is left is a round that stopped dead: that gets an anomaly row.
  */
-export const LOUD_CANCEL_CAUSES: ReadonlySet<CancelCause> = new Set<CancelCause>(["deadline_overrun"]);
+export const LOUD_CANCEL_CAUSES: ReadonlySet<CancelCause> = new Set<CancelCause>(["deadline_overrun", "infrastructure_failure"]);
 
 export function isLoudCancelCause(cause: string | null | undefined): boolean {
   return cause !== null && cause !== undefined && LOUD_CANCEL_CAUSES.has(cause as CancelCause);
@@ -188,6 +192,7 @@ export const CANCEL_CAUSE_LABEL: Record<CancelCause, string> = {
   lost_prompt: "prompt lost",
   head_moved: "head moved",
   incomplete_round: "incomplete round",
+  infrastructure_failure: "infrastructure failure",
   superseded: "superseded",
   operator: "operator",
   unknown: "unclassified",
@@ -534,6 +539,7 @@ CREATE TABLE IF NOT EXISTS session_commands (
   status         TEXT NOT NULL CHECK (status IN ('pending', 'running', 'acked', 'failed')),
   owner_token    TEXT,
   attempt        INTEGER NOT NULL DEFAULT 0,
+  unknown_checks INTEGER NOT NULL DEFAULT 0,
   created_at     TEXT NOT NULL,
   updated_at     TEXT NOT NULL,
   next_check_at  TEXT NOT NULL,
@@ -546,6 +552,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS session_commands_one_active
   ON session_commands(session) WHERE status IN ('pending', 'running');
 CREATE UNIQUE INDEX IF NOT EXISTS session_commands_inject_path ON session_commands(inject_path);
 CREATE INDEX IF NOT EXISTS session_commands_pr_created ON session_commands(pr, created_at);
+-- Durable heartbeat for local correctness supervisors. last_attempt_at
+-- advances before async work; a callback that hangs therefore becomes stale
+-- even while the daemon's process heartbeat keeps advancing.
+CREATE TABLE IF NOT EXISTS supervisor_leases (
+  name            TEXT PRIMARY KEY,
+  last_attempt_at TEXT,
+  last_success_at TEXT,
+  last_error_at   TEXT,
+  last_error      TEXT
+);
 -- Wakes held while their PR's round was in flight (single-shepherd invariant
 -- S4: the PR's ONE main pi is never given two instructions at once). Flushed
 -- in insertion order once the round ends.
@@ -773,6 +789,9 @@ export interface SessionCommandRow {
   status: SessionCommandStatus;
   owner_token: string | null;
   attempt: number;
+  /** Consecutive supervisor observations where JSONL/liveness evidence was
+   * unavailable. Reset on retry; bounded so unknown cannot buy silence. */
+  unknown_checks: number;
   created_at: string;
   updated_at: string;
   next_check_at: string;
@@ -780,6 +799,14 @@ export interface SessionCommandRow {
   settled_at: string | null;
   failed_at: string | null;
   failure: string | null;
+}
+
+export interface SupervisorLeaseRow {
+  name: string;
+  last_attempt_at: string | null;
+  last_success_at: string | null;
+  last_error_at: string | null;
+  last_error: string | null;
 }
 
 export interface CreateSessionCommand {
@@ -839,6 +866,10 @@ export class StateStore {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
     this.db = new Database(path);
     this.db.pragma("journal_mode = WAL");
+    // The inject bridge is a second WAL writer. A short daemon-side wait keeps
+    // routine cross-process commits from turning into partial handoffs while
+    // preserving a finite failure that supervisor health can expose.
+    this.db.pragma("busy_timeout = 2000");
     this.db.exec(SCHEMA);
     // Additive migration for stores created before pause-pr existed.
     try {
@@ -908,6 +939,8 @@ export class StateStore {
       "ALTER TABLE pending_wakes ADD COLUMN claim_token TEXT",
       "ALTER TABLE pending_wakes ADD COLUMN claimed_at TEXT",
       "ALTER TABLE pending_wakes ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
+      // one finite ambiguity allowance per command attempt.
+      "ALTER TABLE session_commands ADD COLUMN unknown_checks INTEGER NOT NULL DEFAULT 0",
     ]) {
       try {
         this.db.exec(ddl);
@@ -1507,15 +1540,109 @@ export class StateStore {
   /** Work still owed by the session. `failed` is terminal for one attempt but
    * deliberately blocks successors until recovery retries the same id. */
   blockingSessionCommand(session: string): SessionCommandRow | undefined {
-    return this.db
-      .prepare("SELECT * FROM session_commands WHERE session = ? AND status != 'acked' ORDER BY created_at DESC LIMIT 1")
-      .get(session) as SessionCommandRow | undefined;
+    return this.db.prepare(
+      `SELECT c.* FROM session_commands c
+        WHERE c.session=@session AND (
+          c.status IN ('pending', 'running')
+          OR (
+            c.status='failed' AND (
+              c.kind!='round'
+              OR NOT EXISTS (SELECT 1 FROM rounds r WHERE r.pr=c.pr AND r.round_no=c.round_no)
+              OR EXISTS (SELECT 1 FROM rounds r WHERE r.pr=c.pr AND r.round_no=c.round_no AND r.status='running')
+            )
+          )
+        )
+        ORDER BY c.created_at DESC LIMIT 1`,
+    ).get({ session }) as SessionCommandRow | undefined;
   }
 
   activeSessionCommands(): SessionCommandRow[] {
     return this.db
       .prepare("SELECT * FROM session_commands WHERE status IN ('pending', 'running') ORDER BY created_at, id")
       .all() as SessionCommandRow[];
+  }
+
+  /** Finite command-stage obligations. Acked round commands remain due only
+   * while their round is still running: settlement without a verdict is a
+   * liveness failure, whereas completed historical commands need no scans. */
+  dueSessionCommands(at: string): SessionCommandRow[] {
+    return this.db.prepare(
+      `SELECT c.* FROM session_commands c
+        WHERE c.next_check_at <= @at
+          AND (
+            c.status IN ('pending', 'running')
+            OR (
+              c.status IN ('acked', 'failed') AND c.kind='round'
+              AND EXISTS (
+                SELECT 1 FROM rounds r
+                 WHERE r.pr=c.pr AND r.round_no=c.round_no AND r.status='running'
+              )
+            )
+          )
+        ORDER BY c.next_check_at, c.created_at, c.id`,
+    ).all({ at }) as SessionCommandRow[];
+  }
+
+  /** Persist one bounded allowance for unreadable/contradictory evidence. */
+  deferSessionCommandEvidence(id: string, nextCheckAt: string): boolean {
+    const ts = this.ts();
+    return this.db.prepare(
+      `UPDATE session_commands
+          SET unknown_checks=unknown_checks+1, updated_at=@ts, next_check_at=@next
+        WHERE id=@id AND status IN ('pending', 'running')`,
+    ).run({ id, ts, next: nextCheckAt }).changes === 1;
+  }
+
+  /** Reconcile durable positive JSONL evidence the bridge could not stamp. */
+  observeSessionCommandStarted(id: string, startedAt: string, nextCheckAt: string): boolean {
+    const ts = this.ts();
+    return this.db.prepare(
+      `UPDATE session_commands
+          SET status='running', started_at=COALESCE(started_at, @started),
+              updated_at=@ts, next_check_at=@next
+        WHERE id=@id AND status IN ('pending', 'running')`,
+    ).run({ id, started: startedAt, ts, next: nextCheckAt }).changes === 1;
+  }
+
+  scheduleSessionCommandCheck(id: string, nextCheckAt: string): boolean {
+    const ts = this.ts();
+    return this.db.prepare(
+      `UPDATE session_commands SET updated_at=@ts, next_check_at=@next
+        WHERE id=@id AND status IN ('pending', 'running', 'acked', 'failed')`,
+    ).run({ id, ts, next: nextCheckAt }).changes === 1;
+  }
+
+  /** Supervisor terminalization is owner-independent only after external
+   * evidence/lease classification. Its guarded active-state update fences a
+   * concurrent bridge settlement that won first. */
+  failActiveSessionCommand(id: string, failure: string): boolean {
+    const ts = this.ts();
+    return this.db.prepare(
+      `UPDATE session_commands
+          SET status='failed', failed_at=@ts, failure=@failure,
+              updated_at=@ts, next_check_at=@ts
+        WHERE id=@id AND status IN ('pending', 'running')`,
+    ).run({ id, failure, ts }).changes === 1;
+  }
+
+  ackSettledSessionCommand(id: string): boolean {
+    const ts = this.ts();
+    return this.db.prepare(
+      `UPDATE session_commands
+          SET status='acked', settled_at=COALESCE(settled_at, @ts),
+              updated_at=@ts, next_check_at=@ts, failure=NULL
+        WHERE id=@id AND status='running' AND started_at IS NOT NULL`,
+    ).run({ id, ts }).changes === 1;
+  }
+
+  failSettledSessionCommand(id: string, failure: string): boolean {
+    const ts = this.ts();
+    return this.db.prepare(
+      `UPDATE session_commands
+          SET status='failed', failed_at=@ts, failure=@failure,
+              updated_at=@ts, next_check_at=@ts
+        WHERE id=@id AND status='acked'`,
+    ).run({ id, failure, ts }).changes === 1;
   }
 
   sessionCommandForRound(pr: number, roundNo: number): SessionCommandRow | undefined {
@@ -1572,15 +1699,79 @@ export class StateStore {
     ).run({ id, failure, ts }).changes === 1;
   }
 
+  /** Kill-before-replay CAS. The caller has already proved the old session is
+   * absent; this transaction then refuses if acceptance or round completion
+   * won while that kill was in flight. */
+  retryUnstartedSessionCommand(id: string, expectedAttempt: number, nextCheckAt: string): boolean {
+    const retry = this.db.transaction((): boolean => {
+      const row = this.getSessionCommand(id);
+      if (!row || (row.status !== "pending" && row.status !== "running") || row.started_at !== null || row.attempt !== expectedAttempt) return false;
+      if (row.kind === "round") {
+        const round = this.db.prepare(
+          "SELECT status FROM rounds WHERE pr=? AND round_no=?",
+        ).get(row.pr, row.round_no) as { status: string } | undefined;
+        if (round?.status !== "running") return false;
+      }
+      const ts = this.ts();
+      return this.db.prepare(
+        `UPDATE session_commands
+            SET status='pending', owner_token=NULL, updated_at=@ts,
+                next_check_at=@next, unknown_checks=0,
+                started_at=NULL, settled_at=NULL, failed_at=NULL, failure=NULL
+          WHERE id=@id AND status IN ('pending', 'running')
+            AND started_at IS NULL AND attempt=@attempt`,
+      ).run({ id, attempt: expectedAttempt, ts, next: nextCheckAt }).changes === 1;
+    });
+    return retry();
+  }
+
   retrySessionCommand(id: string, opts: { inject_path: string; next_check_at: string }): boolean {
     const ts = this.ts();
     return this.db.prepare(
       `UPDATE session_commands
           SET status='pending', owner_token=NULL, inject_path=@inject_path,
-              updated_at=@ts, next_check_at=@next_check_at,
+              updated_at=@ts, next_check_at=@next_check_at, unknown_checks=0,
               started_at=NULL, settled_at=NULL, failed_at=NULL, failure=NULL
-        WHERE id=@id AND status IN ('acked', 'failed')`,
+        WHERE id=@id AND status IN ('acked', 'failed')
+          AND NOT EXISTS (
+            SELECT 1 FROM session_commands active
+             WHERE active.session=session_commands.session
+               AND active.id!=session_commands.id
+               AND active.status IN ('pending', 'running')
+          )`,
     ).run({ id, ...opts, ts }).changes === 1;
+  }
+
+  // ---- supervisor liveness ----------------------------------------------
+
+  supervisorLease(name: string): SupervisorLeaseRow | undefined {
+    return this.db.prepare("SELECT * FROM supervisor_leases WHERE name = ?").get(name) as SupervisorLeaseRow | undefined;
+  }
+
+  markSupervisorAttempt(name: string, at = this.ts()): void {
+    this.db.prepare(
+      `INSERT INTO supervisor_leases (name, last_attempt_at)
+       VALUES (?, ?)
+       ON CONFLICT(name) DO UPDATE SET last_attempt_at=excluded.last_attempt_at`,
+    ).run(name, at);
+  }
+
+  markSupervisorSuccess(name: string, at = this.ts()): void {
+    this.db.prepare(
+      `INSERT INTO supervisor_leases (name, last_success_at, last_error_at, last_error)
+       VALUES (?, ?, NULL, NULL)
+       ON CONFLICT(name) DO UPDATE SET
+         last_success_at=excluded.last_success_at, last_error_at=NULL, last_error=NULL`,
+    ).run(name, at);
+  }
+
+  markSupervisorError(name: string, error: string, at = this.ts()): void {
+    this.db.prepare(
+      `INSERT INTO supervisor_leases (name, last_error_at, last_error)
+       VALUES (?, ?, ?)
+       ON CONFLICT(name) DO UPDATE SET
+         last_error_at=excluded.last_error_at, last_error=excluded.last_error`,
+    ).run(name, at, error);
   }
 
   // ---- held wakes (single-shepherd S4) -----------------------------------
@@ -2611,6 +2802,16 @@ export interface StatusSnapshot {
   draining?: boolean;
   drained_deliveries?: number;
   draining_since?: string;
+  /** local correctness supervisor. A fresh process heartbeat with a
+   * stale/failed scan is pipeline-unhealthy, not healthy. */
+  round_stage_supervisor?: {
+    healthy: boolean;
+    stale_after_s: number;
+    last_attempt_at: string | null;
+    last_success_at: string | null;
+    last_error_at: string | null;
+    last_error: string | null;
+  };
   /** watcher-global breaker and durable backlog health. */
   thread_decisions?: {
     breaker_state: "closed" | "open" | "half_open";
@@ -2639,6 +2840,7 @@ export function buildStatusSnapshot(
   piAuth?: { last_at: string; hits: number },
   openviking?: OpenVikingStatus,
   threadDecisions?: StatusSnapshot["thread_decisions"],
+  roundStageSupervisor?: StatusSnapshot["round_stage_supervisor"],
 ): StatusSnapshot {
   const today = now().toISOString().slice(0, 10);
   const drain = store.drainState();
@@ -2688,6 +2890,7 @@ export function buildStatusSnapshot(
     ...(piAuth ? { pi_auth_expired: piAuth } : {}),
     ...(openviking ? { openviking } : {}),
     ...(threadDecisions ? { thread_decisions: threadDecisions } : {}),
+    ...(roundStageSupervisor ? { round_stage_supervisor: roundStageSupervisor } : {}),
     ...(drain.draining
       ? {
           draining: true,

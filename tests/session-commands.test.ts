@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { StateStore } from "../src/state.js";
 
@@ -100,6 +101,101 @@ describe("durable PR-session command slot", () => {
       inject_path: "/inject/pr-5408/retry--cmd-cmd-a.md",
       next_check_at: "2026-08-27T20:04:00.000Z",
     });
+  });
+
+  it("exposes due work and gives unknown evidence exactly one durable deferral", () => {
+    const store = open();
+    store.createSessionCommand({ ...input("cmd-a"), next_check_at: "2026-08-27T19:59:00.000Z" });
+    store.claimSessionCommand("cmd-a", "bridge-a", "2026-08-27T19:59:30.000Z");
+
+    expect(store.dueSessionCommands(T0)).toMatchObject([{ id: "cmd-a", unknown_checks: 0 }]);
+    expect(store.deferSessionCommandEvidence("cmd-a", "2026-08-27T20:01:00.000Z")).toBe(true);
+    expect(store.getSessionCommand("cmd-a")).toMatchObject({ unknown_checks: 1, next_check_at: "2026-08-27T20:01:00.000Z" });
+    expect(store.dueSessionCommands(T0)).toEqual([]);
+  });
+
+  it("reconciles a correlated start and supervisor-fails active ownership atomically", () => {
+    const store = open();
+    store.createSessionCommand(input("cmd-a"));
+    store.claimSessionCommand("cmd-a", "bridge-a", "2026-08-27T20:02:00.000Z");
+
+    expect(store.observeSessionCommandStarted("cmd-a", T0, "2026-08-27T20:45:00.000Z")).toBe(true);
+    expect(store.getSessionCommand("cmd-a")).toMatchObject({
+      status: "running",
+      owner_token: "bridge-a",
+      started_at: T0,
+      next_check_at: "2026-08-27T20:45:00.000Z",
+    });
+    expect(store.failActiveSessionCommand("cmd-a", "hard bound exhausted")).toBe(true);
+    expect(store.getSessionCommand("cmd-a")).toMatchObject({ status: "failed", failure: "hard bound exhausted" });
+  });
+
+  it("persists the supervisor attempt and success lease independently", () => {
+    const store = open();
+    store.markSupervisorAttempt("round-stage", "2026-08-27T20:00:00.000Z");
+    expect(store.supervisorLease("round-stage")).toMatchObject({
+      last_attempt_at: "2026-08-27T20:00:00.000Z",
+      last_success_at: null,
+      last_error: null,
+    });
+
+    store.markSupervisorSuccess("round-stage", "2026-08-27T20:00:05.000Z");
+    expect(store.supervisorLease("round-stage")).toMatchObject({
+      last_attempt_at: "2026-08-27T20:00:00.000Z",
+      last_success_at: "2026-08-27T20:00:05.000Z",
+      last_error: null,
+    });
+  });
+
+  it("releases a failed round command only after that round terminalizes", () => {
+    const store = open();
+    store.upsertPr({
+      number: 5408,
+      state: "reviewing",
+      head_sha: "abc",
+      title: "PR 5408",
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    const roundId = store.startRound(5408, "first", ["pass-baseline"], 75);
+    store.createSessionCommand({ ...input("cmd-a"), round_no: 1 });
+    store.claimSessionCommand("cmd-a", "bridge-a", "2026-08-27T20:02:00.000Z");
+    store.finishSessionCommand("cmd-a", "bridge-a", "failed", "no start");
+    expect(store.blockingSessionCommand("pr-5408")?.id).toBe("cmd-a");
+
+    store.markRoundCancelled(roundId, "infrastructure recovery", "infrastructure_failure");
+    expect(store.blockingSessionCommand("pr-5408")).toBeUndefined();
+  });
+
+  it("migrates the pre-supervisor command table without losing its active row", () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-session-command-old-"));
+    try {
+      const path = join(dir, "state.db");
+      const old = new Database(path);
+      old.exec(`
+        CREATE TABLE session_commands (
+          id TEXT PRIMARY KEY, pr INTEGER NOT NULL, session TEXT NOT NULL,
+          kind TEXT NOT NULL, round_no INTEGER, payload_sha256 TEXT NOT NULL,
+          payload_path TEXT NOT NULL, inject_path TEXT NOT NULL,
+          status TEXT NOT NULL, owner_token TEXT, attempt INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL, updated_at TEXT NOT NULL, next_check_at TEXT NOT NULL,
+          started_at TEXT, settled_at TEXT, failed_at TEXT, failure TEXT
+        );
+      `);
+      old.prepare(`INSERT INTO session_commands
+        (id,pr,session,kind,round_no,payload_sha256,payload_path,inject_path,status,owner_token,attempt,created_at,updated_at,next_check_at)
+        VALUES ('cmd-old',5408,'pr-5408','round',20,?,?,?,'pending',NULL,0,?,?,?)`)
+        .run("a".repeat(64), "/state/old.md", "/inject/old.md", T0, T0, "2026-08-27T20:02:00.000Z");
+      old.close();
+
+      const migrated = open(path);
+      expect(migrated.getSessionCommand("cmd-old")).toMatchObject({ status: "pending", unknown_checks: 0 });
+      expect(migrated.supervisorLease("round-stage")).toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("reconstructs the same active slot after a store restart", () => {

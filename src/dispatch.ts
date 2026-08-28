@@ -1007,11 +1007,47 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       provisionalRoundId = undefined;
       dispatched.push(order);
     } catch (err) {
-      // One bad PR must never stall the pump. A failed session handoff leaves
-      // the PR queued for retry and consumes no round-capacity slot.
-      if (provisionalRoundId !== undefined) store.discardRunningRound(provisionalRoundId);
-      log(`dispatch: #${row.number} failed`, err);
-      store.logEvent("dispatch_failed", row.number, { round_id: provisionalRoundId ?? null, error: String(err) });
+      // One bad PR must never stall the pump. Before the session handoff, the
+      // provisional round is disposable. AFTER dispatchRound persisted a
+      // durable command, deleting only the round would orphan a live command
+      // that blocks every successor and that the supervisor cannot correlate.
+      // Keep that round authoritative instead; best-effort publish reviewing
+      // state and let the bounded command supervisor finish/recover it.
+      let retainedCommand = false;
+      if (provisionalRoundId !== undefined) {
+        const provisional = store.runningRounds().find((round) => round.id === provisionalRoundId);
+        const command = provisional ? store.sessionCommandForRound(row.number, provisional.round_no) : undefined;
+        if (command) {
+          retainedCommand = true;
+          try {
+            applyEvent(store, row.number, { type: "dispatched" }, {}, { botLogin: cfg.github.bot_login, now });
+          } catch (publishError) {
+            log(`dispatch: #${row.number} retained command but could not publish reviewing state`, publishError);
+          }
+          try {
+            store.logAnomaly(
+              "dispatch_commit_failed",
+              row.number,
+              provisional!.round_no,
+              `session command ${command.id} was persisted but dispatch bookkeeping failed: ${String(err)}; bounded supervision retains ownership`,
+            );
+          } catch (anomalyError) {
+            log(`dispatch: #${row.number} retained-command anomaly write failed`, anomalyError);
+          }
+        } else {
+          store.discardRunningRound(provisionalRoundId);
+        }
+      }
+      log(`dispatch: #${row.number} failed${retainedCommand ? " after durable handoff — round retained" : ""}`, err);
+      try {
+        store.logEvent("dispatch_failed", row.number, {
+          round_id: provisionalRoundId ?? null,
+          retained_command: retainedCommand,
+          error: String(err),
+        });
+      } catch (eventError) {
+        log(`dispatch: #${row.number} failure event write failed`, eventError);
+      }
     }
   }
   return dispatched;
