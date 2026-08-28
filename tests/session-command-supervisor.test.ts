@@ -37,6 +37,7 @@ function seedRoundCommand(opts: {
   started?: boolean;
   attempt?: number;
   nextCheckAt?: string;
+  lenses?: string[];
 } = {}) {
   const id = opts.id ?? "cmd-1";
   const pr = opts.pr ?? 5408;
@@ -50,7 +51,7 @@ function seedRoundCommand(opts: {
     stale_recheck: 0,
     migration_gate: 0,
   });
-  const roundId = store.startRound(pr, "first", ["pass-baseline"], baseCfg.daemon.round_deadline_min);
+  const roundId = store.startRound(pr, "first", opts.lenses ?? ["pass-baseline"], baseCfg.daemon.round_deadline_min);
   const round = store.roundsFor(pr)[0]!;
   store.createSessionCommand({
     id,
@@ -224,6 +225,124 @@ describe("bounded round-stage supervision", () => {
 
     expect(store.getSessionCommand(id)?.status).toBe("acked");
     expect(onRoundFailure).not.toHaveBeenCalled();
+  });
+
+  it("recovers a command-correlated round that starts no first pass within its finite lease", async () => {
+    clock = new Date("2026-08-27T20:00:00.000Z");
+    const { id, pr, round } = seedRoundCommand({ status: "running", started: true, nextCheckAt: "2026-08-27T20:45:00.000Z" });
+    clock = new Date("2026-08-27T20:05:00.000Z");
+    const onRoundFailure = vi.fn(async () => "requeued" as const);
+    const progress = () => ({
+      version: 2 as const,
+      pr,
+      session: `pr-${pr}`,
+      run_started_at: "2026-08-27T20:00:00.000Z",
+      updated_at: clock.toISOString(),
+      parent_status: "active" as const,
+      command_id: id,
+      command_sha256: "a".repeat(64),
+      command_accepted_at: "2026-08-27T20:00:01.000Z",
+      last_activity_at: clock.toISOString(),
+      last_activity: "parent thinking",
+      agents: [],
+    });
+
+    await supervisor(hooks({ killSession: async () => {} }), onRoundFailure, baseCfg, progress).supervisor.scan();
+
+    expect(onRoundFailure).toHaveBeenCalledWith(pr, round.round_no, "first_pass_start", expect.stringContaining("no planned pass started"));
+  });
+
+  it("does not infer a missing first pass from legacy or uncorrelated telemetry", async () => {
+    clock = new Date("2026-08-27T19:59:00.000Z");
+    const { id, pr } = seedRoundCommand({ status: "running", started: true, nextCheckAt: "2026-08-27T20:44:00.000Z" });
+    clock = new Date("2026-08-27T20:05:00.000Z");
+    const onRoundFailure = vi.fn(async () => "requeued" as const);
+    const progress = () => ({
+      version: 1 as const,
+      pr,
+      session: `pr-${pr}`,
+      run_started_at: "2026-08-27T19:59:00.000Z",
+      updated_at: clock.toISOString(),
+      parent_status: "active" as const,
+      command_id: id,
+      command_sha256: "a".repeat(64),
+      last_activity_at: clock.toISOString(),
+      last_activity: "legacy telemetry",
+      agents: [],
+    });
+
+    await supervisor(hooks(), onRoundFailure, baseCfg, progress).supervisor.scan();
+
+    expect(onRoundFailure).not.toHaveBeenCalled();
+    expect(store.getSessionCommand(id)?.status).toBe("running");
+  });
+
+  it("recovers an incomplete planned pass set at the absolute pass deadline", async () => {
+    clock = new Date("2026-08-27T20:00:00.000Z");
+    const { id, pr, round } = seedRoundCommand({
+      status: "running",
+      started: true,
+      nextCheckAt: "2026-08-27T20:45:00.000Z",
+      lenses: ["pass-baseline", "pass-validate"],
+    });
+    clock = new Date("2026-08-27T20:35:00.000Z");
+    const onRoundFailure = vi.fn(async () => "requeued" as const);
+    const progress = () => ({
+      version: 2 as const,
+      pr,
+      session: `pr-${pr}`,
+      run_started_at: "2026-08-27T20:00:00.000Z",
+      updated_at: clock.toISOString(),
+      parent_status: "active" as const,
+      command_id: id,
+      command_sha256: "a".repeat(64),
+      command_accepted_at: "2026-08-27T20:00:01.000Z",
+      first_lens_started_at: "2026-08-27T20:01:00.000Z",
+      last_activity_at: clock.toISOString(),
+      last_activity: "validator never launched",
+      agents: [{
+        execution_id: "lens-1:pass-baseline",
+        agent: "pass-baseline",
+        status: "completed" as const,
+        duration_ms: 60_000,
+        tool_count: 1,
+        started_at: "2026-08-27T20:01:00.000Z",
+        finished_at: "2026-08-27T20:02:00.000Z",
+      }],
+    });
+
+    await supervisor(hooks({ killSession: async () => {} }), onRoundFailure, baseCfg, progress).supervisor.scan();
+
+    expect(onRoundFailure).toHaveBeenCalledWith(pr, round.round_no, "passes_incomplete", expect.stringContaining("pass-validate"));
+  });
+
+  it("bounds parent finalization after every planned and added pass is terminal", async () => {
+    clock = new Date("2026-08-27T20:00:00.000Z");
+    const { id, pr, round } = seedRoundCommand({ status: "running", started: true, nextCheckAt: "2026-08-27T20:45:00.000Z" });
+    clock = new Date("2026-08-27T20:30:00.000Z");
+    const onRoundFailure = vi.fn(async () => "requeued" as const);
+    const progress = () => ({
+      version: 2 as const,
+      pr,
+      session: `pr-${pr}`,
+      run_started_at: "2026-08-27T20:00:00.000Z",
+      updated_at: clock.toISOString(),
+      parent_status: "active" as const,
+      command_id: id,
+      command_sha256: "a".repeat(64),
+      command_accepted_at: "2026-08-27T20:00:01.000Z",
+      first_lens_started_at: "2026-08-27T20:20:00.000Z",
+      last_activity_at: clock.toISOString(),
+      last_activity: "all passes done",
+      agents: [
+        { execution_id: "lens-1:pass-baseline", agent: "pass-baseline", status: "completed" as const, duration_ms: 1, tool_count: 1, started_at: "2026-08-27T20:20:00.000Z", finished_at: "2026-08-27T20:25:00.000Z" },
+        { execution_id: "lens-2:pass-added", agent: "pass-added", status: "failed" as const, duration_ms: 1, tool_count: 1, started_at: "2026-08-27T20:21:00.000Z", finished_at: "2026-08-27T20:25:00.000Z" },
+      ],
+    });
+
+    await supervisor(hooks({ killSession: async () => {} }), onRoundFailure, baseCfg, progress).supervisor.scan();
+
+    expect(onRoundFailure).toHaveBeenCalledWith(pr, round.round_no, "parent_finalize", expect.stringContaining("all observed passes terminal"));
   });
 
   it("enforces the fixed running hard bound even when progress telemetry keeps changing", async () => {

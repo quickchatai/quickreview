@@ -7,6 +7,9 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
+  DEFAULT_ROUND_FINALIZE_GRACE_MIN,
+  DEFAULT_ROUND_FIRST_PASS_MAX_MIN,
+  DEFAULT_ROUND_PASSES_MAX_MIN,
   DEFAULT_ROUND_STAGE_SUPERVISOR_STALE_S,
   DEFAULT_SESSION_COMMAND_MAX_START_RETRIES,
   DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN,
@@ -16,13 +19,16 @@ import {
 } from "./config.js";
 import { sessionCommandMarker } from "./session-command.js";
 import type { RoundProgressSnapshot } from "./round-progress.js";
-import type { SessionCommandRow, StateStore, SupervisorLeaseRow } from "./state.js";
+import type { RoundRow, SessionCommandRow, StateStore, SupervisorLeaseRow } from "./state.js";
 import type { RoundRecoveryDisposition, SessionHooks } from "./types.js";
 
 export const ROUND_STAGE_SUPERVISOR = "round-stage";
 
 export type RoundInfrastructureStage =
   | "command_start"
+  | "first_pass_start"
+  | "passes_incomplete"
+  | "parent_finalize"
   | "settled_without_verdict"
   | "running_hard_bound";
 
@@ -125,6 +131,7 @@ export class SessionCommandSupervisor {
     const nowIso = this.now().toISOString();
     const due = command.next_check_at <= nowIso;
     const settled = this.progressShowsSettlement(command);
+    let runningRound: RoundRow | undefined;
     if (command.kind === "round" && command.round_no !== null) {
       const round = this.deps.store.roundsFor(command.pr).find((row) => row.round_no === command.round_no);
       if (!round) {
@@ -148,6 +155,7 @@ export class SessionCommandSupervisor {
         }
         return;
       }
+      runningRound = round;
     } else if (command.status === "running" && settled) {
       await this.finishTerminalRoundCommand(command);
       return;
@@ -156,8 +164,11 @@ export class SessionCommandSupervisor {
       await this.settledWithoutVerdict(command);
       return;
     }
-    if (!due) return;
     if (this.verdictPending(command)) return; // the 10s verdict sweep owns it
+    if (command.status === "running" && command.started_at !== null && runningRound) {
+      if (await this.executionStageExpired(command, runningRound)) return;
+    }
+    if (!due) return;
 
     if (command.status === "failed") {
       await this.failRound(
@@ -326,6 +337,77 @@ export class SessionCommandSupervisor {
       || progress.command_id !== command.id || progress.command_sha256 !== command.payload_sha256
     ) return undefined;
     return progress;
+  }
+
+  /** v2 milestones are observational proof for earlier finite bounds. Missing,
+   * legacy or mismatched telemetry stays UNKNOWN and falls through to the
+   * immutable hard runtime cap; activity can never renew a lease. */
+  private correlatedExecutionProgress(command: SessionCommandRow): RoundProgressSnapshot | undefined {
+    if (command.started_at === null) return undefined;
+    const progress = this.matchingProgress(command);
+    if (!progress || progress.version !== 2) return undefined;
+    const started = Date.parse(command.started_at);
+    const runStarted = Date.parse(progress.run_started_at);
+    const accepted = Date.parse(progress.command_accepted_at ?? "");
+    if (
+      !Number.isFinite(started) || !Number.isFinite(runStarted) || !Number.isFinite(accepted)
+      || Math.abs(runStarted - started) > 5_000 || accepted < runStarted
+    ) return undefined;
+    return progress;
+  }
+
+  private async executionStageExpired(command: SessionCommandRow, round: RoundRow): Promise<boolean> {
+    const progress = this.correlatedExecutionProgress(command);
+    if (!progress) return false;
+    const started = Date.parse(command.started_at!);
+    const now = this.now().getTime();
+    const minute = 60_000;
+    const firstPassAt = started + (this.deps.cfg.daemon.round_first_pass_max_min ?? DEFAULT_ROUND_FIRST_PASS_MAX_MIN) * minute;
+    const passesAt = started + (this.deps.cfg.daemon.round_passes_max_min ?? DEFAULT_ROUND_PASSES_MAX_MIN) * minute;
+    const hardAt = started + (this.deps.cfg.daemon.session_command_running_max_min ?? DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN) * minute;
+    const planned = round.lenses.split(",").map((name) => name.trim()).filter(Boolean);
+
+    if (!progress.first_lens_started_at && now >= firstPassAt) {
+      await this.failRound(
+        command,
+        "first_pass_start",
+        `command ${command.id} was accepted but no planned pass started within ${this.deps.cfg.daemon.round_first_pass_max_min ?? DEFAULT_ROUND_FIRST_PASS_MAX_MIN} minutes`,
+      );
+      return true;
+    }
+    if (!progress.first_lens_started_at) return false;
+
+    const terminal = (status: string): boolean => status === "completed" || status === "failed";
+    const missing = planned.filter((name) => {
+      const executions = progress.agents.filter((agent) => agent.agent === name);
+      return executions.length === 0 || executions.some((agent) => !terminal(agent.status));
+    });
+    const addedRunning = progress.agents.filter((agent) => !planned.includes(agent.agent) && !terminal(agent.status)).map((agent) => agent.agent);
+    if ((missing.length > 0 || addedRunning.length > 0) && now >= passesAt) {
+      const outstanding = [...missing, ...addedRunning].join(", ");
+      await this.failRound(
+        command,
+        "passes_incomplete",
+        `command ${command.id} did not terminalize every planned/observed pass within ${this.deps.cfg.daemon.round_passes_max_min ?? DEFAULT_ROUND_PASSES_MAX_MIN} minutes; outstanding: ${outstanding}`,
+      );
+      return true;
+    }
+    if (missing.length > 0 || addedRunning.length > 0) return false;
+
+    const finished = progress.agents.map((agent) => Date.parse(agent.finished_at ?? ""));
+    if (planned.length === 0 || finished.length === 0 || finished.some((value) => !Number.isFinite(value))) return false;
+    const allFinishedAt = Math.max(...finished);
+    const finalizeAt = Math.min(
+      allFinishedAt + (this.deps.cfg.daemon.round_finalize_grace_min ?? DEFAULT_ROUND_FINALIZE_GRACE_MIN) * minute,
+      hardAt,
+    );
+    if (now < finalizeAt) return false;
+    await this.failRound(
+      command,
+      "parent_finalize",
+      `command ${command.id} left all observed passes terminal without a verdict for ${this.deps.cfg.daemon.round_finalize_grace_min ?? DEFAULT_ROUND_FINALIZE_GRACE_MIN} minutes`,
+    );
+    return true;
   }
 
   private progressShowsSettlement(command: SessionCommandRow): boolean {

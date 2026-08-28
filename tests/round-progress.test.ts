@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import activate from "../extensions/round-progress.js";
+import { parseRoundProgress } from "../src/round-progress.js";
 import type { PiEventHandler } from "@earendil-works/pi-coding-agent";
 
 const dirs: string[] = [];
@@ -64,12 +65,14 @@ describe("round progress extension", () => {
       const path = join(root, "state", "round-progress", "pr-5408.json");
       const running = JSON.parse(readFileSync(path, "utf8"));
       expect(running).toMatchObject({
-        version: 1,
+        version: 2,
         pr: 5408,
         session: "pr-5408",
         parent_status: "active",
         command_id: "cmd-5408",
         command_sha256: "a".repeat(64),
+        command_accepted_at: expect.any(String),
+        first_lens_started_at: expect.any(String),
         active_tool: "subagent: pass-security",
       });
       expect(running.agents).toEqual([expect.objectContaining({
@@ -77,9 +80,11 @@ describe("round progress extension", () => {
         status: "running",
         duration_ms: 12_000,
         tool_count: 3,
+        started_at: running.first_lens_started_at,
         current_tool: "grep: bearer",
         last_message: "Tracing the bearer into the logger",
       })]);
+      expect(running.agents[0].finished_at).toBeUndefined();
 
       await emit("tool_execution_end", {
         toolName: "subagent",
@@ -89,11 +94,81 @@ describe("round progress extension", () => {
       await emit("agent_settled");
       const done = JSON.parse(readFileSync(path, "utf8"));
       expect(done.parent_status).toBe("settled");
-      expect(done.agents[0]).toMatchObject({ agent: "pass-security", status: "completed", duration_ms: 15_000, tool_count: 4 });
+      expect(done.agents[0]).toMatchObject({
+        agent: "pass-security",
+        status: "completed",
+        duration_ms: 15_000,
+        tool_count: 4,
+        started_at: running.first_lens_started_at,
+        finished_at: expect.any(String),
+      });
       expect(done.last_activity).toContain("session settled");
     } finally {
       process.env = previous;
     }
+  });
+
+  it("keeps execution milestones immutable across progress updates", async () => {
+    const root = mkdtempSync(join(tmpdir(), "qcr-progress-"));
+    dirs.push(root);
+    const previous = { ...process.env };
+    process.env.QCR_SANDBOX_ROOT = root;
+    process.env.QCR_SESSION_NAME = "pr-5408";
+    process.env.QCR_PR = "5408";
+    const handlers = new Map<string, PiEventHandler[]>();
+    const pi = { on(name: string, handler: PiEventHandler) { handlers.set(name, [...(handlers.get(name) ?? []), handler]); } };
+    const emit = async (name: string, event: Record<string, unknown> = {}) => {
+      for (const handler of handlers.get(name) ?? []) await handler(event);
+    };
+    try {
+      activate(pi as never);
+      await emit("agent_start");
+      await emit("message_start", { message: { role: "user", content: [{ type: "text", text: `<!-- qcr-command:cmd-5408:${"a".repeat(64)} -->` }] } });
+      await emit("tool_execution_start", { toolName: "subagent", toolCallId: "lens-1", args: { agent: "pass-security" } });
+      const path = join(root, "state", "round-progress", "pr-5408.json");
+      const first = JSON.parse(readFileSync(path, "utf8"));
+      await emit("tool_execution_update", { toolName: "subagent", toolCallId: "lens-1", partialResult: { details: { results: [{ agent: "pass-security", progress: { status: "running", durationMs: 10 } }] } } });
+      await emit("message_update");
+      const later = JSON.parse(readFileSync(path, "utf8"));
+      expect(later.command_accepted_at).toBe(first.command_accepted_at);
+      expect(later.first_lens_started_at).toBe(first.first_lens_started_at);
+      expect(later.agents[0].started_at).toBe(first.agents[0].started_at);
+
+      await emit("tool_execution_end", { toolName: "subagent", toolCallId: "lens-1", result: { details: { results: [{ agent: "pass-security", exitCode: 0 }] } } });
+      await emit("tool_execution_start", { toolName: "subagent", toolCallId: "lens-2", args: { agent: "pass-security" } });
+      const repeated = JSON.parse(readFileSync(path, "utf8"));
+      expect(repeated.agents).toHaveLength(2);
+      expect(repeated.agents).toEqual(expect.arrayContaining([
+        expect.objectContaining({ execution_id: "lens-1:pass-security", agent: "pass-security", status: "completed", finished_at: expect.any(String) }),
+        expect.objectContaining({ execution_id: "lens-2:pass-security", agent: "pass-security", status: "running", started_at: expect.any(String) }),
+      ]));
+      expect(repeated.agents.find((agent: { execution_id: string }) => agent.execution_id === "lens-2:pass-security").finished_at).toBeUndefined();
+    } finally {
+      process.env = previous;
+    }
+  });
+
+  it("rejects malformed milestone ordering while retaining legacy display snapshots", () => {
+    const legacy = {
+      version: 1,
+      pr: 5408,
+      session: "pr-5408",
+      run_started_at: "2026-08-28T09:00:00Z",
+      updated_at: "2026-08-28T09:01:00Z",
+      parent_status: "active",
+      last_activity_at: "2026-08-28T09:01:00Z",
+      last_activity: "working",
+      agents: [],
+    };
+    expect(parseRoundProgress(JSON.stringify(legacy))?.version).toBe(1);
+    expect(parseRoundProgress(JSON.stringify({
+      ...legacy,
+      version: 2,
+      command_id: "cmd-1",
+      command_sha256: "a".repeat(64),
+      command_accepted_at: "2026-08-28T09:00:10Z",
+      first_lens_started_at: "2026-08-28T09:00:05Z",
+    }))).toBeUndefined();
   });
 
   it("does nothing outside a numbered PR session", () => {

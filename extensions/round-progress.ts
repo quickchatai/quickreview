@@ -125,8 +125,12 @@ export default function activate(pi: Pi): void {
   const path = join(root, "state", "round-progress", `pr-${pr}.json`);
   let sequence = 0;
   let lastHeartbeat = 0;
+  // Key by invocation, never by agent name: a parent may deliberately launch
+  // the same lens twice, and the second run must not inherit the first run's
+  // terminal timestamp.
   const agents = new Map<string, LiveAgentProgress>();
   const callAgents = new Map<string, string>();
+  const executionKey = (callId: string, agent: string): string => `${callId}:${agent}`;
   const nowIso = (): string => new Date().toISOString();
   let snapshot: RoundProgressSnapshot | undefined;
 
@@ -164,7 +168,7 @@ export default function activate(pi: Pi): void {
     agents.clear();
     callAgents.clear();
     snapshot = {
-      version: 1,
+      version: 2,
       pr,
       session,
       run_started_at: at,
@@ -184,6 +188,7 @@ export default function activate(pi: Pi): void {
     if (!marker) return;
     snapshot.command_id = marker.id;
     snapshot.command_sha256 = marker.payloadSha256;
+    snapshot.command_accepted_at ??= nowIso();
     activity(`command ${marker.id} accepted`);
   });
 
@@ -197,8 +202,19 @@ export default function activate(pi: Pi): void {
     if (name === "subagent") {
       const agent = text(args.agent);
       if (agent) {
-        callAgents.set(toolId(event), agent);
-        agents.set(agent, { agent, status: "running", duration_ms: 0, tool_count: 0 });
+        const at = nowIso();
+        const callId = toolId(event);
+        const key = executionKey(callId, agent);
+        callAgents.set(callId, agent);
+        agents.set(key, {
+          execution_id: key,
+          agent,
+          status: "running",
+          duration_ms: 0,
+          tool_count: 0,
+          started_at: at,
+        });
+        snapshot.first_lens_started_at ??= at;
         snapshot.active_tool = `subagent: ${agent}`;
         activity(`${agent} started`);
         return;
@@ -217,7 +233,15 @@ export default function activate(pi: Pi): void {
     for (const result of reported) {
       const agent = asAgent(result, fallback);
       if (!agent) continue;
-      agents.set(agent.agent, agent);
+      const key = executionKey(toolId(event), agent.agent);
+      const previous = agents.get(key);
+      agents.set(key, {
+        ...previous,
+        ...agent,
+        execution_id: key,
+        started_at: previous?.started_at ?? nowIso(),
+        ...(previous?.finished_at ? { finished_at: previous.finished_at } : {}),
+      });
       snapshot.active_tool = `subagent: ${agent.agent}`;
       changed = true;
     }
@@ -234,17 +258,27 @@ export default function activate(pi: Pi): void {
     for (const result of reported) {
       const agent = asAgent(result, fallback);
       if (!agent) continue;
-      finalAgent = agent;
-      agents.set(agent.agent, agent);
+      const key = executionKey(id, agent.agent);
+      const previous = agents.get(key);
+      finalAgent = {
+        ...previous,
+        ...agent,
+        execution_id: key,
+        started_at: previous?.started_at ?? nowIso(),
+        finished_at: previous?.finished_at ?? nowIso(),
+      };
+      agents.set(key, finalAgent);
     }
     if (!finalAgent && fallback) {
-      const previous = agents.get(fallback);
+      const key = executionKey(id, fallback);
+      const previous = agents.get(key);
       const failed = event.isError === true;
       finalAgent = {
-        ...(previous ?? { agent: fallback, duration_ms: 0, tool_count: 0 }),
+        ...(previous ?? { execution_id: key, agent: fallback, duration_ms: 0, tool_count: 0, started_at: nowIso() }),
         status: failed ? "failed" : "completed",
+        finished_at: previous?.finished_at ?? nowIso(),
       };
-      agents.set(fallback, finalAgent);
+      agents.set(key, finalAgent);
     }
     callAgents.delete(id);
     snapshot.active_tool = undefined;

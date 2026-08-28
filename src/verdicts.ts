@@ -930,7 +930,13 @@ export class VerdictWatcher {
   async recoverInfrastructureFailure(
     pr: number,
     roundNo: number,
-    stage: "command_start" | "settled_without_verdict" | "running_hard_bound",
+    stage:
+      | "command_start"
+      | "first_pass_start"
+      | "passes_incomplete"
+      | "parent_finalize"
+      | "settled_without_verdict"
+      | "running_hard_bound",
     detail: string,
   ): Promise<RoundRecoveryDisposition> {
     const round = this.runningRound(pr, roundNo);

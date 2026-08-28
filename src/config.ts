@@ -547,6 +547,11 @@ export interface Config {
      * values. Progress telemetry never changes any of them. */
     session_command_start_lease_s?: number;
     session_command_running_max_min?: number;
+    /** round execution milestones, all anchored to durable command
+     * start. They never renew from heartbeat/activity telemetry. */
+    round_first_pass_max_min?: number;
+    round_passes_max_min?: number;
+    round_finalize_grace_min?: number;
     session_command_unknown_grace_s?: number;
     session_command_unknown_max_checks?: number;
     session_command_max_start_retries?: number;
@@ -661,6 +666,9 @@ export const DEFAULT_MAX_PROMPT_REDELIVERIES = 2;
  * defense-in-depth round deadline. */
 export const DEFAULT_SESSION_COMMAND_START_LEASE_S = 120;
 export const DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN = 45;
+export const DEFAULT_ROUND_FIRST_PASS_MAX_MIN = 5;
+export const DEFAULT_ROUND_PASSES_MAX_MIN = 35;
+export const DEFAULT_ROUND_FINALIZE_GRACE_MIN = 5;
 export const DEFAULT_SESSION_COMMAND_UNKNOWN_GRACE_S = 60;
 export const DEFAULT_SESSION_COMMAND_UNKNOWN_MAX_CHECKS = 1;
 export const DEFAULT_SESSION_COMMAND_MAX_START_RETRIES = 2;
@@ -715,6 +723,9 @@ export function parseConfig(toml: string): Config {
       expire_overdue_after_h: 24,
       session_command_start_lease_s: DEFAULT_SESSION_COMMAND_START_LEASE_S,
       session_command_running_max_min: DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN,
+      round_first_pass_max_min: DEFAULT_ROUND_FIRST_PASS_MAX_MIN,
+      round_passes_max_min: DEFAULT_ROUND_PASSES_MAX_MIN,
+      round_finalize_grace_min: DEFAULT_ROUND_FINALIZE_GRACE_MIN,
       session_command_unknown_grace_s: DEFAULT_SESSION_COMMAND_UNKNOWN_GRACE_S,
       session_command_unknown_max_checks: DEFAULT_SESSION_COMMAND_UNKNOWN_MAX_CHECKS,
       session_command_max_start_retries: DEFAULT_SESSION_COMMAND_MAX_START_RETRIES,
@@ -747,6 +758,13 @@ export function parseConfig(toml: string): Config {
     "issue_label", "secrets_dir",
   ] as const) req(cfg.github as unknown as Record<string, unknown>, k);
   cfg.github.secrets_dir = expandHome(cfg.github.secrets_dir);
+  const firstPass = cfg.daemon.round_first_pass_max_min ?? DEFAULT_ROUND_FIRST_PASS_MAX_MIN;
+  const passes = cfg.daemon.round_passes_max_min ?? DEFAULT_ROUND_PASSES_MAX_MIN;
+  const running = cfg.daemon.session_command_running_max_min ?? DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN;
+  const finalize = cfg.daemon.round_finalize_grace_min ?? DEFAULT_ROUND_FINALIZE_GRACE_MIN;
+  if (!(firstPass > 0 && firstPass < passes && passes < running && finalize > 0 && finalize < running)) {
+    throw new Error("config.toml: require 0 < round_first_pass_max_min < round_passes_max_min < session_command_running_max_min and 0 < round_finalize_grace_min < session_command_running_max_min");
+  }
   // Shape checks are pure, so they fire on every parse (tests included);
   // the token-file check is I/O and lives in validateSlackConfig.
   checkSlackShape(cfg.slack);

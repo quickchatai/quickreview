@@ -47,6 +47,14 @@ describe("parseConfig", () => {
     expect(parseConfig(off).daemon.expire_overdue_after_h).toBe(0);
   });
 
+  it("bounds pass milestones below the immutable command hard limit", () => {
+    expect(cfg.daemon.round_first_pass_max_min).toBe(5);
+    expect(cfg.daemon.round_passes_max_min).toBe(35);
+    expect(cfg.daemon.round_finalize_grace_min).toBe(5);
+    const invalid = readFileSync(configPath, "utf8").replace("round_passes_max_min = 35", "round_passes_max_min = 45");
+    expect(() => parseConfig(invalid)).toThrow(/round_first_pass_max_min/);
+  });
+
   it("expands secrets_dir to an absolute path", () => {
     expect(cfg.github.secrets_dir.startsWith("~")).toBe(false);
     expect(cfg.github.secrets_dir).toBe(resolve(homedir(), ".config/quickreview-bot"));
