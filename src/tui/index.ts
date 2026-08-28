@@ -15,6 +15,9 @@ import { visiblePrs } from "./filters.js";
 import { reselect } from "./model.js";
 import { HotReloader, parseResumeArg, readResumeState, realReexec } from "./reload.js";
 import { killInFlightSsh, realSshRunner } from "./remote.js";
+import { chainOnPoll } from "./poll-hooks.js";
+
+export { chainOnPoll } from "./poll-hooks.js";
 
 export function parseTarget(arg: string | undefined): { kind: "none" } | { kind: "pr"; pr: number } | { kind: "session"; session: string } | { kind: "bad"; reason: string } {
   if (arg === undefined || arg === "") return { kind: "none" };
@@ -82,20 +85,6 @@ export function parseTuiArgs(args: string[]): TuiArgs {
     reload: !flags.has("--no-reload"),
     resumeState: stateFile,
     help: flags.has("--help") || flags.has("-h"),
-  };
-}
-
-/**
- * Chain an onPoll wrapper AFTER whatever is already installed. EVERY wrapper
- * runTui adds composes through this — an installer that reassigns
- * `app.hooks.onPoll` bare silently drops every earlier wrapper (the FeedWriter
- * block did exactly that and killed the strip-refresh wrapper in production).
- */
-export function chainOnPoll(app: App, fn: (a: App) => void): void {
-  const prev = app.hooks.onPoll;
-  app.hooks.onPoll = (a) => {
-    prev?.(a);
-    fn(a);
   };
 }
 
@@ -289,8 +278,9 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
   };
   app.hooks.reconnect = () => onRealTerminal(() => ensureSshMaster(cfg));
   app.hooks.deployRun = (_theApp, onData, onExit) => {
-    // Streamed into the deploy tab — the TUI never leaves the screen.
-    // deploy.sh's own guardrails (clean tree, pin agreement) are the gate.
+    // Streamed into the deploy tab — the TUI never leaves the screen. The
+    // tab invokes this only after its drain receipt + fresh zero-round gate;
+    // deploy.sh keeps its own clean-tree/pin checks as defense in depth.
     // Colors off: the pane strips ANSI anyway, plain text diffs better.
     const child = spawn("bash", ["scripts/deploy.sh", "sync"], {
       cwd: sandboxRoot(),
@@ -378,6 +368,7 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
       : undefined,
   });
   const { RealDeployFetcher, installDeployHooks, powerCommand, realLocalRunner } = await import("./deploytab.js");
+  const { FileDeployCeremonyStore } = await import("./deploy-ceremony.js");
   const localRunner = realLocalRunner(sandboxRoot());
   app.hooks.powerRun = (_theApp, action, onData, onExit) => {
     // docker stop/start on the VM, streamed into the tab like a deploy.
@@ -401,7 +392,13 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
     };
   };
 
-  const deployState = installDeployHooks(app, new RealDeployFetcher(cfg, realSshRunner, localRunner));
+  const deployState = installDeployHooks(
+    app,
+    new RealDeployFetcher(cfg, realSshRunner, localRunner),
+    undefined,
+    undefined,
+    new FileDeployCeremonyStore(join(sandboxRoot(), "state", "tui-deploy-ceremony.json")),
+  );
   const { installMetricsHooks, localHeadProbe } = await import("./metricstab.js");
   // The metrics OPERATIONS card answers "deploy needed?" through the same
   // read-only local-git seam the deploy tab uses.

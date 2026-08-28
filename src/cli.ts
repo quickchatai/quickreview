@@ -13,6 +13,9 @@ import {
   type StatusSnapshot,
 } from "./state.js";
 import { computeMetrics, computeTimeline, readOps, renderMetrics, renderTimeline } from "./metrics.js";
+import { CommandDrainSender, drainPayload } from "./tui/deploy-drain.js";
+
+export { drainPayload } from "./tui/deploy-drain.js";
 
 function stateDir(): string {
   return join(sandboxRoot(), "state");
@@ -406,12 +409,6 @@ export async function cmdRegression(rest: string[], json: boolean): Promise<numb
 // `--local` writes the file into THIS machine's sandbox commands/ dir instead
 // (for running inside the container or against a local dev daemon).
 
-/** The exact command payload — built here so this module cannot produce any
- * other command. */
-export function drainPayload(on: boolean): string {
-  return `${JSON.stringify({ command: "drain", on }, null, 2)}\n`;
-}
-
 /** The documented manual fallback: the exact ssh one-liner that writes the
  * same command file by hand when the runner path fails. */
 export function drainManualSshCommand(tui: TuiConfig, on: boolean): string {
@@ -435,50 +432,20 @@ export interface DrainRunDeps {
  * Returns a process exit code; every failure path prints the manual ssh
  * fallback so the operator is never stuck behind this wrapper. */
 export async function runDrain(on: boolean, deps: DrainRunDeps): Promise<number> {
-  const { commandFileName, commandResultArgv, commandWriteArgv } = await import("./tui/unwedge.js");
   const tui = deps.cfg.tui;
-  const now = deps.now ?? (() => new Date());
-  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  const name = commandFileName(now(), 0);
-  deps.log(`drain ${on ? "on" : "off"} → ${tui.ssh_host}:${tui.remote_sandbox_root}/commands/${name}`);
-  const write = await deps.ssh(tui.ssh_host, commandWriteArgv(tui, name), { stdin: drainPayload(on) });
-  if (!write.ok) {
-    deps.log(`✖ command write failed (${write.stderr.trim() || `exit ${write.code}`})`);
-    deps.log("manual fallback — run:");
-    deps.log(`  ${drainManualSshCommand(tui, on)}`);
-    return 1;
-  }
-  // Read the daemon's own verdict rather than assuming the write was the
-  // outcome — a refusal (tier belt, unwired dep) is a real answer.
-  const deadline = now().getTime() + tui.msg_timeout_s * 1000;
-  while (now().getTime() < deadline) {
-    await sleep(2000);
-    const probe = await deps.ssh(tui.ssh_host, commandResultArgv(tui, name));
-    if (!probe.ok) continue;
-    const body = probe.stdout.trim();
-    if (body === "pending" || body === "") continue;
-    let result: { ok?: unknown; reason?: unknown; running_rounds?: unknown; dropped_deliveries?: unknown };
-    try {
-      result = JSON.parse(body) as typeof result;
-    } catch {
-      deps.log("✖ unreadable result file");
-      return 1;
+  deps.log(`drain ${on ? "on" : "off"} → ${tui.ssh_host}:${tui.remote_sandbox_root}/commands/`);
+  const sender = new CommandDrainSender(tui, deps.ssh, deps.now, deps.sleep);
+  const result = await sender.set(on);
+  if (result.ok) {
+    if (on) {
+      deps.log(`✓ draining — ${result.running_rounds ?? 0} round(s) still finishing; deploy when \`qcr status\` shows rounds running: 0`);
+      deps.log("  (auto-lifts on the new boot's first healthy reconcile — re-drain before each step of a multi-deploy window)");
+    } else {
+      deps.log(`✓ drain lifted — ${result.dropped_deliveries ?? 0} webhook delivery(ies) were dropped; the reconcile poll recovers them`);
     }
-    if (result.ok === true) {
-      if (on) {
-        const rounds = typeof result.running_rounds === "number" ? result.running_rounds : "?";
-        deps.log(`✓ draining — ${rounds} round(s) still finishing; deploy when \`qcr status\` shows rounds running: 0`);
-        deps.log("  (auto-lifts on the new boot's first healthy reconcile — re-drain before each step of a multi-deploy window)");
-      } else {
-        const dropped = typeof result.dropped_deliveries === "number" ? result.dropped_deliveries : 0;
-        deps.log(`✓ drain lifted — ${dropped} webhook delivery(ies) were dropped; the reconcile poll recovers them`);
-      }
-      return 0;
-    }
-    deps.log(`✖ drain refused: ${String(result.reason ?? "no reason given")}`);
-    return 1;
+    return 0;
   }
-  deps.log("✖ no result before the timeout (daemon down?)");
+  deps.log(`✖ drain refused: ${result.reason ?? "no reason given"}`);
   deps.log("manual fallback — run:");
   deps.log(`  ${drainManualSshCommand(tui, on)}`);
   return 1;

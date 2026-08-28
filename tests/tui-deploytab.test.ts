@@ -15,10 +15,12 @@ import {
   installDeployHooks,
   logArgv,
   parseBuildSha,
+  type DeployDrainSender,
   type DeployState,
   type LocalRunner,
 } from "../src/tui/deploytab.js";
 import { stripAnsi } from "../src/tui/paint.js";
+import { MemoryDeployCeremonyStore } from "../src/tui/deploy-ceremony.js";
 import type { RemoteResult } from "../src/tui/remote.js";
 
 const ok = (stdout: string): RemoteResult => ({ ok: true, stdout, stderr: "", code: 0 });
@@ -149,6 +151,309 @@ describe("deployLines", () => {
   });
 });
 
+let statusSeq = 0;
+function freshStatus(runningRounds: number, draining = true): any {
+  const now = new Date(Date.UTC(2026, 7, 28, 12, 0, statusSeq++)).toISOString();
+  return {
+    written_at: now,
+    heartbeat: now,
+    dry_run: false,
+    prs: [],
+    running_rounds: runningRounds,
+    max_concurrent_rounds: 12,
+    total_spend_usd: 0,
+    today_spend_usd: 0,
+    ...(draining ? { draining: true, drained_deliveries: 0, drain_failed_loud: 0 } : {}),
+  };
+}
+
+function publishStatus(app: App, runningRounds: number, draining = true): void {
+  app.view.snapshot = freshStatus(runningRounds, draining);
+  app.view.health = { kind: "ok", heartbeatAgeS: 0 };
+  app.hooks.onPoll?.(app);
+}
+
+const settle = async (): Promise<void> => { await new Promise((r) => setTimeout(r, 0)); };
+
+function quietDrain(rounds = 0): DeployDrainSender {
+  return {
+    set: async (on) => on
+      ? { ok: true, draining: true, running_rounds: rounds }
+      : { ok: true, draining: false, dropped_deliveries: 0 },
+  };
+}
+
+describe("deploy tab drain orchestration", () => {
+  it("engages drain, visibly waits through running rounds, then deploys exactly once at zero", async () => {
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    const drainCalls: boolean[] = [];
+    const drain: DeployDrainSender = {
+      set: async (on) => {
+        drainCalls.push(on);
+        return { ok: true, draining: on, running_rounds: on ? 2 : undefined, dropped_deliveries: on ? undefined : 0 };
+      },
+    };
+    let deploys = 0;
+    app.hooks.deployRun = (_a, _data, exit) => { deploys++; exit(0); return { kill: () => {} }; };
+    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => 1000, drain);
+    const run = app.run();
+    streams.type("3");
+    await settle();
+    streams.type("D");
+    streams.type("D");
+    await settle();
+
+    expect(drainCalls).toEqual([true]);
+    expect(deploys).toBe(0);
+    expect(st.deployPhase).toBe("waiting-rounds");
+    expect(stripAnsi(streams.written())).toContain("DRAINING — 2 rounds finishing");
+
+    publishStatus(app, 1);
+    expect(deploys).toBe(0);
+    expect(stripAnsi(streams.written())).toContain("DRAINING — 1 round finishing");
+    publishStatus(app, 0);
+    await settle();
+    expect(deploys).toBe(1);
+    publishStatus(app, 0);
+    await settle();
+    expect(deploys).toBe(1);
+    expect(stripAnsi(streams.written())).toContain("healthy boot will auto-lift the drain");
+    streams.type("D"); streams.type("D");
+    expect(deploys).toBe(1);
+    expect(app.view.noticeLine).toContain("close the previous deploy result");
+    streams.type("x");
+    expect(st.run).toBeDefined();
+    expect(app.view.noticeLine).toContain("has not auto-lifted yet");
+    publishStatus(app, 0, false);
+    expect(st.deployPhase).toBe("done");
+    expect(app.view.noticeLine).toContain("drain lifted");
+    expect(drainCalls).toEqual([true]); // the healthy daemon boot owns the lift
+    app.quit();
+    await run;
+  });
+
+  it("restores an owned drain after hot reload and continues only when the board reaches zero", async () => {
+    const store = new MemoryDeployCeremonyStore();
+    const firstStreams = fakeStreams();
+    const first = new App(TUI_DEFAULTS, async () => ok(""), firstStreams.out, firstStreams.input);
+    const drain = quietDrain(2);
+    installDeployHooks(first, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => 1000, drain, store);
+    const firstRun = first.run();
+    firstStreams.type("3"); await settle();
+    firstStreams.type("D"); firstStreams.type("D"); await settle();
+    expect(store.read()?.phase).toBe("waiting-rounds");
+    first.quit(); await firstRun;
+
+    const secondStreams = fakeStreams();
+    const second = new App(TUI_DEFAULTS, async () => ok(""), secondStreams.out, secondStreams.input);
+    let deploys = 0;
+    second.hooks.deployRun = (_a, _d, exit) => { deploys++; exit(0); return { kill: () => {} }; };
+    const restored = installDeployHooks(second, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => 2000, drain, store);
+    const secondRun = second.run();
+    secondStreams.type("3"); await settle();
+    expect(restored.deployPhase).toBe("waiting-rounds");
+    publishStatus(second, 1);
+    expect(deploys).toBe(0);
+    publishStatus(second, 0);
+    await settle();
+    expect(deploys).toBe(1);
+    second.quit(); await secondRun;
+  });
+
+  it("will not resume a zero-round drain until the restored target HEAD is loaded", async () => {
+    const store = new MemoryDeployCeremonyStore();
+    store.write({ version: 1, phase: "waiting-rounds", target_head: "abc1234", updated_at: "2026-08-28T12:00:01Z" });
+    const finishLoads: Array<(value: any) => void> = [];
+    const fetcher = { load: () => new Promise<any>((resolve) => { finishLoads.push(resolve); }) };
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    let deploys = 0;
+    app.hooks.deployRun = (_a, _d, exit) => { deploys++; exit(0); return { kill: () => {} }; };
+    const st = installDeployHooks(app, fetcher, () => 2000, quietDrain(), store);
+    const run = app.run();
+    publishStatus(app, 0);
+    await settle();
+    expect(deploys).toBe(0);
+    expect(st.deployPhase).toBe("waiting-rounds");
+    expect(finishLoads).toHaveLength(2); // eager restore + zero-round preflight refresh
+    for (const finish of finishLoads) finish({ dirty: [], plan: [], head: "abc1234" });
+    await settle();
+    expect(deploys).toBe(1);
+    app.quit(); await run;
+  });
+
+  it("persists an abort requested during drain acknowledgement across hot reload", async () => {
+    const store = new MemoryDeployCeremonyStore();
+    const firstStreams = fakeStreams();
+    const first = new App(TUI_DEFAULTS, async () => ok(""), firstStreams.out, firstStreams.input);
+    const never = new Promise<any>(() => {});
+    const pendingDrain: DeployDrainSender = { set: async () => never };
+    installDeployHooks(first, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => 1000, pendingDrain, store);
+    const firstRun = first.run();
+    firstStreams.type("3"); await settle();
+    firstStreams.type("D"); firstStreams.type("D");
+    firstStreams.type("x");
+    expect(store.read()?.phase).toBe("abort-requested");
+    first.quit(); await firstRun;
+
+    const calls: boolean[] = [];
+    const resumedDrain: DeployDrainSender = {
+      set: async (on) => {
+        calls.push(on);
+        return on
+          ? { ok: true, draining: true, running_rounds: 2 }
+          : { ok: true, draining: false, dropped_deliveries: 1 };
+      },
+    };
+    const secondStreams = fakeStreams();
+    const second = new App(TUI_DEFAULTS, async () => ok(""), secondStreams.out, secondStreams.input);
+    let deploys = 0;
+    second.hooks.deployRun = () => { deploys++; return { kill: () => {} }; };
+    const restored = installDeployHooks(second, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => 2000, resumedDrain, store);
+    const secondRun = second.run();
+    await settle(); await settle();
+    expect(calls).toEqual([true, false]);
+    expect(restored.deployPhase).toBe("aborted");
+    expect(deploys).toBe(0);
+    expect(store.read()).toBeUndefined();
+    second.quit(); await secondRun;
+  });
+
+  it("turns an interrupted sync into a durable ambiguous failure instead of repeating it", async () => {
+    const store = new MemoryDeployCeremonyStore();
+    store.write({ version: 1, phase: "syncing", target_head: "abc1234", pre_deploy_snapshot_at: "2026-08-28T12:00:00Z", updated_at: "2026-08-28T12:00:01Z" });
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    let deploys = 0;
+    app.hooks.deployRun = () => { deploys++; return { kill: () => {} }; };
+    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => 2000, quietDrain(), store);
+    const run = app.run();
+    streams.type("3"); await settle();
+    expect(st.deployPhase).toBe("deploy-failed");
+    expect(deploys).toBe(0);
+    streams.type("D"); streams.type("D");
+    expect(deploys).toBe(0);
+    expect(app.view.noticeLine).toContain("close the previous deploy result");
+    app.quit(); await run;
+  });
+
+  it("never starts deploy when the daemon refuses the drain", async () => {
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    let deploys = 0;
+    app.hooks.deployRun = () => { deploys++; return { kill: () => {} }; };
+    const drain: DeployDrainSender = { set: async () => ({ ok: false, reason: "tier refused" }) };
+    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => 1000, drain);
+    const run = app.run();
+    streams.type("3");
+    await settle();
+    streams.type("D"); streams.type("D");
+    await settle();
+    expect(deploys).toBe(0);
+    expect(st.deployPhase).toBe("drain-failed");
+    expect(stripAnsi(streams.written())).toContain("tier refused");
+    app.quit();
+    await run;
+  });
+
+  it("x while rounds are draining lifts the drain and does not deploy", async () => {
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    const calls: boolean[] = [];
+    const drain: DeployDrainSender = {
+      set: async (on) => {
+        calls.push(on);
+        return on
+          ? { ok: true, draining: true, running_rounds: 2 }
+          : { ok: true, draining: false, dropped_deliveries: 3 };
+      },
+    };
+    let deploys = 0;
+    app.hooks.deployRun = () => { deploys++; return { kill: () => {} }; };
+    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => 1000, drain);
+    const run = app.run();
+    streams.type("3");
+    await settle();
+    streams.type("D"); streams.type("D");
+    await settle();
+    publishStatus(app, 2);
+    streams.type("x");
+    await settle();
+    expect(calls).toEqual([true, false]);
+    expect(deploys).toBe(0);
+    expect(st.deployPhase).toBe("aborted");
+    expect(app.view.noticeLine).toContain("review work resumed");
+    app.quit();
+    await run;
+  });
+
+  it("treats an explicit external drain-off as an operator cancellation", async () => {
+    const store = new MemoryDeployCeremonyStore();
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    let deploys = 0;
+    app.hooks.deployRun = () => { deploys++; return { kill: () => {} }; };
+    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => 1000, quietDrain(2), store);
+    const run = app.run();
+    streams.type("3"); await settle();
+    streams.type("D"); streams.type("D"); await settle();
+    publishStatus(app, 2, true);
+    expect(store.read()?.drain_observed).toBe(true);
+    publishStatus(app, 0, false);
+    expect(st.deployPhase).toBe("aborted");
+    expect(deploys).toBe(0);
+    expect(store.read()).toBeUndefined();
+    expect(app.view.noticeLine).toContain("operator lifted the drain");
+    app.quit(); await run;
+  });
+
+  it("recognizes an external drain-off even before the first ON snapshot arrives", async () => {
+    const store = new MemoryDeployCeremonyStore();
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    let deploys = 0;
+    app.hooks.deployRun = () => { deploys++; return { kill: () => {} }; };
+    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => 1000, quietDrain(2), store);
+    const run = app.run();
+    streams.type("3"); await settle();
+    streams.type("D"); streams.type("D"); await settle();
+    publishStatus(app, 0, false); // may still be the pre-command status generation
+    expect(st.deployPhase).toBe("waiting-rounds");
+    publishStatus(app, 0, false); // a newer undrained generation proves override
+    expect(st.deployPhase).toBe("aborted");
+    expect(deploys).toBe(0);
+    expect(store.read()).toBeUndefined();
+    app.quit(); await run;
+  });
+
+  it("a failed sync leaves the drain standing rather than resuming blind", async () => {
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    const calls: boolean[] = [];
+    const drain: DeployDrainSender = {
+      set: async (on) => {
+        calls.push(on);
+        return { ok: true, draining: on, running_rounds: on ? 0 : undefined, dropped_deliveries: on ? undefined : 0 };
+      },
+    };
+    app.hooks.deployRun = (_a, _data, exit) => { exit(1); return { kill: () => {} }; };
+    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => 1000, drain);
+    const run = app.run();
+    streams.type("3");
+    await settle();
+    streams.type("D"); streams.type("D");
+    await settle();
+    publishStatus(app, 0);
+    await settle();
+    expect(st.deployPhase).toBe("deploy-failed");
+    expect(calls).toEqual([true]);
+    expect(stripAnsi(streams.written())).toContain("drain remains ON");
+    app.quit();
+    await run;
+  });
+});
+
 describe("deploy tab keys", () => {
   it("opens on 3, scrolls with j/k, refreshes on r, and 1 returns to the board", async () => {
     const streams = fakeStreams();
@@ -186,7 +491,7 @@ describe("deploy tab keys", () => {
       return { kill: () => {} };
     };
     let clock = 1000;
-    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [] }) }, () => clock);
+    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => clock, quietDrain());
     const run = app.run();
     streams.type("3");
     await new Promise((r) => setTimeout(r, 0));
@@ -200,14 +505,18 @@ describe("deploy tab keys", () => {
     streams.type("D");
     clock += 2000; // inside the confirm window
     streams.type("D");
+    await settle();
+    publishStatus(app, 0);
+    await settle();
     expect(deploys).toBe(1);
     expect(st.armedAt).toBeUndefined();
 
     streams.type("D");
-    clock += 10_000; // window expired: second D only re-arms
+    clock += 10_000;
     streams.type("D");
     expect(deploys).toBe(1);
-    expect(st.armedAt).toBeDefined();
+    expect(st.armedAt).toBeUndefined();
+    expect(app.view.noticeLine).toContain("close the previous deploy result");
     app.quit();
     await run;
   });
@@ -222,7 +531,7 @@ describe("deploy tab keys", () => {
       return { kill: () => {} };
     };
     let clock = 1000;
-    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [] }) }, () => clock);
+    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => clock, quietDrain());
     const run = app.run();
     streams.type("3");
     await new Promise((r) => setTimeout(r, 0)); // render → buttonZone measured
@@ -238,7 +547,10 @@ describe("deploy tab keys", () => {
 
     click(x1, y1);
     clock += 1000;
-    click(st.buttonZone!.x2, st.buttonZone!.y2); // second click inside the window deploys
+    click(st.buttonZone!.x2, st.buttonZone!.y2); // second click starts the drain ceremony
+    await settle();
+    publishStatus(app, 0);
+    await settle();
     expect(deploys).toBe(1);
     expect(st.armedAt).toBeUndefined();
     app.quit();
@@ -256,17 +568,20 @@ describe("deploy tab keys", () => {
       return { kill: () => {} };
     };
     let clock = 1000;
-    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [] }) }, () => clock);
+    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => clock, quietDrain());
     const run = app.run();
     streams.type("3");
     await new Promise((r) => setTimeout(r, 0));
 
     streams.type("D");
     streams.type("D");
+    await settle();
+    publishStatus(app, 0);
+    await settle();
     expect(st.run?.running).toBe(true);
     dataFn!("plan — deploy.sh sync\nrsync st"); // chunk split mid-line
     dataFn!("arted\x1b[32m ok\x1b[0m\n");
-    expect(st.run?.lines).toEqual(["plan — deploy.sh sync", "rsync started ok"]); // ANSI stripped
+    expect(st.run?.lines.slice(-2)).toEqual(["plan — deploy.sh sync", "rsync started ok"]); // ANSI stripped
     expect(stripAnsi(streams.written())).toContain("DEPLOYING…");
     expect(stripAnsi(streams.written())).toContain("rsync started ok");
 
@@ -279,7 +594,8 @@ describe("deploy tab keys", () => {
     expect(st.run?.code).toBe(0);
     expect(stripAnsi(streams.written())).toContain("DEPLOY OK");
 
-    streams.type("x"); // close the log — back to the plan view
+    publishStatus(app, 0, false); // new boot's healthy reconcile auto-lifts
+    streams.type("x"); // close the completed ceremony — back to the plan view
     expect(st.run).toBeUndefined();
     app.quit();
     await run;
@@ -294,12 +610,15 @@ describe("deploy tab keys", () => {
       exitFn = onExit;
       return { kill: () => killed++ };
     };
-    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [] }) }, () => 1000);
+    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => 1000, quietDrain());
     const run = app.run();
     streams.type("3");
     await new Promise((r) => setTimeout(r, 0));
     streams.type("D");
     streams.type("D");
+    await settle();
+    publishStatus(app, 0);
+    await settle();
     expect(st.run?.running).toBe(true);
     streams.type("x");
     expect(killed).toBe(1);
@@ -333,7 +652,7 @@ describe("power button (stop/start the VM app)", () => {
       onExit(0);
       return { kill: () => {} };
     };
-    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], containerStatus: status }) }, () => 1000);
+    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234", containerStatus: status }) }, () => 1000);
     const run = app.run();
     streams.type("3");
     await new Promise((r) => setTimeout(r, 0));
@@ -363,7 +682,7 @@ describe("power button (stop/start the VM app)", () => {
     let powers = 0;
     app.hooks.powerRun = (_a, _action, _d, onExit) => (powers++, onExit(0), { kill: () => {} });
     app.hooks.deployRun = (_a, _d, onExit) => (onExit(0), { kill: () => {} });
-    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], containerStatus: "Up 5 minutes" }) }, () => 1000);
+    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234", containerStatus: "Up 5 minutes" }) }, () => 1000);
     const run = app.run();
     streams.type("3");
     await new Promise((r) => setTimeout(r, 0));

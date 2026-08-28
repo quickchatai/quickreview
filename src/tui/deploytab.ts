@@ -1,10 +1,10 @@
 // Deploy tab (key 4) — "what would a deploy ship?" plus the deploy button:
 // the commit the VM is running (the BUILD_SHA marker deploy.sh rsyncs along),
 // local HEAD, the pending commit list + diffstat between them, and deploy.sh's
-// own --dry-run plan verbatim. Click ▶ (or D D) starts `scripts/deploy.sh
-// sync` via hooks.deployRun and streams its output live into the pane — the
-// TUI never suspends. deploy.sh's own guardrails (clean tree, pin agreement)
-// stay the only gate.
+// own --dry-run plan verbatim. Click ▶ (or D D) owns the whole ceremony:
+// engage the persistent daemon drain, visibly wait for a fresh zero-round
+// snapshot, then stream `scripts/deploy.sh sync`. The new boot auto-lifts only
+// after its first healthy reconcile; a failed sync stays drained.
 import { execFile } from "node:child_process";
 import type { TuiConfig } from "../config.js";
 import type { App } from "./app.js";
@@ -13,6 +13,11 @@ import { paintCmdBar } from "./cmdbar.js";
 import { ACCENT, ACCENT_BG, BAD, HEADING, MUTED, OK, RESET as DRESET, STRONG, WARN_BG, badge, modeBadge, sectionTitle } from "./design.js";
 import { Frame, displayWidth, rule, stripAnsi, truncate } from "./paint.js";
 import type { RemoteResult, SshRunner } from "./remote.js";
+import { CommandDrainSender, type DeployDrainSender } from "./deploy-drain.js";
+import { chainOnPoll } from "./poll-hooks.js";
+import { MemoryDeployCeremonyStore, type DeployCeremonyStore, type DurableDeployPhase } from "./deploy-ceremony.js";
+
+export type { DeployDrainSender } from "./deploy-drain.js";
 import { FG, RESET } from "./theme.js";
 
 function dockerSh(cfg: TuiConfig, script: string): string[] {
@@ -100,6 +105,14 @@ export interface DeployState {
   powerZone?: { x1: number; y1: number; x2: number; y2: number };
   /** Which button is armed — the two never arm together. */
   armedKind?: RunKind;
+  /** A confirmed deploy is a drain ceremony, not an immediate process spawn. */
+  deployPhase?: "engaging-drain" | "waiting-rounds" | "syncing" | "awaiting-lift" | "done" | "lifting-after-abort" | "aborted" | "drain-failed" | "deploy-failed";
+  drainRounds?: number;
+  drainStatusNote?: string;
+  targetHead?: string;
+  preDeploySnapshotAt?: string;
+  drainObserved?: boolean;
+  firstUndrainedSnapshotAt?: string;
 }
 
 export type RunKind = "deploy" | "stop" | "start";
@@ -213,9 +226,9 @@ export function deployLines(st: DeployState, width: number): string[] {
   for (const p of st.plan) lines.push(truncate(`  ${p}`, width));
   lines.push("");
   if (st.armedAt !== undefined) {
-    lines.push(truncate(`${badge("warn", "ARMED")} press ${STRONG}D${DRESET} again to run ./scripts/deploy.sh sync (any other key cancels)`, width));
+    lines.push(truncate(`${badge("warn", "ARMED")} press ${STRONG}D${DRESET} again to drain → wait for zero → deploy (any other key cancels)`, width));
   } else {
-    lines.push(truncate(`${STRONG}to deploy:${DRESET} press ${STRONG}D${DRESET} twice (runs ${ACCENT}./scripts/deploy.sh sync${DRESET} in your terminal) — or run it yourself`, width));
+    lines.push(truncate(`${STRONG}to deploy:${DRESET} press ${STRONG}D${DRESET} twice (${ACCENT}drain → zero rounds → ./scripts/deploy.sh sync → healthy-boot auto-lift${DRESET})`, width));
   }
   return lines;
 }
@@ -234,7 +247,24 @@ export function renderDeployTab(st: DeployState, dryRun: boolean, cols: number, 
   };
   if (run) {
     const [busy, ok, bad] = RUN_VERBS[run.kind];
-    const label = run.running ? busy : run.code === 0 ? ok : `${bad} (exit ${run.code ?? "signal"}) `;
+    const deployLabel = run.kind === "deploy"
+      ? st.deployPhase === "engaging-drain"
+        ? " ⟳ ENGAGING DRAIN… "
+        : st.deployPhase === "waiting-rounds"
+          ? ` ⏳ DRAINING — ${st.drainRounds ?? "?"} round${st.drainRounds === 1 ? "" : "s"} finishing `
+          : st.deployPhase === "lifting-after-abort"
+            ? " ⟳ ABORTING — LIFTING DRAIN… "
+            : st.deployPhase === "aborted"
+              ? " ■ DEPLOY ABORTED · DRAIN OFF "
+              : st.deployPhase === "awaiting-lift"
+                ? " ✔ DEPLOY OK · DRAIN AUTO-LIFT PENDING "
+                : st.deployPhase === "done"
+                  ? " ✔ DEPLOY OK · DRAIN LIFTED "
+                  : st.deployPhase === "drain-failed" || st.deployPhase === "deploy-failed"
+                    ? ` ✖ DEPLOY FAILED (exit ${run.code ?? "signal"}) `
+                    : undefined
+      : undefined;
+    const label = deployLabel ?? (run.running ? busy : run.code === 0 ? ok : `${bad} (exit ${run.code ?? "signal"}) `);
     const chip =
       run.running
         ? `${ACCENT_BG}${STRONG}${label}${DRESET}`
@@ -301,8 +331,16 @@ export function renderDeployTab(st: DeployState, dryRun: boolean, cols: number, 
 
 // ---- hooks ------------------------------------------------------------------
 
-export function installDeployHooks(app: App, fetcher?: DeployFetcher, now: () => number = () => Date.now()): DeployState {
+export function installDeployHooks(
+  app: App,
+  fetcher?: DeployFetcher,
+  now: () => number = () => Date.now(),
+  drainSender?: DeployDrainSender,
+  ceremonyStore?: DeployCeremonyStore,
+): DeployState {
   const f = fetcher ?? new RealDeployFetcher(app.cfg, app.ssh, realLocalRunner(process.cwd()));
+  const drain = drainSender ?? new CommandDrainSender(app.cfg, app.ssh);
+  const ceremony = ceremonyStore ?? new MemoryDeployCeremonyStore();
   const st: DeployState = { loaded: false, loading: false, dirty: [], plan: [], scroll: 0 };
 
   const load = async (): Promise<void> => {
@@ -322,28 +360,79 @@ export function installDeployHooks(app: App, fetcher?: DeployFetcher, now: () =>
     return renderDeployTab(st, theApp.view.dryRun, cols, rows);
   };
 
-  // The kill handle of the run in flight (undefined once it exits).
+  // The kill handle exists only while deploy.sh / docker is running. A drain
+  // wait is cancellable too, but cancellation is a validated `drain off`
+  // command rather than a process signal.
   let handle: { kill(): void } | undefined;
+  let targetCheckInFlight = false;
+  let drainAttempt = 0;
+  let abortDrainRequested = false;
 
-  type StreamRunner = (a: App, onData: (chunk: string) => void, onExit: (code: number | null) => void) => { kill(): void };
+  const line = (run: DeployRun, text: string): void => {
+    if (run.lines[run.lines.length - 1] !== text) run.lines.push(text);
+  };
+  const persist = (phase: DurableDeployPhase): void => ceremony.write({
+    version: 1,
+    phase,
+    ...(st.targetHead ? { target_head: st.targetHead } : {}),
+    ...(st.preDeploySnapshotAt ? { pre_deploy_snapshot_at: st.preDeploySnapshotAt } : {}),
+    ...(st.drainObserved ? { drain_observed: true } : {}),
+    ...(st.firstUndrainedSnapshotAt ? { first_undrained_snapshot_at: st.firstUndrainedSnapshotAt } : {}),
+    updated_at: new Date(now()).toISOString(),
+  });
+  const failDrain = (theApp: App, run: DeployRun, reason: string): void => {
+    if (st.run !== run) return;
+    st.deployPhase = "drain-failed";
+    persist("drain-failed");
+    run.running = false;
+    run.code = 1;
+    line(run, `✖ drain failed — ${reason}`);
+    line(run, "deploy did not start");
+    theApp.notice(`✖ deploy drain failed — ${reason}`);
+    theApp.repaint();
+  };
 
-  const startRun = (theApp: App, kind: RunKind): void => {
-    const power = theApp.hooks.powerRun;
-    const runner: StreamRunner | undefined =
-      kind === "deploy"
-        ? theApp.hooks.deployRun
-        : power && ((a, onData, onExit) => power(a, kind, onData, onExit));
+  const launchDeployProcess = (theApp: App, run: DeployRun): void => {
+    if (st.run !== run || st.deployPhase !== "waiting-rounds") return;
+    const runner = theApp.hooks.deployRun;
     if (!runner) {
-      theApp.notice(`✖ ${kind} runner not wired`);
+      failDrain(theApp, run, "deploy runner not wired");
       return;
     }
-    const run: DeployRun = { kind, lines: [], partial: "", running: true };
-    st.run = run;
-    st.scroll = 0; // follow the tail
+    if (!st.loaded) {
+      line(run, "… waiting for local deploy target to reload before sync");
+      return;
+    }
+    if (!st.head) {
+      st.deployPhase = "deploy-failed";
+      run.running = false;
+      run.code = 1;
+      persist("deploy-failed");
+      line(run, "✖ local deploy target is unknown — deploy did not start; drain remains ON");
+      theApp.notice("✖ deploy target unknown — drain remains on");
+      theApp.repaint();
+      return;
+    }
+    if (st.targetHead && st.targetHead !== st.head) {
+      st.deployPhase = "deploy-failed";
+      run.running = false;
+      run.code = 1;
+      persist("deploy-failed");
+      line(run, `✖ local HEAD moved from ${st.targetHead} to ${st.head} while draining — deploy did not start; drain remains ON`);
+      theApp.notice("✖ deploy target changed while draining — drain remains on");
+      theApp.repaint();
+      return;
+    }
+    st.preDeploySnapshotAt = theApp.view.snapshot?.written_at;
+    st.deployPhase = "syncing";
+    persist("syncing");
+    line(run, "✓ drain confirmed and board quiet — starting ./scripts/deploy.sh sync");
+    line(run, "  drain stays on until the new boot's first healthy reconcile");
+    theApp.notice("deploy drain reached zero — starting sync");
     handle = runner(
       theApp,
       (chunk) => {
-        if (st.run !== run) return; // stale callback after a close
+        if (st.run !== run) return;
         appendRunChunk(run, chunk);
         theApp.repaint();
       },
@@ -355,25 +444,283 @@ export function installDeployHooks(app: App, fetcher?: DeployFetcher, now: () =>
         run.running = false;
         run.code = code;
         handle = undefined;
+        if (code === 0) {
+          st.deployPhase = "awaiting-lift";
+          persist("awaiting-lift");
+          line(run, "✓ sync finished — healthy boot will auto-lift the drain after its first reconcile");
+          theApp.notice("deploy complete — waiting for healthy boot to auto-lift drain");
+        } else {
+          st.deployPhase = "deploy-failed";
+          persist("deploy-failed");
+          line(run, "✖ deploy failed — drain remains ON; investigate before lifting it");
+          theApp.notice("✖ deploy failed — drain remains on");
+        }
         st.loaded = false;
-        void load(); // re-read BUILD_SHA/status/plan against the new reality
+        void load();
         theApp.repaint();
       },
     );
     theApp.repaint();
   };
 
+  const startDeployProcess = (theApp: App, run: DeployRun): void => {
+    if (st.run !== run || st.deployPhase !== "waiting-rounds" || targetCheckInFlight) return;
+    targetCheckInFlight = true;
+    line(run, "… board is quiet — refreshing local HEAD and deploy preflight");
+    theApp.repaint();
+    void f.load().then((latest) => {
+      targetCheckInFlight = false;
+      if (st.run !== run || st.deployPhase !== "waiting-rounds") return;
+      Object.assign(st, latest);
+      st.loaded = true;
+      launchDeployProcess(theApp, run);
+    }).catch((err: unknown) => {
+      targetCheckInFlight = false;
+      failDrain(theApp, run, `could not refresh deploy target (${String(err instanceof Error ? err.message : err)})`);
+    });
+  };
+
+  const observeDrain = (theApp: App): void => {
+    const run = st.run;
+    const health = theApp.view.health;
+    const snap = theApp.view.snapshot;
+    if (!run || run.kind !== "deploy") {
+      const saved = ceremony.read();
+      if (saved && snap && health.kind !== "stale" && health.kind !== "unreachable" && snap.draining !== true) {
+        const liftGenerationOk = saved.phase !== "awaiting-lift" || (
+          saved.pre_deploy_snapshot_at !== undefined && Date.parse(snap.written_at) > Date.parse(saved.pre_deploy_snapshot_at)
+        );
+        if (liftGenerationOk) ceremony.clear();
+      }
+      return;
+    }
+    const postDeployGeneration = st.preDeploySnapshotAt !== undefined && snap !== undefined &&
+      Date.parse(snap.written_at) > Date.parse(st.preDeploySnapshotAt);
+    if (
+      st.deployPhase === "awaiting-lift" && snap && postDeployGeneration &&
+      health.kind !== "stale" && health.kind !== "unreachable" && snap.draining !== true
+    ) {
+      st.deployPhase = "done";
+      ceremony.clear();
+      line(run, "✓ drain auto-lifted by the new boot's first healthy reconcile");
+      theApp.notice("deploy complete — drain lifted; reconcile is recovering dropped deliveries");
+      theApp.repaint();
+      return;
+    }
+    if (st.deployPhase !== "waiting-rounds") return;
+    if (!snap || health.kind === "stale" || health.kind === "unreachable") {
+      const note = "waiting for a fresh daemon status before deploy";
+      if (st.drainStatusNote !== note) line(run, `… ${note}`);
+      st.drainStatusNote = note;
+      theApp.repaint();
+      return;
+    }
+    if (snap.draining !== true) {
+      const repeatedUndrained = st.firstUndrainedSnapshotAt !== undefined &&
+        Date.parse(snap.written_at) > Date.parse(st.firstUndrainedSnapshotAt);
+      if (st.drainObserved || repeatedUndrained) {
+        st.deployPhase = "aborted";
+        run.running = false;
+        run.code = null;
+        ceremony.clear();
+        line(run, "■ drain was lifted outside this ceremony — deploy cancelled; review work resumed");
+        theApp.notice("deploy cancelled — operator lifted the drain");
+      } else {
+        if (!st.firstUndrainedSnapshotAt) {
+          st.firstUndrainedSnapshotAt = snap.written_at;
+          persist("waiting-rounds");
+        }
+        const note = "daemon acknowledged drain; waiting for status.json to show it";
+        if (st.drainStatusNote !== note) line(run, `… ${note}`);
+        st.drainStatusNote = note;
+      }
+      theApp.repaint();
+      return;
+    }
+    st.firstUndrainedSnapshotAt = undefined;
+    if (!st.drainObserved) {
+      st.drainObserved = true;
+      persist("waiting-rounds");
+    }
+    st.drainStatusNote = undefined;
+    if (st.drainRounds !== snap.running_rounds) {
+      st.drainRounds = snap.running_rounds;
+      line(run, `DRAINING — ${snap.running_rounds} round${snap.running_rounds === 1 ? "" : "s"} finishing · ${snap.drained_deliveries ?? 0} webhook delivery(ies) dropped`);
+      theApp.notice(`deploy drain — ${snap.running_rounds} round${snap.running_rounds === 1 ? "" : "s"} finishing`);
+    }
+    if (snap.running_rounds === 0) startDeployProcess(theApp, run);
+    else theApp.repaint();
+  };
+
+  const liftDrainAfterAbort = (theApp: App, run: DeployRun): void => {
+    if (st.run !== run) return;
+    st.deployPhase = "lifting-after-abort";
+    persist("lifting-after-abort");
+    line(run, "→ deploy aborted before sync — lifting drain so review work can resume…");
+    theApp.notice("deploy aborted — lifting drain");
+    const attempt = ++drainAttempt;
+    void drain.set(false).then((result) => {
+      if (st.run !== run || attempt !== drainAttempt) return;
+      run.running = false;
+      run.code = null;
+      if (result.ok && result.draining === false) {
+        st.deployPhase = "aborted";
+        ceremony.clear();
+        line(run, `✓ drain lifted — ${result.dropped_deliveries ?? 0} dropped delivery(ies) will be recovered by reconcile`);
+        theApp.notice("deploy aborted — drain lifted; review work resumed");
+      } else {
+        st.deployPhase = "drain-failed";
+        persist("drain-failed");
+        line(run, `✖ could not lift drain — ${result.reason ?? "daemon did not confirm"}; drain may remain ON`);
+        theApp.notice("✖ deploy aborted but drain lift failed — check board");
+      }
+      theApp.repaint();
+    }).catch((err: unknown) => {
+      if (st.run !== run || attempt !== drainAttempt) return;
+      run.running = false;
+      run.code = 1;
+      st.deployPhase = "drain-failed";
+      persist("drain-failed");
+      line(run, `✖ could not lift drain — ${String(err instanceof Error ? err.message : err)}; drain may remain ON`);
+      theApp.notice("✖ deploy aborted but drain lift failed — check board");
+      theApp.repaint();
+    });
+    theApp.repaint();
+  };
+
+  const startDrain = (theApp: App, resuming = false, resumeAbort = false): void => {
+    if (!resuming && (!st.loaded || !st.head)) {
+      theApp.notice("deploy target is still loading — wait for LOCAL HEAD, then press D D again");
+      return;
+    }
+    const run: DeployRun = { kind: "deploy", lines: ["→ engaging daemon deploy drain…"], partial: "", running: true };
+    st.run = run;
+    st.scroll = 0;
+    st.deployPhase = resumeAbort ? "lifting-after-abort" : "engaging-drain";
+    if (!resuming) st.targetHead = st.head;
+    st.preDeploySnapshotAt = undefined;
+    st.drainObserved = false;
+    st.firstUndrainedSnapshotAt = undefined;
+    persist(resumeAbort ? "abort-requested" : "engaging-drain");
+    st.drainRounds = undefined;
+    st.drainStatusNote = undefined;
+    abortDrainRequested = resumeAbort;
+    const attempt = ++drainAttempt;
+    theApp.notice("deploy requested — engaging drain; no new review work will start");
+    theApp.repaint();
+    void drain.set(true).then((result) => {
+      if (st.run !== run || attempt !== drainAttempt) return;
+      if (!result.ok || result.draining !== true) {
+        if (abortDrainRequested) liftDrainAfterAbort(theApp, run);
+        else failDrain(theApp, run, result.reason ?? "daemon did not confirm drain");
+        return;
+      }
+      if (abortDrainRequested) {
+        liftDrainAfterAbort(theApp, run);
+        return;
+      }
+      st.deployPhase = "waiting-rounds";
+      persist("waiting-rounds");
+      st.drainRounds = result.running_rounds;
+      line(run, `✓ drain engaged — ${result.running_rounds ?? "?"} round(s) reported by command receipt`);
+      theApp.notice(`drain engaged — ${result.running_rounds ?? "?"} round(s) finishing before deploy`);
+      observeDrain(theApp);
+      theApp.repaint();
+    }).catch((err: unknown) => {
+      if (abortDrainRequested) liftDrainAfterAbort(theApp, run);
+      else failDrain(theApp, run, String(err instanceof Error ? err.message : err));
+    });
+  };
+
+  const startPowerRun = (theApp: App, kind: "stop" | "start"): void => {
+    const power = theApp.hooks.powerRun;
+    if (!power) {
+      theApp.notice(`✖ ${kind} runner not wired`);
+      return;
+    }
+    st.deployPhase = undefined;
+    const run: DeployRun = { kind, lines: [], partial: "", running: true };
+    st.run = run;
+    st.scroll = 0;
+    handle = power(theApp, kind, (chunk) => {
+      if (st.run !== run) return;
+      appendRunChunk(run, chunk);
+      theApp.repaint();
+    }, (code) => {
+      if (run.partial) run.lines.push(stripAnsi(run.partial));
+      run.partial = "";
+      run.running = false;
+      run.code = code;
+      handle = undefined;
+      st.loaded = false;
+      void load();
+      theApp.repaint();
+    });
+    theApp.repaint();
+  };
+
+  const savedCeremony = ceremony.read();
+  if (savedCeremony) {
+    st.targetHead = savedCeremony.target_head;
+    st.preDeploySnapshotAt = savedCeremony.pre_deploy_snapshot_at;
+    st.drainObserved = savedCeremony.drain_observed === true;
+    st.firstUndrainedSnapshotAt = savedCeremony.first_undrained_snapshot_at;
+    if (savedCeremony.phase === "engaging-drain" || savedCeremony.phase === "abort-requested") {
+      // Drain-on is idempotent. Reissuing is the only safe recovery from a
+      // reload that may have landed before or after the daemon receipt. An
+      // abort first proves ON, then sends OFF, so write/result races cannot
+      // leave the later ON command standing.
+      startDrain(app, true, savedCeremony.phase === "abort-requested");
+    } else {
+      const interruptedSync = savedCeremony.phase === "syncing";
+      const phase = interruptedSync ? "deploy-failed" : savedCeremony.phase;
+      const running = phase === "waiting-rounds" || phase === "lifting-after-abort";
+      const run: DeployRun = {
+        kind: "deploy",
+        lines: interruptedSync
+          ? ["✖ TUI reloaded during sync — outcome is ambiguous; drain remains ON and deploy will not repeat"]
+          : [`↻ restored deploy ceremony after TUI reload (${phase})`],
+        partial: "",
+        running,
+        ...(phase === "awaiting-lift" ? { code: 0 } : phase === "deploy-failed" || phase === "drain-failed" ? { code: 1 } : {}),
+      };
+      st.run = run;
+      st.deployPhase = phase;
+      if (interruptedSync) {
+        persist("deploy-failed");
+        app.notice("✖ TUI reloaded during deploy — drain remains on; duplicate sync refused");
+      } else if (phase === "lifting-after-abort") {
+        liftDrainAfterAbort(app, run);
+      } else {
+        app.notice(`restored deploy ceremony — ${phase}`);
+      }
+    }
+  }
+
+  if (savedCeremony) void load().then(() => observeDrain(app));
+  chainOnPoll(app, observeDrain);
+
   // One press = arm; a second press of the SAME button inside the confirm
-  // window = run. Shared by keys (D/S) and the mouse. Ignored mid-run.
+  // window starts the drain ceremony (deploy) or the power process.
   const press = (theApp: App, kind: RunKind): void => {
     if (st.run?.running) return;
+    if (kind === "deploy" && st.run) {
+      theApp.notice("close the previous deploy result with x before starting another");
+      return;
+    }
+    if (kind === "deploy" && ceremony.read()) {
+      theApp.notice("previous deploy still owns the drain — resolve or lift it before another deploy");
+      return;
+    }
     const t = now();
     if (st.armedKind === kind && st.armedAt !== undefined && t - st.armedAt < DEPLOY_CONFIRM_MS) {
       st.armedAt = undefined;
       st.armedKind = undefined;
-      startRun(theApp, kind);
+      if (kind === "deploy") startDrain(theApp);
+      else startPowerRun(theApp, kind);
     } else {
-      st.run = undefined; // arming clears a finished log
+      st.run = undefined;
+      st.deployPhase = undefined;
       st.armedAt = t;
       st.armedKind = kind;
     }
@@ -413,11 +760,30 @@ export function installDeployHooks(app: App, fetcher?: DeployFetcher, now: () =>
     if (disarmed) disarm(theApp); // any other key disarms
     if (st.run && key.kind === "char" && key.ch === "x") {
       if (st.run.running) {
-        handle?.kill(); // abort — onExit lands with the signal code
-        theApp.notice(`${st.run.kind} aborted (SIGTERM)`);
+        if (st.run.kind === "deploy" && st.deployPhase === "engaging-drain") {
+          abortDrainRequested = true;
+          st.deployPhase = "lifting-after-abort";
+          persist("abort-requested");
+          line(st.run, "→ abort requested — waiting for drain receipt before lifting it safely");
+          theApp.notice("deploy abort requested — drain will be lifted after acknowledgement");
+        } else if (st.run.kind === "deploy" && st.deployPhase === "waiting-rounds") {
+          liftDrainAfterAbort(theApp, st.run);
+        } else if (st.deployPhase !== "lifting-after-abort") {
+          handle?.kill(); // sync/power abort — drain deliberately stays on after a failed sync
+          theApp.notice(`${st.run.kind} aborted (SIGTERM)${st.run.kind === "deploy" ? " — drain remains on" : ""}`);
+        }
+      } else if (st.deployPhase === "awaiting-lift") {
+        theApp.notice("deploy finished but drain has not auto-lifted yet — result stays visible");
       } else {
         st.run = undefined; // close the finished log, back to the plan view
         st.scroll = 0;
+        st.deployPhase = undefined;
+        if (!ceremony.read()) {
+          st.targetHead = undefined;
+          st.preDeploySnapshotAt = undefined;
+          st.drainObserved = undefined;
+          st.firstUndrainedSnapshotAt = undefined;
+        }
       }
       theApp.repaint();
       return true;

@@ -72,10 +72,9 @@ export interface AppHooks {
   changesKey?: (app: App, key: ReturnType<typeof decodeKey>) => boolean;
   /** Change-register click routing (row selection); true = consumed. */
   changesClick?: (app: App, x: number, y: number) => boolean;
-  /** Start ./scripts/deploy.sh sync, streaming its output back into the
-   * deploy tab (the TUI stays up). onData receives raw chunks, onExit the
-   * exit code; the handle aborts a stuck run. The script's own guardrails
-   * (clean tree, pin agreement) are the only gate. */
+  /** Start ./scripts/deploy.sh sync after the deploy tab has engaged the
+   * daemon drain and observed a fresh zero-running-round snapshot. Streams
+   * output back into the tab; the handle aborts a stuck sync. */
   deployRun?: (
     app: App,
     onData: (chunk: string) => void,
