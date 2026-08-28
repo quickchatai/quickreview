@@ -39,10 +39,6 @@ case "$EVENT" in
   APPROVE) die "APPROVE is not allowed here — use scripts/approve-pr.sh (it also clears the wake triggers)" ;;
   *) die "$USAGE" ;;
 esac
-[[ -n "$BODY_FILE" && -r "$BODY_FILE" ]] || die "unreadable review body file: ${BODY_FILE:-<missing>}"
-if [[ -n "$COMMENTS_FILE" ]]; then
-  [[ -r "$COMMENTS_FILE" ]] || die "unreadable comments file: $COMMENTS_FILE"
-fi
 
 cfg() { # cfg <section-or-empty> <key>  (tomllib, sed fallback — as approve-pr.sh)
   local section="$1" key="$2"
@@ -74,6 +70,57 @@ REPO="$(cfg github repo)"
 # Anything other than an explicit `false` is treated as dry-run (fail closed).
 [[ "$DRY_RUN" == "false" ]] && LIVE=1 || LIVE=0
 
+# replay guard runs BEFORE posting guards: once this exact round/head
+# has a confirmed receipt, retry is idempotent success even though guard 2 now
+# (correctly) sees an already-reviewed head.
+POSTING_RECEIPT=""
+POSTING_MARKER=""
+POST_ALREADY_CONFIRMED=0
+RECEIPT_LOCK=""
+cleanup_receipt_lock() { [[ -z "$RECEIPT_LOCK" ]] || rmdir "$RECEIPT_LOCK" 2>/dev/null || true; }
+trap cleanup_receipt_lock EXIT
+ROUND_NO="${QCR_ROUND_NO:-}"
+if [[ -n "$ROUND_NO" || -n "${QCR_POSTING_KEY:-}" ]]; then
+  [[ "$ROUND_NO" =~ ^[0-9]+$ ]] || die "QCR_ROUND_NO must be an integer"
+  RECEIPT_HEAD="${QCR_EXPECTED_HEAD:-}"
+  [[ -n "$RECEIPT_HEAD" ]] || die "QCR_EXPECTED_HEAD is required for a receipt-keyed round"
+  EXPECTED_KEY="v1:$PR:$ROUND_NO:${RECEIPT_HEAD,,}"
+  POSTING_KEY="${QCR_POSTING_KEY:-$EXPECTED_KEY}"
+  [[ "$POSTING_KEY" == "$EXPECTED_KEY" ]] || die "QCR_POSTING_KEY mismatch (expected $EXPECTED_KEY)"
+  POSTING_MARKER="<!-- qcr-post:$POSTING_KEY -->"
+  RECEIPT_DIR="${QCR_POSTING_RECEIPT_DIR:-$ROOT/state/posting-receipts}"
+  POSTING_RECEIPT="$RECEIPT_DIR/pr-$PR-round-$ROUND_NO.json"
+  RECEIPT_STATE="$(python3 "$ROOT/scripts/posting-receipt.py" check "$POSTING_RECEIPT" "$POSTING_KEY")"
+  case "$RECEIPT_STATE" in
+    confirmed) POST_ALREADY_CONFIRMED=1 ;;
+    dryrun)
+      if [[ "$LIVE" == "0" ]]; then
+        POST_ALREADY_CONFIRMED=1
+      else
+        mv "$POSTING_RECEIPT" "$POSTING_RECEIPT.dryrun-$(date -u +%Y%m%dT%H%M%SZ)"
+        RECEIPT_LOCK="$POSTING_RECEIPT.lock"
+        mkdir -p "$RECEIPT_DIR"
+        mkdir "$RECEIPT_LOCK" 2>/dev/null || die "another posting attempt owns $POSTING_KEY"
+      fi
+      ;;
+    prepared) die "posting outcome is still unknown for $POSTING_KEY — refusing a duplicate POST; let the daemon reconcile the marker" ;;
+    none)
+      RECEIPT_LOCK="$POSTING_RECEIPT.lock"
+      mkdir -p "$RECEIPT_DIR"
+      mkdir "$RECEIPT_LOCK" 2>/dev/null || die "another posting attempt owns $POSTING_KEY"
+      ;;
+    *) die "invalid or mismatched posting receipt for $POSTING_KEY" ;;
+  esac
+fi
+if [[ "$POST_ALREADY_CONFIRMED" == "1" ]]; then
+  echo "posting receipt already confirmed for $POSTING_KEY — skipping duplicate review"
+  exit 0
+fi
+[[ -n "$BODY_FILE" && -r "$BODY_FILE" ]] || die "unreadable review body file: ${BODY_FILE:-<missing>}"
+if [[ -n "$COMMENTS_FILE" ]]; then
+  [[ -r "$COMMENTS_FILE" ]] || die "unreadable comments file: $COMMENTS_FILE"
+fi
+
 # ---- the posting-time guards --------------------------------------
 # All three, from the shared mirror of src/guards.ts — this is the session's
 # posting route, so it must refuse exactly what the gate refuses.
@@ -85,6 +132,7 @@ HEAD_SHA="$GUARD_HEAD_SHA"
 guard_require_expected_head "$HEAD_SHA"                   # guard 5
 guard_require_new_evidence "$HEAD_SHA"                    # guard 2
 
+INTENDED_EVENT="$EVENT"
 DOWNGRADE_NOTE=""
 APPROVER=""
 if [[ "$EVENT" == "REQUEST_CHANGES" ]]; then              # guard 1
@@ -97,13 +145,16 @@ if [[ "$EVENT" == "REQUEST_CHANGES" ]]; then              # guard 1
 fi
 
 # Payload: validates comments (path str, line int>0, body str, side RIGHT|LEFT).
-PAYLOAD="$(EVENT="$EVENT" NOTE_SUFFIX="$DOWNGRADE_NOTE" HEAD_SHA="$HEAD_SHA" \
+PAYLOAD="$(EVENT="$EVENT" NOTE_SUFFIX="$DOWNGRADE_NOTE" HEAD_SHA="$HEAD_SHA" POSTING_MARKER="$POSTING_MARKER" \
   python3 - "$BODY_FILE" "$COMMENTS_FILE" <<'PY'
 import json, os, sys
 body = open(sys.argv[1]).read()
 suffix = os.environ.get("NOTE_SUFFIX", "")
 if suffix:
     body = f"{body}\n\n{suffix}"
+marker = os.environ.get("POSTING_MARKER", "")
+if marker:
+    body = f"{body}\n\n{marker}"
 payload = {"event": os.environ["EVENT"], "body": body}
 if os.environ.get("HEAD_SHA"):
     payload["commit_id"] = os.environ["HEAD_SHA"]
@@ -126,6 +177,10 @@ json.dump(payload, sys.stdout)
 PY
 )"
 
+if [[ -n "$POSTING_RECEIPT" && "$POST_ALREADY_CONFIRMED" == "0" ]]; then
+  python3 "$ROOT/scripts/posting-receipt.py" prepare "$POSTING_RECEIPT" "$POSTING_KEY" "$PR" "$ROUND_NO" "$HEAD_SHA" "$INTENDED_EVENT" "$EVENT" "$PAYLOAD"
+fi
+
 record() { # record <kind> <method> <path> <body-json> <note> — same shape as src/gate.ts
   mkdir -p "$DRYRUN_DIR"
   local file
@@ -146,6 +201,7 @@ PY
   echo "dry-run: $5 -> $file — nothing was sent"
 }
 
+CALL_RESPONSE=""
 call() { # call <method> <path> <body-json> <note>
   local out status
   out="$(mktemp)"
@@ -163,7 +219,7 @@ call() { # call <method> <path> <body-json> <note>
   fi
   echo "$1 $2 -> $status  ($4)"
   case "$status" in
-    2*) rm -f "$out" ;;
+    2*) CALL_RESPONSE="$(cat "$out")"; rm -f "$out" ;;
     *)  echo "  $(head -c 300 "$out")" >&2; rm -f "$out"; die "$1 $2 failed with $status" ;;
   esac
 }
@@ -171,11 +227,25 @@ call() { # call <method> <path> <body-json> <note>
 NOTE="post $EVENT review on #$PR"
 if [[ -n "$DOWNGRADE_NOTE" ]]; then NOTE="$NOTE (downgraded: @$APPROVER approved this head)"; fi
 if [[ "$LIVE" == "1" ]]; then
-  call POST "/repos/$REPO/pulls/$PR/reviews" "$PAYLOAD" "$NOTE"
+  if [[ "$POST_ALREADY_CONFIRMED" == "0" ]]; then
+    call POST "/repos/$REPO/pulls/$PR/reviews" "$PAYLOAD" "$NOTE"
+  else
+    echo "posting receipt already confirmed for $POSTING_KEY — skipping duplicate review"
+  fi
+  if [[ -n "$POSTING_RECEIPT" && "$POST_ALREADY_CONFIRMED" == "0" ]]; then
+    QCR_POST_RESPONSE="$CALL_RESPONSE" python3 "$ROOT/scripts/posting-receipt.py" confirm "$POSTING_RECEIPT" "$POSTING_KEY" "$PR" "$ROUND_NO" "$HEAD_SHA" "$INTENDED_EVENT" "$EVENT" "$PAYLOAD"
+  fi
   # The reviewed-head mark, stamped only for a review that really reached
   # GitHub — the same after-step the gate runs daemon-side, and what makes
   # guard 2 bite on the next round through this route.
   guard_stamp_reviewed_head "$HEAD_SHA" "$EVENT"
 else
-  record create_review POST "/repos/$REPO/pulls/$PR/reviews" "$PAYLOAD" "$NOTE"
+  if [[ "$POST_ALREADY_CONFIRMED" == "0" ]]; then
+    record create_review POST "/repos/$REPO/pulls/$PR/reviews" "$PAYLOAD" "$NOTE"
+  else
+    echo "dry-run posting receipt already exists for $POSTING_KEY — skipping duplicate intent"
+  fi
+  if [[ -n "$POSTING_RECEIPT" && "$POST_ALREADY_CONFIRMED" == "0" ]]; then
+    python3 "$ROOT/scripts/posting-receipt.py" dryrun "$POSTING_RECEIPT" "$POSTING_KEY" "$PR" "$ROUND_NO" "$HEAD_SHA" "$INTENDED_EVENT" "$EVENT" "$PAYLOAD"
+  fi
 fi

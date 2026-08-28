@@ -16,6 +16,7 @@ import { classifyCi, type CheckSummary } from "./cigate.js";
 import {
   DEFAULT_MAX_PROMPT_REDELIVERIES,
   DEFAULT_MAX_SELF_REQUEUES,
+  DEFAULT_POSTING_RECEIPT_GRACE_S,
   DEFAULT_ROUND_STALL_GRACE_MIN,
   sandboxRoot,
   type Config,
@@ -28,6 +29,7 @@ import { isLoudCancelCause, type CancelCause, type RoundRow, type StateStore } f
 import { enforceLedgerFreshness } from "./ledgercheck.js";
 import { enforceFindingsRecord } from "./findingsrecord.js";
 import { normalizeVerdict, type RoundRecoveryDisposition, type SessionHooks, type VerdictFile, type VerdictPassEntry } from "./types.js";
+import { postingMarker, readPostingReceipt, receiptMatchesVerdict, type PostingReceipt } from "./posting-receipt.js";
 import { flushHeldWakes } from "./wakes.js";
 
 /** Self-requeue mode → the cancellation cause it records. Two modes
@@ -54,6 +56,17 @@ export interface VerdictAdapter {
    * it, a session-route withheld approval records WHICH CI state caused the
    * withhold; without it the mark stores null, as it always did. */
   listChecks?(ref: string): Promise<CheckSummary[]>;
+  /** Read-only reconciliation for an ambiguous post-success/local-crash
+   * window. Exact marker + bot identity + head are required. */
+  listReviewsFull?(pr: number): Promise<Array<{
+    id: number;
+    user: string;
+    user_type?: string;
+    state: string;
+    body: string;
+    commit_id: string;
+    submitted_at: string | null;
+  }>>;
 }
 
 export interface VerdictDeps {
@@ -73,6 +86,9 @@ export interface VerdictDeps {
   announce?: VerdictAnnouncer;
   /** Sandbox root — anchors the default pi-session dir. */
   root?: string;
+  /** Atomic shell posting receipts. Defaults to state/posting-receipts. */
+  postingReceiptDir?: string;
+  postingReceiptGraceS?: number;
   /** Usage-measurement seams; every field defaults from cfg/root. */
   usage?: {
     /** pi session dir for a PR's sticky session (sessions.ts sessionDir()). */
@@ -329,7 +345,8 @@ export class VerdictWatcher {
         return true;
       }
       if (parsed.passes_note) this.log(`verdicts: ${name} passes telemetry: ${parsed.passes_note}`);
-      await this.apply(parsed.verdict, name);
+      const applied = await this.apply(parsed.verdict, name);
+      if (applied === "waiting") return false;
       this.archive(name);
       return true;
     } finally {
@@ -337,8 +354,150 @@ export class VerdictWatcher {
     }
   }
 
-  /** The handoff: labels, round record, transition. */
-  private async apply(v: VerdictFile, name: string): Promise<void> {
+  private postingReceiptDir(): string {
+    return this.deps.postingReceiptDir ?? join(this.deps.root ?? sandboxRoot(), "state", "posting-receipts");
+  }
+
+  private async postingProof(
+    round: RoundRow,
+    verdict?: VerdictFile,
+  ): Promise<{ kind: "legacy" | "confirmed" | "waiting" | "failed"; detail?: string; receipt?: PostingReceipt }> {
+    if (!round.posting_key) return { kind: "legacy" };
+    const expectedHead = verdict?.head_sha ?? round.posting_key.split(":").slice(3).join(":");
+    const receipt = readPostingReceipt(this.postingReceiptDir(), round.pr, round.round_no);
+    const receiptIdentityOk = receipt !== undefined
+      && receipt.posting_key === round.posting_key
+      && receipt.pr === round.pr
+      && receipt.round_no === round.round_no
+      && receipt.head_sha.toLowerCase() === expectedHead.toLowerCase();
+    if (receiptIdentityOk && receipt) {
+      if (receipt.status === "confirmed" && (!verdict || receiptMatchesVerdict(receipt, verdict))) {
+        const persisted = this.deps.store.confirmRoundPosting(round.id, {
+          posting_key: receipt.posting_key,
+          actual_event: receipt.actual_event,
+          gh_review_id: receipt.gh_review_id!,
+          gh_commit_id: receipt.gh_commit_id!,
+          confirmed_at: receipt.confirmed_at!,
+        });
+        return persisted ? { kind: "confirmed", receipt } : { kind: "failed", detail: `conflicting posting linkage for ${round.posting_key}` };
+      }
+      if (receipt.status === "dryrun" && this.deps.cfg.dry_run && (!verdict || receiptMatchesVerdict(receipt, verdict))) {
+        const persisted = this.deps.store.confirmRoundPosting(round.id, {
+          posting_key: receipt.posting_key,
+          actual_event: receipt.actual_event,
+          gh_review_id: null,
+          gh_commit_id: receipt.head_sha,
+          confirmed_at: receipt.confirmed_at ?? receipt.prepared_at,
+        });
+        return persisted ? { kind: "confirmed", receipt } : { kind: "failed", detail: `conflicting dry-run posting linkage for ${round.posting_key}` };
+      }
+      if ((receipt.status === "confirmed" || receipt.status === "dryrun") && verdict) {
+        return { kind: "failed", detail: `posting receipt ${round.posting_key} does not match verdict/head` };
+      }
+    }
+
+    // The POST may have reached GitHub before the shell could persist its
+    // response. Reconcile by the inert marker; never retry a mutation on an
+    // ambiguous transport outcome.
+    if (!this.deps.cfg.dry_run && this.deps.adapter.listReviewsFull) {
+      try {
+        const marker = postingMarker(round.posting_key);
+        const bot = this.deps.cfg.github.bot_login;
+        const matches = (await this.deps.adapter.listReviewsFull(round.pr)).filter((review) =>
+          (review.user === bot || review.user === `${this.deps.cfg.github.app_slug}[bot]`)
+          && review.commit_id?.toLowerCase() === expectedHead.toLowerCase()
+          && review.body.includes(marker),
+        );
+        if (matches.length > 1) return { kind: "failed", detail: `multiple bot reviews match ${round.posting_key}` };
+        if (matches.length === 1) {
+          const match = matches[0]!;
+          const actualEvent: PostingReceipt["actual_event"] = match.state.toUpperCase() === "APPROVED"
+            ? "APPROVE"
+            : match.state.toUpperCase() === "CHANGES_REQUESTED"
+              ? "REQUEST_CHANGES"
+              : "COMMENT";
+          const synthetic: PostingReceipt = {
+            version: 1,
+            posting_key: round.posting_key,
+            marker,
+            pr: round.pr,
+            round_no: round.round_no,
+            head_sha: expectedHead,
+            intended_event: actualEvent,
+            actual_event: actualEvent,
+            status: "confirmed",
+            payload_sha256: "0".repeat(64),
+            prepared_at: match.submitted_at ?? this.now().toISOString(),
+            confirmed_at: match.submitted_at ?? this.now().toISOString(),
+            gh_review_id: match.id,
+            gh_commit_id: match.commit_id,
+            gh_state: match.state,
+          };
+          if (verdict && !receiptMatchesVerdict(synthetic, verdict)) {
+            return { kind: "failed", detail: `GitHub review ${match.id} event does not match verdict` };
+          }
+          const persisted = this.deps.store.confirmRoundPosting(round.id, {
+            posting_key: round.posting_key,
+            actual_event: actualEvent,
+            gh_review_id: match.id,
+            gh_commit_id: match.commit_id,
+            confirmed_at: synthetic.confirmed_at!,
+          });
+          if (!persisted) return { kind: "failed", detail: `conflicting reconciled posting linkage for ${round.posting_key}` };
+          this.deps.store.logEvent("posting_receipt_reconciled", round.pr, {
+            round_no: round.round_no,
+            posting_key: round.posting_key,
+            gh_review_id: match.id,
+          });
+          return { kind: "confirmed", receipt: synthetic };
+        }
+      } catch (error) {
+        this.log(`posting receipt reconciliation failed for #${round.pr} round ${round.round_no}`, error);
+      }
+    }
+
+    const origin = receiptIdentityOk && receipt ? receipt.prepared_at : round.started_at;
+    const graceS = this.deps.postingReceiptGraceS ?? this.deps.cfg.daemon.posting_receipt_grace_s ?? DEFAULT_POSTING_RECEIPT_GRACE_S;
+    if (this.now().getTime() - Date.parse(origin) < graceS * 1000) return { kind: "waiting" };
+    return { kind: "failed", detail: `no confirmed posting receipt for ${round.posting_key} after ${graceS}s` };
+  }
+
+  private async failPostingProof(round: RoundRow, detail: string, stage = "posting_receipt"): Promise<void> {
+    const { store, cfg, adapter } = this.deps;
+    store.markRoundCancelled(round.id, `posting receipt failure — ${detail}`, "infrastructure_failure");
+    await this.safe(() => adapter.removeLabel(round.pr, cfg.github.in_progress_label), `remove ${cfg.github.in_progress_label} on #${round.pr}`);
+    const command = store.sessionCommandForRound(round.pr, round.round_no);
+    const successor = store.successorFor(round.pr);
+    const failure = store.openReviewFailure({
+      pr: round.pr,
+      command_id: command?.id ?? null,
+      round_id: round.id,
+      round_no: round.round_no,
+      head_sha: successor?.head_sha ?? store.getPr(round.pr)?.head_sha ?? "",
+      stage,
+      detail,
+      attempts: command?.attempt ?? 1,
+      retry_cap: 0,
+    });
+    store.logAnomaly(
+      "review_failed_loud",
+      round.pr,
+      round.round_no,
+      `posting receipt: ${detail}; work remains owed as ${failure.incident_id}`,
+    );
+    await this.announceSafe((a) =>
+      a.anomaly({
+        pr: round.pr,
+        round_no: round.round_no,
+        kind: "failed_loud",
+        deadline_min: cfg.daemon.round_deadline_min,
+        incident_id: failure.incident_id,
+      }),
+    );
+  }
+
+  /** The handoff: posting receipt, labels, round record, transition. */
+  private async apply(v: VerdictFile, name: string): Promise<"applied" | "waiting" | "failed"> {
     const { cfg, store, adapter } = this.deps;
     const round = this.runningRound(v.pr, v.round_no);
 
@@ -362,7 +521,7 @@ export class VerdictWatcher {
       if (round && round.status === "running" && (await this.selfRequeue(round, "head_moved"))) {
         await this.safe(() => adapter.removeLabel(v.pr, cfg.github.in_progress_label), `remove ${cfg.github.in_progress_label} on #${v.pr}`);
         this.log(`verdicts: #${v.pr} round ${v.round_no} ended head_moved — cancelled and requeued at the fresh head`);
-        return;
+        return "applied";
       }
       await this.handleAnomaly(
         v.pr,
@@ -370,7 +529,7 @@ export class VerdictWatcher {
         `round ${v.round_no} reported head_moved (reviewed ${v.head_sha.slice(0, 7)}, the PR advanced mid-round) but could not be self-requeued — cap exhausted or no running round`,
         "overdue",
       );
-      return;
+      return "applied";
     }
 
     // NEEDS_HUMAN discipline (2026-08-19, the owner): a park hands a FINISHED
@@ -391,8 +550,21 @@ export class VerdictWatcher {
       if (await this.selfRequeue(round, "needs_human_incomplete")) {
         await this.safe(() => adapter.removeLabel(v.pr, cfg.github.in_progress_label), `remove ${cfg.github.in_progress_label} on #${v.pr}`);
         this.log(`verdicts: #${v.pr} round ${v.round_no} NEEDS_HUMAN without executed passes — requeued, not parked`);
-        return;
+        return "applied";
       }
+    }
+
+    if (round) {
+      const proof = await this.postingProof(round, v);
+      if (proof.kind === "waiting") {
+        store.logEvent("verdict_waiting_posting_receipt", v.pr, { round_no: v.round_no, posting_key: round.posting_key });
+        return "waiting";
+      }
+      if (proof.kind === "failed") {
+        await this.failPostingProof(round, proof.detail ?? "posting receipt invalid");
+        return "failed";
+      }
+      if (proof.kind === "legacy") store.logEvent("posting_receipt_legacy_unknown", v.pr, { round_no: v.round_no });
     }
 
     await this.safe(() => adapter.removeLabel(v.pr, cfg.github.in_progress_label), `remove ${cfg.github.in_progress_label} on #${v.pr}`);
@@ -525,6 +697,7 @@ export class VerdictWatcher {
     // terminal path. Without a successor, ordinary FIFO wake delivery resumes.
     if (!successorPromoted) await this.flushWakes(v.pr);
     this.log(`verdicts: #${v.pr} round ${v.round_no} → ${v.verdict}`);
+    return "applied";
   }
 
   // ---- ledger freshness ---------------------------------------
@@ -948,6 +1121,22 @@ export class VerdictWatcher {
   ): Promise<RoundRecoveryDisposition> {
     const round = this.runningRound(pr, roundNo);
     if (!round || round.status !== "running") return "requeued";
+    if (stage === "settled_without_verdict" && round.posting_key) {
+      const proof = await this.postingProof(round);
+      if (proof.kind === "waiting") return "retryable";
+      if (proof.kind === "confirmed") {
+        await this.failPostingProof(
+          round,
+          `GitHub review ${proof.receipt?.gh_review_id ?? "confirmed"} was posted but the session settled before writing its verdict`,
+          "posted_without_verdict",
+        );
+        return "failed_loud";
+      }
+      if (proof.kind === "failed") {
+        await this.failPostingProof(round, proof.detail ?? "settled without a posting receipt");
+        return "failed_loud";
+      }
+    }
     this.deps.store.logEvent("round_infrastructure_failure", pr, {
       round_id: round.id,
       round_no: roundNo,
@@ -1286,6 +1475,22 @@ export class VerdictWatcher {
         );
         this.log(`verdicts: #${round.pr} round ${round.round_no} cancelled (superseded)`);
         continue;
+      }
+      if (round.posting_key && !existsSync(join(this.deps.verdictDir, `pr-${round.pr}-round-${round.round_no}.json`))) {
+        const proof = await this.postingProof(round);
+        if (proof.kind === "waiting") continue;
+        if (proof.kind === "confirmed") {
+          await this.failPostingProof(
+            round,
+            `GitHub review ${proof.receipt?.gh_review_id ?? "confirmed"} was posted but no verdict file arrived before the round deadline`,
+            "posted_without_verdict",
+          );
+          continue;
+        }
+        if (proof.kind === "failed") {
+          await this.failPostingProof(round, proof.detail ?? "round ended without posting confirmation");
+          continue;
+        }
       }
       const stuck = await this.stuckDisposition(round);
       if (stuck === "verdict_pending") {

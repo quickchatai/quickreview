@@ -381,6 +381,8 @@ describe("shipped round templates", () => {
       expect(text).toContain("scripts/post-review.sh {{n}} <REQUEST_CHANGES|COMMENT> <body-file>");
       expect(text).toContain("scripts/reply-thread.sh {{n}} <comment-id> <body-file>");
       expect(text).toContain("scripts/approve-pr.sh");
+      expect(text).toContain("export QCR_ROUND_NO={{round_no}}");
+      expect(text).toContain("deterministic posting key");
     });
 
     // the ONE corpus rule that is about WHICH LENS RUNS rather than

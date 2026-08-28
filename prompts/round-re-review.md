@@ -64,7 +64,13 @@ moved under you —
 
 ```sh
 export QCR_EXPECTED_HEAD={{head_sha}}
+export QCR_ROUND_NO={{round_no}}
 ```
+
+The guarded script derives this round's deterministic posting key from the PR,
+round and expected head, embeds its marker, and saves GitHub's returned review
+id before you write the verdict. Without that confirmed receipt the daemon will
+not complete this round.
 
 If the script refuses with "head moved" (guard 5), the PR advanced
 while you were reviewing: post NOTHING further on GitHub. Then write the

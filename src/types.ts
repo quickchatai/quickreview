@@ -108,6 +108,8 @@ export interface RoundOrder {
   title: string;
   round_id: number;
   round_no: number;
+  /** identity carried through the guarded shell posting route. */
+  posting_key?: string;
   /** The PR's review age: prior VERDICTED rounds + 1. round_no stays the
    * audit-unique sequence (cancelled rounds included); review_no drives
    * age-keyed behaviour (nit cap) so failed rounds don't age the PR. */
@@ -247,7 +249,7 @@ export interface VerdictFile {
 /** The daemon↔session boundary. B2 codes against this; B3 implements it; B2
  * ships a disk-logging stub so the daemon runs end-to-end without pi. */
 export type SessionCommandRetryResult = "retried" | "round_finished" | "accepted_race" | "retry_failed";
-export type RoundRecoveryDisposition = "requeued" | "exhausted" | "retryable";
+export type RoundRecoveryDisposition = "requeued" | "exhausted" | "retryable" | "failed_loud";
 
 export interface SessionHooks {
   /** Ensure the per-PR session exists (birth on first trigger) and inject the

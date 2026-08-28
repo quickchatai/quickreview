@@ -96,6 +96,11 @@ export interface RoundRow {
   /** GitHub review databaseId — the backfill idempotence key. */
   gh_review_id: number | null;
   gh_commit_id: string | null;
+  /** deterministic shell-post identity and confirmed outcome. Null key
+   * means a legacy round whose verdict cannot be receipt-gated. */
+  posting_key: string | null;
+  posted_event: string | null;
+  posted_at: string | null;
   /** The trigger instant this round answered, copied off pr_state at start so
    * time-to-first-verdict survives the `trigger_ts = null` reset at dispatch. */
   trigger_ts: string | null;
@@ -955,6 +960,9 @@ export class StateStore {
       "ALTER TABLE rounds ADD COLUMN backfilled INTEGER NOT NULL DEFAULT 0",
       "ALTER TABLE rounds ADD COLUMN gh_review_id INTEGER",
       "ALTER TABLE rounds ADD COLUMN gh_commit_id TEXT",
+      "ALTER TABLE rounds ADD COLUMN posting_key TEXT",
+      "ALTER TABLE rounds ADD COLUMN posted_event TEXT",
+      "ALTER TABLE rounds ADD COLUMN posted_at TEXT",
       "ALTER TABLE rounds ADD COLUMN trigger_ts TEXT",
       "ALTER TABLE bot_comments ADD COLUMN round_no INTEGER",
       // Measured usage — nullable, additive.
@@ -1184,6 +1192,27 @@ export class StateStore {
     }
     if (sets.length === 0) return;
     this.db.prepare(`UPDATE rounds SET ${sets.join(", ")} WHERE id = ?`).run(...args, id);
+  }
+
+  stampPostingKey(id: number, postingKey: string): void {
+    this.db.prepare("UPDATE rounds SET posting_key=? WHERE id=? AND posting_key IS NULL").run(postingKey, id);
+  }
+
+  confirmRoundPosting(
+    id: number,
+    receipt: { posting_key: string; actual_event: string; gh_review_id: number | null; gh_commit_id: string; confirmed_at: string },
+  ): boolean {
+    return this.db.prepare(
+      `UPDATE rounds
+          SET gh_review_id=COALESCE(gh_review_id, @gh_review_id),
+              gh_commit_id=COALESCE(gh_commit_id, @gh_commit_id),
+              posted_event=COALESCE(posted_event, @actual_event),
+              posted_at=COALESCE(posted_at, @confirmed_at)
+        WHERE id=@id AND posting_key=@posting_key
+          AND (gh_review_id IS NULL OR @gh_review_id IS NULL OR gh_review_id=@gh_review_id)
+          AND (gh_commit_id IS NULL OR gh_commit_id=@gh_commit_id)
+          AND (posted_event IS NULL OR posted_event=@actual_event)`,
+    ).run({ id, ...receipt }).changes === 1;
   }
 
   /** Rounds that actually DELIVERED a verdict for a PR — backfilled history

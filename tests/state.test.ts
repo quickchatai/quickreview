@@ -629,6 +629,37 @@ describe("stranded rounds", () => {
   });
 });
 
+describe("confirmed round posting linkage", () => {
+  it("binds one deterministic posting key to one GitHub review/head", () => {
+    store.upsertPr(prRow(5408, { state: "reviewing", head_sha: "abc" }));
+    const roundId = store.startRound(5408, "re-review", [], 75);
+    store.stampPostingKey(roundId, "v1:5408:1:abc");
+
+    expect(store.confirmRoundPosting(roundId, {
+      posting_key: "wrong",
+      actual_event: "APPROVE",
+      gh_review_id: 9,
+      gh_commit_id: "abc",
+      confirmed_at: T0.toISOString(),
+    })).toBe(false);
+    expect(store.confirmRoundPosting(roundId, {
+      posting_key: "v1:5408:1:abc",
+      actual_event: "APPROVE",
+      gh_review_id: 9,
+      gh_commit_id: "abc",
+      confirmed_at: T0.toISOString(),
+    })).toBe(true);
+    expect(store.roundsFor(5408)[0]).toMatchObject({ posting_key: "v1:5408:1:abc", gh_review_id: 9, gh_commit_id: "abc", posted_event: "APPROVE" });
+    expect(store.confirmRoundPosting(roundId, {
+      posting_key: "v1:5408:1:abc",
+      actual_event: "COMMENT",
+      gh_review_id: 9,
+      gh_commit_id: "different",
+      confirmed_at: T0.toISOString(),
+    })).toBe(false);
+  });
+});
+
 describe("durable FAILED_LOUD review obligations", () => {
   it("keeps exhausted work owed until explicit operator recovery and projects pipeline health", () => {
     store.upsertPr(prRow(5408, { state: "reviewing", head_sha: "abc123" }));

@@ -34,6 +34,7 @@ import {
   type RoundMemorySeed,
 } from "./memory/context.js";
 import { carryWithheldMark, classifyDelta, recheckFingerprint, type DeltaClass, type DeltaFile } from "./recheck.js";
+import { roundPostingKey } from "./posting-receipt.js";
 import { isFirstPartyDirectivePath } from "./severity.js";
 import type { DispatchAnnouncer } from "./slack/announce.js";
 import { applyEvent, setPrGates } from "./statemachine.js";
@@ -640,11 +641,13 @@ export function buildRoundOrder(args: {
   prBody?: string;
 }): RoundOrder {
   const { pass_plan, addable_lenses } = buildPassPlan(args.cfg, args.files, { body: args.prBody });
+  const headSha = args.tree?.head_sha || args.row.head_sha;
   return {
     pr: args.row.number,
     title: args.row.title,
     round_id: args.roundId,
     round_no: args.roundNo,
+    posting_key: roundPostingKey(args.row.number, args.roundNo, headSha),
     ...(args.reviewNo !== undefined ? { review_no: args.reviewNo } : {}),
     round_type: args.roundType,
     // Kept for compatibility with the rounds table / event log: always the
@@ -656,7 +659,7 @@ export function buildRoundOrder(args: {
     migration_collisions: args.migrationCollisions ?? [],
     migration_precheck_degraded: args.migrationPrecheckDegraded ?? false,
     ...(args.firstPartyDirectives !== undefined ? { first_party_directives: args.firstPartyDirectives } : {}),
-    head_sha: args.tree?.head_sha || args.row.head_sha,
+    head_sha: headSha,
     base_ref: args.tree?.base_ref ?? "",
     base_sha: args.tree?.base_sha ?? "",
     merge_base: args.tree?.merge_base ?? "",
@@ -957,6 +960,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // and the order so the context is seeded from the same sha the passes
       // read. It is bounded and total: the worst case is this round's prompt
       // arriving memory-less a couple of seconds later.
+      store.stampPostingKey(roundId, order.posting_key!);
       const memory = await seedRoundMemory(deps, order, files);
 
       // The round is provisional until the worktree/session/prompt handoff

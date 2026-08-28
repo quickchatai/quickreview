@@ -1,10 +1,11 @@
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
 import type { GateResult } from "../src/gate.js";
 import { StateStore } from "../src/state.js";
+import { postingMarker, roundPostingKey } from "../src/posting-receipt.js";
 import type { SessionHooks, VerdictFile } from "../src/types.js";
 import { AnomalyWakePolicy } from "../src/anomalies.js";
 import { validateVerdict, VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
@@ -16,6 +17,7 @@ class FakeAdapter implements VerdictAdapter {
   calls: string[] = [];
   /** Optional checks read (ci_state stamping); absent by default. */
   listChecks?: (ref: string) => Promise<import("../src/cigate.js").CheckSummary[]>;
+  listReviewsFull?: VerdictAdapter["listReviewsFull"];
   async addLabel(n: number, label: string): Promise<GateResult> {
     this.calls.push(`addLabel:${n}:${label}`);
     return { executed: false, dryRunFile: "d" };
@@ -101,6 +103,36 @@ function write(pr: number, round: number, body: unknown): string {
   const name = `pr-${pr}-round-${round}.json`;
   writeFileSync(join(dir, name), typeof body === "string" ? body : JSON.stringify(body));
   return name;
+}
+
+function stampPosting(pr: number, roundNo: number, head = "abc123"): { roundId: number; key: string; receiptDir: string } {
+  const round = store.roundsFor(pr).find((row) => row.round_no === roundNo)!;
+  const key = roundPostingKey(pr, roundNo, head);
+  store.stampPostingKey(round.id, key);
+  return { roundId: round.id, key, receiptDir: join(dir, "state", "posting-receipts") };
+}
+
+function writePostingReceipt(pr: number, roundNo: number, key: string, actualEvent: "APPROVE" | "REQUEST_CHANGES" | "COMMENT", over: Record<string, unknown> = {}): void {
+  const receiptDir = join(dir, "state", "posting-receipts");
+  mkdirSync(receiptDir, { recursive: true });
+  writeFileSync(join(receiptDir, `pr-${pr}-round-${roundNo}.json`), JSON.stringify({
+    version: 1,
+    posting_key: key,
+    marker: postingMarker(key),
+    pr,
+    round_no: roundNo,
+    head_sha: "abc123",
+    intended_event: actualEvent,
+    actual_event: actualEvent,
+    status: "confirmed",
+    payload_sha256: "a".repeat(64),
+    prepared_at: "2026-08-13T11:59:58Z",
+    confirmed_at: "2026-08-13T11:59:59Z",
+    gh_review_id: 991,
+    gh_commit_id: "abc123",
+    gh_state: actualEvent === "APPROVE" ? "APPROVED" : actualEvent === "REQUEST_CHANGES" ? "CHANGES_REQUESTED" : "COMMENTED",
+    ...over,
+  }));
 }
 
 const verdictFile = (over: Partial<VerdictFile> = {}): VerdictFile => ({
@@ -334,6 +366,75 @@ describe("measured round usage", () => {
     expect(round.status).toBe("done");
     expect(round.tokens_in).toBe(0);
     expect(round.tokens_out).toBe(0);
+  });
+});
+
+describe("confirmed round posting receipts", () => {
+  it("applies a merits verdict only after linking GitHub's returned review id", async () => {
+    reviewingRound(180);
+    const { roundId, key } = stampPosting(180, 1);
+    writePostingReceipt(180, 1, key, "REQUEST_CHANGES");
+
+    expect(await watcher().handleFile(write(180, 1, verdictFile({ pr: 180 })))).toBe(true);
+
+    expect(store.roundsFor(180)[0]).toMatchObject({ status: "done", gh_review_id: 991, gh_commit_id: "abc123", posted_event: "REQUEST_CHANGES" });
+    expect(store.getPr(180)?.state).toBe("awaiting_author");
+    expect(roundId).toBe(store.roundsFor(180)[0]?.id);
+  });
+
+  it("holds a verdict file while the post/local-persistence window is still ambiguous", async () => {
+    reviewingRound(181);
+    stampPosting(181, 1);
+    const name = write(181, 1, verdictFile({ pr: 181 }));
+
+    expect(await watcher({ postingReceiptGraceS: 120 }).handleFile(name)).toBe(false);
+
+    expect(store.roundsFor(181)[0]?.status).toBe("running");
+    expect(store.getPr(181)?.state).toBe("reviewing");
+    expect(existsSync(join(dir, name))).toBe(true);
+    expect(adapter.calls).toEqual([]);
+  });
+
+  it("fails loud after the finite receipt grace instead of trusting or reposting", async () => {
+    reviewingRound(182);
+    stampPosting(182, 1);
+
+    expect(await watcher({ postingReceiptGraceS: 0 }).handleFile(write(182, 1, verdictFile({ pr: 182 })))).toBe(true);
+
+    expect(store.roundsFor(182)[0]).toMatchObject({ status: "cancelled", verdict: null });
+    expect(store.openReviewFailure(182)).toMatchObject({ stage: "posting_receipt", work_owed: 1 });
+    expect(store.reviewedHead(182)).toBeUndefined();
+  });
+
+  it("reconciles the exact bot marker after GitHub acceptance/local crash", async () => {
+    reviewingRound(183);
+    const { key } = stampPosting(183, 1);
+    adapter.listReviewsFull = async () => [{
+      id: 777,
+      user: cfg.github.bot_login,
+      user_type: "Bot",
+      state: "CHANGES_REQUESTED",
+      body: `review body\n\n${postingMarker(key)}`,
+      commit_id: "abc123",
+      submitted_at: "2026-08-13T11:59:59Z",
+    }];
+
+    expect(await watcher({ postingReceiptGraceS: 0 }).handleFile(write(183, 1, verdictFile({ pr: 183 })))).toBe(true);
+
+    expect(store.roundsFor(183)[0]).toMatchObject({ status: "done", gh_review_id: 777, posted_event: "REQUEST_CHANGES" });
+    expect(store.db.prepare("SELECT COUNT(*) c FROM events WHERE kind='posting_receipt_reconciled'").get()).toMatchObject({ c: 1 });
+  });
+
+  it("never requeues a confirmed posted review whose session lost only the verdict", async () => {
+    reviewingRound(184);
+    const { key } = stampPosting(184, 1);
+    writePostingReceipt(184, 1, key, "REQUEST_CHANGES");
+
+    expect(await watcher().recoverInfrastructureFailure(184, 1, "settled_without_verdict", "parent settled")).toBe("failed_loud");
+
+    expect(store.roundsFor(184)[0]).toMatchObject({ status: "cancelled", verdict: null, gh_review_id: 991 });
+    expect(store.openReviewFailure(184)).toMatchObject({ stage: "posted_without_verdict", work_owed: 1 });
+    expect(store.db.prepare("SELECT COUNT(*) c FROM events WHERE kind='round_self_requeued'").get()).toMatchObject({ c: 0 });
   });
 });
 

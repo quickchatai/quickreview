@@ -553,6 +553,7 @@ export interface Config {
     round_first_pass_max_min?: number;
     round_passes_max_min?: number;
     round_finalize_grace_min?: number;
+    posting_receipt_grace_s?: number;
     session_command_unknown_grace_s?: number;
     session_command_unknown_max_checks?: number;
     session_command_max_start_retries?: number;
@@ -670,6 +671,7 @@ export const DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN = 45;
 export const DEFAULT_ROUND_FIRST_PASS_MAX_MIN = 5;
 export const DEFAULT_ROUND_PASSES_MAX_MIN = 35;
 export const DEFAULT_ROUND_FINALIZE_GRACE_MIN = 5;
+export const DEFAULT_POSTING_RECEIPT_GRACE_S = 120;
 export const DEFAULT_SESSION_COMMAND_UNKNOWN_GRACE_S = 60;
 export const DEFAULT_SESSION_COMMAND_UNKNOWN_MAX_CHECKS = 1;
 export const DEFAULT_SESSION_COMMAND_MAX_START_RETRIES = 2;
@@ -727,6 +729,7 @@ export function parseConfig(toml: string): Config {
       round_first_pass_max_min: DEFAULT_ROUND_FIRST_PASS_MAX_MIN,
       round_passes_max_min: DEFAULT_ROUND_PASSES_MAX_MIN,
       round_finalize_grace_min: DEFAULT_ROUND_FINALIZE_GRACE_MIN,
+      posting_receipt_grace_s: DEFAULT_POSTING_RECEIPT_GRACE_S,
       session_command_unknown_grace_s: DEFAULT_SESSION_COMMAND_UNKNOWN_GRACE_S,
       session_command_unknown_max_checks: DEFAULT_SESSION_COMMAND_UNKNOWN_MAX_CHECKS,
       session_command_max_start_retries: DEFAULT_SESSION_COMMAND_MAX_START_RETRIES,

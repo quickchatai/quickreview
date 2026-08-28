@@ -30,12 +30,7 @@ PR="${1:-}"
 BODY_FILE="${2:-}"
 [[ "$PR" =~ ^[0-9]+$ ]] || die "usage: approve-pr.sh <pr-number> [review-body-file]"
 
-if [[ -n "$BODY_FILE" ]]; then
-  [[ -r "$BODY_FILE" ]] || die "unreadable review body file: $BODY_FILE"
-  REVIEW_BODY="$(cat "$BODY_FILE")"
-else
-  REVIEW_BODY="Automated review: approved."
-fi
+REVIEW_BODY=""
 
 # ---- config -----------------------------------------------------------------
 
@@ -76,6 +71,48 @@ TEAM_SLUG="${REVIEW_TEAM##*/}"
 # Anything other than an explicit `false` is treated as dry-run (fail closed).
 [[ "$DRY_RUN" == "false" ]] && LIVE=1 || LIVE=0
 
+# replay guard precedes posting guards: a confirmed approval retry must
+# resume idempotent trigger cleanup even if CI/head/state changed afterwards.
+POSTING_RECEIPT=""
+POSTING_MARKER=""
+POST_ALREADY_CONFIRMED=0
+RECEIPT_LOCK=""
+cleanup_receipt_lock() { [[ -z "$RECEIPT_LOCK" ]] || rmdir "$RECEIPT_LOCK" 2>/dev/null || true; }
+trap cleanup_receipt_lock EXIT
+ROUND_NO="${QCR_ROUND_NO:-}"
+if [[ -n "$ROUND_NO" || -n "${QCR_POSTING_KEY:-}" ]]; then
+  [[ "$ROUND_NO" =~ ^[0-9]+$ ]] || die "QCR_ROUND_NO must be an integer"
+  RECEIPT_HEAD="${QCR_EXPECTED_HEAD:-}"
+  [[ -n "$RECEIPT_HEAD" ]] || die "QCR_EXPECTED_HEAD is required for a receipt-keyed round"
+  EXPECTED_KEY="v1:$PR:$ROUND_NO:${RECEIPT_HEAD,,}"
+  POSTING_KEY="${QCR_POSTING_KEY:-$EXPECTED_KEY}"
+  [[ "$POSTING_KEY" == "$EXPECTED_KEY" ]] || die "QCR_POSTING_KEY mismatch (expected $EXPECTED_KEY)"
+  POSTING_MARKER="<!-- qcr-post:$POSTING_KEY -->"
+  RECEIPT_DIR="${QCR_POSTING_RECEIPT_DIR:-$ROOT/state/posting-receipts}"
+  POSTING_RECEIPT="$RECEIPT_DIR/pr-$PR-round-$ROUND_NO.json"
+  RECEIPT_STATE="$(python3 "$ROOT/scripts/posting-receipt.py" check "$POSTING_RECEIPT" "$POSTING_KEY")"
+  case "$RECEIPT_STATE" in
+    confirmed) POST_ALREADY_CONFIRMED=1 ;;
+    dryrun)
+      if [[ "$LIVE" == "0" ]]; then
+        POST_ALREADY_CONFIRMED=1
+      else
+        mv "$POSTING_RECEIPT" "$POSTING_RECEIPT.dryrun-$(date -u +%Y%m%dT%H%M%SZ)"
+        RECEIPT_LOCK="$POSTING_RECEIPT.lock"
+        mkdir -p "$RECEIPT_DIR"
+        mkdir "$RECEIPT_LOCK" 2>/dev/null || die "another posting attempt owns $POSTING_KEY"
+      fi
+      ;;
+    prepared) die "posting outcome is still unknown for $POSTING_KEY — refusing a duplicate POST; let the daemon reconcile the marker" ;;
+    none)
+      RECEIPT_LOCK="$POSTING_RECEIPT.lock"
+      mkdir -p "$RECEIPT_DIR"
+      mkdir "$RECEIPT_LOCK" 2>/dev/null || die "another posting attempt owns $POSTING_KEY"
+      ;;
+    *) die "invalid or mismatched posting receipt for $POSTING_KEY" ;;
+  esac
+fi
+
 SEQ=0
 record() { # record <kind> <method> <path> <body-json-or-empty> <note>
   mkdir -p "$DRYRUN_DIR"
@@ -110,6 +147,7 @@ token() {
   printf '%s' "$TOKEN"
 }
 
+CALL_RESPONSE=""
 call() { # call <method> <path> <body-json-or-empty> <note>
   local out status
   out="$(mktemp)"
@@ -137,7 +175,7 @@ call() { # call <method> <path> <body-json-or-empty> <note>
   fi
   echo "$1 $2 -> $status  ($4)"
   case "$status" in
-    2*) rm -f "$out" ;;
+    2*) CALL_RESPONSE="$(cat "$out")"; rm -f "$out" ;;
     404) echo "  not present, treating as already cleared: $(head -c 200 "$out")"; rm -f "$out" ;;
     *)   echo "  $(head -c 300 "$out")" >&2; rm -f "$out"; die "$1 $2 failed with $status" ;;
   esac
@@ -171,16 +209,43 @@ urlenc() { python3 -c 'import sys,urllib.parse; sys.stdout.write(urllib.parse.qu
 # shellcheck source=scripts/guards.sh
 . "$ROOT/scripts/guards.sh"
 
-guard_require_open
-guard_require_expected_head "$GUARD_HEAD_SHA"   # guard 5
-guard_require_green_ci "$GUARD_HEAD_SHA"
+if [[ "$POST_ALREADY_CONFIRMED" == "0" ]]; then
+  guard_require_open
+  guard_require_expected_head "$GUARD_HEAD_SHA"   # guard 5
+  guard_require_green_ci "$GUARD_HEAD_SHA"
+  if [[ -n "$BODY_FILE" ]]; then
+    [[ -r "$BODY_FILE" ]] || die "unreadable review body file: $BODY_FILE"
+    REVIEW_BODY="$(cat "$BODY_FILE")"
+  else
+    REVIEW_BODY="Automated review: approved."
+  fi
+  [[ -z "$POSTING_MARKER" ]] || REVIEW_BODY="$REVIEW_BODY
+
+$POSTING_MARKER"
+else
+  GUARD_HEAD_SHA="$RECEIPT_HEAD"
+fi
 
 # ---- 1. approve -------------------------------------------------------------
 
-REVIEW_BODY_JSON="$(REVIEW_BODY="$REVIEW_BODY" python3 -c \
-  'import json,os,sys; json.dump({"event":"APPROVE","body":os.environ["REVIEW_BODY"]}, sys.stdout)')"
-do_mutation create_review POST "/repos/$REPO/pulls/$PR/reviews" "$REVIEW_BODY_JSON" \
-  "approve #$PR"
+REVIEW_BODY_JSON="$(REVIEW_BODY="$REVIEW_BODY" REVIEW_HEAD="$GUARD_HEAD_SHA" python3 -c \
+  'import json,os,sys; json.dump({"event":"APPROVE","body":os.environ["REVIEW_BODY"],"commit_id":os.environ["REVIEW_HEAD"]}, sys.stdout)')"
+if [[ -n "$POSTING_RECEIPT" && "$POST_ALREADY_CONFIRMED" == "0" ]]; then
+  python3 "$ROOT/scripts/posting-receipt.py" prepare "$POSTING_RECEIPT" "$POSTING_KEY" "$PR" "$ROUND_NO" "$GUARD_HEAD_SHA" "APPROVE" "APPROVE" "$REVIEW_BODY_JSON"
+fi
+if [[ "$POST_ALREADY_CONFIRMED" == "0" ]]; then
+  do_mutation create_review POST "/repos/$REPO/pulls/$PR/reviews" "$REVIEW_BODY_JSON" \
+    "approve #$PR"
+else
+  echo "posting receipt already exists for $POSTING_KEY — skipping duplicate approval"
+fi
+if [[ -n "$POSTING_RECEIPT" && "$POST_ALREADY_CONFIRMED" == "0" ]]; then
+  if [[ "$LIVE" == "1" ]]; then
+    QCR_POST_RESPONSE="$CALL_RESPONSE" python3 "$ROOT/scripts/posting-receipt.py" confirm "$POSTING_RECEIPT" "$POSTING_KEY" "$PR" "$ROUND_NO" "$GUARD_HEAD_SHA" "APPROVE" "APPROVE" "$REVIEW_BODY_JSON"
+  else
+    python3 "$ROOT/scripts/posting-receipt.py" dryrun "$POSTING_RECEIPT" "$POSTING_KEY" "$PR" "$ROUND_NO" "$GUARD_HEAD_SHA" "APPROVE" "APPROVE" "$REVIEW_BODY_JSON"
+  fi
+fi
 # The reviewed-head mark, only for an approval that really reached GitHub (the
 # same rule the gate's after-step follows). reads this mark.
 if [[ "$LIVE" == "1" ]]; then guard_stamp_reviewed_head "$GUARD_HEAD_SHA" "APPROVE"; fi

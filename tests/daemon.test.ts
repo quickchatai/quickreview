@@ -11,6 +11,7 @@ import { createDaemon, type DaemonAdapter } from "../src/daemon.js";
 import type { GateResult } from "../src/gate.js";
 import type { PrRef } from "../src/github.js";
 import { StateStore } from "../src/state.js";
+import { postingMarker } from "../src/posting-receipt.js";
 
 const PR = 101;
 
@@ -120,6 +121,26 @@ describe("daemon wiring", () => {
       // Stub hooks wrote the round order to disk.
       const orders = readdirSync(join(root, "state", "round-orders"));
       expect(orders.length).toBe(1);
+
+      // Session posts through the guarded dry-run route, whose receipt is the
+      // prerequisite for accepting the verdict.
+      const running = store.roundsFor(PR)[0]!;
+      const receiptDir = join(root, "state", "posting-receipts");
+      mkdirSync(receiptDir, { recursive: true });
+      writeFileSync(join(receiptDir, `pr-${PR}-round-1.json`), JSON.stringify({
+        version: 1,
+        posting_key: running.posting_key,
+        marker: postingMarker(running.posting_key!),
+        pr: PR,
+        round_no: 1,
+        head_sha: "headsha1",
+        intended_event: "APPROVE",
+        actual_event: "APPROVE",
+        status: "dryrun",
+        payload_sha256: "a".repeat(64),
+        prepared_at: new Date().toISOString(),
+        confirmed_at: new Date().toISOString(),
+      }));
 
       // Session finishes: verdict file appears; the watcher applies it.
       writeFileSync(

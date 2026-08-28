@@ -462,18 +462,25 @@ export class GitHubAdapter {
     return res.map((r) => ({ id: r.id, user: r.user?.login ?? "", state: r.state, commit_id: r.commit_id }));
   }
 
-  /** Full review rows (bodies included) — read-only, for the compare harness. */
+  /** Full review rows (bodies included) — read-only, for compare and
+   * posting-marker reconciliation. Paginated so long-lived PRs cannot hide the
+   * accepted review beyond the first 100 rows. */
   async listReviewsFull(n: number): Promise<ReviewFull[]> {
-    const res = await this.request<any[]>("GET", `/repos/${this.owner}/${this.repo}/pulls/${n}/reviews?per_page=100`);
-    return res.map((r) => ({
-      id: r.id,
-      user: r.user?.login ?? "",
-      user_type: r.user?.type ?? "User",
-      state: r.state,
-      body: r.body ?? "",
-      commit_id: r.commit_id,
-      submitted_at: r.submitted_at ?? null,
-    }));
+    const out: ReviewFull[] = [];
+    for (let page = 1; ; page++) {
+      const res = await this.request<any[]>("GET", `/repos/${this.owner}/${this.repo}/pulls/${n}/reviews?per_page=100&page=${page}`);
+      out.push(...res.map((r) => ({
+        id: r.id,
+        user: r.user?.login ?? "",
+        user_type: r.user?.type ?? "User",
+        state: r.state,
+        body: r.body ?? "",
+        commit_id: r.commit_id,
+        submitted_at: r.submitted_at ?? null,
+      })));
+      if (res.length < 100) break;
+    }
+    return out;
   }
 
   /** Top-level PR conversation comments — read-only, the sweep's

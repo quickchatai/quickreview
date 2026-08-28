@@ -51,6 +51,7 @@ describe("parseConfig", () => {
     expect(cfg.daemon.round_first_pass_max_min).toBe(5);
     expect(cfg.daemon.round_passes_max_min).toBe(35);
     expect(cfg.daemon.round_finalize_grace_min).toBe(5);
+    expect(cfg.daemon.posting_receipt_grace_s).toBe(120);
     const invalid = readFileSync(configPath, "utf8").replace("round_passes_max_min = 35", "round_passes_max_min = 45");
     expect(() => parseConfig(invalid)).toThrow(/round_first_pass_max_min/);
   });
