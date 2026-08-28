@@ -390,6 +390,31 @@ describe("pinned heartbeat", () => {
     expect(slack.updates[1].text).toContain("2026-08-17T09:10:00Z");
   });
 
+  it("keeps FAILED_LOUD review debt visible in the pinned heartbeat", async () => {
+    store.upsertPr({ number: 5408, state: "reviewing", head_sha: "abc", title: "PR", author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+    const roundId = store.startRound(5408, "first", ["pass-baseline"], 75);
+    store.openReviewFailure({ pr: 5408, command_id: "cmd-5408", round_id: roundId, round_no: 1, head_sha: "abc", stage: "command_start", detail: "no start", attempts: 2, retry_cap: 2 });
+
+    const a = announcer();
+    await a.anomaly({ pr: 5408, round_no: 1, kind: "failed_loud", deadline_min: 75, incident_id: "review-failure:cmd-5408" });
+    const incidentTs = store.slackPost("review-failure:cmd-5408")?.ts;
+    await a.heartbeat();
+    expect(slack.posts.some((post) => post.text.includes("PIPELINE FAILED · 1 review needs u"))).toBe(true);
+
+    store.recoverReviewFailure(5408, "operator-rerun");
+    store.upsertPr({ number: 5409, state: "reviewing", head_sha: "def", title: "PR 2", author: "bob", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+    const round2 = store.startRound(5409, "first", ["pass-baseline"], 75);
+    store.openReviewFailure({ pr: 5409, command_id: "cmd-5409", round_id: round2, round_no: 1, head_sha: "def", stage: "command_start", detail: "no start", attempts: 2, retry_cap: 2 });
+    await a.anomaly({ pr: 5409, round_no: 1, kind: "failed_loud", deadline_min: 75, incident_id: "review-failure:cmd-5409" });
+    const incidentTs2 = store.slackPost("review-failure:cmd-5409")?.ts;
+    store.recoverReviewFailure(5409, "operator-rerun");
+
+    at("2026-08-17T09:01:00.000Z");
+    await a.heartbeat();
+    expect(slack.updates).toContainEqual({ ts: incidentTs, text: expect.stringContaining("recovered via operator-rerun") });
+    expect(slack.updates).toContainEqual({ ts: incidentTs2, text: expect.stringContaining("recovered via operator-rerun") });
+  });
+
   it("ignores a refused pin (no_permission — the owner may pin by hand)", async () => {
     slack.pinResult = { ok: false, error: "no_permission" };
     const a = announcer();

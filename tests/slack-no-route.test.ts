@@ -14,7 +14,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { parseConfig } from "../src/config.js";
-import { StateStore } from "../src/state.js";
+import { StateStore, type StatusSnapshot } from "../src/state.js";
 import { createWebhookServer } from "../src/webhook.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -23,11 +23,12 @@ const SECRET = "test-webhook-secret";
 let store: StateStore;
 let server: ReturnType<typeof createWebhookServer>;
 let base: string;
+let pipeline: StatusSnapshot["pipeline"] = { healthy: true, failed_loud: 0, causes: [] };
 
 beforeAll(async () => {
   store = new StateStore(":memory:");
   const cfg = parseConfig(readFileSync(join(root, "config.toml"), "utf8"));
-  server = createWebhookServer({ cfg, store, secret: SECRET, onInterpretation: async () => {}, log: () => {} });
+  server = createWebhookServer({ cfg, store, secret: SECRET, onInterpretation: async () => {}, pipelineHealth: () => pipeline, log: () => {} });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });
@@ -68,12 +69,24 @@ describe("no Slack HTTP route exists", () => {
   it("serves the two routes the daemon actually has", async () => {
     const health = await fetch(`${base}/health`);
     expect(health.status).toBe(200);
-    expect(await health.json()).toEqual({ ok: true });
+    expect(await health.json()).toEqual({ ok: true, process: "alive", pipeline });
 
     const { body, headers } = signedDelivery();
     const hook = await fetch(`${base}/webhook`, { method: "POST", body, headers });
     expect(hook.status).toBe(200);
     expect(((await hook.json()) as { ok: boolean }).ok).toBe(true);
+  });
+
+  it("reports pipeline failure without making a live process fail its liveness probe", async () => {
+    pipeline = {
+      healthy: false,
+      failed_loud: 1,
+      causes: [{ key: "review-failure:cmd-1", pr: 5408, since: "2026-08-28T10:00:00Z", stage: "command_start", detail: "no start", next_action: "operator_unwedge" }],
+    };
+    const health = await fetch(`${base}/health`);
+    expect(health.status).toBe(200);
+    expect(await health.json()).toEqual({ ok: true, process: "alive", pipeline });
+    pipeline = { healthy: true, failed_loud: 0, causes: [] };
   });
 
   it("404s every plausible Slack path, on GET and on POST", async () => {

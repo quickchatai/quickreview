@@ -249,9 +249,12 @@ export function heartbeatMessage(m: {
   max_concurrent: number;
   queued: number;
   dry_run: boolean;
+  failed_loud?: number;
+  recovered_incident?: string;
 }): string {
   return (
     `💓 review daemon alive — ${isoSeconds(m.refreshed_at)} · ${m.running}/${m.max_concurrent} rounds running · ` +
-    `${m.queued} queued${m.dry_run ? " · DRY-RUN" : ""}`
+    `${m.queued} queued${m.failed_loud ? ` · ⛔ PIPELINE FAILED · ${m.failed_loud} review${m.failed_loud === 1 ? "" : "s"} needs u` : ""}` +
+    `${m.recovered_incident ? ` · ✓ recovered ${m.recovered_incident}` : ""}${m.dry_run ? " · DRY-RUN" : ""}`
   );
 }

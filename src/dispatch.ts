@@ -710,6 +710,11 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
   const dispatched: RoundOrder[] = [];
   const running = new Set(store.runningRounds().map((r) => r.pr));
   const commandEligible = queuedInOrder(store).filter((row) => {
+    const failure = store.openReviewFailure(row.number);
+    if (failure) {
+      log(`dispatch: #${row.number} held FAILED_LOUD (${failure.incident_id}); operator u required`);
+      return false;
+    }
     const active = store.blockingSessionCommand(`pr-${row.number}`);
     if (!active) return true;
     log(`dispatch: #${row.number} skipped — session command ${active.id} is ${active.status}`);

@@ -151,6 +151,9 @@ function barSegments(view: BoardView, alerts: boolean): string[] {
     case "ok":
       health = `${FG.approve}●${RESET} daemon ok (hb ${view.health.heartbeatAgeS}s)`;
       break;
+    case "pipeline_unhealthy":
+      health = `${FG.anomaly}⛔ daemon alive · PIPELINE FAILED · ${view.health.causes.length} (hb ${view.health.heartbeatAgeS}s)${RESET}`;
+      break;
     case "stale":
       health = `${WARN}▲ DATA STALE (${view.health.dataAgeS}s)${DRESET}`;
       break;
@@ -165,7 +168,7 @@ function barSegments(view: BoardView, alerts: boolean): string[] {
   // so loudly, with how many rounds still have to finish before a deploy is
   // safe and how many webhook deliveries were dropped so far.
   const drainSeg = s?.draining
-    ? `${FG.anomaly}⛔ DRAINING — ${s.running_rounds} round${s.running_rounds === 1 ? "" : "s"} finishing · ${s.drained_deliveries ?? 0} dropped${RESET}`
+    ? `${FG.anomaly}⛔ DRAINING — ${s.running_rounds} round${s.running_rounds === 1 ? "" : "s"} finishing · ${s.drain_failed_loud ?? 0} failed loud · ${s.drained_deliveries ?? 0} dropped${RESET}`
     : "";
   const td = s?.thread_decisions;
   const breakerSeg = td && (td.breaker_state !== "closed" || td.failed > 0)
@@ -198,7 +201,9 @@ export function alertZone(view: BoardView, cols: number): { x1: number; x2: numb
 
 function styledRow(pr: SnapshotPr, selected: boolean, width: number, now: Date, repo: string | undefined): string {
   const color = stateColor(pr.stale_recheck ? "reviewing" : pr.state);
-  const chip = verdictChip(pr.last_verdict);
+  const chip = pr.review_failure
+    ? `${FG.anomaly}FAILED_LOUD${RESET}`
+    : verdictChip(pr.last_verdict);
   const rounds = pr.rounds ? `${FG.dim}r${pr.rounds}${RESET}` : "";
   const head = `${color}${glyphFor(pr)} ${STRONG}#${pr.number}${RESET}`;
   const meta = [`${FG.author}${pr.author ?? ""}${RESET}`, `${FG.dim}${fmtAge(pr.updated_at, now)}${RESET}`, rounds, chip]
@@ -327,6 +332,15 @@ export function detailLines(
   lines.push(truncate(`spend $${detail.spend_usd.toFixed(2)} · head ${(detail.head_sha ?? "").slice(0, 7)} · ${trig}`, width));
   if (detail.labels && detail.labels.length > 0) {
     lines.push(truncate(detail.labels.map((l) => `${FG.accent}[${sanitizeText(l)}]${RESET}`).join(" "), width));
+  }
+  if (pr.review_failure) {
+    const command = pr.review_failure.command_id ? ` · ${pr.review_failure.command_id}` : "";
+    const round = pr.review_failure.round_no !== null ? ` · round ${pr.review_failure.round_no}` : "";
+    lines.push(truncate(
+      `${FG.anomaly}${STRONG}FAILED_LOUD${RESET}${FG.anomaly} · ${pr.review_failure.stage}${command}${round} · attempt ${pr.review_failure.attempts}/${pr.review_failure.retry_cap} · ${fmtAge(pr.review_failure.failed_at, now)} old${RESET}`,
+      width,
+    ));
+    lines.push(truncate(`${FG.anomaly}${oneLine(pr.review_failure.detail)} · press u to recover${RESET}`, width));
   }
   lines.push(`${FG.dim}${"─".repeat(Math.max(0, width))}${RESET}`);
   // status.json advances every poll and therefore owns CURRENT timing/plan;

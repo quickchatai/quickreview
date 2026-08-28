@@ -92,8 +92,9 @@ export interface VerdictAnnouncement {
 export interface AnomalyAnnouncement {
   pr: number;
   round_no: number | null;
-  kind: "malformed" | "overdue";
+  kind: "malformed" | "overdue" | "failed_loud";
   deadline_min: number;
+  incident_id?: string;
 }
 
 export interface SupersededAnnouncement {
@@ -390,14 +391,16 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
    * an approval. A round-less anomaly has nothing to say and stays silent. */
   async anomaly(a: AnomalyAnnouncement): Promise<void> {
     if (a.round_no === null) return;
-    const cause = a.kind === "overdue" ? "round.overdue" : "round.malformed_verdict";
+    const cause = a.kind === "overdue" ? "round.overdue" : a.kind === "failed_loud" ? "review.failed_loud" : "round.malformed_verdict";
     // An anomaly is a genuine escalation: it may spend the day's one bypass.
     if (!this.announcementAllowed(cause, a.pr, true)) return;
     const text =
       a.kind === "overdue"
         ? causeMessage(this.deps.cfg, { cause: "round.overdue", pr: a.pr, round_no: a.round_no, deadline_min: a.deadline_min })
-        : causeMessage(this.deps.cfg, { cause: "round.malformed_verdict", pr: a.pr, round_no: a.round_no });
-    await this.post({ idemKey: `${cause}:${a.pr}:${a.round_no}`, kind: "announce", pr: a.pr, text });
+        : a.kind === "failed_loud"
+          ? `⛔ #${a.pr} round ${a.round_no} exhausted automatic recovery — review work is still owed. Use u on the board to recover.`
+          : causeMessage(this.deps.cfg, { cause: "round.malformed_verdict", pr: a.pr, round_no: a.round_no });
+    await this.post({ idemKey: a.incident_id ?? `${cause}:${a.pr}:${a.round_no}`, kind: "announce", pr: a.pr, text });
   }
 
   /** A PR still waiting for a slot. This may be the FIRST event on the PR, in
@@ -525,11 +528,29 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
   async heartbeat(): Promise<string | undefined> {
     if (!this.enabled) return undefined;
     const { store, cfg, slack } = this.deps;
+    const refreshedAt = this.now();
+    const recoveries = store.recentReviewRecoveries(new Date(refreshedAt.getTime() - 10 * 60_000).toISOString());
+    for (const recovered of recoveries) {
+      const incidentPost = store.slackPost(recovered.incident_id);
+      if (!incidentPost?.ts) continue;
+      try {
+        await slack.updateMessage({
+          channel: cfg.slack.channel,
+          ts: incidentPost.ts,
+          text: `✓ #${recovered.pr} review failure recovered via ${recovered.recovery ?? "operator action"} — ${recovered.incident_id}`,
+        });
+      } catch (err) {
+        this.log("slack: failure recovery update threw", err);
+      }
+    }
+    const recovered = recoveries[0];
     const text = heartbeatMessage({
-      refreshed_at: this.now().toISOString(),
+      refreshed_at: refreshedAt.toISOString(),
       running: store.runningRounds().length,
       max_concurrent: cfg.daemon.max_concurrent_rounds,
       queued: store.allPrs().filter((p) => p.state === "queued" && !p.paused).length,
+      failed_loud: store.openReviewFailures().length,
+      ...(recovered ? { recovered_incident: recovered.incident_id } : {}),
       dry_run: cfg.dry_run,
     });
     const existing = store.slackPost(HEARTBEAT_IDEM_KEY);

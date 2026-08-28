@@ -347,7 +347,8 @@ describe("anomaly paths", () => {
     expect(overseer[0]).toContain("ANOMALY (malformed)");
     expect(adapter.calls).toEqual([`removeLabel:200:${cfg.github.in_progress_label}`]);
     expect(adapter.calls.some((c) => c.includes(cfg.github.reviewed_label))).toBe(false);
-    expect(store.getPr(200)!.state).toBe("tracked"); // no park (retired 2026-08-19)
+    expect(store.getPr(200)!.state).toBe("queued"); // FAILED_LOUD: review work remains owed
+    expect(store.openReviewFailure(200)?.stage).toBe("malformed_verdict");
     const round = store.db.prepare("SELECT status, verdict FROM rounds WHERE id = ?").get(roundId) as any;
     expect(round.status).toBe("overdue");
     expect(round.verdict).toBeNull();
@@ -375,7 +376,8 @@ describe("anomaly paths", () => {
     const { hooks, overseer } = recordingHooks();
     await watcher({}, hooks).handleFile(write(201, 1, verdictFile({ pr: 201, verdict: "APPROVED" as any })));
     expect(overseer[0]).toContain("ANOMALY (malformed)");
-    expect(store.getPr(201)!.state).toBe("tracked");
+    expect(store.getPr(201)!.state).toBe("queued");
+    expect(store.openReviewFailure(201)?.work_owed).toBe(1);
   });
 
   it("an overdue round returns to the standing state, never approved", async () => {
@@ -403,7 +405,8 @@ describe("anomaly paths", () => {
     expect(overseer[0]).toContain("ANOMALY (overdue)");
     // the durable anomaly record rides beside the inject file.
     expect(overdueStore.anomalies()).toMatchObject([{ kind: "overdue", pr: 300, round_no: 1 }]);
-    expect(overdueStore.getPr(300)!.state).toBe("tracked");
+    expect(overdueStore.getPr(300)!.state).toBe("queued");
+    expect(overdueStore.openReviewFailure(300)?.stage).toBe("round_deadline");
     expect((overdueStore.db.prepare("SELECT status FROM rounds WHERE id = ?").get(roundId) as any).status).toBe("overdue");
     // No reviewer nomination anywhere on the anomaly path either.
     expect(adapter.calls.every((c) => c.startsWith("addLabel") || c.startsWith("removeLabel"))).toBe(true);
@@ -473,7 +476,7 @@ describe("held wakes are flushed at round end", () => {
     expect(store.heldWakes(100)).toHaveLength(0);
   });
 
-  it("delivers them when the round is abandoned as overdue", async () => {
+  it("keeps them behind FAILED_LOUD work when the round is abandoned as overdue", async () => {
     const later = new Date(Date.now() + (cfg.daemon.round_deadline_min + 10) * 60_000);
     reviewingRound(101);
     store.holdWake(101, "author says: ping", "author_reply");
@@ -482,8 +485,9 @@ describe("held wakes are flushed at round end", () => {
     const w = new VerdictWatcher({ cfg, store, adapter, hooks, verdictDir: dir, now: () => later });
 
     expect(await w.checkDeadlines()).toEqual([101]);
-    expect(injects).toEqual(["101:author says: ping"]);
-    expect(store.heldWakes(101)).toHaveLength(0);
+    expect(injects).toEqual([]);
+    expect(store.heldWakes(101)).toHaveLength(1);
+    expect(store.openReviewFailure(101)?.work_owed).toBe(1);
   });
 
   it("leaves a wake held while the round is still running", async () => {

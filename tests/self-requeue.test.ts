@@ -188,7 +188,13 @@ describe("bounded infrastructure-stage recovery", () => {
     expect(await v.recoverInfrastructureFailure(291, 1, "running_hard_bound", "fixed bound exhausted")).toBe("exhausted");
     expect(killed).toEqual([291]);
     expect(store.roundsFor(291)[0]).toMatchObject({ status: "cancelled", cancel_cause: "infrastructure_failure", verdict: null });
-    expect(store.getPr(291)?.state).toBe("reviewing"); // promotes this to canonical FAILED_LOUD
+    expect(store.getPr(291)?.state).toBe("queued");
+    expect(store.openReviewFailure(291)).toMatchObject({
+      work_owed: 1,
+      stage: "running_hard_bound",
+      attempts: DEFAULT_MAX_SELF_REQUEUES,
+      next_action: "operator_unwedge",
+    });
   });
 });
 
@@ -226,7 +232,8 @@ describe("stuck-round detection + self-requeue", () => {
 
     expect(await watcher(hooks).checkDeadlines()).toEqual([301]);
     expect(roundStatus(roundId)).toBe("overdue");
-    expect(store.getPr(301)!.state).toBe("tracked"); // no park (retired 2026-08-19): returned to standing state
+    expect(store.getPr(301)!.state).toBe("queued"); // FAILED_LOUD hold: work remains owed
+    expect(store.openReviewFailure(301)?.stage).toBe("round_deadline");
     expect(overseer.some((m) => m.startsWith("ANOMALY (overdue)"))).toBe(true);
     expect(events("round_self_requeued")).toHaveLength(0);
   });
@@ -237,7 +244,8 @@ describe("stuck-round detection + self-requeue", () => {
     const { hooks } = hooksWith(undefined);
 
     expect(await watcher(hooks).checkDeadlines()).toEqual([302]);
-    expect(store.getPr(302)!.state).toBe("tracked");
+    expect(store.getPr(302)!.state).toBe("queued");
+    expect(store.openReviewFailure(302)?.work_owed).toBe(1);
     expect(events("round_self_requeued")).toHaveLength(0);
   });
 
@@ -250,7 +258,8 @@ describe("stuck-round detection + self-requeue", () => {
     };
 
     expect(await watcher(hooks).checkDeadlines()).toEqual([303]);
-    expect(store.getPr(303)!.state).toBe("tracked");
+    expect(store.getPr(303)!.state).toBe("queued");
+    expect(store.openReviewFailure(303)?.work_owed).toBe(1);
     expect(events("round_self_requeued")).toHaveLength(0);
   });
 
@@ -300,7 +309,8 @@ describe("the per-head cap", () => {
     pastDeadline();
     expect(await w.checkDeadlines()).toEqual([310]);
     expect(roundStatus(lastRoundId)).toBe("overdue");
-    expect(store.getPr(310)!.state).toBe("tracked"); // no park: returned to standing state, anomaly raised
+    expect(store.getPr(310)!.state).toBe("queued"); // FAILED_LOUD, not an ordinary standing state
+    expect(store.openReviewFailure(310)?.work_owed).toBe(1);
     expect(events("round_self_requeued")).toHaveLength(cap); // unchanged
     expect(events("self_requeue_cap_exhausted")).toHaveLength(1);
     expect(events("self_requeue_cap_exhausted")[0]!.payload).toMatchObject({ head_sha: "abc123", attempts: cap, cap });
@@ -503,7 +513,8 @@ describe("live-but-stuck recovery", () => {
     pastDeadline();
     expect(await w.checkDeadlines()).toEqual([312]);
     expect(roundStatus(roundId)).toBe("overdue");
-    expect(store.getPr(312)!.state).toBe("tracked");
+    expect(store.getPr(312)!.state).toBe("queued");
+    expect(store.openReviewFailure(312)?.work_owed).toBe(1);
   });
 });
 
@@ -932,7 +943,8 @@ describe("head_moved outcome — a guard-5 refusal lands cheaply, session surviv
     reviewingRound(341);
     headMovedFile(341, latestRoundNo());
     await w.sweep();
-    expect(store.getPr(341)!.state).toBe("tracked"); // standing-verdict state, never an approve
+    expect(store.getPr(341)!.state).toBe("queued"); // FAILED_LOUD, never an approve
+    expect(store.openReviewFailure(341)?.work_owed).toBe(1);
     expect(events("self_requeue_cap_exhausted")).toHaveLength(1);
     expect(events("round_self_requeued")).toHaveLength(DEFAULT_MAX_SELF_REQUEUES);
     expect(events("round_overdue")).toHaveLength(1); // the anomaly landing

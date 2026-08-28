@@ -42,7 +42,7 @@ export interface FeedWriteResult {
 
 /** Health remains part of the feed writer call contract even though the
  * snapshot is now the only place it is observed. */
-export type FeedHealth = "ok" | "stale" | "unreachable";
+export type FeedHealth = "ok" | "pipeline_unhealthy" | "stale" | "unreachable";
 
 /** Bound both dedupe memory and the disk journal. On overflow the oldest half
  * is discarded in one atomic compaction, avoiding a rewrite on every poll. */
@@ -105,6 +105,9 @@ export interface TuiView {
     max_concurrent_rounds?: number;
     today_spend_usd?: number;
     total_spend_usd?: number;
+    pipeline_healthy?: boolean;
+    pipeline_causes?: Array<{ key: string; pr: number | null }>;
+    pipeline_recoveries?: Array<{ key: string; pr: number }>;
   };
   /** The row the owner is pointing at — the shared referent for "this one". */
   selected?: {
@@ -213,6 +216,13 @@ export function buildTuiView(src: ViewSource): TuiView {
       max_concurrent_rounds: src.snapshot?.max_concurrent_rounds,
       today_spend_usd: src.snapshot?.today_spend_usd,
       total_spend_usd: src.snapshot?.total_spend_usd,
+      ...(src.snapshot?.pipeline
+        ? {
+            pipeline_healthy: src.snapshot.pipeline.healthy,
+            pipeline_causes: src.snapshot.pipeline.causes.map((cause) => ({ key: cause.key, pr: cause.pr })),
+            pipeline_recoveries: (src.snapshot.pipeline.recoveries ?? []).map((recovery) => ({ key: recovery.key, pr: recovery.pr })),
+          }
+        : {}),
     },
     ...(sel
       ? {

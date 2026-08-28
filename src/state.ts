@@ -24,6 +24,25 @@ export type PrLifecycleState =
  * default is a full round. */
 export type TriggerProvenance = "human" | "system";
 
+export interface ReviewFailureRow {
+  incident_id: string;
+  pr: number;
+  command_id: string | null;
+  round_id: number | null;
+  round_no: number | null;
+  head_sha: string;
+  stage: string;
+  detail: string;
+  attempts: number;
+  retry_cap: number;
+  failed_at: string;
+  updated_at: string;
+  recovered_at: string | null;
+  recovery: string | null;
+  next_action: "operator_unwedge" | "closed";
+  work_owed: number;
+}
+
 export interface SuccessorObligationRow {
   pr: number;
   predecessor_round_id: number;
@@ -632,6 +651,29 @@ CREATE TABLE IF NOT EXISTS successor_obligations (
   reason               TEXT NOT NULL,
   updated_at           TEXT NOT NULL
 );
+-- canonical FAILED_LOUD review debt. Orthogonal to GitHub lifecycle:
+-- a PR may be queued while this hold prevents dispatch. The row remains until
+-- explicit operator recovery, so exhausted work can never look merely tracked.
+CREATE TABLE IF NOT EXISTS review_failures (
+  incident_id  TEXT PRIMARY KEY,
+  pr           INTEGER NOT NULL,
+  command_id   TEXT,
+  round_id     INTEGER,
+  round_no     INTEGER,
+  head_sha     TEXT NOT NULL,
+  stage        TEXT NOT NULL,
+  detail       TEXT NOT NULL,
+  attempts     INTEGER NOT NULL,
+  retry_cap    INTEGER NOT NULL,
+  failed_at    TEXT NOT NULL,
+  updated_at   TEXT NOT NULL,
+  recovered_at TEXT,
+  recovery     TEXT,
+  next_action  TEXT NOT NULL,
+  work_owed    INTEGER NOT NULL CHECK(work_owed IN (0,1))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS review_failures_one_open_pr
+  ON review_failures(pr) WHERE work_owed=1;
 -- Approval withheld for red CI: one row per PR, the head whose
 -- approval was withheld and why. Presence of a row is the promise the gate
 -- makes to the author — "this is waiting on CI alone" — and the thing the
@@ -2140,6 +2182,142 @@ export class StateStore {
     this.db.prepare("DELETE FROM approval_withheld WHERE pr = ?").run(pr);
   }
 
+  // ---- durable FAILED_LOUD review debt -----------------------
+
+  openReviewFailure(pr: number): ReviewFailureRow | undefined;
+  openReviewFailure(input: {
+    pr: number;
+    command_id?: string | null;
+    round_id?: number | null;
+    round_no?: number | null;
+    head_sha: string;
+    stage: string;
+    detail: string;
+    attempts: number;
+    retry_cap: number;
+  }): ReviewFailureRow;
+  openReviewFailure(
+    arg: number | {
+      pr: number;
+      command_id?: string | null;
+      round_id?: number | null;
+      round_no?: number | null;
+      head_sha: string;
+      stage: string;
+      detail: string;
+      attempts: number;
+      retry_cap: number;
+    },
+  ): ReviewFailureRow | undefined {
+    if (typeof arg === "number") {
+      return this.db.prepare("SELECT * FROM review_failures WHERE pr=? AND work_owed=1 ORDER BY failed_at LIMIT 1").get(arg) as ReviewFailureRow | undefined;
+    }
+    const ts = this.ts();
+    const incidentId = arg.command_id
+      ? `review-failure:${arg.command_id}`
+      : `review-failure:pr-${arg.pr}-round-${arg.round_no ?? "unknown"}`;
+    const failure = this.db.transaction((): ReviewFailureRow => {
+      this.db.prepare(
+        `UPDATE review_failures
+            SET work_owed=0, recovered_at=@ts, recovery='superseded-by-new-failure', next_action='closed', updated_at=@ts
+          WHERE pr=@pr AND work_owed=1 AND incident_id!=@incident_id`,
+      ).run({ pr: arg.pr, incident_id: incidentId, ts });
+      this.db.prepare(
+        `INSERT INTO review_failures
+          (incident_id, pr, command_id, round_id, round_no, head_sha, stage, detail,
+           attempts, retry_cap, failed_at, updated_at, next_action, work_owed)
+         VALUES (@incident_id, @pr, @command_id, @round_id, @round_no, @head_sha, @stage, @detail,
+                 @attempts, @retry_cap, @ts, @ts, 'operator_unwedge', 1)
+         ON CONFLICT(incident_id) DO UPDATE SET
+           head_sha=excluded.head_sha, stage=excluded.stage, detail=excluded.detail,
+           attempts=excluded.attempts, retry_cap=excluded.retry_cap,
+           updated_at=excluded.updated_at, recovered_at=NULL, recovery=NULL,
+           next_action='operator_unwedge', work_owed=1`,
+      ).run({
+        incident_id: incidentId,
+        pr: arg.pr,
+        command_id: arg.command_id ?? null,
+        round_id: arg.round_id ?? null,
+        round_no: arg.round_no ?? null,
+        head_sha: arg.head_sha,
+        stage: arg.stage,
+        detail: arg.detail,
+        attempts: arg.attempts,
+        retry_cap: arg.retry_cap,
+        ts,
+      });
+      const row = this.getPr(arg.pr);
+      const successor = this.successorFor(arg.pr);
+      if (row && row.state !== "closed") {
+        this.db.prepare(
+          `UPDATE pr_state
+              SET state='queued', head_sha=?, trigger_ts=?, trigger_provenance=?, updated_at=?
+            WHERE number=? AND state!='closed'`,
+        ).run(successor?.head_sha ?? arg.head_sha, successor?.requested_at ?? ts, successor?.provenance ?? "system", ts, arg.pr);
+      }
+      return this.db.prepare("SELECT * FROM review_failures WHERE incident_id=?").get(incidentId) as ReviewFailureRow;
+    })();
+    this.logEvent("review_failed_loud", arg.pr, {
+      incident_id: failure.incident_id,
+      command_id: failure.command_id,
+      round_no: failure.round_no,
+      stage: failure.stage,
+      attempts: failure.attempts,
+      retry_cap: failure.retry_cap,
+      next_action: failure.next_action,
+    });
+    return failure;
+  }
+
+  openReviewFailures(): ReviewFailureRow[] {
+    return this.db.prepare("SELECT * FROM review_failures WHERE work_owed=1 ORDER BY failed_at, incident_id").all() as ReviewFailureRow[];
+  }
+
+  recentReviewRecoveries(since: string): ReviewFailureRow[] {
+    return this.db.prepare(
+      "SELECT * FROM review_failures WHERE work_owed=0 AND recovered_at IS NOT NULL AND recovered_at>=? ORDER BY recovered_at DESC, incident_id",
+    ).all(since) as ReviewFailureRow[];
+  }
+
+  recoverReviewFailure(
+    pr: number,
+    recovery: string,
+    match?: { incident_id?: string; round_no?: number; head_sha?: string },
+  ): ReviewFailureRow | undefined {
+    const ts = this.ts();
+    const current = this.openReviewFailure(pr);
+    if (
+      !current
+      || (match?.incident_id !== undefined && current.incident_id !== match.incident_id)
+      || (match?.round_no !== undefined && current.round_no !== match.round_no)
+      || (match?.head_sha !== undefined && current.head_sha !== match.head_sha)
+    ) return undefined;
+    const recovered = this.db.transaction((): ReviewFailureRow | undefined => {
+      const changed = this.db.prepare(
+        `UPDATE review_failures
+            SET work_owed=0, recovered_at=?, recovery=?, next_action='closed', updated_at=?
+          WHERE incident_id=? AND work_owed=1`,
+      ).run(ts, recovery, ts, current.incident_id).changes;
+      if (changed !== 1) return undefined;
+      // Recovery and durable work publication are one commit. A process crash
+      // after this point may delay the pump, but cannot forget what u asked for.
+      const row = this.getPr(pr);
+      const successor = this.successorFor(pr);
+      if (row && row.state !== "closed") {
+        this.db.prepare(
+          `UPDATE pr_state
+              SET state='queued', head_sha=?, trigger_ts=COALESCE(trigger_ts, ?),
+                  trigger_provenance=COALESCE(trigger_provenance, ?), updated_at=?
+            WHERE number=? AND state!='closed'`,
+        ).run(successor?.head_sha ?? current.head_sha, successor?.requested_at ?? ts, successor?.provenance ?? "system", ts, pr);
+      }
+      return this.db.prepare("SELECT * FROM review_failures WHERE incident_id=?").get(current.incident_id) as ReviewFailureRow;
+    })();
+    if (!recovered) return undefined;
+    this.logEvent("review_failure_recovered", pr, { incident_id: current.incident_id, recovery });
+    return recovered;
+  }
+
   // ---- durable fresh-head successor --------------------------
 
   successorFor(pr: number): SuccessorObligationRow | undefined {
@@ -2890,6 +3068,9 @@ export interface StatusSnapshot {
         /** The authoritative running plan/timing. Live lens activity is a
          * separate ephemeral sidecar; neither source impersonates the other. */
         current_round?: Pick<RoundRow, "round_no" | "round_type" | "status" | "started_at" | "deadline_at" | "lenses" | "validate_tier">;
+        /** canonical operator hold. Presence overrides the ordinary PR
+         * lifecycle label: review work is still owed and `u` is the action. */
+        review_failure?: Pick<ReviewFailureRow, "incident_id" | "command_id" | "round_no" | "head_sha" | "stage" | "detail" | "attempts" | "retry_cap" | "failed_at" | "next_action">;
       }
   >;
   running_rounds: number;
@@ -2912,6 +3093,9 @@ export interface StatusSnapshot {
   draining?: boolean;
   drained_deliveries?: number;
   draining_since?: string;
+  /** Terminal FAILED_LOUD obligations are visible during drain but do not
+   * count as live rounds; operator recovery remains dormant until drain lifts. */
+  drain_failed_loud?: number;
   /** local correctness supervisor. A fresh process heartbeat with a
    * stale/failed scan is pipeline-unhealthy, not healthy. */
   round_stage_supervisor?: {
@@ -2922,6 +3106,38 @@ export interface StatusSnapshot {
     last_error_at: string | null;
     last_error: string | null;
   };
+  /** separates process liveness from review-pipeline health. Cause
+   * keys are stable alert/dedupe identities, never prose or timestamps. */
+  pipeline?: {
+    healthy: boolean;
+    failed_loud: number;
+    causes: Array<{
+      key: string;
+      pr: number | null;
+      since: string;
+      stage: string;
+      detail: string;
+      next_action: string;
+      command_id?: string;
+      round_no?: number;
+      attempts?: number;
+      retry_cap?: number;
+      age_s?: number;
+    }>;
+    recoveries?: Array<{ key: string; pr: number; recovered_at: string; recovery: string | null }>;
+    oldest_expired?: {
+      key: string;
+      pr: number | null;
+      since: string;
+      stage: string;
+      detail: string;
+      next_action: string;
+      age_s?: number;
+    };
+  };
+  /** Provider/auth health is a sibling of pipeline and OpenViking health;
+   * never let one domain impersonate another. */
+  provider?: { healthy: boolean; detail?: string; last_at?: string };
   /** watcher-global breaker and durable backlog health. */
   thread_decisions?: {
     breaker_state: "closed" | "open" | "half_open";
@@ -2952,7 +3168,8 @@ export function buildStatusSnapshot(
   threadDecisions?: StatusSnapshot["thread_decisions"],
   roundStageSupervisor?: StatusSnapshot["round_stage_supervisor"],
 ): StatusSnapshot {
-  const today = now().toISOString().slice(0, 10);
+  const at = now();
+  const today = at.toISOString().slice(0, 10);
   const drain = store.drainState();
   // Expired zombie rounds stay out of the per-PR round COUNTS —
   // but they DO count in every spend aggregate (below).
@@ -2961,8 +3178,42 @@ export function buildStatusSnapshot(
     .all() as Array<{ pr: number; c: number; v: string | null }>;
   const byPr = new Map(roundStats.map((r) => [r.pr, r]));
   const runningByPr = new Map(store.runningRounds().map((r) => [r.pr, r]));
+  const failures = store.openReviewFailures();
+  const failureByPr = new Map(failures.map((failure) => [failure.pr, failure]));
+  const pipelineCauses: NonNullable<StatusSnapshot["pipeline"]>["causes"] = failures.map((failure) => ({
+    key: failure.incident_id,
+    pr: failure.pr,
+    since: failure.failed_at,
+    stage: failure.stage,
+    detail: failure.detail,
+    next_action: failure.next_action,
+    ...(failure.command_id ? { command_id: failure.command_id } : {}),
+    ...(failure.round_no !== null ? { round_no: failure.round_no } : {}),
+    attempts: failure.attempts,
+    retry_cap: failure.retry_cap,
+    age_s: Math.max(0, Math.floor((at.getTime() - Date.parse(failure.failed_at)) / 1000)),
+  }));
+  if (roundStageSupervisor && !roundStageSupervisor.healthy) {
+    pipelineCauses.push({
+      key: "round-stage-supervisor",
+      pr: null,
+      since: roundStageSupervisor.last_error_at ?? roundStageSupervisor.last_attempt_at ?? at.toISOString(),
+      stage: "supervisor",
+      detail: roundStageSupervisor.last_error ?? "round-stage supervisor lease is stale",
+      next_action: "inspect-supervisor",
+      age_s: Math.max(0, Math.floor((at.getTime() - Date.parse(roundStageSupervisor.last_error_at ?? roundStageSupervisor.last_attempt_at ?? at.toISOString())) / 1000)),
+    });
+  }
+  pipelineCauses.sort((a, b) => a.key.localeCompare(b.key));
+  const oldest = [...pipelineCauses].sort((a, b) => a.since.localeCompare(b.since))[0];
+  const recoveries = store.recentReviewRecoveries(new Date(at.getTime() - 10 * 60_000).toISOString()).map((failure) => ({
+    key: failure.incident_id,
+    pr: failure.pr,
+    recovered_at: failure.recovered_at!,
+    recovery: failure.recovery,
+  }));
   return {
-    written_at: now().toISOString(),
+    written_at: at.toISOString(),
     dry_run: dryRun,
     prs: store.allPrs().map((p) => ({
       rounds: byPr.get(p.number)?.c ?? 0,
@@ -2989,6 +3240,22 @@ export function buildStatusSnapshot(
       updated_at: p.updated_at,
       author: p.author,
       paused: p.paused,
+      ...(failureByPr.get(p.number)
+        ? {
+            review_failure: {
+              incident_id: failureByPr.get(p.number)!.incident_id,
+              command_id: failureByPr.get(p.number)!.command_id,
+              round_no: failureByPr.get(p.number)!.round_no,
+              head_sha: failureByPr.get(p.number)!.head_sha,
+              stage: failureByPr.get(p.number)!.stage,
+              detail: failureByPr.get(p.number)!.detail,
+              attempts: failureByPr.get(p.number)!.attempts,
+              retry_cap: failureByPr.get(p.number)!.retry_cap,
+              failed_at: failureByPr.get(p.number)!.failed_at,
+              next_action: failureByPr.get(p.number)!.next_action,
+            },
+          }
+        : {}),
     })),
     running_rounds: store.runningRounds().length,
     ...(maxConcurrentRounds !== undefined ? { max_concurrent_rounds: maxConcurrentRounds } : {}),
@@ -2997,17 +3264,31 @@ export function buildStatusSnapshot(
     // deadline still burned its tokens — same rule as totalSpend/cli/metrics.
     today_spend_usd: store.roundsOn(today).reduce((n, r) => n + (r.est_usd ?? 0), 0),
     ...(digestHeadline ? { digest_headline: digestHeadline } : {}),
-    ...(piAuth ? { pi_auth_expired: piAuth } : {}),
+    ...(piAuth ? { pi_auth_expired: piAuth, provider: { healthy: false, detail: `pi auth expired (${piAuth.hits} hit${piAuth.hits === 1 ? "" : "s"})`, last_at: piAuth.last_at } } : {}),
     ...(openviking ? { openviking } : {}),
     ...(threadDecisions ? { thread_decisions: threadDecisions } : {}),
     ...(roundStageSupervisor ? { round_stage_supervisor: roundStageSupervisor } : {}),
+    ...(roundStageSupervisor || pipelineCauses.length > 0
+      ? {
+          pipeline: {
+            healthy: pipelineCauses.length === 0,
+            failed_loud: failures.length,
+            causes: pipelineCauses,
+            recoveries,
+            ...(oldest
+              ? { oldest_expired: { key: oldest.key, pr: oldest.pr, since: oldest.since, stage: oldest.stage, detail: oldest.detail, next_action: oldest.next_action, age_s: oldest.age_s } }
+              : {}),
+          },
+        }
+      : {}),
     ...(drain.draining
       ? {
           draining: true,
           drained_deliveries: drain.drained_deliveries,
           ...(drain.since ? { draining_since: drain.since } : {}),
+          drain_failed_loud: failures.length,
         }
       : {}),
-    heartbeat: now().toISOString(),
+    heartbeat: at.toISOString(),
   };
 }

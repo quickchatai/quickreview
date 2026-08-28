@@ -65,6 +65,14 @@ describe("topBar", () => {
     expect(bar).toContain("today $4.12");
   });
 
+  it("distinguishes a live daemon from a failed review pipeline", () => {
+    const causes = [{ key: "review-failure:cmd-1", pr: 5408, since: "2026-08-13T11:55:00Z", stage: "command_start", detail: "no start", next_action: "operator_unwedge" }] as const;
+    const bar = stripAnsi(topBar(view({ health: { kind: "pipeline_unhealthy", heartbeatAgeS: 2, causes: [...causes] } }), 120));
+    expect(bar).toContain("daemon alive");
+    expect(bar).toContain("PIPELINE FAILED · 1");
+    expect(bar).not.toContain("daemon ok");
+  });
+
   it("replaces health with the stale banner", () => {
     const bar = stripAnsi(topBar(view({ health: { kind: "stale", dataAgeS: 42 } }), 100));
     expect(bar).toContain("DATA STALE (42s)");
@@ -102,6 +110,27 @@ describe("detailLines", () => {
     expect(lines).toContain("F1 [P1/0.9][delivery] tasks.py:88 open");
     expect(lines.find((l) => l.startsWith("▍ROUNDS"))).toContain("r1 RC · r2 …");
     expect(lines.find((l) => l.startsWith("▍THREADS"))).toContain("2 known");
+  });
+
+  it("shows FAILED_LOUD stage, attempts and the operator recovery key", () => {
+    const failed = {
+      ...snapshot.prs[0]!,
+      review_failure: {
+        incident_id: "review-failure:cmd-1",
+        command_id: "cmd-1",
+        round_no: 1,
+        head_sha: "a2e380ff11",
+        stage: "command_start",
+        detail: "no correlated start",
+        attempts: 2,
+        retry_cap: 2,
+        failed_at: "2026-08-13T11:55:00Z",
+        next_action: "operator_unwedge" as const,
+      },
+    };
+    const lines = detailLines(why, failed, 80, new Date("2026-08-13T12:00:00Z")).map(stripAnsi);
+    expect(lines.join("\n")).toContain("FAILED_LOUD · command_start · cmd-1 · round 1 · attempt 2/2 · 5m old");
+    expect(lines.join("\n")).toContain("press u to recover");
   });
 
   it("shows a loading line until the payload matches the selection", () => {

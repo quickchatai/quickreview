@@ -7,6 +7,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
+  DEFAULT_MAX_SELF_REQUEUES,
   DEFAULT_ROUND_FINALIZE_GRACE_MIN,
   DEFAULT_ROUND_FIRST_PASS_MAX_MIN,
   DEFAULT_ROUND_PASSES_MAX_MIN,
@@ -503,6 +504,20 @@ export class SessionCommandSupervisor {
       detail,
     });
     if (disposition === "exhausted") {
+      const failed = this.deps.store.getSessionCommand(command.id) ?? command;
+      const successor = this.deps.store.successorFor(command.pr);
+      const row = this.deps.store.getPr(command.pr);
+      this.deps.store.openReviewFailure({
+        pr: command.pr,
+        command_id: command.id,
+        round_id: this.deps.store.roundsFor(command.pr).find((round) => round.round_no === command.round_no)?.id ?? null,
+        round_no: command.round_no,
+        head_sha: successor?.head_sha ?? row?.head_sha ?? "",
+        stage,
+        detail,
+        attempts: failed.attempt,
+        retry_cap: this.deps.cfg.daemon.max_self_requeues ?? DEFAULT_MAX_SELF_REQUEUES,
+      });
       this.deps.store.logAnomaly(
         "round_stage_recovery_exhausted",
         command.pr,

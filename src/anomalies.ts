@@ -70,6 +70,10 @@ const WAKE_KINDS: ReadonlySet<string> = new Set([
   // may never have been reviewed at all. Fires at most once per round, by
   // construction (the sweep terminalizes what it reports), so it can wake.
   "round_stranded",
+  // automatic recovery is exhausted and review work remains owed.
+  // Stable incident state suppresses duplicates; this wake is the first loud
+  // transition, while status/TUI/Slack heartbeat keep it persistently visible.
+  "review_failed_loud",
 ]);
 
 /**

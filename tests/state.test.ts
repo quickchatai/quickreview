@@ -629,6 +629,59 @@ describe("stranded rounds", () => {
   });
 });
 
+describe("durable FAILED_LOUD review obligations", () => {
+  it("keeps exhausted work owed until explicit operator recovery and projects pipeline health", () => {
+    store.upsertPr(prRow(5408, { state: "reviewing", head_sha: "abc123" }));
+    const roundId = store.startRound(5408, "re-review", ["pass-baseline"], 75);
+    const failure = store.openReviewFailure({
+      pr: 5408,
+      command_id: "cmd-5408",
+      round_id: roundId,
+      round_no: 1,
+      head_sha: "abc123",
+      stage: "running_hard_bound",
+      detail: "fixed bound exhausted",
+      attempts: 2,
+      retry_cap: 2,
+    });
+
+    expect(failure).toMatchObject({ work_owed: 1, next_action: "operator_unwedge" });
+    expect(store.getPr(5408)?.state).toBe("queued");
+    expect(store.openReviewFailure(5408)?.incident_id).toBe("review-failure:cmd-5408");
+    const snap = buildStatusSnapshot(store, false, undefined, now, undefined, undefined, undefined, undefined, {
+      healthy: true, stale_after_s: 180, last_attempt_at: T0.toISOString(), last_success_at: T0.toISOString(), last_error_at: null, last_error: null,
+    });
+    expect(snap.pipeline).toMatchObject({ healthy: false, failed_loud: 1 });
+    expect(snap.pipeline?.causes[0]).toMatchObject({ key: "review-failure:cmd-5408", pr: 5408, stage: "running_hard_bound" });
+    expect(snap.prs.find((pr) => pr.number === 5408)?.review_failure).toMatchObject({ incident_id: "review-failure:cmd-5408" });
+
+    expect(store.recoverReviewFailure(5408, "operator-rerun")?.work_owed).toBe(0);
+    expect(store.openReviewFailure(5408)).toBeUndefined();
+    const recovered = buildStatusSnapshot(store, false, undefined, now, undefined, undefined, undefined, undefined, {
+      healthy: true, stale_after_s: 180, last_attempt_at: T0.toISOString(), last_success_at: T0.toISOString(), last_error_at: null, last_error: null,
+    });
+    expect(recovered.pipeline?.recoveries).toEqual([{ key: "review-failure:cmd-5408", pr: 5408, recovered_at: T0.toISOString(), recovery: "operator-rerun" }]);
+  });
+
+  it("does not let a stale verdict clear newer failed work", () => {
+    store.upsertPr(prRow(5408, { state: "reviewing", head_sha: "new" }));
+    const roundId = store.startRound(5408, "re-review", [], 75);
+    store.markRoundCancelled(roundId, "failed", "infrastructure_failure");
+    store.openReviewFailure({ pr: 5408, command_id: "cmd-new", round_id: roundId, round_no: 2, head_sha: "new", stage: "command_start", detail: "no start", attempts: 2, retry_cap: 2 });
+
+    expect(store.recoverReviewFailure(5408, "stale-verdict", { round_no: 1, head_sha: "old" })).toBeUndefined();
+    expect(store.openReviewFailure(5408)?.incident_id).toBe("review-failure:cmd-new");
+  });
+
+  it("makes supervisor failure pipeline-unhealthy even with no failed review", () => {
+    const snap = buildStatusSnapshot(store, false, undefined, now, undefined, undefined, undefined, undefined, {
+      healthy: false, stale_after_s: 180, last_attempt_at: T0.toISOString(), last_success_at: null, last_error_at: T0.toISOString(), last_error: "scan hung",
+    });
+    expect(snap.pipeline).toMatchObject({ healthy: false, failed_loud: 0 });
+    expect(snap.pipeline?.causes[0]).toMatchObject({ key: "round-stage-supervisor", pr: null });
+  });
+});
+
 describe("durable fresh-head successor obligation", () => {
   it("coalesces pushes to the newest head while preserving the earliest ask and human provenance", () => {
     store.upsertPr(prRow(5408, { state: "reviewing", head_sha: "old" }));

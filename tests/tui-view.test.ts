@@ -104,6 +104,19 @@ describe("buildTuiView — the derived state behind the frame", () => {
     expect(JSON.stringify(v).length).toBeLessThan(4000);
   });
 
+  it("publishes pipeline health and stable cause keys to the companion view", () => {
+    const pipeline: NonNullable<StatusSnapshot["pipeline"]> = {
+      healthy: false,
+      failed_loud: 1,
+      causes: [{ key: "review-failure:cmd-1", pr: 5408, since: "2026-08-25T09:55:00Z", stage: "command_start", detail: "no start", next_action: "operator_unwedge" }],
+      recoveries: [{ key: "review-failure:cmd-0", pr: 5407, recovered_at: "2026-08-25T09:59:00Z", recovery: "operator-rerun" }],
+    };
+    const v = buildTuiView({ now: NOW, tab: "board", snapshot: snap({ pipeline }), health: { kind: "pipeline_unhealthy", heartbeatAgeS: 4, causes: pipeline.causes } });
+    expect(v.board.pipeline_healthy).toBe(false);
+    expect(v.board.pipeline_causes).toEqual([{ key: "review-failure:cmd-1", pr: 5408 }]);
+    expect(v.board.pipeline_recoveries).toEqual([{ key: "review-failure:cmd-0", pr: 5407 }]);
+  });
+
   it("an unreachable daemon reports its kind and no bogus age", () => {
     const v = buildTuiView({ now: NOW, tab: "board", health: { kind: "unreachable", sinceS: Number.POSITIVE_INFINITY } });
     expect(v.board.health).toBe("unreachable");

@@ -250,7 +250,10 @@ export function applyEvent(
       });
     }
   }
-  if (event.type === "closed") store.clearSuccessor(pr, "pr-closed");
+  if (event.type === "closed") {
+    store.clearSuccessor(pr, "pr-closed");
+    store.recoverReviewFailure(pr, "pr-closed");
+  }
 
   const changed = from !== to;
   if (changed || event.type === "trigger" || event.type === "stale_detected") {

@@ -11,7 +11,7 @@ import { captureFromEvent } from "./capture.js";
 import type { Config } from "./config.js";
 import { interpretReviewEvent, isFeedbackBody } from "./feedback.js";
 import { applyEvent as applyEventFor } from "./statemachine.js";
-import type { StateStore } from "./state.js";
+import type { StateStore, StatusSnapshot } from "./state.js";
 
 // ---- signature -----------------------------------------------------------
 
@@ -330,6 +330,9 @@ export interface WebhookDeps {
   onInterpretation: (i: Interpretation, ctx: { event: string; action: string | null; guid: string }) => void | Promise<void>;
   log?: (msg: string, extra?: unknown) => void;
   path?: string;
+  /** Process liveness stays HTTP-200; the body separately exposes a failed
+   * review pipeline so orchestrators do not restart a live reconciler. */
+  pipelineHealth?: () => StatusSnapshot["pipeline"];
 }
 
 export interface WebhookHandleResult {
@@ -457,8 +460,9 @@ export function createWebhookServer(deps: WebhookDeps): Server {
   return createServer((req: IncomingMessage, res: ServerResponse) => {
     void (async () => {
       if (req.method === "GET" && req.url === "/health") {
+        const pipeline = deps.pipelineHealth?.();
         res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ ok: true }));
+        res.end(JSON.stringify(pipeline ? { ok: true, process: "alive", pipeline } : { ok: true }));
         return;
       }
       if (req.method !== "POST" || (req.url ?? "").split("?")[0] !== path) {

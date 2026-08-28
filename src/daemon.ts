@@ -514,7 +514,24 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
 
       if (deps.listen !== false) {
         const secret = deps.webhookSecret ?? readWebhookSecret(cfg);
-        server = createWebhookServer({ cfg, store, secret, onInterpretation, log });
+        server = createWebhookServer({
+          cfg,
+          store,
+          secret,
+          onInterpretation,
+          pipelineHealth: () => buildStatusSnapshot(
+            store,
+            cfg.dry_run,
+            undefined,
+            undefined,
+            cfg.daemon.max_concurrent_rounds,
+            undefined,
+            undefined,
+            undefined,
+            roundStages.health(),
+          ).pipeline,
+          log,
+        });
         // Loopback by default; in the container the daemon must bind 0.0.0.0
         // (docker's published port targets the container's eth0, and the
         // host-side binding is already 127.0.0.1-only — spec §9).

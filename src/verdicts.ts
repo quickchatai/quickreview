@@ -431,6 +431,7 @@ export class VerdictWatcher {
     // decided. Read by the no-new-evidence guard at dispatch and at posting
     // time, and by the post-approval delta recheck.
     if (v.head_sha) store.recordReviewedHead(v.pr, { head_sha: v.head_sha, verdict: v.verdict, round_no: v.round_no });
+    store.recoverReviewFailure(v.pr, "verdict-applied", { round_no: v.round_no, head_sha: v.head_sha });
     // The withheld-approval mark, session route. The session posted
     // its review as a COMMENT because CI was not green at this head; the mark
     // is what notices when CI goes green and re-queues the PR (cigate.ts).
@@ -745,7 +746,19 @@ export class VerdictWatcher {
 
     const standing = normalizeVerdict(store.reviewedHead(pr)?.verdict) ?? null;
     applyEvent(store, pr, { type: "round_overdue", standing }, {}, { botLogin: cfg.github.bot_login, now: () => this.now(), reason: `anomaly:${kind}` });
-    const successorPromoted = store.promoteSuccessor(pr);
+    const command = round ? store.sessionCommandForRound(pr, round.round_no) : undefined;
+    const successor = store.successorFor(pr);
+    const failure = store.openReviewFailure({
+      pr,
+      command_id: command?.id ?? null,
+      round_id: round?.id ?? null,
+      round_no: roundNo,
+      head_sha: successor?.head_sha ?? store.getPr(pr)?.head_sha ?? "",
+      stage: kind === "overdue" ? "round_deadline" : "malformed_verdict",
+      detail: message,
+      attempts: command?.attempt ?? 1,
+      retry_cap: cfg.daemon.max_self_requeues ?? DEFAULT_MAX_SELF_REQUEUES,
+    });
     store.logEvent(kind === "overdue" ? "round_overdue" : "verdict_malformed", pr, {
       round_id: round?.id ?? null,
       round_no: roundNo,
@@ -766,21 +779,18 @@ export class VerdictWatcher {
       [
         `ANOMALY (${kind}) — PR #${pr}${roundNo !== null ? ` round ${roundNo}` : ""}`,
         message,
-        "No review was produced: the in-progress label was cleared and the PR returned to its standing-verdict state (never an approve). No reviewer was requested on GitHub.",
-        "Investigate the session and decide whether to rerun the round (commands/rerun-round) or restart the session.",
+        `No review was produced: work remains owed as ${failure.incident_id} (never an approve). No reviewer was requested on GitHub.`,
+        "Press u on the board to clear the FAILED_LOUD hold and rerun, or restart the session deliberately.",
         ...(pendingViolations && pendingViolations.length > 0
           ? [`Also: exec-policy violations were audited on this PR — ${pendingViolations.join(" · ")}`]
           : []),
       ].join("\n"),
     );
     await this.announceSafe((a) =>
-      a.anomaly({ pr, round_no: roundNo, kind, deadline_min: cfg.daemon.round_deadline_min }),
+      a.anomaly({ pr, round_no: roundNo, kind, deadline_min: cfg.daemon.round_deadline_min, incident_id: failure.incident_id }),
     );
-    // The round is abandoned, not running. Fresh-head successor work takes
-    // precedence over held conversation; otherwise flush the ordinary wakes.
-    // The session may be wedged — flushHeldWakes logs a failed delivery rather
-    // than throwing here.
-    if (!successorPromoted) await this.flushWakes(pr);
+    // FAILED_LOUD review debt owns the session ordering until an operator
+    // presses u. Held conversation cannot overtake work that is still owed.
     this.log(`verdicts: anomaly (${kind}) on #${pr}`, message);
   }
 
@@ -952,7 +962,30 @@ export class VerdictWatcher {
         stage === "settled_without_verdict" ? "infrastructure_settled" : "infrastructure_active",
       );
       if (recovered) return "requeued";
-      return this.runningRound(pr, roundNo)?.status === "running" ? "retryable" : "exhausted";
+      if (this.runningRound(pr, roundNo)?.status === "running") return "retryable";
+      const command = this.deps.store.sessionCommandForRound(pr, roundNo);
+      const successor = this.deps.store.successorFor(pr);
+      const failure = this.deps.store.openReviewFailure({
+        pr,
+        command_id: command?.id ?? null,
+        round_id: round.id,
+        round_no: roundNo,
+        head_sha: successor?.head_sha ?? this.deps.store.getPr(pr)?.head_sha ?? head,
+        stage,
+        detail,
+        attempts: cap,
+        retry_cap: cap,
+      });
+      this.deps.store.logAnomaly(
+        "review_failed_loud",
+        pr,
+        roundNo,
+        `${stage}: ${detail}; work remains owed as ${failure.incident_id}; press u to recover`,
+      );
+      await this.announceSafe((a) =>
+        a.anomaly({ pr, round_no: roundNo, kind: "failed_loud", deadline_min: this.deps.cfg.daemon.round_deadline_min, incident_id: failure.incident_id }),
+      );
+      return "exhausted";
     }
     if (stage !== "settled_without_verdict" && !this.deps.hooks.killSession) return "retryable";
     const recovered = await this.selfRequeue(

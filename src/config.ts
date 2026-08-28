@@ -174,6 +174,7 @@ export interface SlackConfig {
 export const SLACK_CAUSE_DEFAULTS: Record<string, SlackCausePolicy> = {
   "round.overdue": { enabled: true, cooldown_min: 60 },
   "round.malformed_verdict": { enabled: true, cooldown_min: 60 },
+  "review.failed_loud": { enabled: true, cooldown_min: 60 },
   "pr.not_picked_up": { enabled: true, cooldown_min: 120 },
   "daemon.up": { enabled: true, cooldown_min: 0 },
   "daemon.stopping": { enabled: true, cooldown_min: 0 },

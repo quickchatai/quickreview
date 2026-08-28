@@ -582,10 +582,16 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           const row = d.store.getPr(pr);
           if (!row) return { ok: false, reason: `unknown PR #${pr}` };
           const cancelled = d.store.cancelRunningRounds(pr, "rerun-round");
+          const recoveredFailure = d.store.recoverReviewFailure(pr, "rerun-round");
           const successorPromoted = d.store.promoteSuccessor(pr);
           if (!successorPromoted) d.store.upsertPr({ ...row, state: "queued", trigger_ts: new Date().toISOString() });
           await d.pump();
-          return { ok: true, requeued: pr, ...(cancelled.length > 0 ? { cancelled_rounds: cancelled } : {}) };
+          return {
+            ok: true,
+            requeued: pr,
+            ...(recoveredFailure ? { recovery_hold_cleared: recoveredFailure.incident_id } : {}),
+            ...(cancelled.length > 0 ? { cancelled_rounds: cancelled } : {}),
+          };
         },
         async restartSession(target) {
           if (target === "overseer") {
@@ -598,6 +604,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           let cancelled: number[] = [];
           if (row && row.state !== "closed") {
             cancelled = d.store.cancelRunningRounds(target, "restart-session");
+            d.store.recoverReviewFailure(target, "restart-session");
             const successorPromoted = d.store.promoteSuccessor(target);
             if (!successorPromoted) d.store.upsertPr({ ...row, state: "queued", trigger_ts: new Date().toISOString() });
             await d.pump();

@@ -7,6 +7,7 @@ import { statusArgv, type SshRunner } from "./remote.js";
 
 export type Health =
   | { kind: "ok"; heartbeatAgeS: number }
+  | { kind: "pipeline_unhealthy"; heartbeatAgeS: number; causes: NonNullable<StatusSnapshot["pipeline"]>["causes"] }
   | { kind: "stale"; dataAgeS: number }
   | { kind: "unreachable"; sinceS: number };
 
@@ -33,6 +34,9 @@ export function classifyHealth(
   const dataAgeS = Math.floor((now.getTime() - new Date(lastSnapshot.written_at).getTime()) / 1000);
   if (dataAgeS > staleAfterS) return { kind: "stale", dataAgeS };
   const heartbeatAgeS = Math.floor((now.getTime() - new Date(lastSnapshot.heartbeat).getTime()) / 1000);
+  if (lastSnapshot.pipeline?.healthy === false) {
+    return { kind: "pipeline_unhealthy", heartbeatAgeS, causes: lastSnapshot.pipeline.causes };
+  }
   return { kind: "ok", heartbeatAgeS };
 }
 

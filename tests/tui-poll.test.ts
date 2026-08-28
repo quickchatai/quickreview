@@ -35,6 +35,20 @@ describe("classifyHealth", () => {
     expect(h).toEqual({ kind: "ok", heartbeatAgeS: 30 });
   });
 
+  it("reports a fresh process with failed review work as pipeline-unhealthy", () => {
+    const unhealthy = snap("2026-08-13T11:59:58Z", "2026-08-13T11:59:56Z");
+    unhealthy.pipeline = {
+      healthy: false,
+      failed_loud: 1,
+      causes: [{ key: "review-failure:cmd-1", pr: 5408, since: "2026-08-13T11:55:00Z", stage: "command_start", detail: "no start", next_action: "operator_unwedge" }],
+    };
+    expect(classifyHealth(now, 90, unhealthy, true, now)).toEqual({
+      kind: "pipeline_unhealthy",
+      heartbeatAgeS: 4,
+      causes: unhealthy.pipeline.causes,
+    });
+  });
+
   it("is ok inside the freshness window and reports heartbeat age", () => {
     const h = classifyHealth(now, 90, snap("2026-08-13T11:59:58Z", "2026-08-13T11:59:56Z"), true, now);
     expect(h).toEqual({ kind: "ok", heartbeatAgeS: 4 });
