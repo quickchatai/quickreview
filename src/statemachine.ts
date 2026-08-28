@@ -177,6 +177,12 @@ export function applyEvent(
   const from = existing?.state ?? null;
   const base = existing?.state ?? INITIAL_STATE;
   const to = transition(base, event);
+  const runningRound = base === "reviewing"
+    ? store.runningRounds().find((round) => round.pr === pr)
+    : undefined;
+  const advancedHead = runningRound && meta.head_sha && existing?.head_sha && meta.head_sha !== existing.head_sha
+    ? meta.head_sha
+    : undefined;
 
   let staleRecheck = existing?.stale_recheck ?? 0;
   if (event.type === "stale_detected") staleRecheck = 1;
@@ -220,6 +226,31 @@ export function applyEvent(
     stale_recheck: staleRecheck,
     migration_gate: existing?.migration_gate ?? 0,
   });
+
+  if (runningRound && advancedHead && (event.type === "synchronize" || event.type === "track" || event.type === "trigger")) {
+    store.recordSuccessor({
+      pr,
+      predecessor_round_id: runningRound.id,
+      head_sha: advancedHead,
+      provenance: event.type === "trigger" && event.source !== "reconcile" ? "human" : "system",
+      reason: event.type === "trigger" ? "trigger-on-new-head" : "head-advanced",
+    });
+  } else if (runningRound && event.type === "trigger") {
+    // A same-head request is already covered by the active round. If a newer
+    // head is already owed, however, retain that target and upgrade its
+    // provenance when this was a fresh human request.
+    const successor = store.successorFor(pr);
+    if (successor) {
+      store.recordSuccessor({
+        pr,
+        predecessor_round_id: runningRound.id,
+        head_sha: successor.head_sha,
+        provenance: event.source === "reconcile" ? "system" : "human",
+        reason: "trigger-while-reviewing",
+      });
+    }
+  }
+  if (event.type === "closed") store.clearSuccessor(pr, "pr-closed");
 
   const changed = from !== to;
   if (changed || event.type === "trigger" || event.type === "stale_detected") {

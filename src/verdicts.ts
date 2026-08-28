@@ -404,6 +404,15 @@ export class VerdictWatcher {
     // (possibly stale) head back onto pr_state, which would mask a mid-round
     // advance (see the chain below).
     const headBeforeApply = store.getPr(v.pr)?.head_sha ?? null;
+    if (round && v.head_sha && headBeforeApply && headBeforeApply !== v.head_sha) {
+      store.recordSuccessor({
+        pr: v.pr,
+        predecessor_round_id: round.id,
+        head_sha: headBeforeApply,
+        provenance: "system",
+        reason: "verdict-observed-head-advance",
+      });
+    }
     if (round) store.finishRound(round.id, v.verdict, null, v.summary ?? null);
     // Executed-pass telemetry: persist what actually ran beside the
     // plan, and flag plan≠executed. Best-effort side channel — nothing in it
@@ -457,37 +466,22 @@ export class VerdictWatcher {
         duration_s: finished?.duration_s ?? null,
       }),
     );
-    // Durability (the owner, 2026-08-19, #5314): a head that advanced WHILE the
-    // round ran means the review just delivered targets a stale sha, and the
-    // mid-round pushes were consumed by recheck_noop ("no-standing-approval")
-    // — nobody would ever revisit them. Chain a SYSTEM-provenance re-trigger:
-    // the delta classifier then decides for free whether the delta
-    // deserves a full follow-up round (significant) or a short-circuit uphold
-    // (trivial/empty). Never on a park (awaiting_human is sticky by design),
-    // never on closed/paused, and never interleaved — the chained round only
-    // dispatches after this one is fully over (S4 holds).
+    // a head that advanced while this round ran was recorded as a
+    // durable successor obligation before terminalization. An old-head verdict
+    // can never erase it; a verdict covering the owed head settles it. Queue
+    // publication and obligation retention are owned by StateStore.
     if (v.head_sha && headBeforeApply && headBeforeApply !== v.head_sha) {
-      const rowAfter = store.getPr(v.pr);
-      if (rowAfter && rowAfter.state !== "closed" && rowAfter.state !== "awaiting_human" && !rowAfter.paused) {
-        store.logEvent("mid_round_head_advance", v.pr, {
-          round_no: v.round_no,
-          reviewed_head: v.head_sha,
-          current_head: headBeforeApply,
-          verdict: v.verdict,
-        });
-        // Restore the advanced head (applyEvent stamped the reviewed one) and
-        // queue with system provenance for the classifier.
-        store.upsertPr({
-          ...rowAfter,
-          head_sha: headBeforeApply,
-          state: "queued",
-          trigger_ts: this.now().toISOString(),
-          trigger_provenance: "system",
-        });
-        this.log(
-          `verdicts: #${v.pr} head advanced mid-round (${v.head_sha.slice(0, 7)} → ${headBeforeApply.slice(0, 7)}) — chained a system re-trigger`,
-        );
-      }
+      store.logEvent("mid_round_head_advance", v.pr, {
+        round_no: v.round_no,
+        reviewed_head: v.head_sha,
+        current_head: headBeforeApply,
+        verdict: v.verdict,
+      });
+    }
+    if (v.head_sha) store.settleSuccessor(v.pr, v.head_sha);
+    const successorPromoted = round ? store.promoteSuccessor(v.pr) : false;
+    if (successorPromoted) {
+      this.log(`verdicts: #${v.pr} preserved fresh-head successor after round ${v.round_no}`);
     }
     if (round) this.measureUsage(v.pr, round.id, round.started_at, this.now().toISOString());
     // Round is over: compact the sticky conversation. Cache re-reads of the
@@ -525,9 +519,10 @@ export class VerdictWatcher {
       }, settleMs);
       timer.unref?.();
     }
-    // The round is over, so the PR's one main pi is free again (S4): deliver
-    // whatever arrived while it was busy, in arrival order.
-    await this.flushWakes(v.pr);
+    // The round is over. Fresh-head review work wins the session command slot;
+    // held conversational wakes stay behind it and flush at the successor's
+    // terminal path. Without a successor, ordinary FIFO wake delivery resumes.
+    if (!successorPromoted) await this.flushWakes(v.pr);
     this.log(`verdicts: #${v.pr} round ${v.round_no} → ${v.verdict}`);
   }
 
@@ -750,6 +745,7 @@ export class VerdictWatcher {
 
     const standing = normalizeVerdict(store.reviewedHead(pr)?.verdict) ?? null;
     applyEvent(store, pr, { type: "round_overdue", standing }, {}, { botLogin: cfg.github.bot_login, now: () => this.now(), reason: `anomaly:${kind}` });
+    const successorPromoted = store.promoteSuccessor(pr);
     store.logEvent(kind === "overdue" ? "round_overdue" : "verdict_malformed", pr, {
       round_id: round?.id ?? null,
       round_no: roundNo,
@@ -780,10 +776,11 @@ export class VerdictWatcher {
     await this.announceSafe((a) =>
       a.anomaly({ pr, round_no: roundNo, kind, deadline_min: cfg.daemon.round_deadline_min }),
     );
-    // The round is abandoned, not running: an author reply held behind it must
-    // not be stranded (S4). The session may be wedged — flushHeldWakes logs a
-    // failed delivery per wake rather than throwing here.
-    await this.flushWakes(pr);
+    // The round is abandoned, not running. Fresh-head successor work takes
+    // precedence over held conversation; otherwise flush the ordinary wakes.
+    // The session may be wedged — flushHeldWakes logs a failed delivery rather
+    // than throwing here.
+    if (!successorPromoted) await this.flushWakes(pr);
     this.log(`verdicts: anomaly (${kind}) on #${pr}`, message);
   }
 
@@ -1087,10 +1084,11 @@ export class VerdictWatcher {
       mode,
       reason,
     });
-    // Requeue through the normal dispatch path: back to queued with a fresh
-    // trigger_ts; the pump re-dispatches and dispatchRound rebirths the dead
-    // session. Never a parallel session, never a mid-round instruction.
-    if (row && row.state === "reviewing") {
+    // Requeue through the normal dispatch path. A durable newer-head
+    // obligation wins; otherwise redo the failed head. The old round is
+    // terminal before either queue publication, so two rounds never coexist.
+    const successorPromoted = store.promoteSuccessor(round.pr);
+    if (!successorPromoted && row && row.state === "reviewing") {
       store.upsertPr({ ...row, state: "queued", trigger_ts: this.now().toISOString() });
     }
     this.log(`verdicts: SELF-REQUEUE #${round.pr} round ${round.round_no} attempt ${attempt}/${cap} — ${reason}`);

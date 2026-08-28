@@ -24,6 +24,16 @@ export type PrLifecycleState =
  * default is a full round. */
 export type TriggerProvenance = "human" | "system";
 
+export interface SuccessorObligationRow {
+  pr: number;
+  predecessor_round_id: number;
+  head_sha: string;
+  requested_at: string;
+  provenance: TriggerProvenance;
+  reason: string;
+  updated_at: string;
+}
+
 export interface PrStateRow {
   number: number;
   state: PrLifecycleState;
@@ -609,6 +619,18 @@ CREATE TABLE IF NOT EXISTS trigger_levels (
   present     INTEGER NOT NULL,
   observed_at TEXT NOT NULL,
   PRIMARY KEY (pr, kind)
+);
+-- a newer head observed while an older round owns the PR is durable
+-- work owed. It survives the predecessor's every terminal path and is retained
+-- after queue promotion until a verdict actually covers the target head.
+CREATE TABLE IF NOT EXISTS successor_obligations (
+  pr                   INTEGER PRIMARY KEY,
+  predecessor_round_id INTEGER NOT NULL,
+  head_sha             TEXT NOT NULL,
+  requested_at         TEXT NOT NULL,
+  provenance           TEXT NOT NULL,
+  reason               TEXT NOT NULL,
+  updated_at           TEXT NOT NULL
 );
 -- Approval withheld for red CI: one row per PR, the head whose
 -- approval was withheld and why. Presence of a row is the promise the gate
@@ -2116,6 +2138,94 @@ export class StateStore {
   /** Drop the mark — the verdict is about to be decided again. */
   clearApprovalWithheld(pr: number): void {
     this.db.prepare("DELETE FROM approval_withheld WHERE pr = ?").run(pr);
+  }
+
+  // ---- durable fresh-head successor --------------------------
+
+  successorFor(pr: number): SuccessorObligationRow | undefined {
+    return this.db.prepare("SELECT * FROM successor_obligations WHERE pr = ?").get(pr) as SuccessorObligationRow | undefined;
+  }
+
+  recordSuccessor(input: {
+    pr: number;
+    predecessor_round_id: number;
+    head_sha: string;
+    provenance: TriggerProvenance;
+    reason: string;
+  }): void {
+    if (!input.head_sha) return;
+    const ts = this.ts();
+    this.db.prepare(
+      `INSERT INTO successor_obligations
+         (pr, predecessor_round_id, head_sha, requested_at, provenance, reason, updated_at)
+       VALUES (@pr, @predecessor_round_id, @head_sha, @ts, @provenance, @reason, @ts)
+       ON CONFLICT(pr) DO UPDATE SET
+         predecessor_round_id=excluded.predecessor_round_id,
+         head_sha=excluded.head_sha,
+         -- The PR has owed successor work since the FIRST observed push. Keep
+         -- that FIFO position while coalescing the target to the newest head;
+         -- a later human edge upgrades provenance but does not manufacture a
+         -- newer arrival time for already-waiting work.
+         requested_at=successor_obligations.requested_at,
+         provenance=CASE
+           WHEN successor_obligations.provenance='human' OR excluded.provenance='human' THEN 'human'
+           ELSE 'system'
+         END,
+         reason=excluded.reason,
+         updated_at=excluded.updated_at`,
+    ).run({ ...input, ts });
+    this.logEvent("successor_required", input.pr, {
+      predecessor_round_id: input.predecessor_round_id,
+      head_sha: input.head_sha,
+      provenance: input.provenance,
+      reason: input.reason,
+    });
+  }
+
+  /** Translate the obligation into ordinary queued work without deleting its
+   * evidence. Queue publication + target head are one transaction; the row is
+   * cleared only when a verdict later covers that head. */
+  promoteSuccessor(pr: number): boolean {
+    const promoted = this.db.transaction((): SuccessorObligationRow | undefined => {
+      const successor = this.successorFor(pr);
+      const row = this.getPr(pr);
+      if (!successor || !row || row.state === "closed" || row.paused || this.hasRunningRound(pr)) return undefined;
+      if (
+        row.state === "queued" && row.head_sha === successor.head_sha
+        && row.trigger_ts === successor.requested_at && row.trigger_provenance === successor.provenance
+      ) return undefined;
+      this.db.prepare(
+        `UPDATE pr_state
+            SET state='queued', head_sha=?, trigger_ts=?, trigger_provenance=?, updated_at=?
+          WHERE number=? AND state!='closed'`,
+      ).run(successor.head_sha, successor.requested_at, successor.provenance, this.ts(), pr);
+      return successor;
+    })();
+    if (!promoted) return false;
+    this.logEvent("successor_promoted", pr, {
+      predecessor_round_id: promoted.predecessor_round_id,
+      head_sha: promoted.head_sha,
+      provenance: promoted.provenance,
+    });
+    return true;
+  }
+
+  /** A confirmed merits verdict covers the owed head; an older verdict cannot
+   * erase it. */
+  settleSuccessor(pr: number, reviewedHead: string): boolean {
+    const successor = this.successorFor(pr);
+    if (!successor || !reviewedHead || successor.head_sha !== reviewedHead) return false;
+    const changed = this.db.prepare("DELETE FROM successor_obligations WHERE pr=? AND head_sha=?").run(pr, reviewedHead).changes === 1;
+    if (changed) this.logEvent("successor_settled", pr, { head_sha: reviewedHead });
+    return changed;
+  }
+
+  clearSuccessor(pr: number, reason: string): boolean {
+    const successor = this.successorFor(pr);
+    if (!successor) return false;
+    const changed = this.db.prepare("DELETE FROM successor_obligations WHERE pr=?").run(pr).changes === 1;
+    if (changed) this.logEvent("successor_cleared", pr, { head_sha: successor.head_sha, reason });
+    return changed;
   }
 
   // ---- trigger-level observations ----------------------------

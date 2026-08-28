@@ -629,6 +629,52 @@ describe("stranded rounds", () => {
   });
 });
 
+describe("durable fresh-head successor obligation", () => {
+  it("coalesces pushes to the newest head while preserving the earliest ask and human provenance", () => {
+    store.upsertPr(prRow(5408, { state: "reviewing", head_sha: "old" }));
+    const roundId = store.startRound(5408, "re-review", ["pass-baseline"], 75);
+    store.recordSuccessor({ pr: 5408, predecessor_round_id: roundId, head_sha: "new-1", provenance: "system", reason: "push" });
+    clock = new Date(T0.getTime() + 60_000);
+    store.recordSuccessor({ pr: 5408, predecessor_round_id: roundId, head_sha: "new-2", provenance: "human", reason: "trigger" });
+
+    expect(store.successorFor(5408)).toMatchObject({
+      predecessor_round_id: roundId,
+      head_sha: "new-2",
+      provenance: "human",
+      requested_at: T0.toISOString(),
+    });
+  });
+
+  it("atomically promotes terminal predecessor work but retains the obligation until that head is decided", () => {
+    store.upsertPr(prRow(5408, { state: "reviewing", head_sha: "old" }));
+    const roundId = store.startRound(5408, "re-review", ["pass-baseline"], 75);
+    store.recordSuccessor({ pr: 5408, predecessor_round_id: roundId, head_sha: "new", provenance: "system", reason: "push" });
+    expect(store.promoteSuccessor(5408)).toBe(false); // predecessor still owns the PR
+
+    store.markRoundCancelled(roundId, "old head finished", "head_moved");
+    expect(store.promoteSuccessor(5408)).toBe(true);
+    expect(store.promoteSuccessor(5408)).toBe(false); // queue publication is idempotent
+    expect(store.getPr(5408)).toMatchObject({ state: "queued", head_sha: "new", trigger_provenance: "system" });
+    expect(store.successorFor(5408)?.head_sha).toBe("new");
+
+    expect(store.settleSuccessor(5408, "old")).toBe(false);
+    expect(store.settleSuccessor(5408, "new")).toBe(true);
+    expect(store.successorFor(5408)).toBeUndefined();
+  });
+
+  it("keeps a paused obligation durable and clears one on close", () => {
+    store.upsertPr(prRow(5408, { state: "reviewing", head_sha: "old" }));
+    const roundId = store.startRound(5408, "re-review", [], 75);
+    store.recordSuccessor({ pr: 5408, predecessor_round_id: roundId, head_sha: "new", provenance: "system", reason: "push" });
+    store.markRoundCancelled(roundId, "done", "head_moved");
+    store.setPaused(5408, true);
+    expect(store.promoteSuccessor(5408)).toBe(false);
+    expect(store.successorFor(5408)).toBeDefined();
+    store.clearSuccessor(5408, "closed");
+    expect(store.successorFor(5408)).toBeUndefined();
+  });
+});
+
 describe("priorRoundCount semantics (finding 3)", () => {
   it('counts VERDICTED rounds only — "first" really means "never successfully reviewed"', () => {
     store.upsertPr(prRow(50));

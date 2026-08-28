@@ -173,6 +173,21 @@ describe("applyEvent", () => {
     store.close();
   });
 
+  it("records fresh-head work owed while preserving the reviewing lifecycle", () => {
+    const store = open();
+    applyEvent(store, 5408, { type: "trigger", source: "label" }, { author: "alice", head_sha: "old" }, {});
+    const roundId = store.startRound(5408, "re-review", ["pass-baseline"], 75);
+    applyEvent(store, 5408, { type: "dispatched" }, {}, {});
+
+    applyEvent(store, 5408, { type: "synchronize" }, { head_sha: "new" }, {});
+    expect(store.getPr(5408)).toMatchObject({ state: "reviewing", head_sha: "new" });
+    expect(store.successorFor(5408)).toMatchObject({ predecessor_round_id: roundId, head_sha: "new", provenance: "system" });
+
+    applyEvent(store, 5408, { type: "trigger", source: "team_request" }, {}, {});
+    expect(store.successorFor(5408)?.provenance).toBe("human");
+    store.close();
+  });
+
   it("logs every state change as pr_transition", () => {
     const store = open();
     applyEvent(store, 10, { type: "trigger", source: "label" }, { author: "alice" }, {});

@@ -72,10 +72,15 @@ is a directive error message and an invariant that greps.
 ### G3 — mid-round wakes are held, not interleaved
 
 New `pending_wakes` table in `state.ts`. When an author reply arrives for a PR
-whose round is running, the rendered wake is stored instead of injected; the
-verdict path and the overdue/anomaly path flush it once the round is over and
-the session has been compacted. Per-PR cap of 5 held wakes — the oldest is
-dropped with an event-log line, never silently.
+whose round is running, the rendered wake is stored instead of injected. The
+verdict and overdue/anomaly paths normally flush it once the round is over and
+the session has been compacted. **Fresh-head successor work is the one ordering
+exception**: if a newer head became durable work owed while the old
+round ran, that successor round claims the session-command slot first and held
+conversation remains behind it until the successor terminates. This is still
+S4—one instruction at a time—and prevents a reply wake from overtaking already
+owed merits work. Per-PR cap of 5 held wakes — the oldest is dropped with an
+event-log line, never silently.
 
 Verified end to end: `tests/verdicts.test.ts` proves the watcher actually
 flushes on both round-end paths (verdict applied, round abandoned as overdue)

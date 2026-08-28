@@ -582,7 +582,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           const row = d.store.getPr(pr);
           if (!row) return { ok: false, reason: `unknown PR #${pr}` };
           const cancelled = d.store.cancelRunningRounds(pr, "rerun-round");
-          d.store.upsertPr({ ...row, state: "queued", trigger_ts: new Date().toISOString() });
+          const successorPromoted = d.store.promoteSuccessor(pr);
+          if (!successorPromoted) d.store.upsertPr({ ...row, state: "queued", trigger_ts: new Date().toISOString() });
           await d.pump();
           return { ok: true, requeued: pr, ...(cancelled.length > 0 ? { cancelled_rounds: cancelled } : {}) };
         },
@@ -597,7 +598,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           let cancelled: number[] = [];
           if (row && row.state !== "closed") {
             cancelled = d.store.cancelRunningRounds(target, "restart-session");
-            d.store.upsertPr({ ...row, state: "queued", trigger_ts: new Date().toISOString() });
+            const successorPromoted = d.store.promoteSuccessor(target);
+            if (!successorPromoted) d.store.upsertPr({ ...row, state: "queued", trigger_ts: new Date().toISOString() });
             await d.pump();
           }
           return { ok: true, restarted: `pr-${target}`, ...(cancelled.length > 0 ? { cancelled_rounds: cancelled } : {}) };
@@ -613,6 +615,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           const row = d.store.getPr(pr);
           if (!row) return { ok: false, reason: `unknown PR #${pr}` };
           d.store.setPaused(pr, false);
+          d.store.promoteSuccessor(pr);
           d.store.logEvent("pr_resumed", pr, {});
           await d.pump();
           return { ok: true, resumed: pr };

@@ -156,6 +156,19 @@ export class SessionCommandSupervisor {
         return;
       }
       runningRound = round;
+      const successor = this.deps.store.successorFor(command.pr);
+      if (
+        successor?.predecessor_round_id === round.id
+        && command.started_at === null
+        && (command.status === "pending" || command.status === "running")
+      ) {
+        await this.failRound(
+          command,
+          "command_start",
+          `round ${round.round_no} was superseded before command start by fresh head ${successor.head_sha}`,
+        );
+        return;
+      }
     } else if (command.status === "running" && settled) {
       await this.finishTerminalRoundCommand(command);
       return;

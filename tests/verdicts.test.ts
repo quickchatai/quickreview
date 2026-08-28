@@ -359,6 +359,17 @@ describe("anomaly paths", () => {
     expect(anomalies[0]!.detail).toContain("malformed verdict file");
   });
 
+  it("a malformed old-head round promotes durable fresh-head work instead of erasing it", async () => {
+    const roundId = reviewingRound(204);
+    store.recordSuccessor({ pr: 204, predecessor_round_id: roundId, head_sha: "fresh", provenance: "system", reason: "push" });
+    const { hooks } = recordingHooks();
+
+    await watcher({}, hooks).handleFile(write(204, 1, '{"pr":204,"round_no":1,"verdict":"MAYBE"'));
+
+    expect(store.getPr(204)).toMatchObject({ state: "queued", head_sha: "fresh", trigger_provenance: "system" });
+    expect(store.successorFor(204)?.head_sha).toBe("fresh");
+  });
+
   it("a verdict value outside the enum is malformed, never applied", async () => {
     reviewingRound(201);
     const { hooks, overseer } = recordingHooks();
@@ -780,6 +791,17 @@ describe("mid-round head advance chains a system re-trigger", () => {
     // The reviewed-head mark stays at the reviewed sha — the classifier's
     // comparison base for the chained trigger.
     expect(store.reviewedHead(400)!.head_sha).toBe("abc123");
+    expect(store.successorFor(400)?.head_sha).toBe("def456");
+  });
+
+  it("a verdict covering the owed successor clears it instead of queueing again", async () => {
+    const roundId = reviewingRound(403);
+    store.recordSuccessor({ pr: 403, predecessor_round_id: roundId, head_sha: "abc123", provenance: "system", reason: "promoted" });
+
+    await watcher().handleFile(write(403, 1, verdictFile({ pr: 403, verdict: "APPROVE", head_sha: "abc123" })));
+
+    expect(store.getPr(403)?.state).toBe("tracked");
+    expect(store.successorFor(403)).toBeUndefined();
   });
 
   it("unchanged head ⇒ no chain", async () => {

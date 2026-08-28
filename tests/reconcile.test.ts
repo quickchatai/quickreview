@@ -554,6 +554,20 @@ describe("reconcileOrphanedRounds", () => {
     store.close();
   });
 
+  it("promotes a durable fresh-head successor when the predecessor session is lost", () => {
+    const store = new StateStore(":memory:");
+    upsert(store, 13, "reviewing");
+    const oldId = store.startRound(13, "first", ["pass-baseline"], 75);
+    store.recordSuccessor({ pr: 13, predecessor_round_id: oldId, head_sha: "fresh13", provenance: "human", reason: "push+trigger" });
+
+    const res = reconcileOrphanedRounds(store, [], { botLogin: cfg.github.bot_login });
+
+    expect(res.requeued).toEqual([13]);
+    expect(store.getPr(13)).toMatchObject({ state: "queued", head_sha: "fresh13", trigger_provenance: "human" });
+    expect(store.successorFor(13)?.head_sha).toBe("fresh13");
+    store.close();
+  });
+
   it("does not requeue a PR whose newer round already completed", () => {
     const store = new StateStore(":memory:");
     upsert(store, 20, "reviewing");

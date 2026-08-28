@@ -144,10 +144,15 @@ export function reconcileOrphanedRounds(
     log(`startup: #${round.pr} round ${round.round_no} cancelled (session lost)`);
     const row = store.getPr(round.pr);
     if (row?.state === "reviewing" && !store.hasLaterRound(round.pr, round.round_no)) {
-      // "reviewing" was true only while the session lived. Same move as the
-      // overseer's rerun-round command: back to queued for a fresh dispatch.
-      store.upsertPr({ ...row, state: "queued", trigger_ts: now().toISOString() });
-      store.logEvent("orphaned_round_requeued", round.pr, { round_id: round.id, round_no: round.round_no });
+      // "reviewing" was true only while the session lived. A durable newer
+      // head wins; otherwise redo the lost head.
+      const successorPromoted = store.promoteSuccessor(round.pr);
+      if (!successorPromoted) store.upsertPr({ ...row, state: "queued", trigger_ts: now().toISOString() });
+      store.logEvent("orphaned_round_requeued", round.pr, {
+        round_id: round.id,
+        round_no: round.round_no,
+        successor_promoted: successorPromoted,
+      });
       requeued.push(round.pr);
       log(`startup: #${round.pr} requeued — its in-flight round was lost`);
     }
@@ -288,7 +293,6 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
       };
       report.triggered.push(pr);
       if (local?.paused) continue; // overseer pause-pr: no re-trigger until resumed
-      if (local?.state === "queued" || local?.state === "reviewing") continue; // already handled
 
       // Only an observed absent→present transition is a fresh edge. Undefined
       // is bootstrap history for an existing row (the table is additive on
@@ -298,6 +302,14 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
         local === undefined
           ? group.kinds[0]
           : group.kinds.find((kind) => previous.get(`${pr}:${kind}`) === false);
+      if (local?.state === "reviewing") {
+        // A fresh request can upgrade an already-recorded pushed-head
+        // successor to human provenance. Same-head requests need no second
+        // round: the active one already covers that head.
+        if (freshKind) applyEvent(store, pr, { type: "trigger", source: freshKind }, meta, { botLogin, now, reason: `reconcile:${freshKind}:reviewing` });
+        continue;
+      }
+      if (local?.state === "queued") continue; // already handled
       const reviewed = store.reviewedHead(pr);
       const pushHandled =
         !freshKind &&
@@ -325,8 +337,15 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
     }
   });
 
-  // Commits never dispatch a review. Open-PR truth above refreshes the stored
-  // head, but only the explicit label/team triggered-set may queue a round.
+  // Commits outside a round never dispatch a review. A head advance WHILE an
+  // older round owns the PR is different: records durable successor
+  // work. Promote obligations whose predecessor became terminal across a
+  // crash/restart; queue publication is idempotent and retains the evidence.
+  await step("successor-obligations", async () => {
+    for (const row of store.allPrs()) {
+      if (store.successorFor(row.number)) store.promoteSuccessor(row.number);
+    }
+  });
 
   // ---- 2b. stale-trigger residue sweep --------------------------
   // A settled PR (tracked/awaiting_author, no round running) never

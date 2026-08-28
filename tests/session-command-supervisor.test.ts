@@ -106,6 +106,29 @@ function supervisor(
 }
 
 describe("bounded round-stage supervision", () => {
+  it("cancels an obsolete unstarted predecessor through bounded recovery", async () => {
+    const { id, pr, roundId, round } = seedRoundCommand({ status: "pending", nextCheckAt: "2026-08-27T20:45:00.000Z" });
+    store.recordSuccessor({ pr, predecessor_round_id: roundId, head_sha: "fresh-head", provenance: "system", reason: "push" });
+    const onRoundFailure = vi.fn(async () => "requeued" as const);
+
+    await supervisor(hooks({ killSession: async () => {} }), onRoundFailure).supervisor.scan();
+
+    expect(onRoundFailure).toHaveBeenCalledWith(pr, round.round_no, "command_start", expect.stringContaining("superseded before command start"));
+    expect(store.getSessionCommand(id)?.status).toBe("failed");
+  });
+
+  it("lets an already-started predecessor finish while retaining fresh-head work", async () => {
+    const { id, pr, roundId } = seedRoundCommand({ status: "running", started: true, nextCheckAt: "2026-08-27T20:45:00.000Z" });
+    store.recordSuccessor({ pr, predecessor_round_id: roundId, head_sha: "fresh-head", provenance: "system", reason: "push" });
+    const onRoundFailure = vi.fn(async () => "requeued" as const);
+
+    await supervisor(hooks(), onRoundFailure).supervisor.scan();
+
+    expect(onRoundFailure).not.toHaveBeenCalled();
+    expect(store.getSessionCommand(id)?.status).toBe("running");
+    expect(store.successorFor(pr)?.head_sha).toBe("fresh-head");
+  });
+
   it("retries the same unstarted command after definitive missing-start evidence", async () => {
     const { id, pr } = seedRoundCommand({ status: "running" });
     const retried: string[] = [];
