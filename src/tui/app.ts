@@ -77,6 +77,7 @@ export interface AppHooks {
    * output back into the tab; the handle aborts a stuck sync. */
   deployRun?: (
     app: App,
+    runId: string,
     onData: (chunk: string) => void,
     onExit: (code: number | null) => void,
   ) => { kill(): void };

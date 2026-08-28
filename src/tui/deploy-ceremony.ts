@@ -26,6 +26,8 @@ export interface DeployCeremonyRecord {
   /** First fresh undrained snapshot seen after the command receipt. A second
    * newer one proves an external drain-off even if ON was never observed. */
   first_undrained_snapshot_at?: string;
+  /** Stable local detached-process identity; survives mandatory TUI re-exec. */
+  deploy_run_id?: string;
   updated_at: string;
 }
 
@@ -44,6 +46,7 @@ function valid(value: unknown): value is DeployCeremonyRecord {
     (v.pre_deploy_snapshot_at === undefined || typeof v.pre_deploy_snapshot_at === "string") &&
     (v.drain_observed === undefined || typeof v.drain_observed === "boolean") &&
     (v.first_undrained_snapshot_at === undefined || typeof v.first_undrained_snapshot_at === "string") &&
+    (v.deploy_run_id === undefined || typeof v.deploy_run_id === "string") &&
     typeof v.updated_at === "string";
 }
 

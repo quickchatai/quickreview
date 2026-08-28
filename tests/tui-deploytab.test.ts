@@ -195,7 +195,7 @@ describe("deploy tab drain orchestration", () => {
       },
     };
     let deploys = 0;
-    app.hooks.deployRun = (_a, _data, exit) => { deploys++; exit(0); return { kill: () => {} }; };
+    app.hooks.deployRun = (_a, _id, _data, exit) => { deploys++; exit(0); return { kill: () => {} }; };
     const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => 1000, drain);
     const run = app.run();
     streams.type("3");
@@ -248,7 +248,7 @@ describe("deploy tab drain orchestration", () => {
     const secondStreams = fakeStreams();
     const second = new App(TUI_DEFAULTS, async () => ok(""), secondStreams.out, secondStreams.input);
     let deploys = 0;
-    second.hooks.deployRun = (_a, _d, exit) => { deploys++; exit(0); return { kill: () => {} }; };
+    second.hooks.deployRun = (_a, _id, _d, exit) => { deploys++; exit(0); return { kill: () => {} }; };
     const restored = installDeployHooks(second, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => 2000, drain, store);
     const secondRun = second.run();
     secondStreams.type("3"); await settle();
@@ -269,7 +269,7 @@ describe("deploy tab drain orchestration", () => {
     const streams = fakeStreams();
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
     let deploys = 0;
-    app.hooks.deployRun = (_a, _d, exit) => { deploys++; exit(0); return { kill: () => {} }; };
+    app.hooks.deployRun = (_a, _id, _d, exit) => { deploys++; exit(0); return { kill: () => {} }; };
     const st = installDeployHooks(app, fetcher, () => 2000, quietDrain(), store);
     const run = app.run();
     publishStatus(app, 0);
@@ -320,21 +320,34 @@ describe("deploy tab drain orchestration", () => {
     second.quit(); await secondRun;
   });
 
-  it("turns an interrupted sync into a durable ambiguous failure instead of repeating it", async () => {
+  it("re-attaches to the same durable sync after the mandatory hot reload", async () => {
     const store = new MemoryDeployCeremonyStore();
-    store.write({ version: 1, phase: "syncing", target_head: "abc1234", pre_deploy_snapshot_at: "2026-08-28T12:00:00Z", updated_at: "2026-08-28T12:00:01Z" });
+    store.write({
+      version: 1,
+      phase: "syncing",
+      target_head: "abc1234",
+      pre_deploy_snapshot_at: "2026-08-28T12:00:00Z",
+      deploy_run_id: "deploy-run-1234",
+      updated_at: "2026-08-28T12:00:01Z",
+    });
     const streams = fakeStreams();
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
-    let deploys = 0;
-    app.hooks.deployRun = () => { deploys++; return { kill: () => {} }; };
+    const attached: string[] = [];
+    let finish: ((code: number | null) => void) | undefined;
+    app.hooks.deployRun = (_a, runId, _data, onExit) => {
+      attached.push(runId);
+      finish = onExit;
+      return { kill: () => {} };
+    };
     const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => 2000, quietDrain(), store);
     const run = app.run();
     streams.type("3"); await settle();
-    expect(st.deployPhase).toBe("deploy-failed");
-    expect(deploys).toBe(0);
-    streams.type("D"); streams.type("D");
-    expect(deploys).toBe(0);
-    expect(app.view.noticeLine).toContain("close the previous deploy result");
+    expect(st.deployPhase).toBe("syncing");
+    expect(st.run?.running).toBe(true);
+    expect(attached).toEqual(["deploy-run-1234"]);
+    finish!(0);
+    expect(st.deployPhase).toBe("awaiting-lift");
+    expect(store.read()?.deploy_run_id).toBe("deploy-run-1234");
     app.quit(); await run;
   });
 
@@ -427,7 +440,8 @@ describe("deploy tab drain orchestration", () => {
     app.quit(); await run;
   });
 
-  it("a failed sync leaves the drain standing rather than resuming blind", async () => {
+  it("a failed sync leaves the drain standing until x acknowledges a safe retry", async () => {
+    const store = new MemoryDeployCeremonyStore();
     const streams = fakeStreams();
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
     const calls: boolean[] = [];
@@ -437,8 +451,8 @@ describe("deploy tab drain orchestration", () => {
         return { ok: true, draining: on, running_rounds: on ? 0 : undefined, dropped_deliveries: on ? undefined : 0 };
       },
     };
-    app.hooks.deployRun = (_a, _data, exit) => { exit(1); return { kill: () => {} }; };
-    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => 1000, drain);
+    app.hooks.deployRun = (_a, _id, _data, exit) => { exit(1); return { kill: () => {} }; };
+    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => 1000, drain, store);
     const run = app.run();
     streams.type("3");
     await settle();
@@ -449,6 +463,12 @@ describe("deploy tab drain orchestration", () => {
     expect(st.deployPhase).toBe("deploy-failed");
     expect(calls).toEqual([true]);
     expect(stripAnsi(streams.written())).toContain("drain remains ON");
+    expect(store.read()?.phase).toBe("deploy-failed");
+    streams.type("x");
+    expect(store.read()).toBeUndefined();
+    expect(app.view.noticeLine).toContain("drain state unchanged");
+    streams.type("D");
+    expect(st.armedAt).toBeDefined();
     app.quit();
     await run;
   });
@@ -485,7 +505,7 @@ describe("deploy tab keys", () => {
     const streams = fakeStreams();
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
     let deploys = 0;
-    app.hooks.deployRun = (_a, _onData, onExit) => {
+    app.hooks.deployRun = (_a, _id, _onData, onExit) => {
       deploys++;
       onExit(0);
       return { kill: () => {} };
@@ -525,7 +545,7 @@ describe("deploy tab keys", () => {
     const streams = fakeStreams();
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
     let deploys = 0;
-    app.hooks.deployRun = (_a, _onData, onExit) => {
+    app.hooks.deployRun = (_a, _id, _onData, onExit) => {
       deploys++;
       onExit(0);
       return { kill: () => {} };
@@ -562,7 +582,7 @@ describe("deploy tab keys", () => {
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
     let exitFn: ((code: number | null) => void) | undefined;
     let dataFn: ((chunk: string) => void) | undefined;
-    app.hooks.deployRun = (_a, onData, onExit) => {
+    app.hooks.deployRun = (_a, _id, onData, onExit) => {
       dataFn = onData;
       exitFn = onExit;
       return { kill: () => {} };
@@ -606,7 +626,7 @@ describe("deploy tab keys", () => {
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
     let killed = 0;
     let exitFn: ((code: number | null) => void) | undefined;
-    app.hooks.deployRun = (_a, _onData, onExit) => {
+    app.hooks.deployRun = (_a, _id, _onData, onExit) => {
       exitFn = onExit;
       return { kill: () => killed++ };
     };
@@ -681,7 +701,7 @@ describe("power button (stop/start the VM app)", () => {
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
     let powers = 0;
     app.hooks.powerRun = (_a, _action, _d, onExit) => (powers++, onExit(0), { kill: () => {} });
-    app.hooks.deployRun = (_a, _d, onExit) => (onExit(0), { kill: () => {} });
+    app.hooks.deployRun = (_a, _id, _d, onExit) => (onExit(0), { kill: () => {} });
     const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234", containerStatus: "Up 5 minutes" }) }, () => 1000);
     const run = app.run();
     streams.type("3");

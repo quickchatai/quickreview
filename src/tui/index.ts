@@ -277,33 +277,10 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
     }
   };
   app.hooks.reconnect = () => onRealTerminal(() => ensureSshMaster(cfg));
-  app.hooks.deployRun = (_theApp, onData, onExit) => {
-    // Streamed into the deploy tab — the TUI never leaves the screen. The
-    // tab invokes this only after its drain receipt + fresh zero-round gate;
-    // deploy.sh keeps its own clean-tree/pin checks as defense in depth.
-    // Colors off: the pane strips ANSI anyway, plain text diffs better.
-    const child = spawn("bash", ["scripts/deploy.sh", "sync"], {
-      cwd: sandboxRoot(),
-      env: { ...process.env, ANSIBLE_FORCE_COLOR: "0", PY_COLORS: "0", NO_COLOR: "1" },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    child.stdout.on("data", (b: Buffer) => onData(b.toString("utf8")));
-    child.stderr.on("data", (b: Buffer) => onData(b.toString("utf8")));
-    child.on("close", (code) => onExit(code));
-    child.on("error", (err) => {
-      onData(`\nspawn failed: ${String(err)}\n`);
-      onExit(1);
-    });
-    return {
-      kill: () => {
-        try {
-          child.kill("SIGTERM");
-        } catch {
-          /* already gone */
-        }
-      },
-    };
-  };
+  const { DurableDeployProcess } = await import("./deploy-process.js");
+  const durableDeploy = new DurableDeployProcess(sandboxRoot());
+  app.hooks.deployRun = (_theApp, runId, onData, onExit) =>
+    durableDeploy.startOrAttach(runId, onData, onExit);
   app.view.repo = full.github.repo;
   const { spawn } = await import("node:child_process");
   const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
