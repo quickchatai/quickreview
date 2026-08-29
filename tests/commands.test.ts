@@ -50,14 +50,6 @@ describe("validateCommand — whitelist", () => {
     expect(COMMAND_WHITELIST).toHaveLength(10); // + drain and bounded thread-decision replay
   });
 
-  it("flag-owner is the role-worded alias for flag-owner-legacy (reseed) — internal kind unchanged", () => {
-    const res = validateCommand({ command: "flag-owner", message: "webhook signature failures spiking" });
-    expect(res.ok).toBe(true);
-    if (res.ok) expect(res.command).toEqual({ command: "flag-owner-legacy", message: "webhook signature failures spiking" });
-    // The alias inherits flag-owner-legacy's strict schema, not a looser one.
-    expect(validateCommand({ command: "flag-owner", reason: "wrong field name" }).ok).toBe(false);
-  });
-
   it("slack_reply: strict shape, ts format, and no channel field", () => {
     expect(validateCommand({ command: "slack_reply", thread: "1712345678.123456" }).ok).toBe(false);
     expect(validateCommand({ command: "slack_reply", thread: "1712345678.123456", text: "  " }).ok).toBe(false);

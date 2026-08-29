@@ -110,6 +110,7 @@ const ALLOWLIST: AllowlistEntry[] = [
   { path: "config.example.toml", tokens: ["owner_legacy"], reason: "documents the legacy [slack] legacy_owner_slack_id alias an old config may still carry" },
   { path: "tests/fixtures/config.toml", tokens: ["owner_legacy"], reason: "fixture exercises the legacy legacy_owner_slack_id alias fold" },
   { path: "tests/legacy-acceptance.test.ts", tokens: ["owner_legacy"], reason: "THE pinning file for the owner_legacy→owner tier fold and flag-owner-legacy→flag-owner command fold" },
+  { path: "prompts/slack-overseer-appendix.md", tokens: ["owner_legacy"], reason: "frozen appendix deliberately keeps the legacy tier and flag-command spellings (structural, folded on input, test-pinned; containers running older prompts) — superseding it is a future reseed, not" },
   { path: "tests/slack-config.test.ts", tokens: ["owner_legacy"], reason: "exercises the legacy legacy_owner_slack_id alias (set, conflicting, folded)" },
   { path: "tests/slack-appendix-schemas.test.ts", tokens: ["owner_legacy"], reason: "pins the flag-owner-legacy legacy command alias against the frozen appendix seed" },
   { path: "tests/slack-appendix.test.ts", tokens: ["owner_legacy"], reason: "asserts the FROZEN slack appendix seed's legacy wording — catches up with the reseed" },
@@ -142,7 +143,7 @@ const ALLOWLIST: AllowlistEntry[] = [
   //    the private profile/config is charted follow-up, not droppable here.
   { path: "src/config.ts", tokens: ["quickchat", "issue-tracker"], reason: "shipped [companion] defaults the LIVE deployment boots from (live config leaves them unset); lifted with the private-profile split" },
   { path: "src/pingpong.ts", tokens: ["owner_legacy"], reason: "session guidance string mirrors the FROZEN conversation-system seed's wording — changes with the reseed" },
-  { path: "tests/templates.test.ts", tokens: ["owner_legacy"], reason: "asserts the pending-reseed round templates' literal wording" },
+  { path: "prompts/companion.md", tokens: ["quickchat"], reason: "container mount path literal /example-app — mirrors CONTAINER.reviewedRepo (live-deployment carrier; genericized with the private-profile split)" },
   { path: "tests/posting.test.ts", tokens: ["owner_legacy"], reason: "negative assertion that the assembled review body stays scrubbed of the personal name" },
   { path: "tests/github-app-manifest.test.ts", tokens: ["quickchat"], reason: "negative assertion that the shipped App manifest carries no private-org hostname" },
   { path: "tests/skill-descriptions.test.ts", tokens: ["quickchat"], reason: "asserts the companion evidence skill names its frozen /example-app mount" },
@@ -347,14 +348,16 @@ describe("publishability lint", () => {
     // …while the exemption channels behave as declared. The exclude/
     // pending_reseed probes are conditional: the assembled tree
     // carries an EMPTY exclude (exclusions applied at assembly), and the
-    // pending_reseed section dies with the reseed — in each case a
-    // planted token must then be CAUGHT, not exempted.
+    // pending_reseed section DIED with the reseed — a planted token
+    // under prompts/ is now CAUGHT; the frozen appendix's legacy spellings
+    // are carried by the reasoned ALLOWLIST instead.
     const retroPlant = scanFiles([{ path: "docs/retro/planted.md", text: "the owner" }]);
     if (isExcluded("docs/retro/planted.md")) expect(retroPlant).toEqual([]);
     else expect(retroPlant).not.toEqual([]);
     const seedPlant = scanFiles([{ path: "prompts/planted.md", text: "the owner" }]);
-    if (isPendingReseed("prompts/planted.md")) expect(seedPlant).toEqual([]); // pending_reseed
+    if (isPendingReseed("prompts/planted.md")) expect(seedPlant).toEqual([]); // pending_reseed (dead)
     else expect(seedPlant).not.toEqual([]);
+    expect(scanFiles([{ path: "prompts/slack-overseer-appendix.md", text: "flag-owner-legacy" }])).toEqual([]); // allowlisted carrier
     expect(scanFiles([{ path: "LICENSE", text: "Copyright Quickchat AI" }])).toEqual([]); // allowlisted token
     expect(scanFiles([{ path: "LICENSE", text: "my-vm" }])).not.toEqual([]); // …but only the GRANTED token
   });

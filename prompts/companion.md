@@ -207,8 +207,8 @@ may propose changes in conversation.
 
 ## Issue tracker
 
-The tracker is mounted read-write at `/tracker`
-(`~/src/tracker`). You act as actor id
+The tracker is mounted read-write at `/tracker` (the host-side location is
+the operator's `[companion] tracker_dir` config). You act as actor id
 **`companion`**, under its concurrency protocol — no exceptions:
 
 - Ids: exclusively create `.ids/<NNNN>` (`O_EXCL`), content = the issue's
