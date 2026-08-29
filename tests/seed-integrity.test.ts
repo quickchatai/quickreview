@@ -1,15 +1,17 @@
 // CLAUDE.md hard rule 6 made structural.
 //
 // `prompts/` + `agents/` seeded content is canonical — byte-identical to the
-// assets — and must never be rewritten in-tree. Per-pass model
+// in-repo seeds/ copies (lineage) — and must never be rewritten
+// in-tree. Per-pass model
 // overrides go through `config.toml [models.passes]`, applied at agent build
 // time by `src/include.ts`, never by editing the seed.
 //
 // Two layers:
 //   1. Hermetic: sha256 of every seeded file against a checked-in manifest.
-//      CI has no issue-tracker checkout, so this is the layer that always runs.
-//   2. Provenance: when the assets dir is present on this machine,
-//      compare byte-for-byte against it too. Skipped visibly when absent.
+//   2. Provenance: byte-for-byte comparison against the in-repo canonical
+//      copies under seeds/ (previously the external assets
+//      dir, present only on the original machine). Runs unconditionally, on
+//      any machine, with no environment variable.
 // Plus a guard that the files we DO own never sneak into the manifest.
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
@@ -31,25 +33,29 @@ const manifest = JSON.parse(
 
 const RULE_6 =
   "CLAUDE.md hard rule 6: prompts/ + agents/ seeded content is canonical " +
-  "(byte-identical to the assets) and must never be rewritten. " +
+  "(byte-identical to the seeds/ canonical copies, lineage) and must " +
+  "never be rewritten. " +
   "Per-pass model overrides go through config.toml [models.passes]. " +
-  "If you genuinely re-seeded from the assets dir, regenerate " +
+  "A genuinely ratified reseed refreshes seeds/ and regenerates " +
   "tests/fixtures/seed-manifest.json in the same commit.";
 
 /**
- * Seeds that have RATIFIED divergence from the assets.
+ * Seeds that have RATIFIED divergence from the original lineage.
  *
- * Rule 6 freezes the seeds against *unilateral* rewriting, not against the owner.
- * A file listed here was re-seeded on his explicit order; it stays pinned by the
- * manifest (so any FURTHER drift is still caught) but is exempt from the
- * byte-identity comparison against the original asset.
+ * Rule 6 freezes the seeds against *unilateral* rewriting, not against the
+ * owner. A file listed here was re-seeded on the owner's explicit order; it
+ * stays pinned by the manifest (so any FURTHER drift is still caught), and
+ * the entry records the departure from the original lineage. Since
+ * the provenance baseline is the in-repo seeds/ copy — refreshed by every
+ * ratified reseed — so the registry no longer exempts anything from the
+ * byte-identity comparison below; it is the lineage record.
  *
  * The registry lives in tests/fixtures/ratified-divergence.json:
  * each entry is a seeded path with its ratification notes. Two writers only —
  * a human recording a ratified reseed, and the TUI's rubric-accept path
  * (the owner's accept click IS the ratification; the TUI appends the entry,
- * re-pins the manifest hash, and commits). Adding an entry any other way is
- * a rule-6 violation, not a fix.
+ * refreshes seeds/, re-pins the manifest hash, and commits). Adding an entry
+ * any other way is a rule-6 violation, not a fix.
  */
 interface DivergenceRegistry {
   files: Record<string, string[]>;
@@ -86,22 +92,7 @@ function sha256(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
-/**
- * The assets dir is flat (basenames only); it lives in the issue tracker, which
- * is absent in CI and may sit at either of the two historically-quoted paths.
- * `QCR_FT0037_ASSETS` overrides for anyone with a checkout elsewhere.
- */
-function findAssetsDir(): string | null {
-  const candidates = [
-    process.env["QCR_FT0037_ASSETS"],
-    "~/src/tracker/efforts/review-sandbox/assets",
-    "~/src/tracker/assets",
-  ].filter((c): c is string => typeof c === "string" && c.length > 0);
-  return candidates.find((c) => existsSync(c)) ?? null;
-}
-
 const seededPaths = Object.keys(manifest.files).sort();
-const assetsDir = findAssetsDir();
 
 describe("seed integrity (hard rule 6)", () => {
   it("manifest covers exactly the seeded set: 4 prompts + 9 pass agents", () => {
@@ -155,7 +146,11 @@ describe("seed integrity (hard rule 6)", () => {
       const notes = divergence.files[rel] ?? [];
       expect(notes.length, `${rel} has no ratification note — who ratified it, when?`).toBeGreaterThan(0);
       for (const note of notes) {
-        expect(note, `${rel}: ratification note must carry a date and 'the owner'`).toMatch(/^\d{4}-\d{2}-\d{2} .*the owner/);
+        // new notes are role-worded ("owner"); the personal spelling
+        // on the legacy notes is history and must keep validating.
+        expect(note, `${rel}: ratification note must carry a date and a ratifier ('owner'; 'the owner' grandfathered)`).toMatch(
+          /^\d{4}-\d{2}-\d{2} .*(?:the owner|owner)/,
+        );
       }
     }
   });
@@ -170,36 +165,61 @@ describe("seed integrity (hard rule 6)", () => {
   });
 });
 
-// ---- provenance layer: only runnable where the issue tracker is checked out --
+// ---- provenance layer: byte-identity vs the in-repo canonical copies --------
+//
+// the canonical seed copies live in seeds/ (same relative layout as
+// the tree), so this layer runs unconditionally on every machine — no
+// environment variable, no external checkout. Until it compared
+// against the assets dir in the issue tracker, which only the
+// original machine had; seeds/ carries that lineage forward in-repo.
+//
+// The RATIFIED_DIVERGENCE interaction, deliberately: the divergence-exempt
+// files (conversation-system, overseer-system, eod-sweep) diverge from the
+// ORIGINAL assets, but seeds/ was copied from the CURRENT tree —
+// whose shas the manifest already pins — so byte-identity vs seeds/ holds for
+// ALL 13 files and nothing is filtered out here. The registry keeps meaning
+// "diverged from the original lineage" (each entry says who ratified the
+// reseed and when); it no longer exempts anything from this comparison.
+// A future ratified reseed — a human recording one, or the TUI's
+// rubric-accept path (`recordRatification`) — refreshes the seeds/ copy AND
+// re-pins the manifest sha in the same commit.
 
-const haveAssets = assetsDir !== null;
+const seedsDir = join(repoRoot, "seeds");
 
-const provenancePaths = seededPaths.filter((p) => !RATIFIED_DIVERGENCE.has(p));
-
-describe.skipIf(!haveAssets)(`seed provenance vs assets (${assetsDir ?? "ABSENT — skipped"})`, () => {
-  it.each(provenancePaths)("%s is byte-identical to the asset", (rel) => {
-    const asset = join(assetsDir as string, rel.split("/").pop() as string);
-    expect(existsSync(asset), `${rel} has no counterpart in ${assetsDir}`).toBe(true);
+describe("seed provenance vs in-repo canonical copies (seeds/)", () => {
+  it.each(seededPaths)("%s is byte-identical to its seeds/ canonical copy", (rel) => {
+    const canonical = join(seedsDir, rel);
+    expect(existsSync(canonical), `${rel} has no canonical copy under seeds/`).toBe(true);
     const ours = readFileSync(join(repoRoot, rel));
-    const theirs = readFileSync(asset);
+    const theirs = readFileSync(canonical);
     expect(
       ours.equals(theirs),
-      `SEED DRIFT: ${rel} differs from ${asset}. ${RULE_6}`,
+      `SEED DRIFT: ${rel} differs from seeds/${rel}. ${RULE_6}`,
     ).toBe(true);
   });
 
-  it("no asset is missing from the manifest", () => {
-    const basenames = new Set(seededPaths.map((p) => p.split("/").pop() as string));
-    const assetFiles = readdirSync(assetsDir as string).filter((f) => f.endsWith(".md"));
-    for (const f of assetFiles) {
-      expect(basenames, `${f} exists in the assets dir but is not tracked by the seed manifest`).toContain(f);
+  it.each(seededPaths)("seeds/%s matches the manifest sha (the canonical copy cannot drift)", (rel) => {
+    // The guard on the copy itself: editing seeds/ instead of the seed would
+    // otherwise make the byte-identity comparison above vacuous.
+    const canonical = join(seedsDir, rel);
+    expect(existsSync(canonical), `seeds/${rel} is missing`).toBe(true);
+    const actual = sha256(canonical);
+    expect(
+      actual,
+      `CANONICAL-COPY DRIFT: seeds/${rel} no longer matches the manifest ` +
+        `(manifest ${manifest.files[rel]}, on disk ${actual}). The seeds/ copy is the ` +
+        `provenance baseline — it changes only in a ratified reseed that re-pins the manifest. ${RULE_6}`,
+    ).toBe(manifest.files[rel]);
+  });
+
+  it("no seeds/ file is missing from the manifest", () => {
+    const tracked = new Set(seededPaths);
+    const found = readdirSync(seedsDir, { recursive: true, withFileTypes: true })
+      .filter((d) => d.isFile())
+      .map((d) => join(d.parentPath, d.name).slice(seedsDir.length + 1))
+      .filter((rel) => rel.endsWith(".md"));
+    for (const rel of found) {
+      expect(tracked, `seeds/${rel} exists but is not tracked by the seed manifest`).toContain(rel);
     }
   });
 });
-
-if (!haveAssets) {
-  // Make the skip visible in the report rather than silently passing.
-  describe("seed provenance vs assets", () => {
-    it.skip("SKIPPED: assets dir not on this machine (set QCR_FT0037_ASSETS to enable)", () => {});
-  });
-}

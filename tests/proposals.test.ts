@@ -195,14 +195,19 @@ describe("recordRatification", () => {
   });
   afterEach(() => rmSync(root, { recursive: true, force: true }));
 
-  it("re-pins the manifest hash and appends a dated the owner note", () => {
+  it("re-pins the manifest hash, refreshes the seeds/ copy, and appends a dated owner note", () => {
     const touched = recordRatification(root, ["agents/pass-baseline.md"], "fix-mergebase", "2026-08-20");
     expect(touched).toEqual(["agents/pass-baseline.md"]);
     const manifest = JSON.parse(readFileSync(join(root, "tests/fixtures/seed-manifest.json"), "utf8"));
     expect(manifest.files["agents/pass-baseline.md"]).toMatch(/^[0-9a-f]{64}$/);
     expect(manifest.files["agents/pass-baseline.md"]).not.toBe("oldhash");
+    // the in-repo canonical copy tracks the ratified content, so the
+    // provenance suite stays green after an accept.
+    expect(readFileSync(join(root, "seeds/agents/pass-baseline.md"), "utf8")).toBe("patched body\n");
     const div = JSON.parse(readFileSync(join(root, "tests/fixtures/ratified-divergence.json"), "utf8"));
-    expect(div.files["agents/pass-baseline.md"][0]).toMatch(/^2026-08-20 the owner: rubric proposal 'fix-mergebase'/);
+    // grandfathering: new notes say "owner", legacy notes say
+    // "the owner" — the verifying grammar accepts both, so old history validates.
+    expect(div.files["agents/pass-baseline.md"][0]).toMatch(/^2026-08-20 (?:the owner|owner): rubric proposal 'fix-mergebase'/);
   });
 
   it("skips non-seeded files (no exemption needed)", () => {
@@ -248,7 +253,10 @@ describe("acceptProposal (local dirs, fake git)", () => {
     );
     expect(res.ok).toBe(true);
     expect(gitCalls.map((c) => c.slice(0, 2).join(" "))).toEqual(["git apply", "git apply", "git add", "git commit"]);
-    expect(gitCalls[3]!.join(" ")).toContain("ratified by the owner via TUI");
+    // The refreshed canonical copy rides the same commit as the reseed.
+    expect(gitCalls[2]).toContain("seeds/agents/pass-baseline.md");
+    // role wording, old spelling grandfathered (history never rewrites).
+    expect(gitCalls[3]!.join(" ")).toMatch(/ratified by (?:the owner|the owner) via TUI/);
     const div = JSON.parse(readFileSync(join(root, "tests/fixtures/ratified-divergence.json"), "utf8"));
     expect(Object.keys(div.files)).toEqual(["agents/pass-baseline.md"]);
     expect(existsSync(join(root, "state/rubric/fix-mergebase"))).toBe(false);

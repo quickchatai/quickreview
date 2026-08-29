@@ -29,8 +29,8 @@
 //     accept click ratifies the proposal's OWN diff, never a fence rewrite
 //     smuggled inside it.
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { TuiConfig } from "../config.js";
 
 export interface RubricProposal {
@@ -228,8 +228,17 @@ export function patchFenceViolation(patch: string, readFile: (rel: string) => st
   return null;
 }
 
-/** Append the ratification + re-pin manifest hashes for the seeded files the
- * accepted patch touched. Pure file transforms — caller does git. */
+/** Append the ratification + re-pin manifest hashes + refresh the seeds/
+ * canonical copies for the seeded files the accepted patch touched. Pure file
+ * transforms — caller does git.
+ *
+ * seeds/ carries the in-repo canonical copies the provenance suite
+ * (tests/seed-integrity.test.ts) compares against, so an accepted reseed must
+ * refresh the copy alongside the manifest sha — the canonical bytes track the
+ * ratified content, while the divergence registry (not seeds/) records the
+ * departure from the original lineage. The note is role-worded
+ * ("owner": the accept click is the owner's ratification); legacy notes
+ * say "the owner" and stay valid — history is never rewritten. */
 export function recordRatification(repoRoot: string, files: string[], slug: string, today: string): string[] {
   const manifestPath = join(repoRoot, "tests/fixtures/seed-manifest.json");
   const divergencePath = join(repoRoot, "tests/fixtures/ratified-divergence.json");
@@ -238,9 +247,13 @@ export function recordRatification(repoRoot: string, files: string[], slug: stri
   const touched: string[] = [];
   for (const rel of files) {
     if (!(rel in manifest.files)) continue; // non-seeded (e.g. pass-intent.md) needs no exemption
-    manifest.files[rel] = createHash("sha256").update(readFileSync(join(repoRoot, rel))).digest("hex");
+    const content = readFileSync(join(repoRoot, rel));
+    manifest.files[rel] = createHash("sha256").update(content).digest("hex");
+    const canonical = join(repoRoot, "seeds", rel);
+    mkdirSync(dirname(canonical), { recursive: true });
+    writeFileSync(canonical, content);
     const notes = divergence.files[rel] ?? (divergence.files[rel] = []);
-    notes.push(`${today} the owner: rubric proposal '${slug}' accepted via TUI (the accept click is the ratification)`);
+    notes.push(`${today} owner: rubric proposal '${slug}' accepted via TUI (the accept click is the ratification)`);
     touched.push(rel);
   }
   if (touched.length > 0) {
@@ -278,7 +291,11 @@ export async function acceptProposal(deps: AcceptDeps, slug: string): Promise<{ 
   try {
     await deps.git.run("git", ["apply", "-"], patch);
     const ratified = recordRatification(deps.repoRoot, files, slug, deps.today());
-    const toAdd = [...files, ...(ratified.length > 0 ? ["tests/fixtures/seed-manifest.json", "tests/fixtures/ratified-divergence.json"] : [])];
+    const toAdd = [
+      ...files,
+      ...ratified.map((rel) => `seeds/${rel}`),
+      ...(ratified.length > 0 ? ["tests/fixtures/seed-manifest.json", "tests/fixtures/ratified-divergence.json"] : []),
+    ];
     await deps.git.run("git", ["add", "--", ...toAdd]);
     await deps.git.run("git", ["commit", "-m", `rubric: accept '${slug}' — ratified by the owner via TUI`]);
   } catch (err) {

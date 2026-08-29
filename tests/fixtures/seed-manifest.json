@@ -1,6 +1,6 @@
 {
-  "_comment": "CLAUDE.md hard rule 6: these files are SEEDED and canonical - byte-identical to the assets. Never edit them; per-pass model overrides go through config.toml [models.passes]. Regenerate this manifest ONLY when re-seeding from the assets dir.",
-  "source": "seeds/ (lineage: the seeding)",
+  "_comment": "CLAUDE.md hard rule 6: these files are SEEDED and canonical - byte-identical to the in-repo canonical copies under seeds/ (which carry the seeding lineage). Never edit them; per-pass model overrides go through config.toml [models.passes]. Regenerate this manifest ONLY alongside a ratified reseed that refreshes seeds/ in the same commit.",
+  "source": "seeds/ (in-repo canonical copies; lineage: the seeding)",
   "algorithm": "sha256",
   "files": {
     "agents/pass-baseline.md": "266fe62d7cf700489c80b74a1fb17fcab0ba4b30a449c7460ed5d3d7e17c8459",

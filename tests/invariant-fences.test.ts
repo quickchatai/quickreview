@@ -166,7 +166,14 @@ const FROZEN_SEEDS = [
  */
 const CITATION = String.raw`FT-\d{4}|RULE-\d{1,2}`;
 
-const OPEN = new RegExp(String.raw`^<!-- RATIFIED (${CITATION}) ([a-z0-9-]+) — do not edit; owner only -->$`);
+/**
+ * The role half of the marker grammar: new fences say `owner only`
+ * — the role, so the machinery reads for any installation's owner. The
+ * personal spelling `the owner only` is GRANDFATHERED: existing fences keep
+ * their ratified bytes (rewriting a fence marker just to rename it would
+ * itself be a fence edit — rule 6 territory), so both spellings parse.
+ */
+const OPEN = new RegExp(String.raw`^<!-- RATIFIED (${CITATION}) ([a-z0-9-]+) — do not edit; (?:the owner|owner) only -->$`);
 const CLOSE = /^<!-- \/RATIFIED ([a-z0-9-]+) -->$/;
 
 interface ParsedFence {
@@ -288,5 +295,15 @@ describe("ratified invariant fences", () => {
     expect(OPEN.exec("<!-- RATIFIED severity-scale — do not edit; owner only -->")?.[1]).toBe("");
     expect(OPEN.exec("<!-- RATIFIED rule 2 x — do not edit; owner only -->")).toBe(null);
     expect(OPEN.exec("<!-- RATIFIED the owner x — do not edit; owner only -->")).toBe(null);
+  });
+
+  it("the role half accepts both spellings — 'owner only' for new fences, 'the owner only' grandfathered", () => {
+    expect(OPEN.exec("<!-- RATIFIED role-worded — do not edit; owner only -->")?.[2]).toBe("role-worded");
+    expect(OPEN.exec("<!-- RATIFIED RULE-2 invariants-absolute — do not edit; owner only -->")?.[1]).toBe("RULE-2");
+    // Existing fences keep their ratified bytes — the personal spelling parses.
+    expect(OPEN.exec("<!-- RATIFIED ci-gate — do not edit; owner only -->")?.[2]).toBe("ci-gate");
+    // But only those two: a free-text role would dilute the marker.
+    expect(OPEN.exec("<!-- RATIFIED x — do not edit; the owner only -->")).toBe(null);
+    expect(OPEN.exec("<!-- RATIFIED x — do not edit; anyone only -->")).toBe(null);
   });
 });
