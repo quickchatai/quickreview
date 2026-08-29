@@ -233,10 +233,10 @@ describe("decideAnnouncement", () => {
       allow: false,
       block: "cooldown",
     });
-    // Next Warsaw day: fresh fire, and the bypass is available again.
+    // Next policy day: fresh fire, and the bypass is available again.
     at("2026-08-17T22:30:00Z");
     expect(decideAnnouncement(store, cfg, { cause: "round.overdue", pr: 1 }, clock)).toMatchObject({ allow: true });
-    expect(store.slackCooldown("round.overdue:1")).toMatchObject({ warsaw_day: "2026-08-18", bypassed: 0, fire_count: 1 });
+    expect(store.slackCooldown("round.overdue:1")).toMatchObject({ day: "2026-08-18", bypassed: 0, fire_count: 1 });
     at("2026-08-17T22:40:00Z");
     expect(decideAnnouncement(store, cfg, { cause: "round.overdue", pr: 1, escalated: true }, clock).bypass).toBe(true);
   });

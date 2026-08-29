@@ -81,6 +81,46 @@ describe("parseConfig", () => {
   });
 });
 
+// ---- [ops] timezone — the operations-day knob --------------------
+describe("[ops] timezone", () => {
+  const shipped = readFileSync(configPath, "utf8");
+  // The fixture's [ops] block, for surgical splicing below.
+  const OPS_WARSAW = '[ops]\ntimezone = "Europe/Warsaw"';
+
+  it("reads the fixture knob", () => {
+    expect(parseConfig(shipped).ops.timezone).toBe("Europe/Warsaw");
+  });
+
+  it("defaults to UTC when [ops] is absent — older configs keep parsing", () => {
+    const without = shipped.replace(OPS_WARSAW, "");
+    expect(parseConfig(without).ops.timezone).toBe("UTC");
+  });
+
+  it("[eod] and [slack.policy] default from [ops] when their own timezone is unset", () => {
+    const derived = shipped
+      .replace(OPS_WARSAW, '[ops]\ntimezone = "America/New_York"')
+      .replace('time = "18:00"\ntimezone = "Europe/Warsaw"', 'time = "18:00"')
+      .replace(/^timezone = "Europe\/Warsaw" +# the day boundary.*$/m, "");
+    const cfg = parseConfig(derived);
+    expect(cfg.ops.timezone).toBe("America/New_York");
+    expect(cfg.eod.timezone).toBe("America/New_York");
+    expect(cfg.slack.policy.timezone).toBe("America/New_York");
+  });
+
+  it("an explicit per-section timezone still wins over [ops]", () => {
+    const cfg = parseConfig(shipped.replace(OPS_WARSAW, '[ops]\ntimezone = "America/New_York"'));
+    expect(cfg.ops.timezone).toBe("America/New_York");
+    // The fixture sets both sections explicitly — they keep their own zone.
+    expect(cfg.eod.timezone).toBe("Europe/Warsaw");
+    expect(cfg.slack.policy.timezone).toBe("Europe/Warsaw");
+  });
+
+  it("rejects a zone Intl does not know — same check the EOD formatter would hit at 18:00", () => {
+    const bad = shipped.replace(OPS_WARSAW, '[ops]\ntimezone = "Mars/Olympus_Mons"');
+    expect(() => parseConfig(bad)).toThrowError(/\[ops\] timezone 'Mars\/Olympus_Mons' is not a valid IANA timezone/);
+  });
+});
+
 describe("[review]", () => {
   it("reads the fixture's escalation-mention fallback", () => {
     const cfg = parseConfig(readFileSync(configPath, "utf8"));

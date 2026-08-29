@@ -301,13 +301,13 @@ describe("computeMetrics", () => {
     });
   });
 
-  it("bucket Warsaw days by local date, not UTC", () => {
+  it("buckets ops days by the configured zone's local date, not UTC (zone from opts)", () => {
     // 23:30Z on 2026-08-13 is already 2026-08-14 in Warsaw (CEST, UTC+2).
     insertRound(store, {
       pr: 300, round_no: 1, verdict: "APPROVE", spend_usd: 1,
       started_at: "2026-08-13T23:30:00.000Z", finished_at: "2026-08-13T23:40:00.000Z",
     });
-    const m = computeMetrics(store, { now });
+    const m = computeMetrics(store, { now, timeZone: "Europe/Warsaw" });
     expect(m.daily.find((d) => d.day === "2026-08-14")!.rounds).toBe(4);
     expect(m.daily.find((d) => d.day === "2026-08-13")!.rounds).toBe(0);
   });

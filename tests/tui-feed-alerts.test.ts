@@ -166,11 +166,12 @@ describe("AlertPolicy", () => {
     expect(p.decide(rec("alert"))).toMatchObject({ action: "fold" });
   });
 
-  // the boundary is Europe/Warsaw, not UTC — 21:50Z in summer is
-  // 23:50 local, 22:05Z is already the next day.
-  it("forgets its daily memory across a Warsaw day boundary", () => {
+  // the boundary is the configured ops timezone, not UTC —
+  // with Europe/Warsaw, 21:50Z in summer is 23:50 local, 22:05Z is already
+  // the next day. The TUI threads the zone from config.
+  it("forgets its daily memory across the configured zone's day boundary", () => {
     let t = new Date("2026-08-14T21:50:00Z");
-    const p = new AlertPolicy(120, () => t);
+    const p = new AlertPolicy(120, () => t, undefined, "Europe/Warsaw");
     p.decide(rec("notice"));
     t = new Date("2026-08-14T22:05:00Z");
     expect(p.decide(rec("notice"))).toEqual({ action: "route", bypass: false });

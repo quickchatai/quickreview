@@ -86,7 +86,7 @@ export interface CauseMemory {
 
 /** The whole "already told you" memory, as it survives a TUI restart. */
 export interface PolicyState {
-  /** Warsaw day the state belongs to; a different day loads as empty. */
+  /** Ops day the state belongs to; a different day loads as empty. */
   day: string;
   causes: Record<string, CauseMemory>;
 }
@@ -130,11 +130,14 @@ export function filePolicyStore(path: string): PolicyStore {
 /**
  * Per-cause cooldown + daily fold memory, persisted across TUI restarts.
  *
- * The day boundary is **Europe/Warsaw** (C2 shipped it as UTC and
- * flagged the deferral): "already told you today" has to flip when the owner's
- * day flips, and the daily escalation bypass has to reset with it — an hour or
- * two of drift either side of midnight is exactly when a night's worth of
- * folded causes should start speaking again.
+ * The day boundary is the **operations timezone** (`cfg.ops.timezone`,
+ * established the principle after C2 shipped it as UTC and
+ * flagged the deferral): "already told you today" has to flip when the
+ * operator's day flips, and the daily escalation bypass has to reset with it
+ * — an hour or two of drift either side of midnight is exactly when a
+ * night's worth of folded causes should start speaking again. The TUI passes
+ * the zone from config; the bare-UTC default exists only for callers with no
+ * config in hand.
  */
 export class AlertPolicy {
   private memory = new Map<string, CauseMemory>();
@@ -143,7 +146,7 @@ export class AlertPolicy {
     private readonly cooldownMin: number,
     private readonly now: () => Date = () => new Date(),
     private readonly store?: PolicyStore,
-    private readonly timeZone: string = "Europe/Warsaw",
+    private readonly timeZone: string = "UTC",
   ) {
     const loaded = store?.load();
     // A state file from an earlier day is discarded wholesale, which IS the

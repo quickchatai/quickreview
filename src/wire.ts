@@ -20,12 +20,12 @@ import { CommandWatcher, type CommandDeps } from "./commands.js";
 import { createDaemon, type Daemon } from "./daemon.js";
 import { eodDigestContext, latestDigestHeadline } from "./digest.js";
 import { startHeartbeat, type HeartbeatTimer } from "./anomalies.js";
-import { promptReader, startEodTimer, type EodTimer } from "./eod.js";
+import { opsDay, promptReader, startEodTimer, type EodTimer } from "./eod.js";
 import { MutationGate, type MutationIntent } from "./gate.js";
 import { GitHubAdapter } from "./github.js";
 import { makePostingGuard } from "./guards.js";
 import { TokenMinter } from "./githubAuth.js";
-import { FeedbackEngine, feedbackDayAddendum, warsawDay, type FeedbackEvent } from "./feedback.js";
+import { FeedbackEngine, feedbackDayAddendum, type FeedbackEvent } from "./feedback.js";
 import { PASS_ADDENDA, buildAgents } from "./include.js";
 import { fileImprovementPr, fileIssue, type Run } from "./improvements.js";
 import { OpenVikingClient, OpenVikingSupervisor, keyFromFile, openVikingContextAssembler, openVikingStore } from "./openviking/index.js";
@@ -504,12 +504,12 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       //
       // the build composes in the SAME-DAY feedback addendum when
       // today carries [feedback] comments — validator-scoped, demotion-only,
-      // regenerated on every ingest and expired on Warsaw-day change (the
+      // regenerated on every ingest and expired on ops-day change (the
       // hourly tick below), so a mid-day restart picks today's feedback up
       // and yesterday's never leaks into a new day.
-      let builtDay = warsawDay();
+      let builtDay = opsDay(cfg.ops.timezone);
       const rebuildAgents = (day?: string): void => {
-        builtDay = day ?? warsawDay();
+        builtDay = day ?? opsDay(cfg.ops.timezone);
         const fb = feedbackDayAddendum(d.store.feedbackCommentsForDay(builtDay), builtDay);
         const built = buildAgents(join(root, "agents"), join(root, "state", "agents"), {
           root,
@@ -541,7 +541,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         cacheTtlMs: cfg.openviking.read_cache_ttl_ms,
         log,
       });
-      feedback = new FeedbackEngine({ store: d.store, rebuildAgents, memory, log });
+      feedback = new FeedbackEngine({ store: d.store, timezone: cfg.ops.timezone, rebuildAgents, memory, log });
       memoryStore = memory;
       memoryAssembler = openVikingContextAssembler({
         client: memoryClient,
@@ -687,7 +687,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       commands = buildLocalCommandWatcher({ root, deps: commandDeps, store: d.store, slack, log: (l) => log(l) });
       await commands.start();
 
-      // Daemon-clock EOD (Warsaw wall time; pi schedulers deliberately unused).
+      // Daemon-clock EOD ([eod]-timezone wall time; pi schedulers deliberately unused).
       // Curation must never touch the owner's pinned entries. The
       // watchdog fingerprints the pinned area around the sweep and raises an
       // anomaly on any change. It WRAPS the inject rather than hooking inside
@@ -727,7 +727,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       });
       log(`EOD timer armed for ${eod.nextFire().toISOString()}`);
 
-      // Daily overseer heartbeat — same Warsaw wall-clock machinery,
+      // Daily overseer heartbeat — same wall-clock machinery,
       // morning slot. At most one boot catch-up if the daemon was down at the
       // hour; the fired-date lives in the store, so restarts never double-fire.
       heartbeat = startHeartbeat({
@@ -750,11 +750,11 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       rotation.unref?.();
 
       // expire a stale same-day feedback addendum promptly on the
-      // Warsaw-day change — a 5-minute string compare, so yesterday's items
+      // ops-day change — a 5-minute string compare, so yesterday's items
       // bite at most minutes into a new day, not an hour.
       const dayCheck = setInterval(() => {
         try {
-          if (warsawDay() !== builtDay) rebuildAgents();
+          if (opsDay(cfg.ops.timezone) !== builtDay) rebuildAgents();
         } catch (err) {
           log("feedback: day-change agents rebuild failed", err);
         }

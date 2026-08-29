@@ -29,7 +29,7 @@
 // cause's `enabled` switch (never hardcoded) and the idem ledger, nothing else.
 import { existsSync, readFileSync } from "node:fs";
 import type { Config } from "../config.js";
-import { zoneDateString } from "../eod.js";
+import { opsDay } from "../eod.js";
 import type { SlackPostKind, StateStore } from "../state.js";
 import type { RoundType } from "../types.js";
 import {
@@ -284,8 +284,10 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     return d.allow;
   }
 
-  private warsawDay(): string {
-    return zoneDateString(this.now(), this.deps.cfg.slack.policy.timezone);
+  /** The policy-timezone day token — the shared opsDay (src/eod.ts) over
+   * this section's zone; no private day-naming copy. */
+  private policyDay(): string {
+    return opsDay(this.deps.cfg.slack.policy.timezone, this.now());
   }
 
   /** Coarse buckets keep a repeatable cause idempotent across a restart while
@@ -432,7 +434,7 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
   async capReached(cap: number): Promise<void> {
     if (!this.announcementAllowed("slack.cap_reached")) return;
     await this.post({
-      idemKey: `slack.cap_reached:${this.warsawDay()}`,
+      idemKey: `slack.cap_reached:${this.policyDay()}`,
       kind: "announce",
       text: causeMessage(this.deps.cfg, { cause: "slack.cap_reached", cap }),
     });

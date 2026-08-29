@@ -431,7 +431,7 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
       }
       await companion.ensureUp((line) => app.notice(`companion: ${line}`));
       // daily rollover — strictly between "container is up" and
-      // "pi is spawned": on the first start of a new Warsaw day it archives
+      // "pi is spawned": on the first start of a new ops day it archives
       // yesterday, kills the session and queues the opening context, so the
       // spawnPi below births the fresh conversation that reads it.
       const { CompanionRollover } = await import("./rollover.js");
@@ -443,6 +443,7 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
         injectDir: companion.hostInjectDir(),
         localDigestHeadline: () => latestDigestHeadline(),
         ownerName: full.owner.name,
+        timeZone: full.ops.timezone,
       });
       const report = await rollover.run();
       if (report.verdict.kind === "rollover") {
@@ -482,15 +483,15 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
   });
   chainOnPoll(app, (a) => void a.sidebar?.refresh());
   // The header carries what the sidebar cannot know for itself: whose day it
-  // is (the companion rolls over on the Warsaw boundary, so a stale day in
-  // the header is the first visible sign a rollover was missed) and whether
+  // is (the companion rolls over on the ops-timezone boundary, so a stale day
+  // in the header is the first visible sign a rollover was missed) and whether
   // memory is actually reachable — a companion talking with no memory behind
   // it looks identical to a healthy one until you ask it something.
   const { todayDate } = await import("./rollover.js");
   chainOnPoll(app, (a) => {
     const fwd = memForward.view();
     a.sidebar?.setHeader({
-      day: todayDate(new Date()),
+      day: todayDate(new Date(), process.env, full.ops.timezone),
       memory: fwd.state === "failed" ? "degraded" : fwd.state === "off" ? "off" : "ok",
     });
   });
@@ -596,8 +597,8 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
     const { InjectSender } = await import("./msg.js");
     const overseer = new InjectSender(cfg, realSshRunner);
     // Persisted per-cause memory: "already told you" survives a TUI restart
-    // inside the same Warsaw day, and resets with the day.
-    const policy = new AlertPolicy(full.companion.cooldown_min, () => new Date(), filePolicyStore(policyStatePath));
+    // inside the same ops day, and resets with the day.
+    const policy = new AlertPolicy(full.companion.cooldown_min, () => new Date(), filePolicyStore(policyStatePath), full.ops.timezone);
     const consumer = new AlertConsumer(full.companion.alerts_dir, policy, {
       notice: (text) => app.notice(text),
       badge: (badge) => app.setAlertBadge(badge),

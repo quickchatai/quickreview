@@ -136,7 +136,7 @@ describe("slack_cooldowns", () => {
   it("records a fire, folds repeats and resets fold on the next fire", () => {
     store.recordSlackCooldownFire("round.overdue:5263", "2026-08-17");
     expect(store.slackCooldown("round.overdue:5263")).toMatchObject({
-      warsaw_day: "2026-08-17",
+      day: "2026-08-17",
       fire_count: 1,
       fold_count: 0,
       bypassed: 0,
@@ -153,7 +153,7 @@ describe("slack_cooldowns", () => {
     store.recordSlackCooldownFire("k", "2026-08-17");
     expect(store.slackCooldown("k")).toMatchObject({ bypassed: 1, fire_count: 2 });
     store.recordSlackCooldownFire("k", "2026-08-18");
-    expect(store.slackCooldown("k")).toMatchObject({ bypassed: 0, fire_count: 1, warsaw_day: "2026-08-18" });
+    expect(store.slackCooldown("k")).toMatchObject({ bypassed: 0, fire_count: 1, day: "2026-08-18" });
   });
 
   it("keys are independent — one PR's cooldown never touches another's", () => {

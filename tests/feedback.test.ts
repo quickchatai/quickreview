@@ -16,13 +16,17 @@ import {
   memoryEntryFor,
   parseEventTags,
   sanitizeFeedbackText,
-  warsawDay,
   type FeedbackEvent,
 } from "../src/feedback.js";
+import { opsDay } from "../src/eod.js";
 import { VALIDATE_PASS, buildAgents } from "../src/include.js";
 import type { MemoryEntry, MemoryOp, MemoryStore, MemoryWriteResult } from "../src/memory/store.js";
 import { StateStore, type FeedbackSignalRow } from "../src/state.js";
 import { applyInterpretation, interpretEvent, type Interpretation } from "../src/webhook.js";
+
+/** The ops timezone the engine tests run on (mirrors the live config; the
+ * non-default-zone coverage uses America/New_York explicitly). */
+const TZ = "Europe/Warsaw";
 
 /** The [feedback] sink talks to the ONE MemoryStore seam — no
  * subprocess, no engine knowledge. */
@@ -77,11 +81,29 @@ describe("sanitizeFeedbackText", () => {
   });
 });
 
-describe("warsawDay", () => {
-  it("returns the Warsaw calendar date (DST-correct via Intl)", () => {
+describe("opsDay", () => {
+  it("returns the calendar date in the given zone (DST-correct via Intl)", () => {
     // 2026-08-19T23:30Z is already 2026-08-20 in Warsaw (UTC+2 in August).
-    expect(warsawDay(new Date("2026-08-19T23:30:00Z"))).toBe("2026-08-20");
-    expect(warsawDay(new Date("2026-08-19T12:00:00Z"))).toBe("2026-08-19");
+    expect(opsDay("Europe/Warsaw", new Date("2026-08-19T23:30:00Z"))).toBe("2026-08-20");
+    expect(opsDay("Europe/Warsaw", new Date("2026-08-19T12:00:00Z"))).toBe("2026-08-19");
+  });
+
+  it("follows a non-default zone, not the old Warsaw constant", () => {
+    // Same instant, three zones, three different day tokens.
+    const t = new Date("2026-01-15T04:30:00Z");
+    expect(opsDay("America/New_York", t)).toBe("2026-01-14"); // 23:30 EST
+    expect(opsDay("UTC", t)).toBe("2026-01-15");
+    expect(opsDay("Europe/Warsaw", t)).toBe("2026-01-15");
+  });
+
+  it("flips exactly at the configured zone's midnight — the day-rollover rebuild boundary", () => {
+    // wire.ts's dayCheck is `opsDay(cfg.ops.timezone) !== builtDay` — prove
+    // the token holds up to the zone's midnight and flips right after it.
+    const tz = "America/New_York";
+    const builtDay = opsDay(tz, new Date("2026-01-15T04:30:00Z")); // 23:30 EST Jan 14
+    expect(builtDay).toBe("2026-01-14");
+    expect(opsDay(tz, new Date("2026-01-15T04:59:59Z"))).toBe(builtDay); // 23:59:59 — no rebuild
+    expect(opsDay(tz, new Date("2026-01-15T05:00:01Z"))).not.toBe(builtDay); // 00:00:01 — rebuild fires
   });
 });
 
@@ -491,7 +513,7 @@ describe("FeedbackEngine.ingest", () => {
   it("records, writes one memory entry, and rebuilds agents for an explicit comment", async () => {
     const memory = new FakeMemoryStore();
     const rebuildAgents = vi.fn();
-    const engine = new FeedbackEngine({ store, rebuildAgents, memory });
+    const engine = new FeedbackEngine({ store, timezone: TZ, rebuildAgents, memory });
     expect(await engine.ingest(comment)).toBe("recorded");
     expect(memory.applied).toHaveLength(1);
     // `note`, never `add`: the entry carries its own tag and is stored verbatim.
@@ -506,7 +528,7 @@ describe("FeedbackEngine.ingest", () => {
   it("behavioral signals write memory but never rebuild agents", async () => {
     const memory = new FakeMemoryStore();
     const rebuildAgents = vi.fn();
-    const engine = new FeedbackEngine({ store, rebuildAgents, memory });
+    const engine = new FeedbackEngine({ store, timezone: TZ, rebuildAgents, memory });
     expect(await engine.ingest({ kind: "bot_comment_deleted", pr: 1, comment_id: 3 })).toBe("recorded");
     expect(await engine.ingest({ kind: "trigger_withdrawn", pr: 1, by: "pmercier" })).toBe("recorded");
     expect(rebuildAgents).not.toHaveBeenCalled();
@@ -515,12 +537,12 @@ describe("FeedbackEngine.ingest", () => {
 
   it("skips a stale dismissal entirely (GitHub's stale-on-push auto-dismiss)", async () => {
     const memory = new FakeMemoryStore();
-    const engine = new FeedbackEngine({ store, rebuildAgents: vi.fn(), memory });
+    const engine = new FeedbackEngine({ store, timezone: TZ, rebuildAgents: vi.fn(), memory });
     expect(await engine.ingest({ kind: "review_set_aside", pr: 1, review_id: 4, by: "x", stale: true })).toBe(
       "skipped_stale",
     );
     expect(memory.applied).toHaveLength(0);
-    expect(store.feedbackCommentsForDay(warsawDay())).toEqual([]);
+    expect(store.feedbackCommentsForDay(opsDay(TZ))).toEqual([]);
     // A real dismissal ingests.
     expect(await engine.ingest({ kind: "review_set_aside", pr: 1, review_id: 4, by: "x", stale: false })).toBe(
       "recorded",
@@ -532,19 +554,19 @@ describe("FeedbackEngine.ingest", () => {
     // engine: the signal stays ledgered and the day addendum still rebuilds.
     const memory = new FakeMemoryStore({ ok: false, message: "refused: stale view" });
     const rebuildAgents = vi.fn();
-    const engine = new FeedbackEngine({ store, rebuildAgents, memory });
+    const engine = new FeedbackEngine({ store, timezone: TZ, rebuildAgents, memory });
     expect(await engine.ingest(comment)).toBe("recorded");
     expect(rebuildAgents).toHaveBeenCalledTimes(1);
-    expect(store.feedbackCommentsForDay(warsawDay()).length).toBe(1);
+    expect(store.feedbackCommentsForDay(opsDay(TZ)).length).toBe(1);
   });
 
   it("writes ONE tagged event entry per signal through the seam", async () => {
     const memory = new FakeMemoryStore();
-    const engine = new FeedbackEngine({ store, rebuildAgents: vi.fn(), memory });
+    const engine = new FeedbackEngine({ store, timezone: TZ, rebuildAgents: vi.fn(), memory });
     await engine.ingest(comment);
     await engine.ingest({ kind: "merged_over_block", pr: 5312 });
     expect(memory.applied.map((o) => o.op)).toEqual(["note", "note"]);
-    const day = warsawDay();
+    const day = opsDay(TZ);
     expect(parseEventTags((memory.applied[0] as { text: string }).text)).toEqual({
       kind: "feedback",
       pr: "5325",
@@ -569,10 +591,10 @@ describe("FeedbackEngine.ingest", () => {
       apply: () => Promise.reject(new Error("ECONNREFUSED 127.0.0.1:1933")),
     };
     const rebuildAgents = vi.fn();
-    const engine = new FeedbackEngine({ store, rebuildAgents, memory });
+    const engine = new FeedbackEngine({ store, timezone: TZ, rebuildAgents, memory });
     await expect(engine.ingest(comment)).resolves.toBe("recorded");
 
-    const day = warsawDay();
+    const day = opsDay(TZ);
     const rows = store.feedbackCommentsForDay(day);
     expect(rows.length).toBe(1);
     expect(rebuildAgents).toHaveBeenCalledWith(day);
@@ -592,14 +614,41 @@ describe("FeedbackEngine.ingest", () => {
       // Never settles until the test lets it — the wedged-store case.
       apply: () => new Promise<MemoryWriteResult>((resolve) => (settle = () => resolve({ ok: true, message: "late" }))),
     };
-    const engine = new FeedbackEngine({ store, rebuildAgents: vi.fn(), memory, memoryTimeoutMs: 5 });
+    const engine = new FeedbackEngine({ store, timezone: TZ, rebuildAgents: vi.fn(), memory, memoryTimeoutMs: 5 });
     await expect(engine.ingest(comment)).resolves.toBe("recorded");
-    expect(store.feedbackCommentsForDay(warsawDay()).length).toBe(1);
+    expect(store.feedbackCommentsForDay(opsDay(TZ)).length).toBe(1);
     const failed = store.recentEvents(20).find((e) => e.kind === "feedback_memory_write_failed");
     expect(failed?.payload ?? "").toContain("timed out");
     // A late answer after the deadline is inert (no unhandled rejection, no
     // second ledger row).
     settle?.();
+  });
+
+  // ----: day scoping follows the configured ops timezone ----------
+  it("stamps and expires the same-day addendum on the configured zone's day, not the old Warsaw constant", async () => {
+    const tz = "America/New_York";
+    let clock = new Date("2026-01-15T04:30:00Z"); // 23:30 Jan 14 in New York — already Jan 15 in Warsaw AND UTC
+    const memory = new FakeMemoryStore();
+    const rebuildAgents = vi.fn();
+    const engine = new FeedbackEngine({ store, timezone: tz, rebuildAgents, memory, now: () => clock });
+
+    expect(await engine.ingest(comment)).toBe("recorded");
+    // Ledger stamp and rebuild both carry the NY day.
+    expect(rebuildAgents).toHaveBeenCalledWith("2026-01-14");
+    expect(store.feedbackCommentsForDay("2026-01-14").length).toBe(1);
+    expect(store.feedbackCommentsForDay("2026-01-15")).toEqual([]); // the Warsaw/UTC day keyed nothing
+
+    // Cross the NY midnight: the new day's ledger is empty, so yesterday's
+    // items no longer feed an addendum — the same-day bite expires with the
+    // configured zone's day, not an hour early on someone else's midnight.
+    clock = new Date("2026-01-15T05:05:00Z"); // 00:05 in New York
+    const day2 = opsDay(tz, clock);
+    expect(day2).toBe("2026-01-15");
+    expect(feedbackDayAddendum(store.feedbackCommentsForDay(day2), day2)).toBeNull();
+    // A fresh comment after that midnight lands on — and rebuilds for — the new day.
+    expect(await engine.ingest({ ...comment, comment_id: 10 })).toBe("recorded");
+    expect(rebuildAgents).toHaveBeenLastCalledWith("2026-01-15");
+    expect(feedbackDayAddendum(store.feedbackCommentsForDay(day2), day2)?.text).toContain("2026-01-15");
   });
 
   it("stale window constant stays within sane bounds", () => {
@@ -643,7 +692,7 @@ describe("the `note` contract", () => {
 
   it("writes every signal as a #tag-opening `note`, never an `add`", async () => {
     const memory = new FakeMemoryStore();
-    const engine = new FeedbackEngine({ store, rebuildAgents: vi.fn(), memory });
+    const engine = new FeedbackEngine({ store, timezone: TZ, rebuildAgents: vi.fn(), memory });
     for (const e of every) expect(await engine.ingest(e)).toBe("recorded");
     expect(memory.applied).toHaveLength(every.length);
     for (const op of memory.applied) {

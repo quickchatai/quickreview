@@ -252,7 +252,7 @@ export function todayJson(
 }
 
 /** Today's cancellations grouped by cause — the same tally the
- * metrics payload carries, scoped to one Warsaw-agnostic ISO date so `qcr
+ * metrics payload carries, scoped to one timezone-agnostic ISO date so `qcr
  * today` can print it beside the rounds it explains. */
 export function cancellationsOn(store: StateStore, date: string): CancellationTally[] {
   const counts = new Map<string, number>();
@@ -310,7 +310,16 @@ async function cmdMetrics(pr: number | null, json: boolean): Promise<void> {
       console.log(json ? JSON.stringify(payload) : renderTimeline(payload));
       return;
     }
-    const payload = computeMetrics(store);
+    // Day buckets follow the ops timezone. `qcr metrics` must stay
+    // usable beside a bare state.db, so an unreadable config degrades to UTC
+    // rather than refusing.
+    let timeZone = "UTC";
+    try {
+      timeZone = loadConfig().ops.timezone;
+    } catch {
+      /* config genuinely unavailable — UTC day buckets */
+    }
+    const payload = computeMetrics(store, { timeZone });
     // The operational half is file-derived: status.json (heartbeat/dry-run/
     // concurrency) + the BUILD_SHA marker deploy.sh writes into the sandbox
     // root. parseBuildSha is deploytab's — the marker format has one parser.

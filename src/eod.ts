@@ -1,4 +1,5 @@
-// EOD scheduling — 18:00 Europe/Warsaw, DST-correct, using Intl only.
+// EOD scheduling — a daily wall-clock fire in the configured [eod] timezone,
+// DST-correct, using Intl only (no date libs).
 //
 // Why daemon-side (§4): every pi scheduler extension is in-process —
 // it fires only while a session happens to be open, queues nothing, and none
@@ -74,6 +75,17 @@ export function zonedParts(instant: Date, timeZone: string): ZonedParts {
 export function zoneDateString(instant: Date, timeZone: string): string {
   const p = zonedParts(instant, timeZone);
   return `${String(p.year).padStart(4, "0")}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
+}
+
+/**
+ * The operations-day token: "YYYY-MM-DD" in the configured
+ * operations timezone (`[ops] timezone`, `cfg.ops.timezone`). The ONE
+ * day-naming implementation — the [feedback] same-day addendum, the agent
+ * rebuild rollover and the Slack day caps all derive their day through it;
+ * callers thread the zone from config rather than importing a constant.
+ */
+export function opsDay(timeZone: string, now: Date = new Date()): string {
+  return zoneDateString(now, timeZone);
 }
 
 /** Zone offset (ms east of UTC) in effect at `instant`. */

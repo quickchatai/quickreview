@@ -429,7 +429,7 @@ export function metricsCards(win: MetricsWindow, daily: DailyRow[], rows = 24, e
   return [
     {
       title: "ACTIVITY",
-      subtitle: daily.length > 0 ? `${daily[0]!.day} → ${daily[daily.length - 1]!.day}` : "per Warsaw day",
+      subtitle: daily.length > 0 ? `${daily[0]!.day} → ${daily[daily.length - 1]!.day}` : "per ops day",
       accent: ACCENTS.cyan,
       body: (w) => {
         if (daily.length === 0) return [dim("no data yet")];

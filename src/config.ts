@@ -124,11 +124,11 @@ export interface SlackCausePolicy {
 }
 
 export interface SlackPolicyConfig {
-  /** Channel-wide model turns per Warsaw day (RATIFIED at 80). */
+  /** Channel-wide model turns per policy day (RATIFIED at 80). */
   daily_turns: number;
-  /** Per-person model turns per Warsaw day (RATIFIED at 20). */
+  /** Per-person model turns per policy day (RATIFIED at 20). */
   per_user_daily_turns: number;
-  /** Daemon posts into any ONE thread per Warsaw day. */
+  /** Daemon posts into any ONE thread per policy day. */
   thread_replies_per_day: number;
   /** Author ping-pong courtesy limit before the bot goes quiet in-thread. */
   soft_exchange_limit: number;
@@ -191,7 +191,10 @@ export const SLACK_POLICY_DEFAULTS: SlackPolicyConfig = {
   soft_exchange_limit: 3,
   announcements_per_hour: 20,
   default_cooldown_min: 60,
-  timezone: "Europe/Warsaw",
+  // Effective value comes from [slack.policy] timezone, else [ops] timezone
+  // (parseSlack) — this static default (= OPS_DEFAULTS.timezone, declared
+  // below) only reaches direct constructions that bypass parseConfig.
+  timezone: "UTC",
   pickup_grace_min: 20,
   downtime_notice_min: 5,
   heartbeat_interval_min: 5,
@@ -543,8 +546,38 @@ export function openVikingBaseUrl(c: OpenVikingConfig): string {
   return `http://${c.host}:${c.port}`;
 }
 
+/**
+ * [ops] — the operations timezone: the ONE knob that defines whose
+ * calendar day the system runs on. Every day-scoped feature derives its day
+ * from here — the [feedback] same-day addendum + agent-rebuild rollover,
+ * metrics day buckets, TUI alert fold memory and companion day rollover —
+ * and the two sections that already carried their own zone ([eod] and
+ * [slack.policy] `timezone`) now DEFAULT from it, each still individually
+ * overridable in its own section.
+ */
+export interface OpsConfig {
+  /** IANA zone (e.g. "Europe/Warsaw") of the operator's day. */
+  timezone: string;
+}
+
+/** Neutral default — a config that never names a zone runs on UTC days. */
+export const OPS_DEFAULTS: OpsConfig = { timezone: "UTC" };
+
+/** The same Intl-based check the EOD machinery relies on (src/eod.ts builds
+ * an Intl.DateTimeFormat per zone): an unknown zone throws RangeError at
+ * formatter construction, so validate at parse time rather than at 18:00. */
+export function assertIanaTimeZone(tz: string, where: string): string {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+  } catch {
+    throw new Error(`config.toml: ${where} '${tz}' is not a valid IANA timezone`);
+  }
+  return tz;
+}
+
 export interface Config {
   dry_run: boolean;
+  ops: OpsConfig;
   github: GithubConfig;
   server: { hostname: string; port: number };
   daemon: {
@@ -810,8 +843,17 @@ export function parseConfig(toml: string): Config {
   const raw = parse(toml) as Record<string, any>;
   const github: GithubConfig = { ...(req(raw, "github") as GithubConfig) };
   const companion = resolveCompanionPaths({ ...COMPANION_DEFAULTS, ...((raw.companion ?? {}) as Partial<CompanionConfig>) });
+  // [ops] is optional so older configs keep parsing; [eod] and
+  // [slack.policy] timezones default from it below, own-section value wins.
+  const ops: OpsConfig = {
+    timezone: assertIanaTimeZone(
+      String(((raw.ops ?? {}) as Partial<OpsConfig>).timezone ?? OPS_DEFAULTS.timezone),
+      "[ops] timezone",
+    ),
+  };
   const cfg: Config = {
     dry_run: Boolean(req(raw, "dry_run")),
+    ops,
     github,
     server: { ...(req(raw, "server") as Config["server"]) },
 // Both knobs default so legacy configs keep parsing.
@@ -830,11 +872,13 @@ export function parseConfig(toml: string): Config {
       round_stage_supervisor_stale_s: DEFAULT_ROUND_STAGE_SUPERVISOR_STALE_S,
       ...(req(raw, "daemon") as Partial<Config["daemon"]>),
     } as Config["daemon"],
-    // heartbeat_time defaults so legacy configs keep parsing.
+    // heartbeat_time defaults so legacy configs keep parsing; the
+    // timezone defaults from [ops], own [eod] value wins.
     eod: {
       heartbeat_time: "09:00",
       pinned_watchdog: true,
       pinned_watchdog_window_min: 90,
+      timezone: ops.timezone,
       ...(req(raw, "eod") as Partial<Config["eod"]>),
     } as Config["eod"],
     caps: { ...(req(raw, "caps") as Config["caps"]) },
@@ -849,7 +893,7 @@ export function parseConfig(toml: string): Config {
     guards: { ...GUARDS_DEFAULTS, ...((raw.guards ?? {}) as Partial<GuardsConfig>) },
     recheck: { ...RECHECK_DEFAULTS, ...((raw.recheck ?? {}) as Partial<RecheckConfig>) },
     review: { ...REVIEW_DEFAULTS, ...((raw.review ?? {}) as Partial<ReviewConfig>) },
-    slack: parseSlack((raw.slack ?? {}) as Record<string, any>),
+    slack: parseSlack((raw.slack ?? {}) as Record<string, any>, ops.timezone),
     owner: { ...OWNER_DEFAULTS, ...((raw.owner ?? {}) as Partial<OwnerConfig>) },
   };
   // Legacy alias: a set `[slack] legacy_owner_slack_id` feeds
@@ -884,7 +928,7 @@ export function parseConfig(toml: string): Config {
   return cfg;
 }
 
-function parseSlack(raw: Record<string, any>): SlackConfig {
+function parseSlack(raw: Record<string, any>, defaultTimezone: string): SlackConfig {
   const rawPolicy = (raw.policy ?? {}) as Record<string, any>;
   const causes: Record<string, SlackCausePolicy> = { ...SLACK_CAUSE_DEFAULTS };
   for (const [cause, v] of Object.entries((rawPolicy.causes ?? {}) as Record<string, Partial<SlackCausePolicy>>)) {
@@ -901,7 +945,9 @@ function parseSlack(raw: Record<string, any>): SlackConfig {
     ...SLACK_DEFAULTS,
     ...(rawScalars as Partial<SlackConfig>),
     users: { ...((raw.users ?? {}) as Record<string, string>) },
-    policy: { ...SLACK_POLICY_DEFAULTS, ...(policyScalars as Partial<SlackPolicyConfig>), causes },
+    // The day boundary defaults from [ops]; an explicit
+    // [slack.policy] timezone still wins.
+    policy: { ...SLACK_POLICY_DEFAULTS, timezone: defaultTimezone, ...(policyScalars as Partial<SlackPolicyConfig>), causes },
   };
   // Token *files* are names under secrets_dir, but an absolute or ~-rooted
   // override must still work — expand here so every reader sees one shape.

@@ -7,6 +7,11 @@
 
 dry_run = true
 
+# the operations timezone — whose calendar day the system runs on.
+# [eod] and [slack.policy] `timezone` default from it (own value wins).
+[ops]
+timezone = "Europe/Warsaw"
+
 [github]
 repo = "example-org/example-app"
 app_slug = "example-review"

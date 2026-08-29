@@ -27,10 +27,11 @@
 //
 // The EOD curator consolidates the `kind=feedback` event entries into durable
 // learnings and rubric proposals through its existing mandate; the addendum
-// expires with the Warsaw day (wire.ts rebuilds on day change) and is built
+// expires with the operations day (`[ops] timezone`; wire.ts rebuilds on day
+// change) and is built
 // from the LEDGER (`feedbackCommentsForDay`), never from memory — it therefore
 // survives a memory outage and the engine cutover untouched.
-import { zoneDateString } from "./eod.js";
+import { opsDay } from "./eod.js";
 import { VALIDATE_PASS, type PassAddendum } from "./include.js";
 import { formatEventTags, parseEventTags } from "./memory/eventtags.js";
 import type { MemoryStore } from "./memory/store.js";
@@ -61,13 +62,6 @@ export type FeedbackEvent =
   | { kind: "merged_over_block"; pr: number }
   | { kind: "bot_comment_deleted"; pr: number; comment_id: number }
   | { kind: "trigger_withdrawn"; pr: number; by: string };
-
-export const FEEDBACK_TIMEZONE = "Europe/Warsaw";
-
-/** The Warsaw day token (YYYY-MM-DD) — same wall clock the EOD machinery uses. */
-export function warsawDay(now: Date = new Date()): string {
-  return zoneDateString(now, FEEDBACK_TIMEZONE);
-}
 
 /** A review set aside within this window of a head push is GitHub's own
  * stale-review auto-dismissal, not a human verdict on the review. */
@@ -165,7 +159,7 @@ function whereLabel(scope: string | null, inReplyTo: number | null): string {
  *
  *   kind   — the event category. Always `feedback` here.
  *   pr     — the PR the signal came from, digits only (the evidence handle).
- *   day    — the Warsaw day it arrived, `YYYY-MM-DD` (the same-day window).
+ *   day    — the ops day it arrived, `YYYY-MM-DD` (the same-day window).
  *   signal — WHICH signal, i.e. the `FeedbackEvent` kind verbatim, so an
  *            explicit human comment can be told from a behavioral inference
  *            without parsing prose.
@@ -264,6 +258,10 @@ export function feedbackDayAddendum(items: FeedbackSignalRow[], day: string): Pa
 
 export interface FeedbackEngineDeps {
   store: StateStore;
+  /** IANA zone whose calendar day scopes the ledger stamp and the same-day
+   * addendum — the operations timezone (`cfg.ops.timezone`). Threaded
+   * through deps so this module carries no timezone constant of its own. */
+  timezone: string;
   /** Rebuild state/agents with the day's feedback addendum composed in
    * (wire.ts owns the closure — it knows the build inputs). The engine
    * passes the day it just stamped, so a rebuild triggered at 23:59:59
@@ -304,7 +302,7 @@ export class FeedbackEngine {
    * survive a broken memory file. */
   async ingest(e: FeedbackEvent): Promise<IngestResult> {
     const now = this.deps.now?.() ?? new Date();
-    const day = warsawDay(now);
+    const day = opsDay(this.deps.timezone, now);
     if (e.kind === "review_set_aside" && e.stale) {
       // GitHub's own stale-on-push dismissal — mechanics, not a human verdict.
       this.deps.store.logEvent("feedback_signal_stale", e.pr, { kind: e.kind, review_id: e.review_id });

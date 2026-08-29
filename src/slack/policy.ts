@@ -6,7 +6,8 @@
 // decision logic over the sqlite ledgers in src/state.ts plus [slack.policy].
 //
 // Windows:
-//   * turn + post caps are **Warsaw-day** windows, DST-correct, derived from
+//   * turn + post caps are **policy-day** windows ([slack.policy] timezone,
+//     defaulting from [ops]), DST-correct, derived from
 //     the Intl helpers in src/eod.ts (the single date implementation in this
 //     codebase — never re-derived here), exactly as the improvement/issue rate
 //     caps count filed_items rows inside a day window.
@@ -16,7 +17,7 @@
 // but they still pass the per-hour limiter and the per-cause cooldown table,
 // whose fold/bypass semantics mirror src/tui/alerts.ts AlertPolicy: one fire
 // per cause per cooldown, repeats inside the window fold into a counter, and a
-// genuine escalation may break the cooldown exactly once per Warsaw day.
+// genuine escalation may break the cooldown exactly once per policy day.
 import type { Config, SlackCausePolicy } from "../config.js";
 import { localWallClockToInstant, zoneDateString, zonedParts } from "../eod.js";
 import type { SlackPostKind, StateStore } from "../state.js";
@@ -50,7 +51,7 @@ export function dayWindow(now: Date, timeZone: string): DayWindow {
   return { day: zoneDateString(now, timeZone), startIso: start.toISOString(), endIso: end.toISOString() };
 }
 
-/** The Warsaw (policy-timezone) day window in force for this config. */
+/** The policy-timezone day window in force for this config. */
 export function policyWindow(cfg: Config, now: Date): DayWindow {
   return dayWindow(now, cfg.slack.policy.timezone);
 }
@@ -73,7 +74,7 @@ export interface TurnDecision {
 
 /**
  * May this inbound Slack message become a model turn? Counts `injected`
- * events in the Warsaw day, channel-wide and (when the sender is known) for
+ * events in the policy day, channel-wide and (when the sender is known) for
  * that one person. An unknown sender is only subject to the channel cap.
  */
 export function decideTurn(
@@ -246,9 +247,9 @@ export function decideAnnouncement(
 
   const w = policyWindow(cfg, now);
   const prev = store.slackCooldown(key);
-  // A row from an earlier Warsaw day is not "already told you today": the day
+  // A row from an earlier policy day is not "already told you today": the day
   // rollover resets the fold counter and the escalation bypass with it.
-  const sameDay = prev !== undefined && prev.warsaw_day === w.day;
+  const sameDay = prev !== undefined && prev.day === w.day;
   if (!sameDay) {
     store.recordSlackCooldownFire(key, w.day);
     return { allow: true, key, bypass: false, folds: 0 };

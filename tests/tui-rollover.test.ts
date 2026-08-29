@@ -83,24 +83,30 @@ function rollover(
 
 // ---------------------------------------------------------------------------
 
-describe("Warsaw day derivation", () => {
-  it("uses the Warsaw calendar date, not UTC's", () => {
+describe("ops-day derivation", () => {
+  // the zone is threaded from config; these pin the derivation for a
+  // concrete zone (Europe/Warsaw) including both DST edges.
+  const TZ = "Europe/Warsaw";
+
+  it("uses the configured zone's calendar date, not UTC's", () => {
     // 22:30Z in summer (CEST, +02:00) is already tomorrow in Warsaw.
-    expect(todayDate(new Date("2026-08-13T22:30:00Z"), {})).toBe("2026-08-14");
+    expect(todayDate(new Date("2026-08-13T22:30:00Z"), {}, TZ)).toBe("2026-08-14");
     // 22:30Z in winter (CET, +01:00) is 23:30 local — still the same day.
-    expect(todayDate(new Date("2026-01-13T22:30:00Z"), {})).toBe("2026-01-13");
+    expect(todayDate(new Date("2026-01-13T22:30:00Z"), {}, TZ)).toBe("2026-01-13");
+    // A different configured zone gives a different day for the same instant.
+    expect(todayDate(new Date("2026-08-13T22:30:00Z"), {}, "America/New_York")).toBe("2026-08-13");
   });
 
   it("is correct across both DST transitions (offset flips, no date skew)", () => {
     // Spring forward: 2026-03-29 02:00 CET → 03:00 CEST.
-    expect(todayDate(new Date("2026-03-28T23:30:00Z"), {})).toBe("2026-03-29"); // 00:30 CET
-    expect(todayDate(new Date("2026-03-29T01:30:00Z"), {})).toBe("2026-03-29"); // 03:30 CEST
-    expect(todayDate(new Date("2026-03-29T22:30:00Z"), {})).toBe("2026-03-30"); // 00:30 CEST
+    expect(todayDate(new Date("2026-03-28T23:30:00Z"), {}, TZ)).toBe("2026-03-29"); // 00:30 CET
+    expect(todayDate(new Date("2026-03-29T01:30:00Z"), {}, TZ)).toBe("2026-03-29"); // 03:30 CEST
+    expect(todayDate(new Date("2026-03-29T22:30:00Z"), {}, TZ)).toBe("2026-03-30"); // 00:30 CEST
     // Fall back: 2026-10-25 03:00 CEST → 02:00 CET (the repeated hour).
-    expect(todayDate(new Date("2026-10-24T22:30:00Z"), {})).toBe("2026-10-25"); // 00:30 CEST
-    expect(todayDate(new Date("2026-10-25T00:30:00Z"), {})).toBe("2026-10-25"); // 02:30 CEST
-    expect(todayDate(new Date("2026-10-25T01:30:00Z"), {})).toBe("2026-10-25"); // 02:30 CET (again)
-    expect(todayDate(new Date("2026-10-25T23:30:00Z"), {})).toBe("2026-10-26"); // 00:30 CET
+    expect(todayDate(new Date("2026-10-24T22:30:00Z"), {}, TZ)).toBe("2026-10-25"); // 00:30 CEST
+    expect(todayDate(new Date("2026-10-25T00:30:00Z"), {}, TZ)).toBe("2026-10-25"); // 02:30 CEST
+    expect(todayDate(new Date("2026-10-25T01:30:00Z"), {}, TZ)).toBe("2026-10-25"); // 02:30 CET (again)
+    expect(todayDate(new Date("2026-10-25T23:30:00Z"), {}, TZ)).toBe("2026-10-26"); // 00:30 CET
   });
 
   it("honours QCR_FAKE_TODAY (the smoke script's only lever) and ignores junk", () => {
@@ -395,15 +401,15 @@ describe("alert-policy persistence and the Warsaw day boundary", () => {
     expect(readPolicyState(path)?.causes["daemon-stale"]?.folds).toBe(1);
   });
 
-  it("resets on a new Warsaw day, including the once-a-day escalation bypass", () => {
+  it("resets on a new ops day (configured zone), including the once-a-day escalation bypass", () => {
     const path = join(dir, "state", "alert-policy.json");
     // 21:30Z on 2026-08-13 is 23:30 Warsaw; 22:30Z is already the 14th.
     let clock = new Date("2026-08-13T21:30:00Z");
-    const policy = new AlertPolicy(120, () => clock, filePolicyStore(path));
+    const policy = new AlertPolicy(120, () => clock, filePolicyStore(path), "Europe/Warsaw");
     expect(policy.decide(alert("daemon-stale")).action).toBe("route");
     clock = new Date("2026-08-13T21:40:00Z");
     expect(policy.decide(alert("daemon-stale")).action).toBe("fold");
-    // Cross Warsaw midnight — still inside the 120-minute cooldown by wall time.
+    // Cross the zone's midnight — still inside the 120-minute cooldown by wall time.
     clock = new Date("2026-08-13T22:30:00Z");
     expect(policy.decide(alert("daemon-stale")).action).toBe("route");
     expect(readPolicyState(path)?.day).toBe("2026-08-14");

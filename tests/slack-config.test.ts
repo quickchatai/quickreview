@@ -62,11 +62,13 @@ describe("shipped config.toml [slack]", () => {
 });
 
 describe("defaults merge", () => {
-  it("an absent [slack] block yields the defaults verbatim", () => {
+  it("an absent [slack] block yields the defaults verbatim — day boundary from [ops]", () => {
     const base = shipped.slice(0, shipped.indexOf("\n[slack]"));
     const cfg = parseConfig(base);
-    expect(cfg.slack).toEqual(SLACK_DEFAULTS);
-    expect(cfg.slack.policy).toEqual(SLACK_POLICY_DEFAULTS);
+    const expectedPolicy = { ...SLACK_POLICY_DEFAULTS, timezone: cfg.ops.timezone };
+    expect(cfg.slack).toEqual({ ...SLACK_DEFAULTS, policy: expectedPolicy });
+    expect(cfg.slack.policy).toEqual(expectedPolicy);
+    expect(cfg.slack.policy.timezone).toBe("Europe/Warsaw"); // the fixture's [ops] zone
   });
 
   it("a partial [slack.policy] keeps every unmentioned default", () => {

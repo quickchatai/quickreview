@@ -8,7 +8,7 @@
 // resolution and size, and EXCLUDED from spend, duration and overruns — every
 // `n` reflects actual data points rather than padded zeroes.
 //
-// Warsaw-day bucketing goes through eod.ts's Intl helpers (DST-correct; never
+// Ops-day bucketing goes through eod.ts's Intl helpers (DST-correct; never
 // manual offsets).
 import { zoneDateString } from "./eod.js";
 import { cancelCauseLabel, isLoudCancelCause, type RoundRow, type StateStore } from "./state.js";
@@ -67,7 +67,7 @@ export interface MetricsWindow {
 export const EVENT_KIND_CAP = 12;
 
 export interface DailyRow {
-  day: string; // YYYY-MM-DD, Europe/Warsaw
+  day: string; // YYYY-MM-DD in the ops timezone (MetricsOptions.timeZone)
   rounds: number;
   prs: number;
   spend_usd: number;
@@ -92,7 +92,7 @@ export interface OpsInfo {
 export interface MetricsPayload {
   generated_at: string;
   windows: { d7: MetricsWindow; d30: MetricsWindow; all: MetricsWindow };
-  daily: DailyRow[]; // last 30 Warsaw days, oldest first, gap days present with zeros
+  daily: DailyRow[]; // last 30 ops days, oldest first, gap days present with zeros
   backfill: { rounds: number; prs: number; oldest: string | null };
   ops: OpsInfo;
 }
@@ -611,7 +611,9 @@ export interface MetricsOptions {
 
 export function computeMetrics(store: StateStore, opts: MetricsOptions = {}): MetricsPayload {
   const now = (opts.now ?? (() => new Date()))();
-  const timeZone = opts.timeZone ?? "Europe/Warsaw";
+  // Callers with a config pass cfg.ops.timezone; UTC only covers
+  // the caller that genuinely has no config to read.
+  const timeZone = opts.timeZone ?? "UTC";
   const nowIso = now.toISOString();
 
   // Expired zombie rounds used to be dropped here, before any

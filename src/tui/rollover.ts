@@ -1,8 +1,8 @@
 // Daily rollover (build slice C3) — a fresh companion conversation
-// per Warsaw day, with the five carry items handed over as the first message.
+// per ops day, with the five carry items handed over as the first message.
 //
 // Ratified: rollover fires on the FIRST TUI start of a new day
-// (Warsaw), never mid-use; the sequence is the rotateOverseer pattern from
+// (ops timezone), never mid-use; the sequence is the rotateOverseer pattern from
 // src/sessions.ts — archive the run date-stamped, kill the tmux session,
 // respawn — and the opening context carries: yesterday's EOD digest, the
 // compacted summary of yesterday's conversation, yesterday's conversation
@@ -28,8 +28,6 @@ import type { StatusSnapshot } from "../state.js";
 import { parseAlert, readPolicyState, type AlertTier } from "./alerts.js";
 import { CONTAINER, type DockerRunner } from "./companion.js";
 
-export const WARSAW = "Europe/Warsaw";
-
 /** Bounds for the compacted summary and the raw tail — the opening message is
  * a briefing, not a transcript. */
 export const SUMMARY_MAX_CHARS = 4000;
@@ -41,7 +39,7 @@ export const TAIL_TURNS = 12;
 // ---- the last-open date -----------------------------------------------------
 
 export interface RolloverState {
-  /** Warsaw calendar date of the conversation currently on the volume. */
+  /** Ops-timezone calendar date of the conversation currently on the volume. */
   last_open_date: string;
   /** Bookkeeping only — when the state file was last written. */
   updated_at: string;
@@ -67,11 +65,13 @@ export function writeRolloverState(path: string, state: RolloverState): void {
 }
 
 /**
- * Today's Warsaw calendar date. `QCR_FAKE_TODAY=YYYY-MM-DD` overrides it — the
+ * Today's calendar date in the operations timezone (`cfg.ops.timezone`,
+ *; the TUI threads it through — the UTC default only covers callers
+ * with no config in hand). `QCR_FAKE_TODAY=YYYY-MM-DD` overrides it — the
  * only way to exercise a rollover without waiting for midnight (the smoke
  * script uses exactly this).
  */
-export function todayDate(now: Date, env: NodeJS.ProcessEnv = process.env, timeZone: string = WARSAW): string {
+export function todayDate(now: Date, env: NodeJS.ProcessEnv = process.env, timeZone: string = "UTC"): string {
   const fake = env.QCR_FAKE_TODAY?.trim();
   if (fake && /^\d{4}-\d{2}-\d{2}$/.test(fake)) return fake;
   return zoneDateString(now, timeZone);
@@ -368,7 +368,7 @@ export class CompanionRollover {
   ) {
     this.now = opts.now ?? (() => new Date());
     this.env = opts.env ?? process.env;
-    this.timeZone = opts.timeZone ?? WARSAW;
+    this.timeZone = opts.timeZone ?? "UTC";
   }
 
   today(): string {

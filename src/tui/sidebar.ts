@@ -87,7 +87,7 @@ export function sidebarResizeHit(x: number, cols: number, width: number): boolea
 export interface SidebarHeader {
   up: boolean; // container running
   piUp: boolean; // the companion pi session is alive
-  day: string; // Warsaw day token, e.g. "2026-08-21"
+  day: string; // ops-day token, e.g. "2026-08-21"
   lastWake: string; // "3m ago" | "—"
   memory: "ok" | "degraded" | "off";
 }

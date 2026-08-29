@@ -154,7 +154,7 @@ export class AnomalyWakePolicy {
 
 // ---- daily heartbeat -------------------------------------------------------
 //
-// One overseer inject at 09:00 Europe/Warsaw (config `[eod] heartbeat_time`,
+// One overseer inject each morning (config `[eod] heartbeat_time` + timezone,
 // same DST-correct Intl machinery as the EOD sweep): review the anomaly table
 // and the digest since the last heartbeat, flag-owner-legacy what matters. The
 // QUIET classes above are exactly what this pass is for.
@@ -195,7 +195,7 @@ export interface HeartbeatTimer {
 const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 
 /**
- * Arm the daily heartbeat. Fires at most once per Warsaw calendar day (the
+ * Arm the daily heartbeat. Fires at most once per `timeZone` calendar day (the
  * persisted last-fired date is the guard, so a restart never double-fires);
  * if the daemon was down at the hour, the next boot catches up AT MOST once —
  * only for TODAY's missed slot, never a backlog of days.

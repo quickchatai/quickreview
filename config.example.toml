@@ -8,6 +8,14 @@
 
 dry_run = true
 
+# The operations timezone: whose calendar day the system runs on.
+# Every day-scoped feature (the [feedback] same-day addendum + its daily
+# expiry, metrics day buckets, TUI alert memory, companion day rollover)
+# derives its day from this one knob; [eod] and [slack.policy] `timezone`
+# default from it and may still be overridden in their own sections.
+[ops]
+timezone = "UTC"                             # ← FILL: your IANA timezone, e.g. "Europe/Warsaw"
+
 [github]
 repo = ""                                    # ← FILL (1): the repo to review, "owner/name"
 app_slug = ""                                # ← FILL (2): your GitHub App slug
@@ -79,7 +87,8 @@ expire_overdue_after_h = 24
 
 [eod]
 time = "18:00"
-timezone = "Europe/Warsaw"
+# timezone defaults from [ops]; uncomment to run the EOD sweep on another clock.
+#timezone = "Europe/Warsaw"
 # Daily overseer heartbeat: anomaly-table + digest review pass.
 heartbeat_time = "09:00"
 # watch the owner's pinned entries across the sweep. Curation must never
@@ -416,13 +425,15 @@ name_cache_ttl_s = 86400
 [slack.policy]
 # Every cap below is enforced in DAEMON CODE (src/slack/policy.ts), never by
 # prompt — a session can ask to speak, the daemon decides.
-daily_turns = 80                  # channel-wide model turns per Warsaw day
+daily_turns = 80                  # channel-wide model turns per policy day
 per_user_daily_turns = 20         # per person, same window
 thread_replies_per_day = 6        # daemon posts into any one thread
 soft_exchange_limit = 3           # author ping-pong before the bot goes quiet
 announcements_per_hour = 20       # rolling hour; announcements bypass turn caps
 default_cooldown_min = 60         # for causes absent from [slack.policy.causes]
-timezone = "Europe/Warsaw"        # the day boundary for every cap (DST-correct)
+# The day boundary for every cap (DST-correct). Defaults from [ops] timezone;
+# uncomment to run the Slack caps on another clock.
+#timezone = "Europe/Warsaw"
 pickup_grace_min = 20
 downtime_notice_min = 5
 heartbeat_interval_min = 5

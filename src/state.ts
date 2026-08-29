@@ -372,11 +372,14 @@ export interface SlackPostRow {
 export interface SlackCooldownRow {
   key: string;
   last_fired_at: string;
-  warsaw_day: string;
+  /** Ops-day token (YYYY-MM-DD, [ops]/[slack.policy] timezone). Stored in the
+   * legacy `warsaw_day` column — see the schema note; the accessor
+   * aliases it so the historical name never leaves state.ts. */
+  day: string;
   fire_count: number;
   /** Repeats swallowed inside the cooldown window (AlertPolicy fold counter). */
   fold_count: number;
-  /** 1 once the one-per-Warsaw-day escalation bypass has been spent. */
+  /** 1 once the one-per-day escalation bypass has been spent. */
   bypassed: number;
 }
 
@@ -452,7 +455,7 @@ CREATE TABLE IF NOT EXISTS events (
 -- comments plus behavioral signals (bot review dismissed, PR merged over a
 -- standing block, bot comment deleted, trigger withdrawn). Deduped per kind
 -- on its natural key so webhook redeliveries and reconcile overlaps never
--- double-ingest. day is the Warsaw day token the same-day addendum keys on.
+-- double-ingest. day is the ops-day token the same-day addendum keys on.
 CREATE TABLE IF NOT EXISTS feedback_signals (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   kind TEXT NOT NULL,
@@ -474,7 +477,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS feedback_by_comment
 CREATE UNIQUE INDEX IF NOT EXISTS feedback_by_review
   ON feedback_signals (kind, review_id) WHERE review_id IS NOT NULL;
 -- Keyless kinds (merged_over_block, trigger_withdrawn) dedupe per PR per
--- Warsaw day — a re-blocked, re-merged PR months later is a fresh signal.
+-- ops day — a re-blocked, re-merged PR months later is a fresh signal.
 CREATE UNIQUE INDEX IF NOT EXISTS feedback_by_pr_day
   ON feedback_signals (kind, pr, day) WHERE comment_id IS NULL AND review_id IS NULL;
 -- Human-comment capture (deciding): every human comment on a
@@ -747,6 +750,11 @@ CREATE INDEX IF NOT EXISTS slack_posts_day ON slack_posts(posted_at);
 CREATE TABLE IF NOT EXISTS slack_cooldowns (
   key           TEXT PRIMARY KEY,
   last_fired_at TEXT NOT NULL,
+  -- (ops-timezone lift): the STORED name predates the configurable
+  -- operations timezone and is deliberately KEPT — a rename migration on live
+  -- state buys nothing. It now holds the ops-day token whatever the
+  -- configured zone; code reads it as "day" (SlackCooldownRow) through the
+  -- alias in slackCooldown(), so "warsaw" appears nowhere outside this file.
   warsaw_day    TEXT NOT NULL,
   fire_count    INTEGER NOT NULL DEFAULT 1,
   fold_count    INTEGER NOT NULL DEFAULT 0,
@@ -776,7 +784,7 @@ export interface FeedbackSignalRow {
   scope: string;
   author: string | null;
   body: string | null;
-  /** Warsaw day token (YYYY-MM-DD) — the same-day addendum's key. */
+  /** Ops-day token (YYYY-MM-DD, [ops] timezone) — the same-day addendum's key. */
   day: string;
   created_at: string;
 }
@@ -2967,7 +2975,7 @@ export class StateStore {
   }
 
   /** Injected turns inside a half-open [since, until) window; `slackUser`
-   * narrows it to one person. Windows are ISO instants — the Warsaw-day
+   * narrows it to one person. Windows are ISO instants — the policy-day
    * boundaries are computed by slack/policy from the eod.ts zone helpers,
    * never re-derived here (mirrors filedSince/improvementRateReason). */
   slackTurnsBetween(sinceIso: string, untilIso: string, slackUser?: string | null): number {
@@ -3053,14 +3061,18 @@ export class StateStore {
   // ---- Slack: announcement cooldowns ------------------------------------
 
   slackCooldown(key: string): SlackCooldownRow | undefined {
-    return this.db.prepare("SELECT * FROM slack_cooldowns WHERE key = ?").get(key) as SlackCooldownRow | undefined;
+    // `warsaw_day AS day`: the one place the legacy column name maps onto the
+    // neutral row field (see the schema note).
+    return this.db
+      .prepare("SELECT key, last_fired_at, warsaw_day AS day, fire_count, fold_count, bypassed FROM slack_cooldowns WHERE key = ?")
+      .get(key) as SlackCooldownRow | undefined;
   }
 
-  /** Record a fire. A fire in a new Warsaw day resets the fold counter and the
+  /** Record a fire. A fire in a new ops day resets the fold counter and the
    * daily bypass; `bypass` marks the one escalation allowed per day. */
-  recordSlackCooldownFire(key: string, warsawDay: string, bypass = false): void {
+  recordSlackCooldownFire(key: string, day: string, bypass = false): void {
     const prev = this.slackCooldown(key);
-    const sameDay = prev?.warsaw_day === warsawDay;
+    const sameDay = prev?.day === day;
     this.db
       .prepare(
         `INSERT INTO slack_cooldowns (key, last_fired_at, warsaw_day, fire_count, fold_count, bypassed)
@@ -3071,7 +3083,7 @@ export class StateStore {
       .run({
         key,
         last_fired_at: this.ts(),
-        warsaw_day: warsawDay,
+        warsaw_day: day,
         fire_count: sameDay ? prev!.fire_count + 1 : 1,
         bypassed: (sameDay && prev!.bypassed === 1) || bypass ? 1 : 0,
       });
