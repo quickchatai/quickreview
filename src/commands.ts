@@ -18,7 +18,7 @@ export type CommandName =
   | "restart-session"
   | "pause-pr"
   | "resume-pr"
-  | "flag-owner-legacy"
+  | "flag-owner"
   | "file-improvement-pr"
   | "file-issue"
   | "slack_reply"
@@ -30,7 +30,7 @@ export const COMMAND_WHITELIST: readonly CommandName[] = [
   "restart-session",
   "pause-pr",
   "resume-pr",
-  "flag-owner-legacy",
+  "flag-owner",
   "file-improvement-pr",
   "file-issue",
   "slack_reply",
@@ -38,12 +38,25 @@ export const COMMAND_WHITELIST: readonly CommandName[] = [
   "retry-thread-decision",
 ] as const;
 
+/**
+ * Retired command spellings, folded to their current name at validate time
+ * — the codebase's ESCALATE→NEEDS_HUMAN pattern: ACCEPTED on input
+ * (frozen prompts and live overseers still emit them, until the
+ * reseed and beyond), never emitted by us — the parsed `Command`, the result
+ * file and the event ledger all carry the current name. Pinned by
+ * tests/legacy-acceptance.test.ts; an entry here is a permanent belt, not a
+ * cleanup candidate.
+ */
+const LEGACY_COMMAND_NAMES: Readonly<Record<string, CommandName>> = {
+  "flag-owner-legacy": "flag-owner",
+};
+
 export type Command =
   | { command: "rerun-round"; pr: number }
   | { command: "restart-session"; pr: number | "overseer" }
   | { command: "pause-pr"; pr: number; reason: string }
   | { command: "resume-pr"; pr: number }
-  | { command: "flag-owner-legacy"; message: string }
+  | { command: "flag-owner"; message: string }
   | ({ command: "file-improvement-pr" } & ImprovementPayload)
   | ({ command: "file-issue" } & IssuePayload)
   | { command: "slack_reply"; thread: string; text: string }
@@ -65,7 +78,7 @@ export interface CommandDeps {
   restartSession(target: number | "overseer"): Promise<FileOutcome | void> | FileOutcome | void;
   pausePr(pr: number, reason: string): Promise<FileOutcome | void> | FileOutcome | void;
   resumePr(pr: number): Promise<FileOutcome | void> | FileOutcome | void;
-  flagOwnerLegacy(message: string): Promise<FileOutcome | void> | FileOutcome | void;
+  flagOwner(message: string): Promise<FileOutcome | void> | FileOutcome | void;
   fileImprovementPr(payload: ImprovementPayload): Promise<FileOutcome | void> | FileOutcome | void;
   fileIssue(payload: IssuePayload): Promise<FileOutcome | void> | FileOutcome | void;
   /** Deploy-window drain valve. Optional like `slackReply`: a daemon wired
@@ -108,7 +121,11 @@ export function validateCommand(raw: unknown): ValidationResult {
   const obj = raw as Record<string, unknown>;
   const name = obj["command"];
   if (typeof name !== "string") return { ok: false, reason: "missing 'command' field" };
-  if (!(COMMAND_WHITELIST as readonly string[]).includes(name)) {
+  // Legacy-name fold FIRST: an aliased spelling validates against — and parses
+  // into — its current name, so downstream (tier table, dispatch, result
+  // files) never sees the retired spelling.
+  const canonical = LEGACY_COMMAND_NAMES[name] ?? name;
+  if (!(COMMAND_WHITELIST as readonly string[]).includes(canonical)) {
     // Retired commands get their own reason. `prompts/overseer-system.md` is
     // frozen seeded content (CLAUDE.md rule 6) and still advertises
     // mark-escalation-worthy, so the overseer will keep emitting it until
@@ -118,13 +135,14 @@ export function validateCommand(raw: unknown): ValidationResult {
         ok: false,
         reason:
           "command 'mark-escalation-worthy' was RETIRED on 2026-08-18: escalation-worthiness no longer exists. " +
-          "A PR only stops for a person when a round returns NEEDS_HUMAN. Use pause-pr to hold one, or flag-owner-legacy to raise it.",
+          "A PR only stops for a person when a round returns NEEDS_HUMAN. Use pause-pr to hold one, or flag-owner " +
+          "(formerly flag-owner-legacy — the old name is still accepted) to raise it.",
       };
     }
     return { ok: false, reason: `command '${name}' is not whitelisted (allowed: ${COMMAND_WHITELIST.join(", ")})` };
   }
 
-  switch (name as CommandName) {
+  switch (canonical as CommandName) {
     case "rerun-round": {
       const err = fieldError(obj, ["pr"]);
       if (err) return { ok: false, reason: err };
@@ -153,11 +171,11 @@ export function validateCommand(raw: unknown): ValidationResult {
       if (!isPrNumber(obj["pr"])) return { ok: false, reason: "'pr' must be a positive integer" };
       return { ok: true, command: { command: "resume-pr", pr: obj["pr"] } };
     }
-    case "flag-owner-legacy": {
+    case "flag-owner": {
       const err = fieldError(obj, ["message"]);
       if (err) return { ok: false, reason: err };
       if (!isNonEmptyString(obj["message"])) return { ok: false, reason: "'message' must be a non-empty string" };
-      return { ok: true, command: { command: "flag-owner-legacy", message: obj["message"] } };
+      return { ok: true, command: { command: "flag-owner", message: obj["message"] } };
     }
     case "file-improvement-pr": {
       const err = fieldError(obj, ["branch", "title", "body", "slug"]);
@@ -243,35 +261,44 @@ export function validateCommand(raw: unknown): ValidationResult {
  * `authorized_prs` (recomputed by the router from `pr_state.author`, NEVER read
  * out of the inject body).
  *
+ * `owner` carries exactly the rights the retired `owner_legacy` tier had (
+ * renamed the column; legacy persisted records fold to it on read). `system`
+ * is the daemon's own unattended turns (`OriginStore.writeLocal`): it is
+ * `true` on every row because a daemon turn with NO origin record already runs
+ * unrestricted — `authorizeCommand(_, null)` ⇒ ok, and that null-origin rule
+ * is unchanged. The column is the stamped, auditable form of that same
+ * standing authority; it never widens anything, and a Slack turn can never
+ * reach it (`computeTier` never returns `system`).
+ *
  * Nothing here can reach the dry_run flag, a deploy, an approval or anything
  * review-dismissing: those are not commands at all, and this feature adds no
  * GitHub mutation — every write still goes through the MutationGate.
  */
-const TIER_TABLE: Record<CommandName, { anyone: boolean; author: "own" | boolean; owner_legacy: boolean }> = {
-  "rerun-round": { anyone: false, author: "own", owner_legacy: true },
-  "pause-pr": { anyone: false, author: "own", owner_legacy: true },
-  "resume-pr": { anyone: false, author: "own", owner_legacy: true },
+const TIER_TABLE: Record<CommandName, { anyone: boolean; author: "own" | boolean; owner: boolean; system: boolean }> = {
+  "rerun-round": { anyone: false, author: "own", owner: true, system: true },
+  "pause-pr": { anyone: false, author: "own", owner: true, system: true },
+  "resume-pr": { anyone: false, author: "own", owner: true, system: true },
   // The safety valve: anyone may always reach a human.
-  "flag-owner-legacy": { anyone: true, author: true, owner_legacy: true },
-  "restart-session": { anyone: false, author: false, owner_legacy: true },
+  "flag-owner": { anyone: true, author: true, owner: true, system: true },
+  "restart-session": { anyone: false, author: false, owner: true, system: true },
   // improvements.ts caps still apply ON TOP — a tier never lifts a cap.
-  "file-improvement-pr": { anyone: false, author: false, owner_legacy: true },
+  "file-improvement-pr": { anyone: false, author: false, owner: true, system: true },
   // (corrected by the owner): the review SESSION files a deferral's
   // ticket itself, in the round that deferred — there is no author
   // confirmation step. The session's command files land in the legacy
-  // `commands/` dir with no Slack origin, which already runs at full tier-M
-  // autonomy, so the deferral path needs no widening here at all. The brief
-  // `author: "own"` widening (built for the retired confirm-then-file design)
-  // is reverted: on Slack, `file-issue` is the owner's alone again. The day cap,
-  // the dedup and the gate all still apply downstream — a tier never lifts a
-  // cap.
-  "file-issue": { anyone: false, author: false, owner_legacy: true },
+  // `commands/` dir with no Slack origin, which already runs at full
+  // (system-column) autonomy, so the deferral path needs no widening here at
+  // all. The brief `author: "own"` widening (built for the retired
+  // confirm-then-file design) is reverted: on Slack, `file-issue` is the
+  // owner's alone again. The day cap, the dedup and the gate all still apply
+  // downstream — a tier never lifts a cap.
+  "file-issue": { anyone: false, author: false, owner: true, system: true },
   // Not user-tiered: gated by channel binding, thread, caps, cooldown, length.
-  slack_reply: { anyone: true, author: true, owner_legacy: true },
+  slack_reply: { anyone: true, author: true, owner: true, system: true },
   // Deploy-window drain: an OPERATOR lever (same standing as restart-session)
   // — it stops the whole board, so it is never author-reachable.
-  drain: { anyone: false, author: false, owner_legacy: true },
-  "retry-thread-decision": { anyone: false, author: false, owner_legacy: true },
+  drain: { anyone: false, author: false, owner: true, system: true },
+  "retry-thread-decision": { anyone: false, author: false, owner: true, system: true },
 };
 
 /** Target PR of a command, when it has one. */
@@ -286,9 +313,10 @@ export type AuthorizationResult = { ok: true } | { ok: false; reason: string };
  * May this command run on behalf of `origin`?
  *
  * `origin === null` means "no Slack turn is live" — the command came from the
- * daemon itself (EOD sweep, anomaly wake) or from the owner at the tmux pane, and
- * keeps today's full autonomy (tier M). A caller that must fail closed (the
- * Slack command directory) checks for a missing origin BEFORE calling this.
+ * daemon itself (EOD sweep, anomaly wake) or from the owner at the tmux pane,
+ * and keeps today's full autonomy (the same rights the `system` tier stamps
+ * explicitly). A caller that must fail closed (the Slack command directory)
+ * checks for a missing origin BEFORE calling this.
  *
  * Every rejection reason starts with `tier: ` so the overseer — and the
  * `command_rejected` event stream — can tell a rights refusal from a cap.
@@ -298,12 +326,14 @@ export function authorizeCommand(command: Command, origin: OriginRecord | null):
   const row = TIER_TABLE[command.command];
   const pr = targetPr(command);
   switch (origin.tier) {
-    case "owner_legacy":
-      return row.owner_legacy ? { ok: true } : { ok: false, reason: `tier: '${command.command}' is not available` };
+    case "owner":
+      return row.owner ? { ok: true } : { ok: false, reason: `tier: '${command.command}' is not available` };
+    case "system":
+      return row.system ? { ok: true } : { ok: false, reason: `tier: '${command.command}' is not available` };
     case "author": {
       if (row.author === true) return { ok: true };
       if (row.author === false) {
-        return { ok: false, reason: `tier: '${command.command}' requires tier owner_legacy (this turn is tier author)` };
+        return { ok: false, reason: `tier: '${command.command}' requires tier owner (this turn is tier author)` };
       }
       if (pr === null) return { ok: false, reason: `tier: '${command.command}' needs a PR number to check ownership` };
       if (origin.authorized_prs.includes(pr)) return { ok: true };
@@ -341,8 +371,8 @@ export async function executeCommand(
       return normalize(await deps.pausePr(command.pr, command.reason));
     case "resume-pr":
       return normalize(await deps.resumePr(command.pr));
-    case "flag-owner-legacy":
-      return normalize(await deps.flagOwnerLegacy(command.message));
+    case "flag-owner":
+      return normalize(await deps.flagOwner(command.message));
     case "file-improvement-pr":
       return normalize(
         await deps.fileImprovementPr({
@@ -400,8 +430,9 @@ export interface CommandTierGate {
    *             Null ⇒ deny: rights need a live turn.
    *   `local` — the most recent origin REGARDLESS OF AGE
    *             (`OriginStore.latestAny()`). Expiry is not an escalation: a
-   *             Slack turn that simply ran long must not become tier M here,
-   *             and only a daemon wake (a `local` record) clears the belt.
+   *             Slack turn that simply ran long must not gain owner rights
+   *             here, and only a daemon wake (a `local` record) clears the
+   *             belt.
    */
   currentOrigin(): OriginRecord | null;
 }
@@ -576,7 +607,10 @@ export class CommandWatcher {
     // Legacy dir: only the belt applies. It fires on CAUSE, not on recency —
     // a daemon-caused turn (`source: "local"`) always passes, and a Slack-caused
     // one from a non-owner user always refuses, however old the record is.
-    if (origin && origin.source === "slack" && origin.tier !== "owner_legacy") {
+    // (`parseOriginRecord` folds the retired "owner_legacy" spelling to "owner", so
+    // this comparison only ever sees the current vocabulary; a Slack origin can
+    // never be "system" — only `writeLocal` stamps that, with source "local".)
+    if (origin && origin.source === "slack" && origin.tier !== "owner") {
       return (
         `tier: this turn was caused by a Slack message from ${origin.slack_user} (tier ${origin.tier}) — ` +
         `write '${command.command}' to commands/slack/ so it can be tier-checked`

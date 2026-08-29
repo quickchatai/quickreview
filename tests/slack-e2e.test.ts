@@ -102,7 +102,7 @@ function commandDeps(): CommandDeps {
     markEscalationWorthy: () => ({ ok: true }),
     pausePr: () => ({ ok: true }),
     resumePr: () => ({ ok: true }),
-    flagOwnerLegacy: () => ({ ok: true }),
+    flagOwner: () => ({ ok: true }),
     fileImprovementPr: forbidden("file-improvement-pr"),
     fileIssue: forbidden("file-issue"),
   };
@@ -291,7 +291,7 @@ describe("tier enforcement in the production path", () => {
     const result = resultFile("issue-1");
     expect(result.ok).toBe(false);
     expect(String(result.reason).startsWith("tier: ")).toBe(true);
-    expect(String(result.reason)).toContain("requires tier owner_legacy");
+    expect(String(result.reason)).toContain("requires tier owner");
     expect(transport.posts).toHaveLength(postsBefore);
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(store.recentEvents(50).some((e) => e.kind === "command_rejected")).toBe(true);

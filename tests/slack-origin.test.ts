@@ -41,7 +41,7 @@ describe("OriginStore", () => {
     const rec = origins.write("a.md", {
       event_id: "Ev1",
       slack_user: "U",
-      tier: "owner_legacy",
+      tier: "owner",
       authorized_prs: [],
       // deliberately smuggled in
       ...({ expires_at: far } as Record<string, never>),
@@ -58,7 +58,7 @@ describe("OriginStore", () => {
   });
 
   it("an expired record authorises nothing", () => {
-    origins.write("a.md", { event_id: "EvA", slack_user: "U0A", tier: "owner_legacy", authorized_prs: [] });
+    origins.write("a.md", { event_id: "EvA", slack_user: "U0A", tier: "owner", authorized_prs: [] });
     at(ORIGIN_TTL_MS - 1);
     expect(origins.latest()?.event_id).toBe("EvA");
     at(ORIGIN_TTL_MS + 1);
@@ -87,10 +87,10 @@ describe("OriginStore", () => {
     expect(slack.source).toBe("slack");
     at(ORIGIN_TTL_MS * 3); // the Slack turn is long expired
     const local = origins.writeLocal("eod-sweep");
-    expect(local).toMatchObject({ source: "local", tier: "owner_legacy", slack_user: "", authorized_prs: [] });
+    expect(local).toMatchObject({ source: "local", tier: "system", slack_user: "", authorized_prs: [] });
     expect(local.event_id).toBe("local:eod-sweep");
     // The daemon wake supersedes the Slack origin for the belt…
-    expect(origins.latestAny()).toMatchObject({ source: "local", tier: "owner_legacy" });
+    expect(origins.latestAny()).toMatchObject({ source: "local", tier: "system" });
     // …and it is a live origin like any other for the Slack dir.
     expect(origins.latest()?.source).toBe("local");
   });
@@ -127,7 +127,7 @@ describe("OriginStore", () => {
 
   it("garbage and wrong-shaped files grant nothing", () => {
     writeFileSync(join(dir, "junk.json"), "{ not json");
-    writeFileSync(join(dir, "shape.json"), JSON.stringify({ tier: "owner_legacy" }));
+    writeFileSync(join(dir, "shape.json"), JSON.stringify({ tier: "owner" }));
     writeFileSync(join(dir, "badtier.json"), JSON.stringify({ event_id: "E", slack_user: "U", tier: "root", authorized_prs: [], expires_at: new Date(T0.getTime() + 60_000).toISOString() }));
     expect(origins.latest()).toBeNull();
   });

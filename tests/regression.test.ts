@@ -274,14 +274,14 @@ describe("a failure is an investigation, not a veto", () => {
     const run = await runRegression(set.cases, replayNothing);
     expect(run.exitCode).toBe(0);
     expect(run.recommendation).not.toBe("veto");
-    expect(["look-at-these", "ask-owner-legacy"]).toContain(run.recommendation);
+    expect(["look-at-these", "ask-owner"]).toContain(run.recommendation);
     expect(run.markdown).toContain("This is not a gate.");
     expect(run.markdown).toContain("The goal is not to imitate a reviewer.");
   });
 
   it("blames the harness, not the reviewer, when the replay produced nothing at all", async () => {
     const run = await runRegression(set.cases, replayNothing);
-    expect(run.recommendation).toBe("ask-owner-legacy");
+    expect(run.recommendation).toBe("ask-owner");
     expect(run.headline).toContain("Suspect the replay harness");
     expect(run.markdown).toContain("produced no sandbox findings at all");
   });

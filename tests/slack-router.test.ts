@@ -105,8 +105,8 @@ function header(body: string): Record<string, string> {
 }
 
 describe("computeTier / authorizedPrs", () => {
-  it("maps owner_legacy, mapped authors and everyone else", () => {
-    expect(computeTier(cfg, OWNER)).toBe("owner_legacy");
+  it("maps the owner, mapped authors and everyone else", () => {
+    expect(computeTier(cfg, OWNER)).toBe("owner");
     expect(computeTier(cfg, ALICE)).toBe("author");
     expect(computeTier(cfg, "U0STRANGER")).toBe("anyone");
     expect(computeTier(cfg, undefined)).toBe("ignored");
@@ -311,10 +311,10 @@ describe("the inject envelope", () => {
     expect(origins.latest()).toMatchObject({ tier: "anyone", authorized_prs: [] });
   });
 
-  it("the owner is tier owner_legacy whatever the message says", async () => {
+  it("the owner is tier owner whatever the message says", async () => {
     await router().handle(event({ user: OWNER, text: "hi" }));
-    expect(header(injected[0] ?? "")["tier"]).toBe("owner_legacy");
-    expect(origins.latest()?.tier).toBe("owner_legacy");
+    expect(header(injected[0] ?? "")["tier"]).toBe("owner");
+    expect(origins.latest()?.tier).toBe("owner");
   });
 });
 

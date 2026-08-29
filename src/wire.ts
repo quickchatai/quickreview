@@ -637,11 +637,13 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           await d.pump();
           return { ok: true, resumed: pr };
         },
-        flagOwnerLegacy(message) {
+        flagOwner(message) {
           const flags = join(root, "state", "flags");
           mkdirSync(flags, { recursive: true });
-          appendFileSync(join(flags, "owner-legacy.log"), `${new Date().toISOString()} ${message}\n`);
-          d.store.logEvent("flag_owner_legacy", null, { message });
+          // owner.log (pre-rename entries live on in owner-legacy.log,
+          // which nothing writes any more).
+          appendFileSync(join(flags, "owner.log"), `${new Date().toISOString()} ${message}\n`);
+          d.store.logEvent("flag_owner", null, { message });
           return { ok: true };
         },
         fileImprovementPr(payload) {

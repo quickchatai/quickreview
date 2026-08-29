@@ -87,7 +87,7 @@ const noopCommandDeps: CommandDeps = {
   markEscalationWorthy: () => ({ ok: true }),
   pausePr: () => ({ ok: true }),
   resumePr: () => ({ ok: true }),
-  flagOwnerLegacy: () => ({ ok: true }),
+  flagOwner: () => ({ ok: true }),
   fileImprovementPr: () => ({ ok: true }),
   fileIssue: () => ({ ok: true }),
 };
@@ -275,7 +275,7 @@ describe("slack on — shutdown", () => {
 describe("state layout", () => {
   it("keeps origin records under state/slack/origin", async () => {
     const runtime = (await startSlack(wiring()))!;
-    runtime.origins.write("wake.md", { event_id: "Ev1", slack_user: OWNER, tier: "owner_legacy", authorized_prs: [] });
+    runtime.origins.write("wake.md", { event_id: "Ev1", slack_user: OWNER, tier: "owner", authorized_prs: [] });
     expect(runtime.origins.latest()?.event_id).toBe("Ev1");
     expect(runtime.origins.path("wake.md")).toBe(join(dir, "state", "slack", "origin", "wake.json"));
     await runtime.stop("test");
@@ -362,7 +362,7 @@ describe("origin cause, not recency (the belt)", () => {
     });
     await hooks.injectOverseer("anomaly: verdict file is malformed");
     expect(wakes).toHaveLength(1);
-    expect(runtime.origins.latestAny()).toMatchObject({ source: "local", tier: "owner_legacy", slack_user: "" });
+    expect(runtime.origins.latestAny()).toMatchObject({ source: "local", tier: "system", slack_user: "" });
 
     // The wrap must forward the optional liveness/kill hooks: dropping
     // sessionAlive here left the stuck-round detector blind in

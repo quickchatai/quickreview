@@ -156,7 +156,7 @@ export class AnomalyWakePolicy {
 //
 // One overseer inject each morning (config `[eod] heartbeat_time` + timezone,
 // same DST-correct Intl machinery as the EOD sweep): review the anomaly table
-// and the digest since the last heartbeat, flag-owner-legacy what matters. The
+// and the digest since the last heartbeat, flag-owner what matters. The
 // QUIET classes above are exactly what this pass is for.
 
 export function renderHeartbeatMessage(date: string, lastFired: string | null): string {
@@ -164,7 +164,7 @@ export function renderHeartbeatMessage(date: string, lastFired: string | null): 
     `OVERSEER HEARTBEAT — ${date}`,
     `Daily check-in. Review the anomaly table (qcr status / the anomaly events in state.db) and the digest ` +
       `since the last heartbeat${lastFired ? ` (${lastFired})` : " (first heartbeat on record)"}.`,
-    "Flag-owner-legacy (commands/flag-owner-legacy) anything that matters — recurring quiet anomalies, degraded checks, stuck PRs.",
+    "Flag-owner (commands/flag-owner) anything that matters — recurring quiet anomalies, degraded checks, stuck PRs.",
     "If nothing does, note that briefly and stand down. Do not open rounds or touch GitHub — this is a read-and-report pass.",
   ].join("\n");
 }

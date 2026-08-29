@@ -20,6 +20,19 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const appendix = readFileSync(join(repoRoot, "prompts/slack-overseer-appendix.md"), "utf8");
 
 /**
+ * the safety valve was renamed `flag-owner-legacy` → `flag-owner`. The
+ * appendix is frozen prose until the reseed and still documents the
+ * legacy spelling; `validateCommand` folds that spelling to the current name,
+ * so this test compares through the same fold the code applies. When
+ * lands and the appendix says `flag-owner`, this map goes empty — the code's
+ * own alias (tests/legacy-acceptance.test.ts) stays either way.
+ */
+const LEGACY_DOC_NAMES: Record<string, string> = { "flag-owner-legacy": "flag-owner" };
+/** The spelling the appendix uses for a whitelisted command. */
+const docNameFor = (command: string): string =>
+  Object.entries(LEGACY_DOC_NAMES).find(([, canonical]) => canonical === command)?.[0] ?? command;
+
+/**
  * Field names to probe. A superset of everything any command takes, plus the
  * two stale spellings and a control that no command may accept — so a field
  * added to src/commands.ts without being added here still can't slip past
@@ -49,7 +62,7 @@ const CANDIDATE_FIELDS = [
  * accepted iff probing it does NOT produce the strict unknown-field rejection.
  * (Type/format complaints mean the field IS in the schema.)
  */
-function acceptedFields(command: CommandName): string[] {
+function acceptedFields(command: CommandName | string): string[] {
   return CANDIDATE_FIELDS.filter((field) => {
     const res = validateCommand({ command, [field]: "probe" });
     return !(res.ok === false && res.reason.startsWith("unknown field(s)"));
@@ -86,22 +99,26 @@ describe("slack overseer appendix — corrected command schemas", () => {
   });
 
   it("documents every whitelisted command, and nothing that isn't whitelisted", () => {
-    expect([...documented.keys()].sort()).toEqual([...COMMAND_WHITELIST].sort());
+    // Documented names are folded exactly as validateCommand folds them, so a
+    // legacy spelling in the frozen appendix still counts as its command.
+    expect([...documented.keys()].map((k) => LEGACY_DOC_NAMES[k] ?? k).sort()).toEqual([...COMMAND_WHITELIST].sort());
   });
 
   it.each([...COMMAND_WHITELIST])("%s: appendix field list matches validateCommand", (command) => {
     const actual = acceptedFields(command);
+    const docName = docNameFor(command);
     expect(
-      documented.get(command),
-      `prompts/slack-overseer-appendix.md documents '${command}' as ` +
-        `{${documented.get(command)?.join(", ") ?? "<missing>"}} but src/commands.ts accepts ` +
+      documented.get(docName),
+      `prompts/slack-overseer-appendix.md documents '${docName}' as ` +
+        `{${documented.get(docName)?.join(", ") ?? "<missing>"}} but src/commands.ts accepts ` +
         `{${actual.join(", ")}}. Update the appendix (it is non-seeded and ours to edit).`,
     ).toEqual(actual);
   });
 
   it("names each command and each of its required fields in prose form too", () => {
     for (const command of COMMAND_WHITELIST) {
-      expect(appendix, `appendix never mentions '${command}'`).toContain(command);
+      const docName = docNameFor(command);
+      expect(appendix, `appendix never mentions '${docName}'`).toContain(docName);
       for (const field of acceptedFields(command)) {
         expect(appendix, `appendix never mentions field '${field}' (of ${command})`).toContain(field);
       }
@@ -110,7 +127,9 @@ describe("slack overseer appendix — corrected command schemas", () => {
 
   // ---- the two drifts, pinned from both ends ------------------------
 
-  it("flag-owner-legacy takes 'message', not the seeded 'reason'", () => {
+  it("the safety valve takes 'message', not the seeded 'reason' — under both spellings", () => {
+    expect(acceptedFields("flag-owner")).toEqual(["message"]);
+    // The legacy spelling inherits the exact same strict schema.
     expect(acceptedFields("flag-owner-legacy")).toEqual(["message"]);
     expect(validateCommand({ command: "flag-owner-legacy", reason: "x" })).toEqual({
       ok: false,
@@ -248,12 +267,17 @@ describe("slack overseer appendix — the origin header", () => {
   it("documents only tiers the router can actually inject", () => {
     // A user-less event is dropped before injection (G3), so `ignored` never
     // reaches the model and must not be advertised as a tier it might see.
+    // the router now injects `owner` where the appendix's frozen
+    // prose still spells the top tier `owner_legacy`; the prose catches up in the
+    // reseed. `system` is daemon-stamped only (OriginStore.writeLocal)
+    // and never injectable, so it must not appear either.
     const tierRow = appendix.split("\n").find((l) => l.trim().startsWith("| tier |"));
     expect(tierRow).toBeDefined();
     expect(tierRow).toContain("anyone");
     expect(tierRow).toContain("author");
-    expect(tierRow).toContain("owner_legacy");
+    expect(tierRow).toContain("owner_legacy"); // legacy spelling of `owner`, frozen until
     expect(tierRow).not.toContain("ignored");
+    expect(tierRow).not.toContain("system");
   });
 
   it("keeps the never-finished check", () => {

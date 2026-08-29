@@ -14,11 +14,11 @@
 //
 // The legacy `commands/` belt asks a DIFFERENT question — "who caused the turn
 // I am serving?" — and answers it from `latestAny()`, ignoring expiry: waiting
-// out a TTL must never turn a guest's turn into a tier-M one. Only a daemon
-// wake (`writeLocal`) supersedes a Slack origin there.
+// out a TTL must never turn a guest's turn into an owner-tier one. Only a
+// daemon wake (`writeLocal`) supersedes a Slack origin there.
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { SlackTier } from "../state.js";
+import { foldSlackTier, type SlackTier } from "../state.js";
 
 /**
  * How long an origin authorises commands. 15 minutes: long enough for the
@@ -36,7 +36,7 @@ export interface OriginRecord {
    *
    * `slack` — a channel message became an overseer turn (the router wrote it).
    * `local` — the DAEMON woke the overseer itself (EOD sweep, anomaly wake,
-   *           connections signal). Full autonomy, tier `owner_legacy`, no user.
+   *           connections signal). Full autonomy, tier `system`, no user.
    *
    * A record read off disk with no `source` is treated as `slack`: old files
    * predate the field, and the safe reading of "unknown cause" is "a human in
@@ -49,7 +49,7 @@ export interface OriginRecord {
   slack_user: string;
   /** Rights tier, computed from `slack_user` alone — never from message text. */
   tier: SlackTier;
-  /** Open PRs authored by this person (empty unless tier is `author`/`owner_legacy`). */
+  /** Open PRs authored by this person (empty unless tier is `author`/`owner`). */
   authorized_prs: number[];
   /** ISO instant after which this origin authorises nothing. */
   expires_at: string;
@@ -64,14 +64,18 @@ export function parseOriginRecord(raw: unknown): OriginRecord | null {
   if (!isRecord(raw)) return null;
   const { source, event_id, slack_user, tier, authorized_prs, expires_at } = raw;
   if (typeof event_id !== "string" || typeof slack_user !== "string") return null;
-  if (tier !== "anyone" && tier !== "author" && tier !== "owner_legacy" && tier !== "ignored") return null;
+  // `foldSlackTier` accepts the retired "owner_legacy" spelling (records written
+  // before are still on disk) and folds it to "owner" — accepted on
+  // input, never emitted; everything unknown still grants nothing.
+  const foldedTier = foldSlackTier(tier);
+  if (foldedTier === null) return null;
   if (typeof expires_at !== "string" || Number.isNaN(Date.parse(expires_at))) return null;
   const prs = Array.isArray(authorized_prs)
     ? authorized_prs.filter((n): n is number => typeof n === "number" && Number.isInteger(n) && n > 0)
     : [];
   // Anything that is not literally "local" — missing, misspelled, non-string —
   // reads as a Slack-caused turn, i.e. the restricting value.
-  return { source: source === "local" ? "local" : "slack", event_id, slack_user, tier, authorized_prs: prs, expires_at };
+  return { source: source === "local" ? "local" : "slack", event_id, slack_user, tier: foldedTier, authorized_prs: prs, expires_at };
 }
 
 /**
@@ -115,7 +119,9 @@ export class OriginStore {
    * during a stale Slack origin would still look like the Slack user's turn, so
    * the legacy-dir belt would refuse the daemon's OWN commands (one guest
    * message every 15 minutes would have blocked the EOD pipeline forever).
-   * Tier `owner_legacy` with no user: the daemon keeps the autonomy it always had.
+   * Tier `system` with no user: the daemon keeps the autonomy it always had —
+   * this is the stamped, auditable form of the same authority a missing origin
+   * record grants (`authorizeCommand(_, null)` ⇒ ok).
    */
   writeLocal(reason: string): OriginRecord {
     const slug = (reason || "wake").replace(/[^a-zA-Z0-9._-]+/g, "-").slice(0, 48).replace(/^-+|-+$/g, "") || "wake";
@@ -124,7 +130,7 @@ export class OriginStore {
       source: "local",
       event_id: `local:${slug}`,
       slack_user: "",
-      tier: "owner_legacy",
+      tier: "system",
       authorized_prs: [],
     });
   }

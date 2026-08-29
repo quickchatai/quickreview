@@ -406,7 +406,8 @@ describe("drain command", () => {
     const origin = (tier: string) =>
       ({ tier, slack_user: "U1", authorized_prs: [4242], source: "slack" }) as never;
     expect(authorizeCommand(cmd, null).ok).toBe(true); // daemon/tmux autonomy
-    expect(authorizeCommand(cmd, origin("owner_legacy")).ok).toBe(true);
+    expect(authorizeCommand(cmd, origin("owner")).ok).toBe(true);
+    expect(authorizeCommand(cmd, origin("system")).ok).toBe(true);
     expect(authorizeCommand(cmd, origin("author")).ok).toBe(false);
     expect(authorizeCommand(cmd, origin("anyone")).ok).toBe(false);
   });

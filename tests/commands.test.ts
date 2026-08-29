@@ -20,7 +20,7 @@ function makeDeps() {
     restartSession: vi.fn(async () => undefined),
     pausePr: vi.fn(async () => undefined),
     resumePr: vi.fn(async () => undefined),
-    flagOwnerLegacy: vi.fn(async () => undefined),
+    flagOwner: vi.fn(async () => undefined),
     fileImprovementPr: vi.fn(async () => ({ ok: true, branch: "bot/improve-x" })),
     fileIssue: vi.fn(async () => ({ ok: true, issue: 7 })),
     retryThreadDecision: vi.fn(async () => ({ ok: true, file: "x.json" })),
@@ -35,7 +35,7 @@ describe("validateCommand — whitelist", () => {
       { command: "restart-session", pr: "overseer" },
       { command: "pause-pr", pr: 12, reason: "same-head staleness churn" },
       { command: "resume-pr", pr: 12 },
-      { command: "flag-owner-legacy", message: "webhook signature failures spiking" },
+      { command: "flag-owner", message: "webhook signature failures spiking" },
       { command: "file-improvement-pr", branch: "wip/fix-docs", title: "t", body: "b", slug: "fix-docs" },
       { command: "file-issue", title: "t", body: "b" },
       { command: "slack_reply", thread: "1712345678.123456", text: "on it" },
@@ -90,7 +90,7 @@ describe("validateCommand — whitelist", () => {
     expect(validateCommand({ command: "mark-escalation-worthy", pr: 1, reason: "x" }).ok).toBe(false); // retired
     expect(validateCommand({ command: "pause-pr", pr: 1 }).ok).toBe(false); // reason required
     expect(validateCommand({ command: "resume-pr", pr: 1, reason: "x" }).ok).toBe(false); // unknown field
-    expect(validateCommand({ command: "flag-owner-legacy", reason: "wrong field name" }).ok).toBe(false);
+    expect(validateCommand({ command: "flag-owner", reason: "wrong field name" }).ok).toBe(false);
     expect(validateCommand({ command: "file-improvement-pr", branch: "b", title: "t", body: "y", slug: "Bad Slug" }).ok).toBe(false);
     expect(validateCommand({ command: "retry-thread-decision", comment_id: "5001" }).ok).toBe(false);
     expect(validateCommand({ command: "retry-thread-decision", comment_id: 5001, force: true }).ok).toBe(false);
@@ -117,8 +117,8 @@ describe("executeCommand", () => {
     expect(deps.pausePr).toHaveBeenCalledWith(5266, "same-head churn");
     await executeCommand({ command: "resume-pr", pr: 5266 }, deps);
     expect(deps.resumePr).toHaveBeenCalledWith(5266);
-    await executeCommand({ command: "flag-owner-legacy", message: "look" }, deps);
-    expect(deps.flagOwnerLegacy).toHaveBeenCalledWith("look");
+    await executeCommand({ command: "flag-owner", message: "look" }, deps);
+    expect(deps.flagOwner).toHaveBeenCalledWith("look");
     await executeCommand(
       { command: "file-improvement-pr", branch: "wip/x", title: "t", body: "b", slug: "x" },
       deps,
@@ -145,7 +145,7 @@ describe("executeCommand", () => {
 
   it("treats a void return as success", async () => {
     const deps = makeDeps();
-    expect(await executeCommand({ command: "flag-owner-legacy", message: "m" }, deps)).toEqual({ ok: true });
+    expect(await executeCommand({ command: "flag-owner", message: "m" }, deps)).toEqual({ ok: true });
   });
 });
 
@@ -238,9 +238,9 @@ describe("CommandWatcher", () => {
   });
 
   it("catches a throwing handler", async () => {
-    writeFileSync(join(cmdDir(), "boom.json"), JSON.stringify({ command: "flag-owner-legacy", message: "m" }));
+    writeFileSync(join(cmdDir(), "boom.json"), JSON.stringify({ command: "flag-owner", message: "m" }));
     const deps = makeDeps();
-    deps.flagOwnerLegacy = vi.fn(async () => {
+    deps.flagOwner = vi.fn(async () => {
       throw new Error("tmux gone");
     }) as any;
     await watcher(deps).sweep();
@@ -251,12 +251,12 @@ describe("CommandWatcher", () => {
     const deps = makeDeps();
     const w = watcher(deps);
     await w.start();
-    writeFileSync(join(cmdDir(), "live.json"), JSON.stringify({ command: "flag-owner-legacy", message: "hello" }));
-    for (let i = 0; i < 50 && deps.flagOwnerLegacy.mock.calls.length === 0; i++) {
+    writeFileSync(join(cmdDir(), "live.json"), JSON.stringify({ command: "flag-owner", message: "hello" }));
+    for (let i = 0; i < 50 && deps.flagOwner.mock.calls.length === 0; i++) {
       await new Promise((r) => setTimeout(r, 20));
     }
     w.stop();
-    expect(deps.flagOwnerLegacy).toHaveBeenCalledWith("hello");
+    expect(deps.flagOwner).toHaveBeenCalledWith("hello");
   });
 
   // ---- tier enforcement (S3) --------------------------------------
@@ -320,7 +320,7 @@ describe("CommandWatcher", () => {
   it("the safety valve and slack_reply are tier-free", async () => {
     const anyone = origin({ tier: "anyone", authorized_prs: [] });
     const d1 = makeDeps();
-    expect((await runSlack(d1, { command: "flag-owner-legacy", message: "help" }, anyone)).ok).toBe(true);
+    expect((await runSlack(d1, { command: "flag-owner", message: "help" }, anyone)).ok).toBe(true);
     const d2 = makeDeps();
     expect((await runSlack(d2, { command: "slack_reply", thread: "1712345678.123456", text: "hi" }, anyone)).ok).toBe(true);
   });
@@ -345,7 +345,7 @@ describe("CommandWatcher", () => {
     ]) {
       const r = await runSlack(makeDeps(), cmd, alice);
       expect(r.ok, JSON.stringify(cmd)).toBe(false);
-      expect(r.reason).toContain("requires tier owner_legacy");
+      expect(r.reason).toContain("requires tier owner");
     }
   });
 
@@ -365,21 +365,21 @@ describe("CommandWatcher", () => {
       const deps = makeDeps();
       const r = await runSlack(deps, cmd, alice);
       expect(r.ok, JSON.stringify(cmd)).toBe(false);
-      expect(r.reason).toContain("requires tier owner_legacy");
+      expect(r.reason).toContain("requires tier owner");
       expect(deps.fileIssue).not.toHaveBeenCalled();
     }
   });
 
   it("the pr provenance field rides through to fileIssue when the owner files", async () => {
-    const m = origin({ tier: "owner_legacy", slack_user: "U0MAT", authorized_prs: [] });
+    const m = origin({ tier: "owner", slack_user: "U0MAT", authorized_prs: [] });
     const deps = makeDeps();
     const r = await runSlack(deps, { command: "file-issue", pr: 1234, title: "t", body: "b" }, m);
     expect(r.ok).toBe(true);
     expect(deps.fileIssue).toHaveBeenCalledWith({ title: "t", body: "b", pr: 1234 });
   });
 
-  it("tier owner_legacy runs every command on any PR", async () => {
-    const m = origin({ tier: "owner_legacy", slack_user: "U0MAT", authorized_prs: [] });
+  it("tier owner runs every command on any PR", async () => {
+    const m = origin({ tier: "owner", slack_user: "U0MAT", authorized_prs: [] });
     for (const cmd of [
       { command: "rerun-round", pr: 42 },
       { command: "restart-session", pr: "overseer" },
@@ -437,7 +437,7 @@ describe("CommandWatcher", () => {
     const deps = makeDeps();
     // The gate for the legacy dir reads `latestAny()`: age is irrelevant, cause
     // is everything. A turn that simply ran past the 15-minute TTL (channel text
-    // can ask for exactly that) must not become tier M.
+    // can ask for exactly that) must not gain owner rights.
     const expired = origin({ tier: "anyone", expires_at: new Date(Date.now() - 60 * 60_000).toISOString() });
     writeFileSync(join(cmdDir(), "patient.json"), JSON.stringify({ command: "file-issue", title: "t", body: "b" }));
     await tierWatcher(deps, "local", () => expired).sweep();
@@ -449,17 +449,17 @@ describe("CommandWatcher", () => {
 
   it("a daemon wake (source: local) clears the belt — the EOD pipeline cannot be DoSed", async () => {
     const deps = makeDeps();
-    const local = origin({ source: "local", event_id: "local:eod-sweep", slack_user: "", tier: "owner_legacy" });
+    const local = origin({ source: "local", event_id: "local:eod-sweep", slack_user: "", tier: "system" });
     writeFileSync(join(cmdDir(), "eod-issue.json"), JSON.stringify({ command: "file-issue", title: "t", body: "b" }));
     await tierWatcher(deps, "local", () => local).sweep();
     expect(result("eod-issue")).toMatchObject({ ok: true });
     expect(deps.fileIssue).toHaveBeenCalled();
   });
 
-  it("legacy commands/ still runs during a the owner Slack turn", async () => {
+  it("legacy commands/ still runs during an owner Slack turn", async () => {
     const deps = makeDeps();
     writeFileSync(join(cmdDir(), "mat.json"), JSON.stringify({ command: "rerun-round", pr: 7 }));
-    await tierWatcher(deps, "local", () => origin({ tier: "owner_legacy" })).sweep();
+    await tierWatcher(deps, "local", () => origin({ tier: "owner" })).sweep();
     expect(result("mat")).toMatchObject({ ok: true });
     expect(deps.rerunRound).toHaveBeenCalledWith(7);
   });
@@ -486,7 +486,7 @@ describe("authorizeCommand (pure)", () => {
     expires_at: new Date(Date.now() + 60_000).toISOString(),
   });
 
-  it("a null origin is a local turn — full tier-M autonomy", () => {
+  it("a null origin is a local turn — full (system-grade) autonomy", () => {
     const cmds: Command[] = [
       { command: "restart-session", pr: "overseer" },
       { command: "file-issue", title: "t", body: "b" },
@@ -508,12 +508,12 @@ describe("authorizeCommand (pure)", () => {
   });
 
   it("tier 'ignored' is treated as read-only, like 'anyone'", () => {
-    expect(authorizeCommand({ command: "flag-owner-legacy", message: "m" }, rec("ignored")).ok).toBe(true);
+    expect(authorizeCommand({ command: "flag-owner", message: "m" }, rec("ignored")).ok).toBe(true);
     expect(authorizeCommand({ command: "rerun-round", pr: 1 }, rec("ignored")).ok).toBe(false);
   });
 
-  it("restart-session on 'overseer' is owner_legacy-only and needs no PR", () => {
-    expect(authorizeCommand({ command: "restart-session", pr: "overseer" }, rec("owner_legacy")).ok).toBe(true);
+  it("restart-session on 'overseer' is owner-only and needs no PR", () => {
+    expect(authorizeCommand({ command: "restart-session", pr: "overseer" }, rec("owner")).ok).toBe(true);
     expect(authorizeCommand({ command: "restart-session", pr: "overseer" }, rec("author", [1])).ok).toBe(false);
   });
 });

@@ -317,8 +317,35 @@ export interface BackfillPrMetaRow {
 // Slack `ts` values are TEXT ALWAYS ("1755431234.001900"): they are opaque
 // message ids whose precision a float would destroy.
 
-/** Who a Slack message came from, in rights terms (resolved by the router). */
-export type SlackTier = "anyone" | "author" | "owner_legacy" | "ignored";
+/** Who a Slack message came from, in rights terms (resolved by the router).
+ *
+ * split the old personal top tier into two ROLES so the audit trail
+ * names which kind of authority acted:
+ *   `owner`  — the configured owner (`[owner] slack_id`): the full
+ *              personal command rights the retired `owner_legacy` tier carried.
+ *   `system` — the daemon's own unattended turns (EOD sweep, anomaly wake,
+ *              connections signal), stamped only by `OriginStore.writeLocal`;
+ *              `computeTier` never returns it for a Slack user.
+ * The retired spelling `"owner_legacy"` is ACCEPTED on input and folded to `owner`
+ * by `foldSlackTier` — the ESCALATE→NEEDS_HUMAN pattern: accepted on read,
+ * never emitted. */
+export type SlackTier = "anyone" | "author" | "owner" | "system" | "ignored";
+
+/**
+ * Parse a persisted tier string into the current vocabulary. The retired
+ * `"owner_legacy"` spelling (legacy origin records and slack_events rows still
+ * on disk) folds to `"owner"`; anything else unknown is `null` — an unknown
+ * tier grants nothing. EVERY read path of a persisted tier goes through this
+ * fold (origin records via `parseOriginRecord`, slack_events rows via
+ * `StateStore.slackEvent`). Pinned by tests/legacy-acceptance.test.ts — a
+ * permanent belt, not a cleanup candidate.
+ */
+export function foldSlackTier(raw: unknown): SlackTier | null {
+  if (raw === "owner_legacy") return "owner"; // legacy — accepted on input, never emitted
+  return raw === "anyone" || raw === "author" || raw === "owner" || raw === "system" || raw === "ignored"
+    ? raw
+    : null;
+}
 
 /** What the router did with a Slack message. Everything that is not
  * `injected` names the reason it never reached a session. */
@@ -2971,7 +2998,15 @@ export class StateStore {
   }
 
   slackEvent(eventId: string): SlackEventRow | undefined {
-    return this.db.prepare("SELECT * FROM slack_events WHERE event_id = ?").get(eventId) as SlackEventRow | undefined;
+    const row = this.db.prepare("SELECT * FROM slack_events WHERE event_id = ?").get(eventId) as
+      | SlackEventRow
+      | undefined;
+    if (!row) return undefined;
+    // Rows written before carry the retired "owner_legacy" tier spelling;
+    // fold on read (accepted on input, never emitted). An unrecognisable value
+    // is returned as-is — this is a ledger read, not a rights grant.
+    const folded = foldSlackTier(row.tier);
+    return folded !== null && folded !== row.tier ? { ...row, tier: folded } : row;
   }
 
   /** Injected turns inside a half-open [since, until) window; `slackUser`

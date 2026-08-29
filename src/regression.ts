@@ -511,7 +511,10 @@ export function assertReplaySafe(cases: RegressionCase[], gate: ReplayGate, cuto
   }
 }
 
-export type Recommendation = "no-action" | "look-at-these" | "ask-owner-legacy";
+/** Renamed from `"ask-owner-legacy"`. The value is produced and rendered
+ * (log line, JSON output, report markdown) but never parsed back or compared
+ * outside this module, so the rename needs no input fold. */
+export type Recommendation = "no-action" | "look-at-these" | "ask-owner";
 
 export interface RegressionRun {
   cases: ScoredCase[];
@@ -552,7 +555,7 @@ export async function runRegression(cases: RegressionCase[], deps: RegressionDep
   let recommendation: Recommendation;
   let headline: string;
   if (vacuous.length >= Math.max(1, Math.ceil(scored.length / 2))) {
-    recommendation = "ask-owner-legacy";
+    recommendation = "ask-owner";
     headline = `${vacuous.length} of ${scored.length} case(s) produced NO sandbox findings at all. Suspect the replay harness before the reviewer — a set that scores clean because it scored nothing is the failure mode this was built to avoid.`;
   } else if (notReached.length === 0) {
     recommendation = "no-action";

@@ -47,9 +47,11 @@ function isOwnPostedTs(store: StateStore, ts: string): boolean {
 /** Rights tier of a Slack member id. Config is the ONLY input besides the id. */
 export function computeTier(cfg: Config, slackUser: string | null | undefined): SlackTier {
   if (!slackUser) return "ignored";
-  // The tier NAME stays "owner_legacy" for now — renaming the tier vocabulary is
-  //; only the id's config home moved.
-  if (cfg.owner.slack_id && slackUser === cfg.owner.slack_id) return "owner_legacy";
+  // The configured owner (`[owner] slack_id`) gets the top rights
+  // tier. Persisted records still spelling this tier "owner_legacy" are folded to
+  // "owner" on read (`foldSlackTier`); `system` is never computed
+  // here — it is stamped only by OriginStore.writeLocal for daemon turns.
+  if (cfg.owner.slack_id && slackUser === cfg.owner.slack_id) return "owner";
   if (Object.prototype.hasOwnProperty.call(cfg.slack.users, slackUser)) return "author";
   // Ratified widening: an unmapped id gets read-only everything, but NO own-PR
   // resolution — there is no login to resolve, so it must name PRs by number.
@@ -66,10 +68,10 @@ export function githubLoginFor(cfg: Config, slackUser: string | null | undefined
  * Open PRs authored by `login`. Empty for an unmapped id — an `anyone` turn can
  * never resolve author->PR, by construction.
  *
- * For the owner this list is his own PRs too, and it is deliberately NOT his
- * authority: `authorizeCommand` lets tier `owner_legacy` act on any PR, so an empty
- * list costs him nothing. Keeping the field honest (his real PRs) means the
- * inject body reads the same for everyone.
+ * For the owner this list is their own PRs too, and it is deliberately NOT
+ * their authority: `authorizeCommand` lets tier `owner` act on any PR, so an
+ * empty list costs them nothing. Keeping the field honest (their real PRs)
+ * means the inject body reads the same for everyone.
  */
 export function authorizedPrs(store: StateStore, login: string | null): number[] {
   if (!login) return [];
@@ -299,7 +301,7 @@ export class SlackRouter {
     // ORDER MATTERS, and it is origin-then-inject. The other order leaves a
     // window — however short — in which a wake file exists with no rights
     // record, and a model that acts inside it would be read as `origin === null`
-    // = a daemon turn = full tier M. The failure direction must be closed, so
+    // = a daemon turn = full system-grade autonomy. The failure direction must be closed, so
     // the record goes down FIRST, under a provisional name, and is renamed onto
     // the inject file once that file exists (the name is the audit join). If the
     // inject never lands, the record is removed again — an origin with no turn

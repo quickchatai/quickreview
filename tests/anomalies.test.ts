@@ -192,7 +192,7 @@ describe("renderHeartbeatMessage", () => {
     const m = renderHeartbeatMessage("2026-08-20", "2026-08-19");
     expect(m).toContain("OVERSEER HEARTBEAT — 2026-08-20");
     expect(m).toContain("since the last heartbeat (2026-08-19)");
-    expect(m).toContain("Flag-owner-legacy");
+    expect(m).toContain("Flag-owner");
     expect(renderHeartbeatMessage("2026-08-20", null)).toContain("first heartbeat on record");
   });
 });
