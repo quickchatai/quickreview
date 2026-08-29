@@ -3,6 +3,15 @@
 # Values are read with hidden input and NEVER printed back. Re-run any time —
 # existing files are kept unless you choose to replace them.
 #
+# The wizard is deployment-shape-aware: the first choice is HOW the
+# GitHub webhook reaches the daemon, and the required set follows from it.
+#   tunnel — a Cloudflare Tunnel on the host fronts the webhook port
+#            (tunnel_token REQUIRED)
+#   docker — plain Docker; you bring your own ingress/TLS to the webhook port
+#            (tunnel_token not needed)
+# The choice persists in <secrets dir>/deploy_shape; QC_DEPLOY_SHAPE=tunnel|docker
+# overrides it non-interactively.
+#
 #   bash deploy/collect-secrets.sh          # prompt for whatever is missing
 #   bash deploy/collect-secrets.sh --force  # offer to replace existing files too
 set -euo pipefail
@@ -19,6 +28,8 @@ info() { printf '  · %s\n' "$*"; }
 mkdir -p "$DIR"
 chmod 700 "$DIR"
 
+SHAPE_FILE="$DIR/deploy_shape"
+
 status_of() { # file
   if [[ -s "$DIR/$1" ]]; then
     printf 'present (%s bytes, %s)' "$(wc -c < "$DIR/$1" | tr -d ' ')" "$(date -r "$DIR/$1" '+%Y-%m-%d %H:%M')"
@@ -27,11 +38,59 @@ status_of() { # file
   fi
 }
 
+shape() { # -> "tunnel" | "docker" | "" (unset)
+  if [[ -s "$SHAPE_FILE" ]]; then cat "$SHAPE_FILE"; fi
+}
+
+save_shape() { # tunnel|docker
+  umask 077
+  printf '%s' "$1" > "$SHAPE_FILE"
+  chmod 600 "$SHAPE_FILE"
+}
+
+choose_shape() {
+  if [[ -n "${QC_DEPLOY_SHAPE:-}" ]]; then
+    case "$QC_DEPLOY_SHAPE" in
+      tunnel|docker) save_shape "$QC_DEPLOY_SHAPE"; info "deployment shape: $QC_DEPLOY_SHAPE (from QC_DEPLOY_SHAPE)"; return 0 ;;
+      *) bad "QC_DEPLOY_SHAPE must be 'tunnel' or 'docker' (got: $QC_DEPLOY_SHAPE)"; exit 1 ;;
+    esac
+  fi
+  local current; current="$(shape)"
+  if [[ -n "$current" && $FORCE -eq 0 ]]; then
+    info "deployment shape: $current (stored; re-run with --force to change)"
+    return 0
+  fi
+  bold "deployment shape — how does the GitHub webhook reach the daemon?"
+  info "1) tunnel — Cloudflare Tunnel on the host fronts the webhook port (needs tunnel_token)"
+  info "2) docker — plain Docker; you bring your own ingress/TLS to the webhook port (no tunnel_token)"
+  local a
+  while true; do
+    if ! read -r -p "  choose [1/2]${current:+ (Enter keeps: $current)}: " a; then
+      [[ -n "$current" ]] && { save_shape "$current"; return 0; }
+      bad "no input — set QC_DEPLOY_SHAPE=tunnel|docker to choose non-interactively"
+      exit 1
+    fi
+    case "$a" in
+      1|tunnel) save_shape tunnel; break ;;
+      2|docker) save_shape docker; break ;;
+      "") if [[ -n "$current" ]]; then save_shape "$current"; break; fi; bad "pick 1 or 2" ;;
+      *) bad "pick 1 or 2" ;;
+    esac
+  done
+  ok "deployment shape: $(shape)"
+}
+
 overview() {
-  bold "quickreview secrets — $DIR"
+  local s; s="$(shape)"
+  bold "quickreview secrets — $DIR  (deployment shape: ${s:-unset})"
   for f in app_id app.pem webhook_secret tunnel_token openai_api_key openviking_root_key openviking_reviewer_key; do
     printf '  %-24s %s\n' "$f" "$(status_of "$f")"
   done
+  if [[ "$s" == "docker" ]]; then
+    info "tunnel_token is NOT required under the docker shape (own ingress)"
+  else
+    info "tunnel_token is required under the tunnel shape"
+  fi
   info "openai_api_key is OPTIONAL (ChatGPT-OAuth route chosen; pi /login instead)"
   info "openviking_root_key / openviking_reviewer_key: memory. Missing root key => the"
   info "server falls back to auth_mode=dev and per-user confinement is NOT enforced."
@@ -85,8 +144,8 @@ v_nonempty() { local v; v="$(cat)"; [[ ${#v} -ge 16 && "$v" != *" "* ]] || { ech
 
 prompt_pem() {
   want app.pem || return 0
-  bold "app.pem — the example-review GitHub App private key"
-  info "GitHub → Settings → Developer settings → GitHub Apps → example-review → Private keys"
+  bold "app.pem — the GitHub App private key"
+  info "GitHub → Settings → Developer settings → GitHub Apps → your App → Private keys"
   read -r -e -p "  path to the downloaded .pem (or Enter to paste it instead): " pempath || return 0
   if [[ -n "$pempath" ]]; then
     pempath="${pempath/#\~/$HOME}"
@@ -105,6 +164,7 @@ prompt_pem() {
   fi
 }
 
+choose_shape
 overview
 
 if want app_id; then
@@ -119,9 +179,11 @@ if want webhook_secret; then
   prompt_hidden webhook_secret "the webhook secret" v_secret
 fi
 
-if want tunnel_token; then
-  bold "tunnel_token — Cloudflare Zero Trust → Networks → Tunnels → quickreview connector token"
-  prompt_hidden tunnel_token "the tunnel token" v_token
+if [[ "$(shape)" == "tunnel" ]]; then
+  if want tunnel_token; then
+    bold "tunnel_token — Cloudflare Zero Trust → Networks → Tunnels → connector token"
+    prompt_hidden tunnel_token "the tunnel token" v_token
+  fi
 fi
 
 if want openai_api_key; then
@@ -149,12 +211,21 @@ fi
 
 echo
 overview
+SHAPE_NOW="$(shape)"
+required=(app_id app.pem webhook_secret)
+if [[ "$SHAPE_NOW" == "tunnel" ]]; then
+  required+=(tunnel_token)
+fi
 missing=0
-for f in app_id app.pem webhook_secret tunnel_token; do
+for f in "${required[@]}"; do
   [[ -s "$DIR/$f" ]] || { bad "still missing: $f"; missing=1; }
 done
 if [[ $missing -eq 0 ]]; then
-  ok "all required secrets in place — tell the session 'secrets done' to continue the deploy"
+  ok "all required secrets in place for the '$SHAPE_NOW' shape — tell the session 'secrets done' to continue the deploy"
+  if [[ "$SHAPE_NOW" == "docker" && -s "$DIR/tunnel_token" ]]; then
+    info "tunnel_token is present but unused under the docker shape"
+  fi
 else
   info "re-run this wizard to fill the gaps (deploy will refuse until they exist)"
+  exit 1
 fi
