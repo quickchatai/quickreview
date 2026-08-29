@@ -2,7 +2,14 @@
   "name": "quickreview-sandbox",
   "version": "0.1.0",
   "private": true,
-  "description": "review sandbox — quickreviewd daemon, qcr CLI, pi extensions",
+  "//private": "kept deliberately: this repo is an application, not an npm library — the flag blocks an accidental `npm publish` and nothing in the toolchain depends on its absence",
+  "description": "quickreviewd — a 24/7 automated GitHub PR-review daemon: deterministic TypeScript core driving sticky LLM review sessions, with an operator TUI, Slack concierge, and a continuous learning loop",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/quickchatai/quickreviewd.git",
+    "//": "placeholder until the public repo exists (snapshot); update on first publish"
+  },
   "type": "module",
   "engines": {
     "node": ">=22"

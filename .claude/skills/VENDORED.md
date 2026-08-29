@@ -35,34 +35,18 @@ The curated set grew 22 → 25.
 ## Updating
 
 Re-clone upstream and re-copy the curated folders (the `skills` list in
-`.claude-plugin/plugin.json`). These are pinned/editable on purpose — some are
-forked to point at the fleet-internal issue tracker (see below).
+`.claude-plugin/plugin.json`). These copies are pristine upstream — pinned,
+not forked.
 
-## The issue-tracker seam — and the planner's fork
+## The issue-tracker seam
 
-`wayfinder`, `to-tickets`, `to-spec`, `triage` are tracker-agnostic. They consult
-one per-repo adapter file, `docs/agents/issue-tracker.md`, emitted by
-`setup-matt-pocock-skills`.
+`wayfinder`, `to-tickets`, `to-spec`, `triage` are tracker-agnostic. They
+consult one per-repo adapter file, `docs/agents/issue-tracker.md`, emitted by
+`setup-matt-pocock-skills` — point them at whatever issue tracker your
+installation uses.
 
-**The copies in this folder are pristine upstream.** The forked copies live in
-`planner/.claude/skills/` — 8 skills, of which 5 (`wayfinder`, `to-spec`,
-`to-tickets`, `triage`, `prototype`) carry fleet-specific edits pointing them at
-`tracker/` and the `tracker-lint` MCP tool.
+## License and first-party additions
 
-**When updating, do not overwrite the planner copies** — 3-way merge them:
-
-```sh
-git merge-file planner/.claude/skills/<n>/<f> <old-pin>/<n>/<f> <new>/<n>/<f>
-```
-
-In the 1.2.0 → 1.2.3 update, 6 of 7 forked files merged clean; only
-`wayfinder/SKILL.md` conflicted (upstream reworded the research-subagent line)
-and was hand-resolved to keep both upstream's phrasing and the fork's
-asset-directory + lint additions.
-
-## Fleet deployment
-
-The same 25 skills are installed at `~/.claude/skills/` on every operator-box VM
-container for the owner (10 boxes as of 2026-08-17). Those copies are
-pristine upstream — no forks — and are expected to stay byte-identical to this
-folder minus this file.
+The vendored set is MIT (Copyright (c) Matt Pocock) — full text in `LICENSE`
+beside this file. Skill folders authored for this project and NOT part of the
+upstream set are listed there and in the repo-root `THIRD-PARTY-NOTICES.md`.
