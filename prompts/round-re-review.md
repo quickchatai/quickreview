@@ -7,7 +7,9 @@
 > {{settled_digest}} {{round_type}} {{round_no}} {{nit_scope_note}}
 > {{intent_note}}`, plus the two memory sections `pinned_head` and
 > `context_block` (written without braces here so this doc line
-> does not render a second copy of the memory seed).
+> does not render a second copy of the memory seed), and the identity
+> variables `owner_name`/`repo`/`bot_login` (same braceless
+> convention).
 
 ---
 
@@ -372,7 +374,7 @@ that ease a human into the change before any jargon: what this PR does, what
 this round found, where it stands. Same register as the verdict `summary` of
 step 7 — and ideally the **same text, word for word**: write it once, open the
 body with it and copy it into the verdict JSON, so one artifact serves both the
-PR author and the owner. No markdown, no lens names, no severity codes, no
+PR author and {{owner_name}}. No markdown, no lens names, no severity codes, no
 `[blocker]` tags, no shas. It comes **before** the verdict line.
 
 **Keep the framing judgment.** The one-sentence framing judgment that opens a
@@ -585,7 +587,7 @@ The verdict shape:
   "round_no": {{round_no}},
   "verdict": "APPROVE" | "REQUEST_CHANGES",
   "head_sha": "{{head_sha}}",
-  "summary": "<3-4 plain sentences for the owner>",
+  "summary": "<3-4 plain sentences for {{owner_name}}>",
   "passes": [
     { "name": "pass-baseline", "tier": "sol-med", "findings": 3 },
     { "name": "pass-concurrency", "tier": "sol-med", "reason": "added: read-then-write race in claim ownership", "findings": 1 },
@@ -625,7 +627,7 @@ it. Planned passes omit `reason`. This structured field is how the daemon
 separates a sanctioned addition from an unexplained plan violation.
 
 `pr` and `round_no` are numbers. `summary` is optional — but always write it: 3-4 plain
-sentences telling the owner what is going on with this PR right now (what the
+sentences telling {{owner_name}} what is going on with this PR right now (what the
 change does, what this round found, where it stands), plus any tier raises or
 added lenses with their reasons. No markdown, no lens jargon; it renders
 verbatim in his TUI detail pane. This is the **same text** as the body's

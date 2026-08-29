@@ -11,6 +11,7 @@ import {
   renderPinnedHeadSection,
   type RoundMemory,
 } from "./memory/context.js";
+import { NEUTRAL_IDENTITY_VARS } from "./include.js";
 import type { FileClass, RecheckOrder } from "./recheck.js";
 import type { PassPlanEntry, RoundOrder, RoundType } from "./types.js";
 
@@ -68,9 +69,12 @@ export function renderDeltaFiles(files: readonly FileClass[]): string {
     .join("\n");
 }
 
-/** The full variable set the recheck template may reference. */
-export function recheckVars(order: RecheckOrder): TemplateVars {
+/** The full variable set the recheck template may reference. `identity` is
+ * the variable map (`{{owner_name}}`/`{{repo}}`/`{{bot_login}}`);
+ * neutral role wording by default, `identityVars(cfg)` in production. */
+export function recheckVars(order: RecheckOrder, identity: Readonly<TemplateVars> = NEUTRAL_IDENTITY_VARS): TemplateVars {
   return {
+    ...identity,
     n: String(order.pr),
     title: order.title,
     worktree: order.worktree,
@@ -104,8 +108,12 @@ export function renderConflictAuditNote(resolved: readonly string[]): string {
 }
 
 /** Render prompts/round-recheck.md against a RecheckOrder. */
-export function renderRecheckPrompt(templateText: string, order: RecheckOrder): string {
-  return render(templateText, recheckVars(order));
+export function renderRecheckPrompt(
+  templateText: string,
+  order: RecheckOrder,
+  identity: Readonly<TemplateVars> = NEUTRAL_IDENTITY_VARS,
+): string {
+  return render(templateText, recheckVars(order, identity));
 }
 
 // The migration-gate prose (GATE_ON/GATE_OFF and the two GATE NOTES
@@ -283,8 +291,10 @@ export function roundVars(
   memory: RoundMemory = MEMORY_LESS,
   ownerName?: string,
   ecosystem: Ecosystem = DJANGO_ECOSYSTEM,
+  identity: Readonly<TemplateVars> = NEUTRAL_IDENTITY_VARS,
 ): TemplateVars {
   return {
+    ...identity,
     pinned_head: renderPinnedHeadSection(memory, ownerName),
     context_block: renderContextBlockSection(memory),
     n: String(order.pr),
@@ -326,8 +336,9 @@ export function renderRoundPrompt(
   memory: RoundMemory = MEMORY_LESS,
   ownerName?: string,
   ecosystem: Ecosystem = DJANGO_ECOSYSTEM,
+  identity: Readonly<TemplateVars> = NEUTRAL_IDENTITY_VARS,
 ): string {
-  return ensurePinnedHead(render(templateText, roundVars(order, memory, ownerName, ecosystem)), memory, ownerName);
+  return ensurePinnedHead(render(templateText, roundVars(order, memory, ownerName, ecosystem, identity)), memory, ownerName);
 }
 
 export interface ConversationPromptVars {
@@ -336,12 +347,15 @@ export interface ConversationPromptVars {
   worktree: string;
 }
 
-/** prompts/conversation-system.md — substituted at PR-session birth. */
+/** prompts/conversation-system.md — substituted at PR-session birth. The
+ * identity variables ride alongside the per-PR ones. */
 export function renderConversationSystemPrompt(
   templateText: string,
   vars: ConversationPromptVars,
+  identity: Readonly<TemplateVars> = NEUTRAL_IDENTITY_VARS,
 ): string {
   return render(templateText, {
+    ...identity,
     n: String(vars.pr),
     title: vars.title,
     worktree: vars.worktree,
@@ -350,7 +364,8 @@ export function renderConversationSystemPrompt(
 
 /** prompts/overseer-system.md — no per-session substitution today; rendered
  * through the same path so a future placeholder fails loudly rather than
- * silently shipping "{{...}}" to the model. */
+ * silently shipping "{{...}}" to the model. The identity variables
+ * are always in scope. */
 export function renderOverseerSystemPrompt(templateText: string, vars: TemplateVars = {}): string {
-  return render(templateText, vars);
+  return render(templateText, { ...NEUTRAL_IDENTITY_VARS, ...vars });
 }

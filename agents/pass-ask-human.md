@@ -85,9 +85,9 @@ the thing you are asking about. Then, on the next line, say in one clause
 **what you already checked** so the reader knows this is not laziness — *"not
 in the PR body, and nothing in `app/validation/` matches the shape"*.
 
-*(the owner's words when he ratified the bar,: "it can only block if it
+*(The owner's words at ratification,: "it can only block if it
 says what is wrong under the bad answer. Not 'unclear' — an actual described
-failure." The passage below is his decision, not prose to tune, and it is
+failure." The passage below is their decision, not prose to tune, and it is
 fenced as `named-defect-bar` and pinned in `tests/invariant-fences.test.ts`.)*
 
 <!-- RATIFIED named-defect-bar — do not edit; owner only -->

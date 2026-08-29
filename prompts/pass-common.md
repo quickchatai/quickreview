@@ -1,6 +1,7 @@
 # Lens passes — shared contract
 
-> Sandbox file: `prompts/pass-common.md`. Included (verbatim `{{include}}`) at
+> Sandbox file: `prompts/pass-common.md`. Included (verbatim, by the build's
+> include expansion) at
 > the top of every `agents/pass-*.md` definition. Passes are pi-subagents
 > agents: isolated pi processes, zero inherited context, text-only returns.
 

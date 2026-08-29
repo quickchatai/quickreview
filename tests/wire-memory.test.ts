@@ -34,7 +34,8 @@ describe("wire.ts: the memory phase is actually connected", () => {
     // from config.
     // the profile-selected ecosystem rides along too, so a none
     // profile's prompts really carry no migration-gate prose.
-    expect(wire).toMatch(/renderRoundPrompt\([\s\S]*?order,\s*memory,\s*cfg\.owner\.name,\s*ecosystem,?\s*\)/);
+    // the identity variable map rides beside them.
+    expect(wire).toMatch(/renderRoundPrompt\([\s\S]*?order,\s*memory,\s*cfg\.owner\.name,\s*ecosystem,\s*identity,?\s*\)/);
     expect(wire).toMatch(/renderPrompt = \(order: RoundOrder, memory: RoundMemory\)/);
   });
 

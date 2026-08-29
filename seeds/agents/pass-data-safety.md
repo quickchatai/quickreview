@@ -7,7 +7,7 @@ model: openai/gpt-5.6-sol
 
 {{include:prompts/pass-common.md}}
 
-# Lens: data safety (assume the repo's hot tables hold millions of rows)
+# Lens: data safety (MySQL; assume the repo's hot tables hold millions of rows)
 
 Apply to: migrations, backfills, bulk writes, scheduled jobs that fan out per
 row.

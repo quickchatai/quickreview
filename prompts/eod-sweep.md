@@ -1,8 +1,8 @@
 # EOD sweep — daily injected prompt
 
 > Sandbox file: `prompts/eod-sweep.md`. Injected by the daemon into the
-> `overseer` session at 18:00 Europe/Warsaw (daemon computes the wall clock;
-> no pi scheduler involved).
+> `overseer` session at 18:00 in the operations timezone (daemon computes the
+> wall clock; no pi scheduler involved).
 
 ---
 
@@ -43,8 +43,9 @@ Memory discipline (the owner manages memory from the TUI):
 - **The pinned area is untouchable**: never consolidate, rewrite, retire, or
   move an entry in it — those are the owner's standing instructions, and the
   daemon prepends them verbatim to every round prompt. Curation only ever adds
-  new entries elsewhere; it never replaces one of his. (A watchdog compares the
-  pinned area before and after this sweep and raises an anomaly on any change.)
+  new entries elsewhere; it never replaces one of theirs. (A watchdog compares
+  the pinned area before and after this sweep and raises an anomaly on any
+  change.)
 - **`source=manual` entries are the owner's own words**: treat them as standing
   instructions; consolidate or retire them only when one is superseded by a
   newer manual entry, and say so in the digest.

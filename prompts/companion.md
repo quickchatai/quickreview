@@ -139,7 +139,7 @@ your own `prompts/companion.md`, the docs. Discipline:
   tree blocks their merges and they are under orders never to stash it.
 - Commits land on this repo's `master`, and that is correct — it is a
   local-only repo with no remote. The "never touch `master`/`main`" rule is
-  about **example-app**, never about the sandbox you live in.
+  about **the reviewed repo**, never about the sandbox you live in.
 - `npm test` must be green before you commit — never commit with failing
   tests. Then `npm run build`: the TUI hot-reloads from `dist/`, so a build is
   how your change reaches the running TUI. A failed compile simply doesn't

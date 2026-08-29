@@ -194,6 +194,27 @@ describe("startEodTimer", () => {
     expect(renderEodPrompt("a {{date}} b {{date}}", "2026-08-13")).toBe("a 2026-08-13 b 2026-08-13");
   });
 
+  it("renderEodPrompt resolves the identity variables and fails loudly on an unknown one", () => {
+    // Neutral role wording by default; identityVars(cfg) in production.
+    expect(renderEodPrompt("for {{owner_name}} of {{repo}}", "2026-08-13")).toBe(
+      "for the owner of the reviewed repository",
+    );
+    expect(
+      renderEodPrompt("for {{owner_name}}", "2026-08-13", undefined, { owner_name: "Ada" }),
+    ).toBe("for Ada");
+    // No unexpanded {{…}} may ever reach the overseer session.
+    expect(() => renderEodPrompt("bad {{mystery}}", "2026-08-13")).toThrow(/unknown placeholder/);
+  });
+
+  it("the real eod-sweep.md renders with no unexpanded {{…}}", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const template = readFileSync(resolve(import.meta.dirname, "../prompts/eod-sweep.md"), "utf8");
+    const out = renderEodPrompt(template, "2026-08-29");
+    expect(out).not.toContain("{{");
+    expect(out).toContain("digest/2026-08-29.md");
+  });
+
   it("appends dayContext to the fired prompt, and a throwing dayContext never loses the sweep", async () => {
     let clock = new Date("2026-08-13T09:00:00Z");
     const timers: Array<{ cb: () => void; ms: number }> = [];

@@ -46,6 +46,7 @@ import type { ExecFn } from "./tmux.js";
 import type { SessionCommandKind, SessionCommandRow, StateStore } from "./state.js";
 import { roundPromptMarker, stampRoundPrompt } from "./types.js";
 import type { RoundOrder, SessionCommandRetryResult, SessionHooks } from "./types.js";
+import { identityVars } from "./include.js";
 import { renderConversationSystemPrompt, renderOverseerSystemPrompt } from "./templates.js";
 import { WorktreeManager } from "./worktrees.js";
 
@@ -475,7 +476,7 @@ export class PiSessionManager implements SessionHooks {
     // anyone schedules: the daemon still owns exactly two pi session kinds.
     await this.ensureOvSession(pr);
     const template = readFileSync(join(this.root, "prompts", "conversation-system.md"), "utf8");
-    const body = renderConversationSystemPrompt(template, { pr, title, worktree });
+    const body = renderConversationSystemPrompt(template, { pr, title, worktree }, identityVars(this.cfg));
     try {
       await this.spawnSession(session, body, this.cfg.models.conversation, {
         QCR_PR: String(pr),
@@ -510,7 +511,7 @@ export class PiSessionManager implements SessionHooks {
     // The seeded overseer prompt is canonical and unmodifiable (CLAUDE.md rule
     // 6), so the Slack contract rides as a spawn-time appendix — same shape as
     // EXECUTION_POLICY_ADDENDUM in include.ts. Slack off = byte-identical prompt.
-    const body = renderOverseerSystemPrompt(template) + this.slackAppendix();
+    const body = renderOverseerSystemPrompt(template, identityVars(this.cfg)) + this.slackAppendix();
     await this.spawnSession(OVERSEER_SESSION, body, this.cfg.models.overseer);
     return OVERSEER_SESSION;
   }

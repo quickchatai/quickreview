@@ -21,6 +21,8 @@
 //   * Ambiguous wall times (inside a repeated fall-back hour — again not 18:00
 //     in Warsaw): fire at the FIRST (earlier, still-DST) occurrence, once only.
 import { readFileSync } from "node:fs";
+import { NEUTRAL_IDENTITY_VARS } from "./include.js";
+import { render, type TemplateVars } from "./templates.js";
 
 const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 const DAY_MS = 86_400_000;
@@ -163,12 +165,20 @@ export function nextEodFire(now: Date, timeHHMM: string, timeZone: string): Date
   return candidate;
 }
 
-/** Substitute {{date}} in the eod-sweep template. `dayContext` (optional) is
- * daemon-measured context — e.g. the day's cancellation summary —
- * appended after the seeded template, which we may not edit (rule 6): the
- * sweep session is told to carry it into the digest it writes. */
-export function renderEodPrompt(template: string, date: string, dayContext?: string): string {
-  const rendered = template.replaceAll("{{date}}", date);
+/** Render the eod-sweep template: `{{date}}` plus the identity
+ * variables (`{{owner_name}}`/`{{repo}}`/`{{bot_login}}`), through the strict
+ * renderer — an unknown `{{…}}` throws rather than reaching the session.
+ * `dayContext` (optional) is daemon-measured context — e.g. the day's
+ * cancellation summary — appended after the seeded template, which
+ * we may not edit (rule 6): the sweep session is told to carry it into the
+ * digest it writes. */
+export function renderEodPrompt(
+  template: string,
+  date: string,
+  dayContext?: string,
+  identity: Readonly<TemplateVars> = NEUTRAL_IDENTITY_VARS,
+): string {
+  const rendered = render(template, { ...identity, date });
   if (!dayContext?.trim()) return rendered;
   return (
     `${rendered.replace(/\n*$/, "\n")}\n` +
@@ -185,6 +195,9 @@ export interface EodTimerDeps {
   timeZone: string;
   /** eod-sweep.md contents; read lazily so an edit lands without a restart. */
   readPrompt: () => string;
+  /** identity variable map (`identityVars(cfg)` in production);
+   * neutral role wording when absent. */
+  identity?: Readonly<TemplateVars>;
   /** Daemon-measured lines for the fired date, appended to the prompt so the
    * sweep carries them into the digest (the cancellation summary).
    * A throw here never loses the sweep: the prompt just goes out bare. */
@@ -263,7 +276,7 @@ export function startEodTimer(deps: EodTimerDeps): EodTimer {
         } catch {
           // context is best-effort; the sweep itself must still fire
         }
-        await deps.injectOverseer(renderEodPrompt(deps.readPrompt(), date, context));
+        await deps.injectOverseer(renderEodPrompt(deps.readPrompt(), date, context, deps.identity));
         deps.onFire?.(date);
       } catch (err) {
         deps.onError?.(err);

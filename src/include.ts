@@ -30,6 +30,64 @@ import type { PassTier } from "./types.js";
 
 const INCLUDE_RE = /\{\{include:([^}\r\n]+)\}\}/g;
 
+// ---- build-time identity variables ------------------------------
+//
+// The de-identified seeds reference the installation's identity through three
+// variables instead of hardcoded names: `{{owner_name}}`, `{{repo}}`,
+// `{{bot_login}}`. For agents they resolve HERE, at build time (leaves must
+// see plain text — a pass never learns that a variable existed); for prompts/
+// templates they resolve at render time through the same vocabulary
+// (src/templates.ts, src/eod.ts). An unknown `{{…}}` fails the build loudly —
+// a variable that survives to a session is a bug, never prose.
+
+/** Variable pattern shared with templates.ts: bare word, no `:` — include
+ * directives (`{{include:path}}`) never match. */
+const VARIABLE_RE = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
+
+/**
+ * The neutral fallback values (degradation contract: empty config
+ * values degrade to role wording, never to a hardcoded personal name).
+ */
+export const NEUTRAL_IDENTITY_VARS: Readonly<Record<string, string>> = {
+  owner_name: "the owner",
+  repo: "the reviewed repository",
+  bot_login: "the review bot",
+};
+
+/** The identity variable map from config ([owner] + [github]).
+ * Structural and tolerant of partial configs (hand-rolled test configs omit
+ * whole sections): every missing or empty value degrades to role wording. */
+export function identityVars(cfg: {
+  owner?: { name?: string };
+  github?: { repo?: string; bot_login?: string };
+}): Record<string, string> {
+  return {
+    owner_name: cfg.owner?.name?.trim() || (NEUTRAL_IDENTITY_VARS["owner_name"] as string),
+    repo: cfg.github?.repo?.trim() || (NEUTRAL_IDENTITY_VARS["repo"] as string),
+    bot_login: cfg.github?.bot_login?.trim() || (NEUTRAL_IDENTITY_VARS["bot_login"] as string),
+  };
+}
+
+/**
+ * Expand `{{name}}` variables in `text`. An unknown name throws — the build
+ * must fail loudly rather than ship a literal `{{…}}` to a session.
+ */
+export function expandVariables(text: string, vars: Readonly<Record<string, string>>): string {
+  const unknown = new Set<string>();
+  const out = text.replace(VARIABLE_RE, (match, name: string) => {
+    const v = vars[name];
+    if (v === undefined) {
+      unknown.add(name);
+      return match;
+    }
+    return v;
+  });
+  if (unknown.size > 0) {
+    throw new Error(`unknown build-time variable(s): ${[...unknown].map((n) => `{{${n}}}`).join(", ")}`);
+  }
+  return out;
+}
+
 export interface IncludeOptions {
   /** Sandbox root every include path is resolved against. */
   root: string;
@@ -619,6 +677,10 @@ export interface BuildAgentsOptions {
   /** Per-VARIANT model-spec overrides, keyed by variant name
    * (`<pass>--<tier>`) — wins over the tier's spec; same splitting rules. */
   models?: Record<string, string>;
+  /** Identity variable map — `identityVars(cfg)` in production
+   * (threaded from wire.ts). Defaults to the neutral role wording so a
+   * config-less build never ships a literal `{{…}}`. */
+  vars?: Readonly<Record<string, string>>;
   readFile?: (path: string) => string;
 }
 
@@ -662,6 +724,7 @@ export function buildAgents(srcDir: string, outDir: string, opts: BuildAgentsOpt
   const riskPasses = opts.riskPasses ?? MODELS_TIER_DEFAULTS.risk_passes;
   const validateTier = opts.validateTier ?? MODELS_TIER_DEFAULTS.validate_tier;
   const addenda = opts.addenda ?? PASS_ADDENDA;
+  const vars = opts.vars ?? NEUTRAL_IDENTITY_VARS;
   const sources = readdirSync(srcDir)
     .filter((f) => f.startsWith("pass-") && f.endsWith(".md"))
     .sort();
@@ -671,7 +734,13 @@ export function buildAgents(srcDir: string, outDir: string, opts: BuildAgentsOpt
     const src = join(srcDir, file);
     const doc = splitFrontmatter(read(src));
     const pass = frontmatterName(doc.frontmatter) ?? file.replace(/\.md$/, "");
-    const body = expandIncludes(doc.body, { root, readFile: opts.readFile }) + composeAddendum(pass, addenda);
+    // Variables expand AFTER includes (so pass-common.md's variables resolve
+    // too) and over the SEED material only — addenda are code-authored and may
+    // quote untrusted text (the same-day feedback addendum quotes PR comments),
+    // so a `{{…}}` inside one must stay data, never a build failure.
+    const body =
+      expandVariables(expandIncludes(doc.body, { root, readFile: opts.readFile }), vars) +
+      composeAddendum(pass, addenda);
     for (const tier of tiersForPass(pass, riskPasses, validateTier)) {
       const name = `${pass}--${tier}`;
       const spec = opts.models?.[name] ?? tiers[tier];

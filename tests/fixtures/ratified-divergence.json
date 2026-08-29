@@ -2,23 +2,36 @@
   "_comment": "Seeds with RATIFIED divergence from the assets (hard rule 6). Every entry was re-seeded on the owner's explicit order; the file stays pinned by seed-manifest.json (further drift still fails) but is exempt from byte-identity vs the original asset. Two writers: a human recording a ratified reseed in the same commit, and the TUI's rubric-accept path (the owner's accept click IS the ratification; the TUI appends the entry, re-pins the manifest hash, and commits).",
   "files": {
     "prompts/pass-common.md": [
-      "2026-08-24 the owner: reseed — RATIFIED fences around the two ratified invariants (passes post nothing, rule 9; the P0–nit severity ladder). Marker lines only; the fenced text is byte-identical to the asset"
+      "2026-08-24 the owner: reseed — RATIFIED fences around the two ratified invariants (passes post nothing, rule 9; the P0–nit severity ladder). Marker lines only; the fenced text is byte-identical to the asset",
+      "2026-08-29 owner: de-identification reseed — pending the owner's ratification"
     ],
     "prompts/conversation-system.md": [
       "2026-08-18 the owner: reseed removing the retired ESCALATE verdict + mark-escalation-worthy (rule 10 de-escalation)",
       "2026-08-19 the owner: NEEDS_HUMAN retired — verdict always on the merits + 'For a human to double-check' section",
       "2026-08-24 the owner: reseed — RATIFIED fences (credential rule 3, decide-step, no-human-handoff, ping-pong discipline, absolute invariants rule 2), and the two stale escalation lines removed: 'When in doubt about a verdict: escalate' and the ESCALATION ledger field (rule 10 /)",
-      "2026-08-25 the owner: reseed (ratified in-session) — the Post step's 'Previously deferred, unchanged' review-body mandate removed, retired: the ledger carries round-to-round state and re-reviews carry only a one-line carried-over count; open findings stay on their existing threads, never restated in the body"
+      "2026-08-25 the owner: reseed (ratified in-session) — the Post step's 'Previously deferred, unchanged' review-body mandate removed, retired: the ledger carries round-to-round state and re-reviews carry only a one-line carried-over count; open findings stay on their existing threads, never restated in the body",
+      "2026-08-29 owner: de-identification reseed — pending the owner's ratification"
     ],
     "prompts/overseer-system.md": [
       "2026-08-18 the owner: reseed removing the retired ESCALATE verdict + mark-escalation-worthy (rule 10 de-escalation)",
       "2026-08-21 the owner: reseed pointing the overseer's memory at OpenViking (viking_write) instead of the retired pi-memory engine; pinned/#manual entries declared off-limits",
-      "2026-08-24 the owner: reseed — RATIFIED fences around the action space + caps, the never-post/never-dismiss half (rule 2) and the memory discipline; marker lines only, text unchanged"
+      "2026-08-24 the owner: reseed — RATIFIED fences around the action space + caps, the never-post/never-dismiss half (rule 2) and the memory discipline; marker lines only, text unchanged",
+      "2026-08-29 owner: de-identification reseed — pending the owner's ratification"
     ],
     "prompts/eod-sweep.md": [
       "2026-08-20 the owner: reseed — pinned/#manual/#bug memory discipline for the TUI management surface, and rubric proposals as state/rubric/<slug>/ dirs (PROPOSAL.md + changes.patch; the VM sandbox has no git, the branch instruction was unexecutable)",
       "2026-08-20 the owner: reseed — the EOD curator writes learnings into OpenViking (viking_write into the experiences area) instead of pi-memory; pin rule, tag spellings and retention restated in OpenViking terms; ratified with the added permission to promote objective repo facts into viking://resources/",
-      "2026-08-24 the owner: reseed — RATIFIED fences around the memory discipline and the improvement caps, and the rubric-proposal carrier retired: the curator flags rubric candidates in the digest and authors nothing (no state/rubric/<slug>/ dirs, no patch)"
+      "2026-08-24 the owner: reseed — RATIFIED fences around the memory discipline and the improvement caps, and the rubric-proposal carrier retired: the curator flags rubric candidates in the digest and authors nothing (no state/rubric/<slug>/ dirs, no patch)",
+      "2026-08-29 owner: de-identification reseed — pending the owner's ratification"
+    ],
+    "agents/pass-security.md": [
+      "2026-08-29 owner: de-identification reseed — pending the owner's ratification"
+    ],
+    "agents/pass-data-safety.md": [
+      "2026-08-29 owner: de-identification reseed — pending the owner's ratification"
+    ],
+    "agents/pass-prod-risk.md": [
+      "2026-08-29 owner: de-identification reseed — pending the owner's ratification"
     ]
   }
 }

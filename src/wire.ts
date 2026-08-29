@@ -26,7 +26,7 @@ import { GitHubAdapter } from "./github.js";
 import { makePostingGuard } from "./guards.js";
 import { TokenMinter } from "./githubAuth.js";
 import { FeedbackEngine, feedbackDayAddendum, type FeedbackEvent } from "./feedback.js";
-import { PASS_ADDENDA, buildAgents } from "./include.js";
+import { PASS_ADDENDA, buildAgents, identityVars } from "./include.js";
 import { ecosystemFor } from "./ecosystem.js";
 import { loadProfileAddenda, loadProfileEcosystem, loadProfileHeuristics } from "./profiles.js";
 import { fileImprovementPr, fileIssue, type Run } from "./improvements.js";
@@ -402,6 +402,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   const ecosystem = ecosystemFor(loadProfileEcosystem(root, cfg.review.profile));
   log(`profile ${cfg.review.profile || "(none)"}: ecosystem ${ecosystem.name}`);
 
+  // the identity variable map every prompt render and agent build
+  // resolves {{owner_name}}/{{repo}}/{{bot_login}} against.
+  const identity = identityVars(cfg);
   const renderPrompt = (order: RoundOrder, memory: RoundMemory): string =>
     renderRoundPrompt(
       readFileSync(join(root, "prompts", roundTemplateFile(order.round_type)), "utf8"),
@@ -409,10 +412,11 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       memory,
       cfg.owner.name,
       ecosystem,
+      identity,
     );
   // The recheck's own template — a nudge, not a round order.
   const renderRecheck = (order: RecheckOrder): string =>
-    renderRecheckPrompt(readFileSync(join(root, "prompts", RECHECK_TEMPLATE_FILE), "utf8"), order);
+    renderRecheckPrompt(readFileSync(join(root, "prompts", RECHECK_TEMPLATE_FILE), "utf8"), order, identity);
 
   let eod: EodTimer | null = null;
   let pinWatch: ReturnType<typeof startEodPinWatch> | null = null;
@@ -547,6 +551,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           tiers: cfg.models.tiers,
           riskPasses: cfg.models.risk_passes,
           validateTier: cfg.models.validate_tier,
+          vars: identity,
           addenda: [...PASS_ADDENDA, ...profileAddenda, ...(fb ? [fb] : [])],
         });
         log(`built ${built.length} pass agents into state/agents${fb ? " (+ same-day feedback addendum)" : ""}`);
@@ -743,6 +748,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         timeHHMM: cfg.eod.time,
         timeZone: cfg.eod.timezone,
         readPrompt: promptReader(join(root, "prompts", "eod-sweep.md")),
+        identity,
         // the day's cancellation summary rides the sweep prompt so
         // the digest actually mentions cancellations (grouped, loud first,
         // "none" explicit).

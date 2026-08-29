@@ -16,6 +16,9 @@ import {
   applyThinkingOverride,
   buildAgents,
   expandIncludes,
+  expandVariables,
+  identityVars,
+  NEUTRAL_IDENTITY_VARS,
   frontmatterName,
   joinFrontmatter,
   splitFrontmatter,
@@ -344,6 +347,102 @@ describe("buildAgents", () => {
   });
 });
 
+describe("build-time identity variables", () => {
+  it("expands the known variables and leaves include directives alone", () => {
+    expect(expandVariables("hi {{owner_name}} of {{ repo }}", { owner_name: "the owner", repo: "org/app" })).toBe(
+      "hi the owner of org/app",
+    );
+    // The include grammar carries a colon — never a variable match.
+    expect(expandVariables("{{include:prompts/x.md}}", {})).toBe("{{include:prompts/x.md}}");
+  });
+
+  it("an unknown variable fails loudly, naming every offender", () => {
+    expect(() => expandVariables("a {{nope}} b {{also_nope}}", NEUTRAL_IDENTITY_VARS)).toThrow(
+      /unknown build-time variable\(s\): \{\{nope\}\}, \{\{also_nope\}\}/,
+    );
+  });
+
+  it("identityVars reads config and degrades every empty/missing value to role wording", () => {
+    expect(
+      identityVars({ owner: { name: "Ada" }, github: { repo: "org/app", bot_login: "bot[bot]" } }),
+    ).toEqual({ owner_name: "Ada", repo: "org/app", bot_login: "bot[bot]" });
+    expect(identityVars({})).toEqual(NEUTRAL_IDENTITY_VARS);
+    expect(identityVars({ owner: { name: "  " }, github: { repo: "", bot_login: "" } })).toEqual(
+      NEUTRAL_IDENTITY_VARS,
+    );
+  });
+
+  it("buildAgents resolves variables in the seed body at build time — leaves see plain text", () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-vars-"));
+    try {
+      const src = join(dir, "agents");
+      mkdirSync(src, { recursive: true });
+      writeFileSync(
+        join(src, "pass-x.md"),
+        "---\nname: pass-x\n---\nPost as {{bot_login}} in {{repo}}; tell {{owner_name}}.\n",
+      );
+      const built = buildAgents(src, join(dir, "out"), {
+        root: dir,
+        riskPasses: [],
+        validateTier: "terra-med",
+        vars: { owner_name: "Ada", repo: "org/app", bot_login: "bot[bot]" },
+      });
+      const text = readFileSync(built[0]!.output, "utf8");
+      expect(text).toContain("Post as bot[bot] in org/app; tell Ada.");
+      expect(text).not.toContain("{{");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("buildAgents without vars uses the neutral role wording, never a literal {{…}}", () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-vars-"));
+    try {
+      const src = join(dir, "agents");
+      mkdirSync(src, { recursive: true });
+      writeFileSync(join(src, "pass-x.md"), "---\nname: pass-x\n---\nTell {{owner_name}}.\n");
+      const built = buildAgents(src, join(dir, "out"), { root: dir, riskPasses: [], validateTier: "terra-med" });
+      expect(readFileSync(built[0]!.output, "utf8")).toContain("Tell the owner.");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("a seed with an unknown variable fails the build loudly", () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-vars-"));
+    try {
+      const src = join(dir, "agents");
+      mkdirSync(src, { recursive: true });
+      writeFileSync(join(src, "pass-x.md"), "---\nname: pass-x\n---\n{{mystery}}\n");
+      expect(() => buildAgents(src, join(dir, "out"), { root: dir, riskPasses: [], validateTier: "terra-med" })).toThrow(
+        /unknown build-time variable/,
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("addenda are NOT variable-expanded — quoted untrusted text stays data", () => {
+    // The same-day feedback addendum quotes PR comments verbatim; a {{…}} in
+    // one must never crash the agent build (or expand).
+    const dir = mkdtempSync(join(tmpdir(), "qcr-vars-"));
+    try {
+      const src = join(dir, "agents");
+      mkdirSync(src, { recursive: true });
+      writeFileSync(join(src, "pass-x.md"), "---\nname: pass-x\n---\nbody\n");
+      const built = buildAgents(src, join(dir, "out"), {
+        root: dir,
+        riskPasses: [],
+        validateTier: "terra-med",
+        addenda: [{ id: "quoted", scope: "all", text: "\nauthor wrote: {{sneaky}}\n" }],
+      });
+      expect(readFileSync(built[0]!.output, "utf8")).toContain("author wrote: {{sneaky}}");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("the real seeded content", () => {
   it("expands every seeded agent against the real prompts/ dir", () => {
     const sandbox = join(import.meta.dirname, "..");
@@ -358,6 +457,9 @@ describe("the real seeded content", () => {
       for (const b of built) {
         const text = readFileSync(b.output, "utf8");
         expect(text).not.toContain("{{include:");
+        // identity variables resolve at build time — leaves must see
+        // plain text, and no unexpanded {{…}} of any kind may reach a session.
+        expect(text).not.toContain("{{");
         expect(text).toContain("You are a **blank-slate review pass**"); // from pass-common.md
         expect(text).toContain("## Execution policy (sandbox rule, enforced)");
         expect(text.startsWith(`---\nname: ${b.name}\n`)).toBe(true);

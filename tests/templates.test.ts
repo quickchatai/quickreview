@@ -655,6 +655,34 @@ describe("system prompts", () => {
   it("passes the overseer prompt through untouched", () => {
     expect(renderOverseerSystemPrompt("You are the overseer.")).toBe("You are the overseer.");
   });
+
+  it("resolves the identity variables on both system prompts (neutral by default, config wins)", () => {
+    expect(
+      renderConversationSystemPrompt("in {{repo}} as {{bot_login}}", { pr: 3, title: "T", worktree: "/wt" }),
+    ).toBe("in the reviewed repository as the review bot");
+    expect(
+      renderConversationSystemPrompt(
+        "in {{repo}} as {{bot_login}}",
+        { pr: 3, title: "T", worktree: "/wt" },
+        { owner_name: "Ada", repo: "org/app", bot_login: "bot[bot]" },
+      ),
+    ).toBe("in org/app as bot[bot]");
+    expect(renderOverseerSystemPrompt("window of {{owner_name}}", { owner_name: "Ada" })).toBe("window of Ada");
+    expect(renderOverseerSystemPrompt("window of {{owner_name}}")).toBe("window of the owner");
+  });
+
+  it("the real conversation-system.md renders with no unexpanded {{…}}", () => {
+    const template = readFileSync(resolve(import.meta.dirname, "../prompts/conversation-system.md"), "utf8");
+    const out = renderConversationSystemPrompt(template, { pr: 7, title: "T", worktree: "/wt/pr-7" });
+    expect(out).not.toContain("{{");
+    expect(out).toContain("the reviewed repository");
+    expect(out).toContain("(`the review bot`)");
+  });
+
+  it("the real overseer-system.md renders with no unexpanded {{…}}", () => {
+    const template = readFileSync(resolve(import.meta.dirname, "../prompts/overseer-system.md"), "utf8");
+    expect(renderOverseerSystemPrompt(template)).not.toContain("{{");
+  });
 });
 
 // ---- the fourth template: the delta recheck ---------------------
