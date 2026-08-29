@@ -1,0 +1,8 @@
+# Profile settings (loaded by src/profiles.ts; each loader owns its own key).
+#
+# `ecosystem`: "none" is the default (an absent file or key means
+# the same), spelled out here so the skeleton documents the knob. A "none"
+# profile gets no framework-specific machinery at all — no migration
+# pre-check, no tier-forcing migration gate, no migration-gate prompt prose.
+# Set it to "django" for a Django codebase.
+ecosystem = "none"

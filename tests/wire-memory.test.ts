@@ -32,7 +32,9 @@ describe("wire.ts: the memory phase is actually connected", () => {
   it("the round renderer receives the assembled seed", () => {
     // the owner name rides along so the pinned-head framing renders
     // from config.
-    expect(wire).toMatch(/renderRoundPrompt\(.*, order, memory, cfg\.owner\.name\)/);
+    // the profile-selected ecosystem rides along too, so a none
+    // profile's prompts really carry no migration-gate prose.
+    expect(wire).toMatch(/renderRoundPrompt\([\s\S]*?order,\s*memory,\s*cfg\.owner\.name,\s*ecosystem,?\s*\)/);
     expect(wire).toMatch(/renderPrompt = \(order: RoundOrder, memory: RoundMemory\)/);
   });
 

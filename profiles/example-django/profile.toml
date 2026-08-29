@@ -1,0 +1,9 @@
+# Profile settings (loaded by src/profiles.ts; each loader owns its own key).
+#
+# `ecosystem` selects the framework-specific review machinery.
+# "django" turns on the migration-number collision pre-check (the daemon
+# posts the renumber remedy itself as a COMMENT, never a blocker), the
+# tier-forcing migration gate, and the round prompt's MIGRATION GATE prose.
+# "none" — also the default when this file or the key is absent — runs none
+# of that: no pre-check, no gate, no migration prose in the prompts.
+ecosystem = "django"

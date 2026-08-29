@@ -22,7 +22,8 @@ import {
   splitModelSpec,
   tiersForPass,
 } from "../src/include.js";
-import { renderMigrationPrecheckDegradedNote, renderNitScopeNote } from "../src/templates.js";
+import { renderMigrationPrecheckDegradedNote } from "../src/ecosystem.js";
+import { renderNitScopeNote } from "../src/templates.js";
 import { loadProfileAddenda } from "../src/profiles.js";
 
 /** In-memory fs for the pure expansion tests. */

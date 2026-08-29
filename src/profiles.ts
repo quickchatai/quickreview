@@ -37,6 +37,8 @@
 // is a LOUD build failure, never a silent skip.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { parse as parseToml } from "smol-toml";
+import type { EcosystemName } from "./ecosystem.js";
 import { PASS_ADDENDA, splitFrontmatter } from "./include.js";
 import type { PassAddendum, PassAddendumScope } from "./include.js";
 
@@ -140,4 +142,46 @@ export function loadProfileAddenda(root: string, profile: string): PassAddendum[
     loaded.push(entry);
   }
   return loaded;
+}
+
+/**
+ * The profile's ecosystem selection: `profiles/<name>/profile.toml`,
+ * key `ecosystem = "django" | "none"`.
+ *
+ * No profile (`""`), no `profile.toml`, or no `ecosystem` key all mean
+ * `"none"` — a generic install gets NO framework-specific machinery (no
+ * pre-check, no tier-forcing migration gate, no migration-gate prompt prose)
+ * unless its profile asks for it. An unreadable file or an unknown value
+ * throws with the path named — a loud boot failure, same contract as the
+ * addenda loader above: a daemon must never review under a profile it could
+ * not parse.
+ *
+ * Deliberately its OWN function rather than a fold into `loadProfileAddenda`:
+ * `profile.toml` is the profile's settings file and other loaders may own
+ * other keys in it (each reads only its own; unknown keys are not an error
+ * here), while `addenda/` stays the addenda loader's alone.
+ */
+export function loadProfileEcosystem(root: string, profile: string): EcosystemName {
+  if (profile === "") return "none";
+  const path = join(profileDir(root, profile), "profile.toml");
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return "none";
+    throw new Error(`[review] profile "${profile}": cannot read ${path}: ${String(err)}`);
+  }
+  let doc: Record<string, unknown>;
+  try {
+    doc = parseToml(raw) as Record<string, unknown>;
+  } catch (err) {
+    throw new Error(`[review] profile "${profile}": ${path} is not valid TOML: ${String(err)}`);
+  }
+  const eco = doc["ecosystem"];
+  if (eco === undefined) return "none";
+  if (eco === "django" || eco === "none") return eco;
+  throw new Error(
+    `[review] profile "${profile}": ${path} names unknown ecosystem ${JSON.stringify(eco)} — use "django" or "none"`,
+  );
 }

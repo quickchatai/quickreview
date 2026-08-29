@@ -27,7 +27,8 @@ import { makePostingGuard } from "./guards.js";
 import { TokenMinter } from "./githubAuth.js";
 import { FeedbackEngine, feedbackDayAddendum, type FeedbackEvent } from "./feedback.js";
 import { PASS_ADDENDA, buildAgents } from "./include.js";
-import { loadProfileAddenda } from "./profiles.js";
+import { ecosystemFor } from "./ecosystem.js";
+import { loadProfileAddenda, loadProfileEcosystem } from "./profiles.js";
 import { fileImprovementPr, fileIssue, type Run } from "./improvements.js";
 import { OpenVikingClient, OpenVikingSupervisor, keyFromFile, openVikingContextAssembler, openVikingStore } from "./openviking/index.js";
 import { OV_REVIEWER_KEY_SECRET, openVikingSessionLifecycle } from "./memory/ovsession.js";
@@ -394,8 +395,21 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     contextBlock: (q, o) => (memoryAssembler ? memoryAssembler.contextBlock(q, o) : Promise.resolve("")),
   };
 
+  // the profile-selected ecosystem seam, loaded ONCE at assembly (a
+  // malformed profile.toml fails the boot loudly). It decides the tier-forcing
+  // migration gate, the round pre-check and the prompt's migration-gate prose;
+  // "none" (no profile, no file, no key) runs none of that machinery.
+  const ecosystem = ecosystemFor(loadProfileEcosystem(root, cfg.review.profile));
+  log(`profile ${cfg.review.profile || "(none)"}: ecosystem ${ecosystem.name}`);
+
   const renderPrompt = (order: RoundOrder, memory: RoundMemory): string =>
-    renderRoundPrompt(readFileSync(join(root, "prompts", roundTemplateFile(order.round_type)), "utf8"), order, memory, cfg.owner.name);
+    renderRoundPrompt(
+      readFileSync(join(root, "prompts", roundTemplateFile(order.round_type)), "utf8"),
+      order,
+      memory,
+      cfg.owner.name,
+      ecosystem,
+    );
   // The recheck's own template — a nudge, not a round order.
   const renderRecheck = (order: RecheckOrder): string =>
     renderRecheckPrompt(readFileSync(join(root, "prompts", RECHECK_TEMPLATE_FILE), "utf8"), order);
@@ -436,6 +450,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     adapter,
     hooks,
     renderPrompt,
+    ecosystem,
     // Pinned head + one budgeted context block per round. Past the
     // deadline the round dispatches memory-less and logs the gap — memory
     // never blocks or delays a round.

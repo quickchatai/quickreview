@@ -76,6 +76,10 @@ export interface DaemonDeps {
   /** Base-branch migration paths at a sha, for the collision pre-check
    *. Absent ⇒ no git: the pre-check is skipped and logged. */
   listBaseMigrations?: (baseSha: string) => Promise<string[]>;
+  /** The profile-selected ecosystem seam, handed through to
+   * dispatch. Absent ⇒ dispatch's own default (Django, the pre-seam
+   * behavior); wire.ts always passes the profile's selection. */
+  ecosystem?: import("./ecosystem.js").Ecosystem;
   /** Most recent human author of paths at a sha (the escalation
    * mention pick). Absent ⇒ no git: the config fallback mention is used. */
   directiveAuthor?: (sha: string, paths: string[]) => Promise<{ login: string | null; name: string; email: string } | null>;
@@ -425,6 +429,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         hooks,
         renderPrompt: deps.renderPrompt,
         ...(deps.memory ? { memory: deps.memory } : {}),
+        ...(deps.ecosystem ? { ecosystem: deps.ecosystem } : {}),
         prepareWorktree: deps.prepareWorktree,
         listBaseMigrations: deps.listBaseMigrations,
         directiveAuthor: deps.directiveAuthor,

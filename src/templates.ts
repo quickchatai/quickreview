@@ -3,6 +3,7 @@
 // Contract: a {{placeholder}} in the text with no supplied value is a bug and
 // throws; a supplied value the template does not use is fine (templates are
 // edited independently of this renderer).
+import { DJANGO_ECOSYSTEM, type Ecosystem } from "./ecosystem.js";
 import {
   ensurePinnedHead,
   MEMORY_LESS,
@@ -10,7 +11,6 @@ import {
   renderPinnedHeadSection,
   type RoundMemory,
 } from "./memory/context.js";
-import type { MigrationCollision } from "./migrations.js";
 import type { FileClass, RecheckOrder } from "./recheck.js";
 import type { PassPlanEntry, RoundOrder, RoundType } from "./types.js";
 
@@ -108,87 +108,11 @@ export function renderRecheckPrompt(templateText: string, order: RecheckOrder): 
   return render(templateText, recheckVars(order));
 }
 
-// The migration gate survived the escalation scrap (the owner, 2026-08-18) as a
-// data-safety signal: it still forces the sol-med tier and still tells the
-// session the DDL must be judged. Only the "escalate unless…" framing is gone.
-const GATE_ON =
-  "MIGRATION GATE: this PR touches migrations — pass-data-safety must judge the ORM operations and any supplied generated SQL for destructive mutation, concrete rebuild/locking risk, backfill safety, and rolling-deploy ordering. Ordinary Django ORM operations are acceptable and must not be rewritten as handwritten SQL merely for reviewability. Only a concrete migration hazard blocks; missing generated SQL or an unproven database algorithm does not.";
-const GATE_OFF = "no migration gate on this round";
-
-/**
- * The GATE NOTES paragraph that carries's pre-check result to the
- * session (rendered inside `migration_gate_note`, which all three round
- * templates already print — no seed and no template edit needed).
- *
- * The daemon detected these collisions itself, before this round was ordered,
- * and already posted the remedy as a COMMENT. Without this paragraph the
- * session would re-derive the same fact from the diff and raise it as a
- * blocker, which is exactly what the ticket exists to stop: the finding is
- * correct, the verdict was wrong. So the note is imperative — the collision is
- * settled mechanics, it is not a finding, and it never moves the verdict.
- */
-export function renderMigrationCollisionsNote(collisions: readonly MigrationCollision[]): string {
-  if (collisions.length === 0) return "";
-  const lines = [
-    "",
-    "",
-    "MIGRATION NUMBERING — ALREADY HANDLED, DO NOT RAISE IT. The daemon checked",
-    "this PR's migration numbers against the base branch at the pinned base sha",
-    "before this round was ordered, found the collision(s) below, and has already",
-    "posted the exact remedy to the PR as a COMMENT:",
-    "",
-  ];
-  for (const c of collisions) {
-    if (c.kind === "renamed-dependency") {
-      lines.push(
-        `- \`${c.pr_path}\` references renamed \`"${c.stale_dependency ?? ""}"\` → dependencies \`[${c.dependency}]\`` +
-          (c.renumber ? `, rename to \`${c.target_path}\`` : ""),
-      );
-      continue;
-    }
-    lines.push(
-      `- \`${c.pr_path}\` collides with \`${c.base_path}\` → rename to \`${c.target_path}\`, dependencies \`[${c.dependency}]\``,
-    );
-  }
-  lines.push(
-    "",
-    "This is mechanics, not review content: it is deterministic, it has exactly",
-    "one remedy and it carries no design decision. It is **not a finding** — do",
-    "not report it, do not post it inline or in the body, do not let any pass",
-    "raise it, and above all do not let it become a `[blocker]` or move the",
-    "verdict. A PR whose only migration problem is this numbering collision is",
-    "still APPROVE-able on its merits. Everything else about these migrations —",
-    "the DDL itself, ALGORITHM, backfill safety, rolling-deploy ordering — is",
-    "judged exactly as it always was.",
-  );
-  return lines.join("\n");
-}
-/**
- * The GATE NOTES paragraph for a DEGRADED pre-check ("more reliable,
- * never quieter"). When the daemon could not run the collision check at all —
- * no base reader, no base sha, or the base read failed — the class must not
- * fall between two stools: the daemon caught nothing AND the pass-data-safety
- * addendum (src/include.ts) muzzles the lens. This note is the key that
- * un-muzzles it for exactly this round: the addendum's withdrawal is
- * conditional on the round prompt NOT carrying this text.
- */
-export function renderMigrationPrecheckDegradedNote(): string {
-  return [
-    "",
-    "",
-    "MIGRATION PRE-CHECK DID NOT RUN — CHECK COLLISIONS YOURSELF. The daemon",
-    "normally checks this PR's migration numbers against the base branch before",
-    "each round and posts the renumber remedy itself as a COMMENT. This round the",
-    "migration pre-check did not run (the base branch facts were unavailable or",
-    "the base read failed), so nothing has been checked and nothing has been",
-    "posted. YOU must check base-branch migration-number collisions yourself this",
-    "round: compare every migration this PR adds against the base branch's",
-    "migrations, and report a number the base already occupies as a normal",
-    "finding — with the remedy (the free target number and the exact",
-    "`dependencies` entry) stated. This lifts, for this round only, the standing",
-    "rule that base-branch numbering collisions are handled daemon-side.",
-  ].join("\n");
-}
+// The migration-gate prose (GATE_ON/GATE_OFF and the two GATE NOTES
+// paragraphs) is the Django ecosystem's own text and moved into
+// src/ecosystem.ts with the seam: `{{migration_gate_note}}` now
+// renders whatever the round's ecosystem says — byte-identical for Django,
+// empty for `none` (a none round carries no migration-gate prose at all).
 
 /**
  * The NIT SCOPE note: the stopping rule on nit generation. The retro
@@ -347,8 +271,19 @@ export function renderAddableLenses(addable: string[]): string {
  * `memory` defaults to MEMORY_LESS, so a caller that knows nothing
  * about memory — the stub-wired daemon core, every legacy test — renders
  * exactly the prompt it rendered before: both memory sections come out empty.
+ *
+ * `ecosystem` defaults to Django — the shipped pre-seam behavior,
+ * which is what every historical call site means; the production assembly
+ * (wire.ts) always passes the profile-selected ecosystem explicitly. With
+ * `NONE_ECOSYSTEM` the migration_gate_note renders empty: no gate prose, no
+ * collision note, no degraded note.
  */
-export function roundVars(order: RoundOrder, memory: RoundMemory = MEMORY_LESS, ownerName?: string): TemplateVars {
+export function roundVars(
+  order: RoundOrder,
+  memory: RoundMemory = MEMORY_LESS,
+  ownerName?: string,
+  ecosystem: Ecosystem = DJANGO_ECOSYSTEM,
+): TemplateVars {
   return {
     pinned_head: renderPinnedHeadSection(memory, ownerName),
     context_block: renderContextBlockSection(memory),
@@ -364,11 +299,7 @@ export function roundVars(order: RoundOrder, memory: RoundMemory = MEMORY_LESS, 
     base_ref: order.base_ref || NO_BASE,
     base_sha: order.base_sha || NO_BASE,
     merge_base: order.merge_base || NO_BASE,
-    migration_gate_note:
-      (order.migration_gate ? GATE_ON : GATE_OFF) +
-      (order.migration_precheck_degraded
-        ? renderMigrationPrecheckDegradedNote()
-        : renderMigrationCollisionsNote(order.migration_collisions ?? [])),
+    migration_gate_note: ecosystem.gateNote(order),
     settled_digest: order.settled_digest.trim() || "(nothing settled yet)",
     nit_scope_note: renderNitScopeNote(order.review_no ?? order.round_no),
     intent_note: renderIntentNote(order),
@@ -394,8 +325,9 @@ export function renderRoundPrompt(
   order: RoundOrder,
   memory: RoundMemory = MEMORY_LESS,
   ownerName?: string,
+  ecosystem: Ecosystem = DJANGO_ECOSYSTEM,
 ): string {
-  return ensurePinnedHead(render(templateText, roundVars(order, memory, ownerName)), memory, ownerName);
+  return ensurePinnedHead(render(templateText, roundVars(order, memory, ownerName, ecosystem)), memory, ownerName);
 }
 
 export interface ConversationPromptVars {

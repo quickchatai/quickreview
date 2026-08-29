@@ -15,13 +15,9 @@
 import type { Config } from "./config.js";
 import type { GateResult } from "./gate.js";
 import type { PrFileEntry } from "./github.js";
-import { INTENT_PASS, migrationGate, passTier, selectLenses } from "./heuristics.js";
-import {
-  collisionFingerprint,
-  detectMigrationCollisions,
-  renderMigrationCollisionComment,
-  type MigrationCollision,
-} from "./migrations.js";
+import { DJANGO_ECOSYSTEM, type Ecosystem } from "./ecosystem.js";
+import { INTENT_PASS, passTier, selectLenses } from "./heuristics.js";
+import type { MigrationCollision } from "./migrations.js";
 import { VALIDATE_PASS } from "./include.js";
 import { hasNewEvidence } from "./guards.js";
 import {
@@ -72,6 +68,15 @@ export interface DispatchDeps {
   store: StateStore;
   adapter: DispatchAdapter;
   hooks: SessionHooks;
+  /**
+   * The profile-selected ecosystem seam: the tier-forcing migration
+   * gate, the round pre-check, and the prompt's gate prose all come off it.
+   * Absent ⇒ Django, the shipped legacy behavior every historical call
+   * site and test means; the production assembly (wire.ts) always passes the
+   * profile's selection explicitly, so a `none` profile really runs none of
+   * the machinery.
+   */
+  ecosystem?: Ecosystem;
   /** B4's template renderer, injected. Default: the order as JSON. The second
    * argument is the round's memory seed; a renderer that ignores it
    * renders exactly the legacy prompt. */
@@ -173,98 +178,48 @@ function alreadyConsumed(err: unknown): boolean {
 }
 
 /**
- * Migration-number collision pre-check, run once per round after the
- * worktree is prepared and BEFORE the session is handed the order.
+ * The round's ecosystem pre-check (behind the seam), run once
+ * per round after the worktree is prepared and BEFORE the session is handed
+ * the order.
  *
- * A PR migration sitting on a number the base branch already took is
- * deterministic, has exactly one remedy and carries no design content — so the
- * daemon states the remedy itself, as a **COMMENT**. It is never a blocker, it
- * consumes no verdict, and it does not touch the PR's lifecycle state. The
- * write is `adapter.createReview`, i.e. the ordinary MutationGate path; in
- * dry-run it lands in state/dryrun/ like every other intent.
+ * The behavior is the ecosystem's (`src/ecosystem.ts`): Django detects
+ * migration-number collisions at the pinned base sha and posts the remedy as a
+ * gated **COMMENT** — never a blocker, never a verdict — while `none` is a
+ * first-class configured-off (`{ status: "off" }`): nothing runs, nothing is
+ * read, nothing is logged. What stays HERE is the plumbing the seam must not
+ * own: the store, the gate-backed adapter, and the mapping back onto the round
+ * order's `migration_collisions` / `migration_precheck_degraded` fields. The
+ * seam is total — every failure resolves to an outcome — so a round is never
+ * lost to the pre-check.
  *
- * Every failure here is logged and swallowed: a round must never be lost to the
- * pre-check. Returns the detected collisions for the round order/event log,
- * plus whether the check DEGRADED — i.e. this PR touches migrations and the
- * daemon could not check them (no base reader, no base sha, or the base read
- * threw). A degraded check must never be quieter than no check at all
- * (acceptance: "more reliable, never quieter"): the caller renders an
- * explicit "the pre-check did not run — check collisions yourself" note into
- * the round prompt, which is what conditionally un-muzzles pass-data-safety's
- * withdrawn finding class for exactly that round (see src/include.ts,
- * MIGRATION_NUMBERING_ADDENDUM).
+ * A DEGRADED check (Django only: the check exists but could not run while the
+ * PR touches migrations) must never be quieter than no check at all (
+ * acceptance: "more reliable, never quieter"): the caller renders an explicit
+ * "the pre-check did not run — check collisions yourself" note into the round
+ * prompt, which is what conditionally un-muzzles pass-data-safety's withdrawn
+ * finding class for exactly that round (see src/include.ts,
+ * MIGRATION_NUMBERING_ADDENDUM) — and raises the overseer anomaly. "off"
+ * takes none of those paths: configured-off is not degradation.
  */
-async function migrationPreCheck(
+async function ecosystemPreCheck(
   deps: DispatchDeps,
+  eco: Ecosystem,
   args: { pr: number; files: PrFileEntry[]; head_sha: string; base_ref: string; base_sha: string },
 ): Promise<{ collisions: MigrationCollision[]; degraded: boolean }> {
-  const log = deps.log ?? (() => {});
-  const touchesMigrations = args.files.some((f) => /(^|\/)migrations\//.test(f.filename));
-  if (!deps.listBaseMigrations || !args.base_sha) {
-    // Not a silent pass: the check is ~15% of all blockers and nothing else in
-    // the pipeline catches the class, so a round that could not run it says so.
-    if (touchesMigrations)
-      deps.store.logEvent("migration_precheck_skipped", args.pr, {
-        head_sha: args.head_sha,
-        reason: !deps.listBaseMigrations ? "no_base_reader" : "no_base_sha",
-      });
-    return { collisions: [], degraded: touchesMigrations };
-  }
-  let collisions: MigrationCollision[];
-  try {
-    const baseFiles = await deps.listBaseMigrations(args.base_sha);
-    collisions = detectMigrationCollisions({ files: args.files, baseFiles });
-  } catch (err) {
-    log(`dispatch: migration pre-check failed on #${args.pr}`, err);
-    deps.store.logEvent("migration_precheck_failed", args.pr, { head_sha: args.head_sha, error: String(err) });
-    return { collisions: [], degraded: touchesMigrations };
-  }
-  if (collisions.length === 0) return { collisions, degraded: false };
-  deps.store.logEvent("migration_collision_detected", args.pr, {
-    head_sha: args.head_sha,
-    base_ref: args.base_ref,
-    base_sha: args.base_sha,
-    collisions: collisions.map((c) => ({ pr_path: c.pr_path, base_path: c.base_path, target_path: c.target_path })),
-  });
-  const fingerprint = collisionFingerprint(args.head_sha, collisions);
-  // A staleness round re-runs at the same head and must not repost the same
-  // comment. Detection still runs and is still logged; only the duplicate
-  // COMMENT is suppressed.
-  if (deps.store.migrationCollisionCommented(args.pr, fingerprint)) {
-    log(`dispatch: #${args.pr} migration collision already commented at ${args.head_sha}`);
-    return { collisions, degraded: false };
-  }
-  try {
-    const body = renderMigrationCollisionComment({
-      collisions,
-      base_ref: args.base_ref,
-      base_sha: args.base_sha,
-    });
-    const result = await deps.adapter.createReview(args.pr, {
-      commit_id: args.head_sha,
-      event: "COMMENT",
-      body,
-    });
-    deps.store.logEvent("migration_collision_comment", args.pr, {
-      head_sha: args.head_sha,
-      fingerprint,
-      executed: result.executed,
-      dry_run_file: result.dryRunFile ?? null,
-    });
-  } catch (err) {
-    // The COMMENT failed, but the collisions are real, already detected and
-    // already logged — throwing them away here would leave the round's gate
-    // note empty while the addendum still muzzles the lens, i.e. NOBODY
-    // holding the class. The check RAN (not degraded); the comment retries on
-    // the next round because the fingerprint is only marked on success.
-    log(`dispatch: migration pre-check failed on #${args.pr}`, err);
-    deps.store.logEvent("migration_precheck_failed", args.pr, {
-      head_sha: args.head_sha,
-      stage: "create_review",
-      error: String(err),
-    });
-  }
-  return { collisions, degraded: false };
+  const outcome = await eco.preCheck(
+    {
+      logEvent: (kind, pr, payload) => deps.store.logEvent(kind, pr, payload),
+      migrationCollisionCommented: (pr, fingerprint) => deps.store.migrationCollisionCommented(pr, fingerprint),
+      createReview: (pr, payload) => deps.adapter.createReview(pr, payload),
+      ...(deps.listBaseMigrations ? { listBaseMigrations: deps.listBaseMigrations } : {}),
+      ...(deps.log ? { log: deps.log } : {}),
+    },
+    args,
+  );
+  return {
+    collisions: outcome.status === "checked" ? outcome.collisions : [],
+    degraded: outcome.status === "degraded",
+  };
 }
 
 /**
@@ -586,9 +541,12 @@ export function buildPassPlan(
   cfg: Config,
   files: PrFileEntry[],
   intent?: { body?: string | null },
+  /**: whose tier-forcing gate applies. Default Django — the shipped
+   * pre-seam behavior; `none` never forces sol-med off a migrations path. */
+  ecosystem: Ecosystem = DJANGO_ECOSYSTEM,
 ): { pass_plan: PassPlanEntry[]; addable_lenses: string[] } {
   const defaultTier = passTier(files, {
-    migrationGate: migrationGate(files),
+    migrationGate: ecosystem.migrationGate(files),
     smallDiffLines: cfg.models.small_diff_lines,
   });
   const risk = new Set(cfg.models.risk_passes);
@@ -641,8 +599,11 @@ export function buildRoundOrder(args: {
    * artifact and the substance-bar input. Absent (stub-wired core, unit tests
    * without an adapter body) ⇒ the intent lens is never selected. */
   prBody?: string;
+  /**: the round's ecosystem. Absent ⇒ Django (pre-seam behavior). */
+  ecosystem?: Ecosystem;
 }): RoundOrder {
-  const { pass_plan, addable_lenses } = buildPassPlan(args.cfg, args.files, { body: args.prBody });
+  const eco = args.ecosystem ?? DJANGO_ECOSYSTEM;
+  const { pass_plan, addable_lenses } = buildPassPlan(args.cfg, args.files, { body: args.prBody }, eco);
   const headSha = args.tree?.head_sha || args.row.head_sha;
   return {
     pr: args.row.number,
@@ -657,7 +618,7 @@ export function buildRoundOrder(args: {
     lenses: pass_plan.map((p) => p.lens),
     pass_plan,
     addable_lenses,
-    migration_gate: migrationGate(args.files),
+    migration_gate: eco.migrationGate(args.files),
     migration_collisions: args.migrationCollisions ?? [],
     migration_precheck_degraded: args.migrationPrecheckDegraded ?? false,
     ...(args.firstPartyDirectives !== undefined ? { first_party_directives: args.firstPartyDirectives } : {}),
@@ -696,6 +657,7 @@ export async function dispatchOnce(deps: DispatchDeps): Promise<RoundOrder[]> {
 
 async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
   const { store, cfg } = deps;
+  const eco = deps.ecosystem ?? DJANGO_ECOSYSTEM;
   const now = deps.now ?? (() => new Date());
   const render = deps.renderPrompt ?? ((o: RoundOrder, _m: RoundMemory) => JSON.stringify(o, null, 2));
   const worktreeFor = deps.worktreeFor ?? defaultWorktree;
@@ -848,12 +810,12 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       }
 
       const files = await deps.adapter.listPrFiles(row.number);
-      const gate = migrationGate(files);
+      const gate = eco.migrationGate(files);
       // The plan is pure and deterministic in `files` + the PR body, so
       // computing it here and again inside buildRoundOrder yields the same
       // tiers; taking the lens list off it keeps the round row and the order
       // from ever disagreeing.
-      const passPolicy = buildPassPlan(cfg, files, { body: prBody });
+      const passPolicy = buildPassPlan(cfg, files, { body: prBody }, eco);
       const plannedPasses = passPolicy.pass_plan;
       const lenses = plannedPasses.map((p) => p.lens);
       const riskPasses = new Set(cfg.models.risk_passes);
@@ -897,10 +859,11 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         });
       }
 
-      // Migration-number collision pre-check, before the session hears about
-      // the round. It is delivered as its own COMMENT, so whatever
-      // the review concludes, the renumber never rides on the verdict.
-      const precheck = await migrationPreCheck(deps, {
+      // The ecosystem pre-check, before the session hears about the round
+      // (behind the seam). Django delivers collisions as its
+      // own COMMENT, so whatever the review concludes, the renumber never
+      // rides on the verdict; a `none` ecosystem runs nothing at all.
+      const precheck = await ecosystemPreCheck(deps, eco, {
         pr: row.number,
         files,
         head_sha: tree?.head_sha || row.head_sha,
@@ -911,7 +874,9 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // A degraded pre-check is an anomaly the overseer should see (same
       // channel verdicts.ts uses — an overseer inject, never a new path). The
       // round itself still runs: the prompt carries the "check collisions
-      // yourself" note, so the class is covered either way.
+      // yourself" note, so the class is covered either way. A configured-off
+      // ecosystem ("none") can never reach this block — off is not degraded,
+      // and the seam's outcome union keeps the two apart structurally.
       if (precheck.degraded) {
         // Durable anomaly record + the overseer wake (WAKE class,
         //) — one logAnomaly call, the store's sink writes the inject.
@@ -942,6 +907,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
 
       const order = buildRoundOrder({
         tree,
+        ecosystem: eco,
         migrationCollisions,
         migrationPrecheckDegraded: precheck.degraded,
         ...(firstPartyDirectives !== undefined ? { firstPartyDirectives } : {}),
