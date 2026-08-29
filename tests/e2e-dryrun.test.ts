@@ -93,7 +93,7 @@ function harness(dryRun = true) {
   fetchSpy = vi.fn(async () => {
     throw new Error("no HTTP request may be made in a dry-run round");
   });
-  const cfg = loadConfig(join(SANDBOX, "config.toml"));
+  const cfg = loadConfig(join(SANDBOX, "tests/fixtures/config.toml"));
   const minter = new TokenMinter(join(dir, "secrets"), fetchSpy as never);
   const gate = new MutationGate(dryRun, join(dir, "dryrun"), async () => {
     throw new Error("the executor must not run in dry-run");
@@ -120,6 +120,10 @@ afterEach(() => {
 
 describe("dry-run fixture round", () => {
   it("has dry_run false in the committed config — LIVE since the 2026-08-14 cutover", () => {
+    // Deliberately reads the LIVE config.toml (rule 1): the production flag is
+    // the owner's alone, and this pin is the tripwire against an accidental
+    // flip. Every other test in this file runs on tests/fixtures/config.toml
+    // so operator identity edits never redden the suite.
     expect(loadConfig(join(SANDBOX, "config.toml")).dry_run).toBe(false);
   });
 

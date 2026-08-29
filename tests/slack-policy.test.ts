@@ -16,7 +16,7 @@ import {
 } from "../src/slack/policy.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const shipped = readFileSync(join(root, "config.toml"), "utf8");
+const shipped = readFileSync(join(root, "tests/fixtures/config.toml"), "utf8");
 
 const T0 = new Date("2026-08-17T09:00:00.000Z"); // 11:00 Warsaw (CEST)
 let clock = T0;

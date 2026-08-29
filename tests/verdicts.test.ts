@@ -10,7 +10,7 @@ import type { SessionHooks, VerdictFile } from "../src/types.js";
 import { AnomalyWakePolicy } from "../src/anomalies.js";
 import { validateVerdict, VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
 
-const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "config.toml"), "utf8"));
+const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
 
 /** Recording adapter — stands in for GitHubAdapter + MutationGate. */
 class FakeAdapter implements VerdictAdapter {
@@ -419,7 +419,9 @@ describe("confirmed round posting receipts", () => {
       submitted_at: "2026-08-13T11:59:59Z",
     }];
 
-    expect(await watcher({ postingReceiptGraceS: 0 }).handleFile(write(183, 1, verdictFile({ pr: 183 })))).toBe(true);
+    // The marker reconcile only runs live (dry-run never posted anything to
+    // find) — the fixture ships dry_run = true, so flip it here.
+    expect(await watcher({ cfg: { ...cfg, dry_run: false }, postingReceiptGraceS: 0 }).handleFile(write(183, 1, verdictFile({ pr: 183 })))).toBe(true);
 
     expect(store.roundsFor(183)[0]).toMatchObject({ status: "done", gh_review_id: 777, posted_event: "REQUEST_CHANGES" });
     expect(store.db.prepare("SELECT COUNT(*) c FROM events WHERE kind='posting_receipt_reconciled'").get()).toMatchObject({ c: 1 });

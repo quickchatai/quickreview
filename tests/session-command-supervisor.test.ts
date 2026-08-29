@@ -10,7 +10,7 @@ import type { SessionHooks } from "../src/types.js";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const baseCfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "config.toml"), "utf8"));
+const baseCfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
 
 let root: string;
 let verdictDir: string;

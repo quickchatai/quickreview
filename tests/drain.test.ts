@@ -30,7 +30,7 @@ import { stripAnsi } from "../src/tui/paint.js";
 import type { RemoteResult } from "../src/tui/remote.js";
 import { handleDelivery, signBody } from "../src/webhook.js";
 
-const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "config.toml"), "utf8"));
+const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
 const SECRET = "drain-secret";
 
 function eventKinds(store: StateStore): string[] {
@@ -331,7 +331,7 @@ describe("drain auto-lift", () => {
     store.countDrainedDelivery();
     store.countDrainedDelivery();
     const daemon = createDaemon({
-      cfg: { ...loadConfig(), dry_run: true },
+      cfg: { ...loadConfig(resolve(process.cwd(), "tests/fixtures/config.toml")), dry_run: true },
       root,
       store,
       adapter: bootAdapter(),
@@ -359,7 +359,7 @@ describe("drain auto-lift", () => {
       },
     });
     const daemon = createDaemon({
-      cfg: { ...loadConfig(), dry_run: true },
+      cfg: { ...loadConfig(resolve(process.cwd(), "tests/fixtures/config.toml")), dry_run: true },
       root,
       store,
       adapter,

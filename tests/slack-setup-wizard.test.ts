@@ -10,7 +10,7 @@ import { parseConfig } from "../src/config.js";
 import * as wiz from "../deploy/collect-slack-secrets.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const shipped = readFileSync(join(root, "config.toml"), "utf8");
+const shipped = readFileSync(join(root, "tests/fixtures/config.toml"), "utf8");
 
 describe("parseChannelId", () => {
   it("accepts a raw id", () => {
@@ -204,8 +204,8 @@ describe("readSlackValues", () => {
 });
 
 describe("readSecretsDir", () => {
-  it("reads [github].secrets_dir from the shipped config", () => {
-    expect(wiz.readSecretsDir(shipped)).toMatch(/quickreview-bot/);
+  it("reads [github].secrets_dir from the fixture config", () => {
+    expect(wiz.readSecretsDir(shipped)).toMatch(/example-review-bot/);
   });
 
   it("falls back when the key is absent", () => {

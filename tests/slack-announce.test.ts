@@ -52,7 +52,7 @@ class FakeSlack implements SlackWebApi {
   }
 }
 
-const shipped = readFileSync(resolve(process.cwd(), "config.toml"), "utf8");
+const shipped = readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8");
 const T0 = new Date("2026-08-17T09:00:00.000Z"); // 11:00 Warsaw
 
 let clock = T0;

@@ -22,7 +22,7 @@ import {
   type Run,
 } from "../src/improvements.js";
 
-const cfg: Config = parseConfig(readFileSync(join(process.cwd(), "config.toml"), "utf8"));
+const cfg: Config = parseConfig(readFileSync(join(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
 
 const fakeMinter = {
   appJwt: () => "jwt",

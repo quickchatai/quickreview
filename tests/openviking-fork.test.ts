@@ -67,6 +67,9 @@ describe("provenance and licence", () => {
   });
 
   it("agrees with config.toml [openviking]", () => {
+    // Deliberately the LIVE config.toml (rule 7): this is one leg of the
+    // extension-commit double mirror, so it must read what deploys — a pin
+    // check, not an identity check; operator identity edits stay green.
     const cfg = parseToml(readFileSync(join(ROOT, "config.toml"), "utf8")) as any;
     const ov = cfg.openviking ?? {};
     // The server version and the fork's base commit move together — the

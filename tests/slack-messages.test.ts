@@ -17,7 +17,7 @@ import {
   verdictMessage,
 } from "../src/slack/messages.js";
 
-const shipped = readFileSync(resolve(process.cwd(), "config.toml"), "utf8");
+const shipped = readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8");
 
 let cfg: Config;
 beforeEach(() => {

@@ -14,7 +14,7 @@ import { StateStore } from "../src/state.js";
 import type { SessionHooks } from "../src/types.js";
 import { handleDelivery, signBody } from "../src/webhook.js";
 
-const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "config.toml"), "utf8"));
+const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
 const BOT = cfg.github.bot_login; // example-review[bot]
 const SECRET = "it's a secret to everybody";
 const PR = 4242;

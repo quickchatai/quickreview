@@ -30,7 +30,7 @@ import type { SlackInboundEvent, SlackInboundHandler, SlackTransport } from "../
 import { startSlack, type SlackRuntime } from "../src/wire.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const shipped = readFileSync(join(root, "config.toml"), "utf8");
+const shipped = readFileSync(join(root, "tests/fixtures/config.toml"), "utf8");
 
 const CHANNEL = "C0CONCIERGE";
 const OWNER = "U0OWNER";

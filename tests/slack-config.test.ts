@@ -15,7 +15,7 @@ import {
 } from "../src/config.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const shipped = readFileSync(join(root, "config.toml"), "utf8");
+const shipped = readFileSync(join(root, "tests/fixtures/config.toml"), "utf8");
 
 /** The shipped config with an alternative [slack] block spliced in. */
 function withSlack(block: string): Config {

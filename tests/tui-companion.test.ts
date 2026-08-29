@@ -85,7 +85,7 @@ const containerCalls = (calls: string[][]): string[][] => calls.filter((c) => c[
 
 describe("companion config", () => {
   it("defaults the whole [companion] section when config.toml omits the keys", () => {
-    const cfg = parseConfig(readFileSync(resolve(root, "config.toml"), "utf8")).companion;
+    const cfg = parseConfig(readFileSync(resolve(root, "tests/fixtures/config.toml"), "utf8")).companion;
     expect(cfg.enabled).toBe(true);
     expect(cfg.container_name).toBe("qcr-companion");
     expect(cfg.image).toBe("qcr-companion");
@@ -107,7 +107,7 @@ describe("companion config", () => {
   });
 
   it("honors an explicit [companion] override", () => {
-    const base = readFileSync(resolve(root, "config.toml"), "utf8");
+    const base = readFileSync(resolve(root, "tests/fixtures/config.toml"), "utf8");
     // Inject into the [companion] table itself — appended bare keys would join
     // whatever table happens to be last in config.toml ([backfill]).
     const withOverrides = base.replace("[companion]", `[companion]\ncontainer_name = "other"\nenabled = false\ncooldown_min = 5`);
@@ -323,8 +323,10 @@ describe("the reviewed repo, read-only", () => {
     const cfg = resolveCompanionPaths({ ...COMPANION_DEFAULTS, reviewed_repo_dir: "~/qc" }, "/root");
     expect(cfg.reviewed_repo_dir.startsWith("/")).toBe(true);
     expect(cfg.reviewed_repo_dir.endsWith("/qc")).toBe(true);
-    // config.toml documents it as a commented default, like every other knob.
-    expect(readFileSync(resolve(root, "config.toml"), "utf8")).toContain("# reviewed_repo_dir =");
+    // The config documents it as a commented default, like every other knob
+    // (asserted on the fixture, which mirrors the shipped config's shape —
+    // keeps operator edits to the live file out of the suite).
+    expect(readFileSync(resolve(root, "tests/fixtures/config.toml"), "utf8")).toContain("# reviewed_repo_dir =");
   });
 
   it("the entrypoint reports the mount either way, and never fabricates it", () => {

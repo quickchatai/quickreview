@@ -10,7 +10,7 @@ import { applyEvent } from "../src/statemachine.js";
 import { StateStore, type PrLifecycleState } from "../src/state.js";
 import type { SessionHooks } from "../src/types.js";
 
-const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "config.toml"), "utf8"));
+const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
 
 function ref(number: number, over: Partial<PrRef> = {}): PrRef {
   return {

@@ -245,7 +245,7 @@ describe("session wiring", () => {
   it("extensionPaths ships register-lens-agents after the base extensions", async () => {
     const { PiSessionManager } = await import("../src/sessions.js");
     const { loadConfig } = await import("../src/config.js");
-    const cfg = loadConfig(join(process.cwd(), "config.toml"));
+    const cfg = loadConfig(join(process.cwd(), "tests/fixtures/config.toml"));
     const mgr = new PiSessionManager({ cfg, root: "/s", exec: (async () => ({ stdout: "", stderr: "", code: 0 })) as never });
     expect(mgr.extensionPaths()).toContain("/s/extensions/register-lens-agents.ts");
   });

@@ -6,7 +6,12 @@ import { fileURLToPath } from "node:url";
 import { MODELS_TIER_DEFAULTS, expandHome, loadConfig, parseConfig, tierModel } from "../src/config.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const configPath = resolve(root, "config.toml");
+// the suite parses the NEUTRAL FIXTURE, not the operator's live
+// config — editing identities in config.toml must never redden a test. The
+// live file is read only by the "live config.toml" block at the bottom, which
+// pins production invariants (rule 1) rather than identity values.
+const configPath = resolve(root, "tests/fixtures/config.toml");
+const liveConfigPath = resolve(root, "config.toml");
 
 describe("expandHome", () => {
   it("expands a leading ~/ and leaves other paths alone", () => {
@@ -19,7 +24,7 @@ describe("expandHome", () => {
 describe("parseConfig", () => {
   const cfg = parseConfig(readFileSync(configPath, "utf8"));
 
-  it("reads the shipped config.toml knob set", () => {
+  it("reads the fixture config knob set", () => {
     expect(cfg.github.repo).toBe("example-org/example-app");
     expect(cfg.github.app_slug).toBe("example-review");
     expect(cfg.github.bot_login).toBe("example-review[bot]");
@@ -35,8 +40,8 @@ describe("parseConfig", () => {
     expect(cfg.pi.session_dir).toBeTruthy();
   });
 
-  it("ships dry_run off — the cutover flag (flipped by the owner, 2026-08-14)", () => {
-    expect(cfg.dry_run).toBe(false);
+  it("the fixture keeps dry_run ON — tests never model the live posture", () => {
+    expect(cfg.dry_run).toBe(true);
   });
 
   it("zombie-round expiry horizon: shipped value, and a default for older configs", () => {
@@ -58,7 +63,7 @@ describe("parseConfig", () => {
 
   it("expands secrets_dir to an absolute path", () => {
     expect(cfg.github.secrets_dir.startsWith("~")).toBe(false);
-    expect(cfg.github.secrets_dir).toBe(resolve(homedir(), ".config/quickreview-bot"));
+    expect(cfg.github.secrets_dir).toBe(resolve(homedir(), ".config/example-review-bot"));
   });
 
   it("throws with the key name on a missing top-level section", () => {
@@ -77,9 +82,9 @@ describe("parseConfig", () => {
 });
 
 describe("[review]", () => {
-  it("reads the shipped escalation-mention fallback", () => {
+  it("reads the fixture's escalation-mention fallback", () => {
     const cfg = parseConfig(readFileSync(configPath, "utf8"));
-    expect(cfg.review.escalation_mention_default).toBe("mhale");
+    expect(cfg.review.escalation_mention_default).toBe("example-maintainer");
   });
 
   it("defaults to an empty mention when [review] is absent — older configs keep parsing", () => {
@@ -139,5 +144,42 @@ describe("loadConfig", () => {
     const b = loadConfig(configPath);
     expect(a).not.toBe(b);
     expect(a.github.repo).toBe(b.github.repo);
+  });
+});
+
+// ---- the LIVE config.toml — production invariants only ----------
+//
+// Deliberately the only place in this file that reads the committed
+// config.toml. It pins what must hold in PRODUCTION regardless of the
+// operator's identity values: the file stays parseable/valid, and dry_run
+// stays false (rule 1 — LIVE since the 2026-08-14 cutover; the flag is
+// the owner's alone). Identity assertions live on the fixture above, so an
+// adopter editing repo/app/team/ssh values never reddens the suite.
+describe("live config.toml (production invariants)", () => {
+  it("parses and passes full config validation", () => {
+    expect(() => loadConfig(liveConfigPath)).not.toThrow();
+  });
+
+  it("keeps dry_run false — the cutover flag (rule 1, the owner's alone)", () => {
+    expect(loadConfig(liveConfigPath).dry_run).toBe(false);
+  });
+});
+
+// ---- config.example.toml — the new-operator template ------------
+describe("config.example.toml", () => {
+  const examplePath = resolve(root, "config.example.toml");
+
+  it("parses and passes the same full validation as the live config", () => {
+    const cfg = loadConfig(examplePath);
+    expect(cfg.dry_run).toBe(true); // safe default: a fresh install never mutates GitHub
+    expect(cfg.slack.enabled).toBe(false); // enabling Slack is a deliberate act
+    expect(cfg.server.port).toBe(8787);
+  });
+
+  it("ships empty identities for the values an operator must fill", () => {
+    const cfg = loadConfig(examplePath);
+    for (const key of ["repo", "app_slug", "bot_login", "review_team"] as const) {
+      expect(cfg.github[key], `github.${key} must be a fill-me placeholder`).toBe("");
+    }
   });
 });

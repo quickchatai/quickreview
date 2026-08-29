@@ -20,7 +20,7 @@ import type { RoundOrder, SessionHooks } from "../src/types.js";
 import { AnomalyWakePolicy } from "../src/anomalies.js";
 import { VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
 
-const baseCfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "config.toml"), "utf8"));
+const baseCfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
 
 class FakeVerdictAdapter implements VerdictAdapter {
   calls: string[] = [];
@@ -348,7 +348,7 @@ describe("the per-head cap", () => {
   it("max_self_requeues is config-knobbed and defaults to 2", () => {
     expect(DEFAULT_MAX_SELF_REQUEUES).toBe(2);
     const noKnob = parseConfig(
-      readFileSync(resolve(process.cwd(), "config.toml"), "utf8").replace(/^max_self_requeues.*$/m, ""),
+      readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8").replace(/^max_self_requeues.*$/m, ""),
     );
     expect(noKnob.daemon.max_self_requeues).toBe(2);
     expect(baseCfg.daemon.max_self_requeues).toBe(2); // the shipped knob

@@ -79,7 +79,7 @@ describe("daemon wiring", () => {
       return listPrs(...a);
     };
     const daemon = createDaemon({
-      cfg: { ...loadConfig(), dry_run: true },
+      cfg: { ...loadConfig(join(process.cwd(), "tests/fixtures/config.toml")), dry_run: true },
       root,
       store,
       adapter,
@@ -101,7 +101,7 @@ describe("daemon wiring", () => {
   it("runs reconcile → dispatch → verdict apply end to end in dry-run", async () => {
     const recorded: string[] = [];
     const daemon = createDaemon({
-      cfg: { ...loadConfig(), dry_run: true }, // the test exercises dry-run machinery regardless of the shipped flag
+      cfg: { ...loadConfig(join(process.cwd(), "tests/fixtures/config.toml")), dry_run: true }, // the test exercises dry-run machinery regardless of the shipped flag
       root,
       store,
       adapter: fakeAdapter(recorded, join(root, "state", "dryrun")),

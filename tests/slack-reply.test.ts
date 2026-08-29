@@ -9,7 +9,7 @@ import * as replyModule from "../src/slack/reply.js";
 import type { SlackPostResult } from "../src/slack/types.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const shipped = readFileSync(join(root, "config.toml"), "utf8");
+const shipped = readFileSync(join(root, "tests/fixtures/config.toml"), "utf8");
 
 const CHANNEL = "C0CONCIERGE";
 const THREAD = "1712345678.123456";

@@ -13,7 +13,7 @@ import { renderRoundPrompt, roundTemplateFile } from "../src/templates.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
 import type { ContextAssembler } from "../src/memory/context.js";
 
-const baseCfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "config.toml"), "utf8"));
+const baseCfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
 
 interface Call {
   fn: string;

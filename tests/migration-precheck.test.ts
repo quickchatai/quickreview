@@ -17,7 +17,7 @@ import { StateStore } from "../src/state.js";
 import { renderRoundPrompt } from "../src/templates.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
 
-const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "config.toml"), "utf8"));
+const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
 
 const BASE_MIGRATIONS = [
   "backend/chat/migrations/0041_add_index.py",

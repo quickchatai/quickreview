@@ -9,7 +9,7 @@ import { GitHubAdapter } from "../src/github.js";
 import type { FetchFn, TokenMinter } from "../src/githubAuth.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const cfg: Config = parseConfig(readFileSync(join(root, "config.toml"), "utf8"));
+const cfg: Config = parseConfig(readFileSync(join(root, "tests/fixtures/config.toml"), "utf8"));
 
 /** A TokenMinter stand-in — no PEM, no network, no cache logic under test. */
 const minter = {

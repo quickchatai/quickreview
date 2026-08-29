@@ -12,6 +12,10 @@ import { fileURLToPath } from "node:url";
 import { OPENVIKING_DEFAULTS, openVikingBaseUrl, parseConfig, resolveOpenVikingPaths } from "../src/config.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+// Deliberately the LIVE config.toml, not the test fixture: this file
+// IS the drift tripwire between the deployed config and group_vars/Dockerfile
+// (rule 7) — running it on a fixture would let the live pins float. It asserts
+// pins only, never identity values, so operator edits stay green here.
 const configToml = readFileSync(resolve(root, "config.toml"), "utf8");
 const groupVars = readFileSync(resolve(root, "deploy/ansible/group_vars/all.yml"), "utf8");
 const dockerfile = readFileSync(resolve(root, "deploy/ansible/templates/Dockerfile.j2"), "utf8");

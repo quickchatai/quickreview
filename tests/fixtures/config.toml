@@ -1,0 +1,420 @@
+# TEST FIXTURE — a neutral copy of config.toml's shape for the test
+# suite. Every identity here is invented (example-org, example-review,
+# review.example.test, example-vm) and dry_run is true, so an operator can
+# put their own values in the live config.toml without turning any test red.
+# Keep the STRUCTURE in lockstep with config.toml (several tests splice or
+# regex-replace whole sections of this text); values stay neutral.
+
+dry_run = true
+
+[github]
+repo = "example-org/example-app"
+app_slug = "example-review"
+bot_login = "example-review[bot]"
+review_team = "example-org/review"          # team-review-requested trigger
+# escalation_reviewer was removed on 2026-08-18 with the escalation mechanics:
+# the daemon never nominates a reviewer on GitHub. A PR it cannot decide is
+# parked on `awaiting_human` daemon-side (verdict NEEDS_HUMAN) and surfaced in
+# the TUI and Slack.
+trigger_label = "AI review requested"
+in_progress_label = "AI review in progress"
+reviewed_label = "Automatic Review"
+improvement_label = "Bot improvement"
+issue_label = "bot-filed"
+# secrets dir: app_id, app.pem, openai_api_key, webhook_secret, tunnel_token
+secrets_dir = "~/.config/example-review-bot"
+
+[server]
+hostname = "review.example.test"
+port = 8787                                  # loopback only; cloudflared on the host fronts it
+
+[daemon]
+poll_interval_s = 300
+# Rounds are network-IO-bound (model calls), not CPU-bound; the container's
+# 2 CPU / 8 GB Docker cap is the hard resource guard (the owner, 2026-08-13).
+max_concurrent_rounds = 12
+round_deadline_min = 75
+overseer_rotation_days = 7
+# a round overdue with no verdict whose session is dead is
+# self-requeued by the daemon (fresh dispatch to the PR's own session) at most
+# this many times per PR head; past the cap the round parks as an anomaly.
+max_self_requeues = 2
+# lost-prompt net: a running round whose inject file was consumed but
+# whose session shows NO activity since the round started is re-queued (once
+# per head, inside the cap) after this many minutes — well before the
+# deadline, so a dropped round prompt no longer costs a full deadline window.
+round_stall_grace_min = 10
+# Durable daemon→Pi stage leases. Start is short because no model
+# work exists yet; running is a fixed hard cap above the measured 23.4m live
+# maximum and below the 75m defense-in-depth round deadline. Unknown evidence
+# gets one minute once, never an open-ended extension.
+session_command_start_lease_s = 120
+session_command_running_max_min = 45
+# Command-correlated execution milestones: no first pass, incomplete pass plan,
+# and all-passes-done/no-verdict. Absolute start-derived bounds; activity cannot
+# renew them.
+round_first_pass_max_min = 5
+round_passes_max_min = 35
+round_finalize_grace_min = 5
+posting_receipt_grace_s = 120
+session_command_unknown_grace_s = 60
+session_command_unknown_max_checks = 1
+session_command_max_start_retries = 2
+round_stage_supervisor_stale_s = 180
+# Zombie-round expiry: a round stuck 'overdue' longer than this whose
+# PR has since verdicted/closed (i.e. a rerun would never touch it) is expired.
+# 0 disables the sweep.
+expire_overdue_after_h = 24
+
+[eod]
+time = "18:00"
+timezone = "Europe/Warsaw"
+# Daily overseer heartbeat: anomaly-table + digest review pass.
+heartbeat_time = "09:00"
+# watch the owner's pinned entries across the sweep. Curation must never
+# touch them; this makes the invariant detectable rather than merely
+# instructed. The window closes early when the day's digest appears.
+pinned_watchdog = true
+pinned_watchdog_window_min = 90
+
+[caps]
+improvement_pr_max_lines = 50
+improvement_pr_max_files = 3
+improvement_pr_per_day = 1
+improvement_pr_per_week = 3
+issues_per_day = 3
+
+[models]
+# default for every role; tiered pass models below (replaces [models.passes])
+# Provider prefix is `openai-codex/` — the ChatGPT-OAuth route's provider key
+# in pi's auth.json (direct `openai/` needs an API key we don't ship).
+default = "openai-codex/gpt-5.6-sol"
+conversation = "openai-codex/gpt-5.6-sol"
+overseer = "openai-codex/gpt-5.6-sol"
+# Passes always run at sol-high — single variant, not raisable (already top).
+risk_passes = ["pass-security", "pass-prod-risk", "pass-data-safety"]
+# pass-validate's FLOOR tier — raised per round to the highest-tier lens that
+# ran (src/dispatch.ts validatorTier), never lowered. Pinned at sol-high since
+# the validator is the single adversarial gate over every finding, so
+# a cheaper model must never decide whether a sol-high finding is real. One
+# validator call per round — not a hot-path multiplier.
+validate_tier = "sol-high"
+# Diffs under this many changed lines (additions+deletions) start at terra-med.
+small_diff_lines = 150
+
+[models.tiers]
+# PassTier → model spec; buildAgents splits the `:thinking` suffix into the
+# separate pi-subagents `model`/`thinking` frontmatter fields at build time.
+"terra-med" = "openai-codex/gpt-5.6-terra:medium"
+"sol-med" = "openai-codex/gpt-5.6-sol:medium"
+"sol-high" = "openai-codex/gpt-5.6-sol:high"
+
+[models.pricing]
+# Spend rates keyed by bare model id, USD per million tokens. Consumed by
+# spend accounting; empty entries fall back to unpriced.
+# "gpt-5.6-sol" = { input_per_mtok = 0.0, output_per_mtok = 0.0 }
+
+[tui]
+# qcr tui — the operator TUI on the owner's PC, polling the VM over ssh.
+# Read-only against the VM except the user's own keystrokes + inject files.
+ssh_host = "example-vm"
+container = "quickreview-sandbox"
+remote_state_dir = "/opt/quickreview/state"
+remote_sandbox_root = "/opt/quickreview/sandbox"
+sudo_docker = true                # docker on VM needs sudo (root-owned socket)
+poll_interval_s = 3
+stale_after_s = 90                # DATA STALE banner past this written_at age
+                                  # (the daemon rewrites status.json every ~30s)
+msg_timeout_s = 30                # quick-message: pending → undelivered after this
+evidence_timeout_s = 60           # evidence copier: per-remote-read
+                                  # budget. A wedged ssh costs one sweep — the
+                                  # copy is retried on the next poll, never
+                                  # blocking the poll or the paint loop.
+
+[pi]
+# VERIFY-ON-PIN: package + version mirrored in package.json "pi" block and the
+# ansible group_vars; the image never floats.
+package = "@earendil-works/pi-coding-agent"
+version = "0.84.1"
+session_dir = "state/pi-sessions"
+
+[memory]
+# Round seeding — how much memory rides each round prompt and how
+# long the daemon waits for it. Memory NEVER blocks or delays a round: past
+# the deadline the round dispatches memory-less, logs the gap, and alerts on
+# a cooldown so a store that stays down cannot bury the overseer.
+context_tokens = 2000
+context_timeout_ms = 3000
+alert_cooldown_min = 60
+# WHICH scopes the round's one context search may draw from, and how many items
+# each may contribute. `context_tokens` above is the budget; this is the
+# corpus — the two bind independently.
+#
+# It is not optional tuning. Measured against the live server on 2026-08-21
+# with 14 imported entries: with NO quotas the server balances the block across
+# every scope it holds, so the round got ONE memory entry and spent the rest of
+# its budget on the built-in `skills`/`resources` OVERVIEW blurbs — boilerplate
+# that says what those scopes are for, not what the reviewer learned. Quotaing
+# `experiences` in made all 14 reachable and left `context_tokens` as the only
+# binding constraint, which is the intended behaviour.
+#
+# Both listed buckets are deliberate: `experiences` is where every reviewer
+# memory entry lands (the openviking `default_category`), and `resources` is the
+# EOD curator's sanctioned promotion target for objective repo facts (the
+# ratified `prompts/eod-sweep.md` reseed). Counts are generous on purpose —
+# their job is to name the scopes, and `context_tokens` decides how much
+# actually rides the prompt. Unknown keys are dropped by the client with a gap.
+context_quotas = { experiences = 24, resources = 8 }
+
+[openviking]
+# OpenViking (github.com/volcengine/OpenViking) — the review system's context
+# store, running as a SECOND process inside the quickreview container on
+# LOOPBACK :1933. The daemon supervises it as a child process
+# (restart + backoff, stdout folded into the daemon log) and reports its
+# health, version, RSS and CPU in the heartbeat.
+#
+# TRIPLE-MIRRORED PINS, same discipline as [pi]: `version` and
+# `llama_cpp_python_version` here == deploy/ansible/group_vars/all.yml
+# (openviking_version / llama_cpp_python_version) == the Dockerfile venv layer,
+# which installs BOTH by referencing those group_vars — never a literal.
+# tests/openviking.test.ts fails on any drift; the heartbeat drift-checks the
+# running server's self-reported /health version against `version` too.
+#
+# Every path below is a CONTAINER path. On a dev PC the binary is absent: the
+# supervisor logs once, reports unavailable, and never crash-loops.
+enabled = true
+version = "0.4.15"
+# The vendored pi extension's upstream base commit (extensions/vendor/
+# openviking-pi). Pinned beside the server version so a bump re-verifies the
+# four-patch series rather than silently rebasing onto new upstream behaviour.
+extension_commit = "d436baa23c83938b22bb0aab08b0ce48568b5ff4"
+# The daemon and every review session act as this user, holding a key the
+# server confines to it — that confinement is what keeps companion memory out
+# of a posted review. NEVER an ADMIN or ROOT key: ADMIN grants no cross-user
+# data access anyway, and can list every user key in plaintext.
+user = "reviewer"
+account = ""
+reviewer_key_file = "openviking_reviewer_key"
+# ov.conf `server.auth_mode`. `api_key` is the RATIFIED posture: the
+# server confines each USER key to its own tree, and that confinement is the
+# only thing keeping companion memory out of a posted review. `dev` bypasses
+# authentication on loopback — it was the deployed value until, which
+# made the two-user design nominal. MIRRORED into group_vars
+# (openviking_auth_mode), which the entrypoint renders; tests/openviking.test.ts
+# and the scripts/deploy.sh preflight both refuse on drift.
+auth_mode = "api_key"
+# The SERVER's own root key, by file name under the secrets mount. ov.conf
+# needs it to run in api_key mode and boot provisioning needs it to mint users.
+# It is the server's credential, never a client's: no daemon surface, no review
+# session and no companion process ever holds it (writeOvcliConf refuses it as
+# a session credential; extensions/bash-guard.ts refuses to read the files that
+# carry it). Mirrored as openviking_root_key_file.
+root_key_file = "openviking_root_key"
+# The users boot provisioning ENSURES exist — created if absent, left exactly
+# as they are if present, and NEVER rotated (a rotation orphans the keys
+# already distributed to the companion's PC). Mirrored as
+# openviking_provision_users (comma-joined).
+provision_users = ["reviewer", "companion"]
+request_timeout_ms = 10000
+search_timeout_ms = 2500
+default_category = "experiences"
+read_cache_ttl_ms = 15000
+# NOT an openviking dependency — an undeclared optional extra. Without it the
+# default local dense embedder raises EmbeddingConfigurationError at startup,
+# so the official image cannot boot (verified against a running 0.4.15 server,
+# 2026-08-20). Registry-verified pin (PyPI latest, 2026-08-20).
+llama_cpp_python_version = "0.3.35"
+host = "127.0.0.1"                # loopback ONLY — the port is never published
+port = 1933
+bin = "/opt/openviking/venv/bin/openviking-server"
+# ~/.openviking is symlinked here at boot: memory lives on the STATE VOLUME so
+# it survives an image rebuild. config_file/workspace derive from this.
+home = "/opt/quickreview/state/openviking"
+# config_file = ""                # empty ⇒ <home>/ov.conf
+# workspace = ""                  # empty ⇒ <home>/workspace
+# ov.conf is TEMPLATED at boot by the entrypoint — the interactive
+# `openviking-server init` wizard is never invoked in-container.
+workers = 1                       # ov.conf server.workers, 2-CPU cap
+queue_concurrency = 2             # ov.conf queue_workers.* (defaults are 4/4/8)
+# Health gate is /ready, NEVER `doctor`: doctor makes live provider calls and
+# exits 1 when no `vlm` is configured, which is our normal state. /health is
+# unauthenticated and carries the version the drift check reads. The heartbeat
+# reports the CACHED sample, so writing status.json never waits on the network.
+health_interval_s = 30
+health_timeout_ms = 2000
+# The supervisor never gives up: a memory engine that stays down is worse than
+# a slow retry, and every call site already degrades memory-less.
+restart_backoff_ms = [1000, 2000, 5000, 15000, 30000, 60000]
+restart_reset_after_s = 120       # an uptime this long resets the ladder
+# OpenAI embeddings ENABLED; ov.conf carries NO `vlm` section, so extraction,
+# summaries and digest are off — memories are authored, never extracted.
+embedding_model = "text-embedding-3-small"
+embedding_dimension = 1536
+
+[companion]
+# The local companion container — an ambient pi session on the owner's
+# PC that watches the daemon through the TUI's feed and raises alert files.
+# Every knob below is commented out: the defaults in src/config.ts
+# (COMPANION_DEFAULTS) are the shipped configuration; uncomment to override.
+# enabled = true                  # `qcr tui` starts it unless --no-companion
+# container_name = "qcr-companion"
+# image = "qcr-companion"         # docker build -t qcr-companion docker/companion
+# pihome_volume = "companion-pihome"   # its OWN pi auth — never the VM's auth.json
+# session = "companion"           # tmux session inside the container
+# model = "openai-codex/gpt-5.6-sol"
+# repo_dir = ""                   # host review-sandbox repo → /workspace (rw);
+#                                 # empty = this sandbox root
+# tracker_dir = "~/src/tracker"   # → /tracker (rw)
+# tracker_docs_dir = "~/src/tracker-docs"
+#                                 # → /tracker-docs (READ-ONLY): the tracker
+#                                 # protocol the companion follows. Outside
+#                                 # tracker_dir, so it needs its own mount.
+# reviewed_repo_dir = "~/src/example-app"
+#                                 # → /reviewed-repo (READ-ONLY): the
+#                                 # reviewed repo's source, so the companion
+#                                 # can read the code a review is about. Never
+#                                 # writable — and a missing checkout just
+#                                 # drops the mount (under-equipped, never a
+#                                 # companion that refuses to start).
+# evidence_dir = "~/.local/share/qcr/evidence"
+#                                 # → /evidence (READ-ONLY): finished-
+#                                 # round evidence (transcript, ledger, prompt,
+#                                 # verdict) the TUI copies down from the VM.
+#                                 # The companion reads plain files and gains
+#                                 # NO ssh and no credential. Kept indefinitely
+#                                 # and unbounded, so the default is a
+#                                 # deliberate home OUTSIDE the repo; empty
+#                                 # means <sandbox root>/evidence (gitignored).
+# feed_dir = ""                   # → /feed;    empty = state/companion/feed
+# alerts_dir = ""                 # → /alerts;  empty = state/companion/alerts
+# ssh_dir = "~/.ssh"              # mounted read-only (VM reads + inject)
+# overdue_grace_min = 30          # watcher knobs — full set lands in C2
+# stale_alert_s = 300
+# awaiting_age_h = 24
+# cooldown_min = 20
+
+[backfill]
+# One-shot pre-daemon history import (`qcr backfill`) — read-only against
+# GitHub, no gate involvement. Every knob defaults off [github] (see
+# backfillDefaults in src/config.ts); uncomment only to re-run against a
+# renamed label or a different identity.
+# bot_login = "example-review[bot]"     # reviews(author:) — with the [bot] suffix
+# bot_actor = "example-review"          # same identity as a timeline actor (no suffix)
+# reviewed_label = "Automatic Review"   # enumeration: the bot-review era marker
+# trigger_label = "AI review requested" # tier-1 trigger candidate
+# in_progress_label = "AI review in progress"   # tier-2 (dispatch moment) fallback
+# review_team_slug = "review"           # team review request = tier-1 trigger
+# concurrency = 2                       # per-PR detail queries in flight
+# max_search_pages = 10                 # 100 hits/page; search caps at 1,000
+
+[guards]
+# Posting-time guards. Enforced on the single MutationGate for the
+# daemon's own route (src/guards.ts) and mirrored in scripts/guards.sh for the
+# sessions' route (post-review.sh 1+2+3+4, approve-pr.sh 3+4 and
+# reply-thread.sh 3), so no posting route goes around them — both halves read
+# these knobs. All are on; a knob exists so a guard can be taken out of the
+# path deliberately, in one place.
+downgrade_on_human_approval = true   # human APPROVED at this head ⇒ COMMENT, not REQUEST_CHANGES
+skip_unchanged_head = true           # same head, no author reply since ⇒ post nothing
+recheck_pr_state_before_post = true  # re-read the PR right before posting; merged/closed ⇒ refuse
+# Guard 4: no green CI at this head ⇒ APPROVE is unavailable,
+# regardless of findings. The review still posts, as a COMMENT with approval
+# withheld, and the PR is re-queued when CI goes green at that head.
+# Amended (the owner, 2026-08-19): only the MOST RECENT run of each check name
+# counts — GitHub auto-cancels superseded runs, and their permanent
+# `cancelled` husks were withholding every approval forever. The latest run
+# of every name must succeed; a genuinely failing/cancelled LATEST run still
+# blocks exactly like a failing test.
+block_approve_on_red_ci = true       # red/pending CI ⇒ approval withheld, review posts as COMMENT
+# Also the owner 2026-08-19: a head with ZERO check-runs (conflicted PR, CI not
+# started) carries no execution evidence — withhold there too. The reviewed repo
+# always runs CI, so `none` here means something is wrong, not "no CI setup".
+no_checks_is_red = true              # zero checks at head ⇒ approval withheld until checks pass
+# Guard 5: the head the round actually reviewed must still
+# be the PR's live head at posting time. Sessions export QCR_EXPECTED_HEAD
+# (the round prompt cites the sha) before posting; a mismatch refuses the
+# post — the session ends the round without a verdict and the daemon re-runs
+# against the new head. A missing expectation warns loudly but proceeds
+# (sessions on older prompts — same belt-and-braces as rule 10's legacy input).
+refuse_on_head_drift = true          # live head != the sha the round reviewed ⇒ refuse to post
+
+[recheck]
+# Post-approval delta recheck. Once a PR is approved, these triggers
+# ask the PR's OWN sticky session one question — "does this delta warrant a
+# review, or change the verdict to REQUEST_CHANGES?" — with the standing
+# verdict UPHELD BY DEFAULT. A trivial or empty delta costs one classification
+# and a no-op; the only transition the path can produce is
+# APPROVE -> REQUEST_CHANGES (never a re-approve, never a park). The fourth
+# trigger, an author reply, is owned by ping-pong (src/pingpong.ts) and has no
+# knob here.
+enabled = true
+on_push = true           # a push landing after an approve — the core case
+on_ci = true             # CI completing at the approved head (adverse => evidence)
+on_base_advance = true   # the base branch moved; no PR-owned file changed => no-op
+
+[review]
+# a first-party agent-directive edit (.claude/**, prompts/**,
+# AGENTS.md/CLAUDE.md in the reviewed repo) never auto-blocks on `kind:
+# injection` — the round parks (NEEDS_HUMAN) and the review carries ONE short
+# escalation comment @-mentioning the most recent human author of the touched
+# directive files. This is the fallback mention when git history yields no
+# attributable human login. It is a comment @-mention through the gated review
+# — never a GitHub reviewer nomination (rule 10 amendment, the owner 2026-08-19).
+escalation_mention_default = "example-maintainer"
+
+[slack]
+# The Slack concierge — ONE channel, one thread per PR. Tokens are
+# NEVER here: bot_token_file / app_token_file name flat files under
+# [github].secrets_dir (~/.config/qcr/<install>/secrets, /opt/quickreview/secrets in the
+# container). Turning `enabled` on is a deliberate deploy-time act: with it on,
+# a missing token file is a hard startup error, never a silent read-only mode.
+enabled = false
+channel = ""                      # the ONE channel id (C…); empty ⇒ cannot enable
+channel_kind = "public"           # "public" | "private" (private needs an invite)
+bot_token_file = "slack_bot_token"   # xoxb-…
+app_token_file = "slack_app_token"   # xapp-…, connections:write, socket mode only
+legacy_owner_slack_id = ""             # U…; must also be a key in [slack.users]
+post_min_interval_ms = 1100       # Slack chat.postMessage is ~1 msg/s per channel
+reconnect_backoff_ms = [1000, 2000, 5000, 15000, 30000]
+server_ping_timeout_ms = 30000    # no server ping within this ⇒ reconnect
+catchup_max_age_s = 300           # older backlog messages are dropped, not replayed
+max_reply_chars = 3000
+name_cache_ttl_s = 86400
+
+[slack.users]
+# Slack member id -> GitHub login. The ONLY source of own-PR rights: a message
+# from an id that is not listed here can never claim to be a PR's author.
+# U0EXAMPLE = "example-login"
+
+[slack.policy]
+# Every cap below is enforced in DAEMON CODE (src/slack/policy.ts), never by
+# prompt — a session can ask to speak, the daemon decides.
+daily_turns = 80                  # channel-wide model turns per Warsaw day
+per_user_daily_turns = 20         # per person, same window
+thread_replies_per_day = 6        # daemon posts into any one thread
+soft_exchange_limit = 3           # author ping-pong before the bot goes quiet
+announcements_per_hour = 20       # rolling hour; announcements bypass turn caps
+default_cooldown_min = 60         # for causes absent from [slack.policy.causes]
+timezone = "Europe/Warsaw"        # the day boundary for every cap (DST-correct)
+pickup_grace_min = 20
+downtime_notice_min = 5
+heartbeat_interval_min = 5
+storm_corrections = 5
+awaiting_author_stale_h = 48
+awaiting_human_stale_h = 72
+broadcast_verdicts = "never"      # verdicts stay in-thread — no reply_broadcast
+
+[slack.policy.causes]
+# Per-cause switch + cooldown. Keys are per-PR at runtime ("round.overdue:5263")
+# so one stuck PR can never silence another.
+"round.overdue"            = { enabled = true,  cooldown_min = 60 }
+"round.malformed_verdict"  = { enabled = true,  cooldown_min = 60 }
+"review.failed_loud"        = { enabled = true,  cooldown_min = 60 }
+"pr.not_picked_up"         = { enabled = true,  cooldown_min = 120 }
+"daemon.up"                = { enabled = true,  cooldown_min = 0 }
+"daemon.stopping"          = { enabled = true,  cooldown_min = 0 }
+"slack.cap_reached"        = { enabled = true,  cooldown_min = 0 }
+"reconcile.storm"          = { enabled = false, cooldown_min = 180 }
+"digest.eod"               = { enabled = false, cooldown_min = 0 }
+"pr.awaiting_author_stale" = { enabled = false, cooldown_min = 1440 }
+"pr.awaiting_human_stale"  = { enabled = false, cooldown_min = 1440 }

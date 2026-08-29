@@ -22,7 +22,7 @@ import { StateStore } from "../src/state.js";
 import { applyInterpretation } from "../src/webhook.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
 
-const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "config.toml"), "utf8"));
+const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
 const BOT = cfg.github.bot_login;
 const HEAD = "68b8040aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const OLD = "1111111111111111111111111111111111111111";

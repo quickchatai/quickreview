@@ -15,7 +15,7 @@ import type { PrReviewHistory, PrTimelineRecord } from "../src/github.js";
 import { enumerationQueries, planPr, runBackfill, triggerCandidates, triggerForReview, verdictForReviewState } from "../src/backfill.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const cfg: Config = parseConfig(readFileSync(join(root, "config.toml"), "utf8"));
+const cfg: Config = parseConfig(readFileSync(join(root, "tests/fixtures/config.toml"), "utf8"));
 
 const minter = {
   appJwt: () => "jwt.fake.token",

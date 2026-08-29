@@ -457,7 +457,7 @@ describe("status.json openviking block", () => {
       const h = harness();
       h.sup.start();
       const daemon = createDaemon({
-        cfg: loadConfig(),
+        cfg: loadConfig(join(process.cwd(), "tests/fixtures/config.toml")),
         root,
         store,
         adapter,
@@ -475,7 +475,7 @@ describe("status.json openviking block", () => {
       // still writes status.json, just without the block.
       const store2 = new StateStore(":memory:");
       const angry = createDaemon({
-        cfg: loadConfig(),
+        cfg: loadConfig(join(process.cwd(), "tests/fixtures/config.toml")),
         root,
         store: store2,
         adapter,

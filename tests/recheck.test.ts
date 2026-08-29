@@ -32,7 +32,7 @@ import {
 import { StateStore } from "../src/state.js";
 import { applyInterpretation, interpretEvent, type Interpretation } from "../src/webhook.js";
 
-const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "config.toml"), "utf8"));
+const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
 const PR = 5109;
 const OLD = "1111111111111111111111111111111111111111";
 const HEAD = "2222222222222222222222222222222222222222";

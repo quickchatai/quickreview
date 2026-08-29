@@ -27,7 +27,7 @@ let pipeline: StatusSnapshot["pipeline"] = { healthy: true, failed_loud: 0, caus
 
 beforeAll(async () => {
   store = new StateStore(":memory:");
-  const cfg = parseConfig(readFileSync(join(root, "config.toml"), "utf8"));
+  const cfg = parseConfig(readFileSync(join(root, "tests/fixtures/config.toml"), "utf8"));
   server = createWebhookServer({ cfg, store, secret: SECRET, onInterpretation: async () => {}, pipelineHealth: () => pipeline, log: () => {} });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;

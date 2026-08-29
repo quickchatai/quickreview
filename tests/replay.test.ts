@@ -36,7 +36,7 @@ import {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SRC_PATH = join(here, "..", "src", "replay.ts");
-const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "config.toml"), "utf8"));
+const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
 const set = parseCaseSet(JSON.parse(readFileSync(join(here, "fixtures", "regression-cases.json"), "utf8")));
 
 const DRY = { isDryRun: true };

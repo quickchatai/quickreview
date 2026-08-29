@@ -28,7 +28,7 @@ import { StateStore } from "../src/state.js";
 import type { SessionHooks } from "../src/types.js";
 import { VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
 
-const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "config.toml"), "utf8"));
+const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
 const HEAD = "abcdef1234567890abcdef1234567890abcdef12";
 
 let dir: string;
