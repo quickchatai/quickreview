@@ -29,7 +29,7 @@
 import type { App } from "./app.js";
 import { decodeKey, type BoardKey } from "./keys.js";
 import { hitTest, type Zone } from "./mouse.js";
-import { autofileDefects, type TrackerPaths } from "./autofile.js";
+import type { IssueSink } from "./issuesink.js";
 import { paintCmdBar } from "./cmdbar.js";
 import { currentFile, renderDigestTab, SshDigestFetcher, type DigestAction, type DigestFetcher, type DigestState } from "./digesttab.js";
 import { applyMemoryFilter, memoryFilterLabel } from "./filters.js";
@@ -37,7 +37,7 @@ import { awaitingRows, sortPrs } from "./model.js";
 import { parseEventTags } from "../memory/eventtags.js";
 import { defectEntries, refOf, storeHealth, timelineOrder, tuiMemoryStore, type MemoryEntry, type MemoryStore } from "./memory.js";
 import type { ForwardStatus } from "./memforward.js";
-import { isActionableTicket, readEffortTickets, type TrackerTicket } from "./trackertickets.js";
+import { isActionableTicket, type TrackerTicket } from "./trackertickets.js";
 import { ACCENT, HEADING, MUTED, RESET, STRONG, WARN, button, modeBadge, sectionTitle, selected as selectedLine } from "./design.js";
 import { Frame, displayWidth, rule, sanitizeText, stripAnsi, truncate, wrap } from "./paint.js";
 import {
@@ -549,9 +549,13 @@ export interface MemTabDeps {
   fetchProposals?: (app: App) => Promise<{ proposals: RubricProposal[]; improvements: ImprovementItem[] }>;
   accept?: (app: App, slug: string) => Promise<{ ok: boolean; message: string }>;
   reject?: (app: App, slug: string, reason: string) => Promise<{ ok: boolean; message: string }>;
-  tracker?: TrackerPaths;
-  /** Read-only feedback-effort tickets. Defaults to tracker.root when the
-   * tracker is configured; injected in tests so no fixture tree is required. */
+  /**: the configured issue sink the defect auto-filer writes through
+   * (wayfinder tracker, gated github command channel, or none). Absent ⇒
+   * auto-filing is off, exactly like kind "none". */
+  sink?: IssueSink;
+  /** Read-only tracker-ticket projection for the configured effort (:
+   * the effort is config, not a literal — index.ts wires this from
+   * `ticketProjection`); injected in tests so no fixture tree is required. */
   readTickets?: () => TrackerTicket[];
   gitRun?: AcceptDeps["git"]["run"];
   /** The canonical repo root the accept path applies/ratifies/commits in —
@@ -596,7 +600,7 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
 
   const loadTickets = (): void => {
     try {
-      st.tickets = deps.readTickets?.() ?? (deps.tracker ? readEffortTickets(deps.tracker.root) : []);
+      st.tickets = deps.readTickets?.() ?? [];
     } catch {
       st.tickets = [];
     }
@@ -633,15 +637,19 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
     const ordered = orderedNow();
     const rebound = prevKey ? ordered.findIndex((e) => entryKey(e) === prevKey) : -1;
     st.sel = rebound >= 0 ? rebound : Math.min(st.sel, Math.max(0, ordered.length - 1));
-    if (deps.tracker && !st.memError) {
-      // The store is the filer's dedup surface too (it stamps `filed=` back
-      // onto each entry), so it is handed the same store the verbs use.
-      const filed = await autofileDefects(deps.tracker, defectEntries(st.entries), now().toISOString(), memory);
-      if (filed.length > 0) {
-        st.status = `auto-filed ${filed.map((f) => f.ticketId).join(", ")}`;
-        app.notice(`memory: auto-filed ${filed.length} defect ticket(s): ${filed.map((f) => f.ticketId).join(", ")}`);
+    if (deps.sink && !st.memError) {
+      // The sink holds the same store the verbs use (it stamps `filed=` back
+      // onto each entry), so "already filed" stays a property of the memory.
+      const report = await deps.sink.file(defectEntries(st.entries), now().toISOString());
+      if (report.filed.length > 0) {
+        const ids = report.filed.map((f) => f.id).join(", ");
+        st.status = `auto-filed ${ids}`;
+        app.notice(`memory: auto-filed ${report.filed.length} defect(s): ${ids}`);
       }
-      st.filedTotal += filed.length;
+      // A refusal is a real answer (a cap, a dead channel) and the operator
+      // must see it — the wayfinder sink's quiet-skip simply never sets one.
+      if (report.refused !== undefined) st.status = `issue sink: ${report.refused}`;
+      st.filedTotal += report.filed.length;
     }
     app.repaint();
   };

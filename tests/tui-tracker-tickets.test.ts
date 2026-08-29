@@ -62,7 +62,8 @@ describe("read-only feedback ticket projection", () => {
     writeFileSync(join(dir, "FT-0299-done.md"), ticket("FT-0299", "resolved", "Done feedback", "2026-08-25T18:00:00Z"));
     writeFileSync(join(dir, "README.md"), "not a ticket");
 
-    const tickets = readEffortTickets(root);
+    // FT-0345: the effort is config, not a literal — callers always name it.
+    const tickets = readEffortTickets(root, "review-feedback-loop");
     expect(tickets.map((t) => t.id)).toEqual(["FT-0300", "FT-0299"]);
     expect(tickets[0]!.path).toContain("FT-0300-open.md");
   });

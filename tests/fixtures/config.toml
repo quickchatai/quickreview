@@ -293,6 +293,14 @@ embedding_dimension = 1536
 # awaiting_age_h = 24
 # cooldown_min = 20
 
+[sink]
+# issue sink for auto-filed defects — "wayfinder" | "github" | "none".
+# The fixture keeps it OFF: sink behavior is exercised at the seam
+# (tests/issuesink.test.ts) against temp dirs and fakes, never a real tracker
+# or GitHub. Wayfinder parsing/validation is covered by config.test.ts on
+# modified copies of this file.
+kind = "none"
+
 [backfill]
 # One-shot pre-daemon history import (`qcr backfill`) — read-only against
 # GitHub, no gate involvement. Every knob defaults off [github] (see

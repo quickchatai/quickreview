@@ -590,6 +590,7 @@ export interface Config {
   memory: MemoryConfig;
   tui: TuiConfig;
   companion: CompanionConfig;
+  sink: SinkConfig;
   backfill: BackfillConfig;
   guards: GuardsConfig;
   recheck: RecheckConfig;
@@ -647,6 +648,71 @@ export const COMPANION_DEFAULTS: CompanionConfig = {
   awaiting_age_h: 24,
   cooldown_min: 20,
 };
+
+/**
+ * the issue sink — where auto-filed defect flags (`#bug` memory
+ * entries, §9) land. Three kinds:
+ *
+ *   `wayfinder` — tickets written into a filesystem wayfinder tracker on the
+ *                 operator's PC (the legacy behaviour, with the effort
+ *                 and parent lifted out of code literals into this block).
+ *   `github`    — defects filed as issues on the reviewed repo. The TUI never
+ *                 talks to GitHub: it writes a `file-issue` COMMAND into the
+ *                 daemon's commands/ channel, so the daemon's MutationGate,
+ *                 day caps and title dedup enforce the filing.
+ *   `none`      — auto-filing off. The default when `[sink]` is absent:
+ *                 unconfigured = off, the degrade-gracefully boundary the
+ *                 filer has always had.
+ */
+export type IssueSinkKind = "wayfinder" | "github" | "none";
+
+export interface SinkConfig {
+  kind: IssueSinkKind;
+  /** Wayfinder tracker root (also the ticket projection's root). Empty ⇒
+   * defaults from `[companion] tracker_dir` — continuity: that dir has been
+   * the one tracker path the TUI knew. */
+  root: string;
+  /** Wayfinder: the effort auto-filed tickets are written into. */
+  effort: string;
+  /** Wayfinder: the `Parent:` map id stamped into each filed ticket. */
+  parent: string;
+  /** The TUI [2]-tab read-only ticket projection's effort. Deliberately a
+   * SEPARATE key: today's live board reads a different effort
+   * ("review-feedback-loop") from the one the filer writes into
+   * ("review-sandbox"). Empty ⇒ same as `effort`. */
+  tickets_effort: string;
+}
+
+export const SINK_DEFAULTS: SinkConfig = {
+  kind: "none",
+  root: "",
+  effort: "",
+  parent: "",
+  tickets_effort: "",
+};
+
+/** [sink] parse + validation. Misconfig is loud at boot, not a quiet no-op:
+ * a `wayfinder` sink missing its effort or parent would otherwise silently
+ * file nothing (or file into a nameless effort) forever. */
+function parseSink(raw: Record<string, any>, companion: CompanionConfig): SinkConfig {
+  const sink: SinkConfig = { ...SINK_DEFAULTS, ...(raw as Partial<SinkConfig>) };
+  if (!["wayfinder", "github", "none"].includes(sink.kind)) {
+    throw new Error(`config.toml [sink]: kind must be "wayfinder", "github" or "none" (got ${JSON.stringify(sink.kind)})`);
+  }
+  sink.root = sink.root ? expandHome(sink.root) : companion.tracker_dir;
+  if (sink.kind === "wayfinder") {
+    if (!sink.root.trim()) throw new Error("config.toml [sink]: kind = \"wayfinder\" requires a `root` (or a [companion] tracker_dir to default from)");
+    if (!sink.effort.trim()) throw new Error("config.toml [sink]: kind = \"wayfinder\" requires a non-empty `effort`");
+    if (!sink.parent.trim()) throw new Error("config.toml [sink]: kind = \"wayfinder\" requires a non-empty `parent`");
+  }
+  return sink;
+}
+
+/** The ticket projection's effort — its own key when set, else the filer's.
+ * Empty ⇒ the projection has nothing configured to read. */
+export function sinkTicketsEffort(cfg: Config): string {
+  return cfg.sink.tickets_effort.trim() || cfg.sink.effort.trim();
+}
 
 /** Default lost-prompt grace when [daemon] carries no
  * `round_stall_grace_min`: long enough that a slow first tool call is never
@@ -716,6 +782,7 @@ function req(obj: Record<string, unknown>, key: string): unknown {
 export function parseConfig(toml: string): Config {
   const raw = parse(toml) as Record<string, any>;
   const github: GithubConfig = { ...(req(raw, "github") as GithubConfig) };
+  const companion = resolveCompanionPaths({ ...COMPANION_DEFAULTS, ...((raw.companion ?? {}) as Partial<CompanionConfig>) });
   const cfg: Config = {
     dry_run: Boolean(req(raw, "dry_run")),
     github,
@@ -749,7 +816,8 @@ export function parseConfig(toml: string): Config {
     openviking: resolveOpenVikingPaths({ ...OPENVIKING_DEFAULTS, ...((raw.openviking ?? {}) as Partial<OpenVikingConfig>) }),
     memory: { ...MEMORY_DEFAULTS, ...((raw.memory ?? {}) as Partial<MemoryConfig>) },
     tui: { ...TUI_DEFAULTS, ...((raw.tui ?? {}) as Partial<TuiConfig>) },
-    companion: resolveCompanionPaths({ ...COMPANION_DEFAULTS, ...((raw.companion ?? {}) as Partial<CompanionConfig>) }),
+    companion,
+    sink: parseSink((raw.sink ?? {}) as Record<string, any>, companion),
     backfill: { ...backfillDefaults(github), ...((raw.backfill ?? {}) as Partial<BackfillConfig>) },
     guards: { ...GUARDS_DEFAULTS, ...((raw.guards ?? {}) as Partial<GuardsConfig>) },
     recheck: { ...RECHECK_DEFAULTS, ...((raw.recheck ?? {}) as Partial<RecheckConfig>) },

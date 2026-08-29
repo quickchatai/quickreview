@@ -53,7 +53,9 @@ export function orderTrackerTickets(tickets: TrackerTicket[]): TrackerTicket[] {
   });
 }
 
-export function readEffortTickets(root: string, effort = "review-feedback-loop"): TrackerTicket[] {
+/**: the effort is CONFIG (`[sink] tickets_effort`, falling back to
+ * the filer's `effort`), never a literal — index.ts wires both arguments. */
+export function readEffortTickets(root: string, effort: string): TrackerTicket[] {
   const dir = join(root, "efforts", effort, "tickets");
   if (!existsSync(dir)) return [];
   const tickets: TrackerTicket[] = [];

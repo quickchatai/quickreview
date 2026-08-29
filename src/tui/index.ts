@@ -303,7 +303,9 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
   installUnwedgeHooks(app);
   // the [2] tab is Memory & learning — digest view + memory
   // management. Accept-verdict git actions run against THIS working copy
-  // (the canonical repo); the tracker path feeds the defect auto-filer.
+  // (the canonical repo); the [sink] config decides where the defect
+  // auto-filer writes (wayfinder tracker, gated github command
+  // channel, or none) and which effort the ticket projection reads.
   const { installMemoryLearningHooks } = await import("./memtab.js");
   const { execFile } = await import("node:child_process");
   const gitRun = (cmd: string, args: string[], stdin?: string): Promise<string> =>
@@ -335,14 +337,16 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
   // memory over the same forward's docker-bridge bind, and it starts below
   // regardless of which tab the operator is looking at.
   void memForward.ensure();
+  const { buildIssueSink, ticketProjection } = await import("./issuesink.js");
+  const { readEffortTickets } = await import("./trackertickets.js");
+  const projection = ticketProjection(full);
   const memState = installMemoryLearningHooks(app, {
     memory: memStore,
     forward: memForward,
     gitRun,
     repoRoot: sandboxRoot(),
-    tracker: full.companion.tracker_dir
-      ? { root: full.companion.tracker_dir, effort: "review-sandbox", parent: "" }
-      : undefined,
+    sink: buildIssueSink(full, app.ssh, memStore),
+    ...(projection ? { readTickets: () => readEffortTickets(projection.root, projection.effort) } : {}),
   });
   const { RealDeployFetcher, installDeployHooks, powerCommand, realLocalRunner } = await import("./deploytab.js");
   const { FileDeployCeremonyStore } = await import("./deploy-ceremony.js");

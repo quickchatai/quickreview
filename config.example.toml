@@ -294,6 +294,22 @@ embedding_dimension = 1536
 # awaiting_age_h = 24
 # cooldown_min = 20
 
+[sink]
+# where auto-filed defect flags (#bug reviewer-memory entries) land.
+# "github"    — defects filed as ISSUES on the reviewed repo. The TUI writes a
+#               file-issue command; the DAEMON files it through the one
+#               MutationGate with the [caps] day cap, title dedup and the
+#               [github] issue_label. In dry-run the gate writes an intent
+#               instead of creating anything. Recommended for new installs.
+# "wayfinder" — tickets in a local filesystem wayfinder tracker on the
+#               operator's PC (set root/effort/parent below).
+# "none"      — auto-filing off (also the default when [sink] is absent).
+kind = "none"                      # ← FILL (10): "github", "wayfinder", or "none"
+# root = ""                        # wayfinder: tracker root; empty = [companion] tracker_dir
+# effort = ""                      # wayfinder: effort auto-filed tickets land in (required)
+# parent = ""                      # wayfinder: parent map id stamped into each ticket (required)
+# tickets_effort = ""              # TUI [2]-tab ticket projection's effort; empty = `effort`
+
 [backfill]
 # One-shot pre-daemon history import (`qcr backfill`) — read-only against
 # GitHub, no gate involvement. Every knob defaults off [github] (see

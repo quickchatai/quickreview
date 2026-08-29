@@ -20,6 +20,7 @@ import {
   renderMemoryView,
   type MemTabState,
 } from "../src/tui/memtab.js";
+import { WayfinderIssueSink } from "../src/tui/issuesink.js";
 import { legacyBlockHash as blockHash, parseLegacyMemory as parseMemory } from "../src/memory/legacy-file.js";
 import type { MemoryEntry, MemoryOp, MemoryStore } from "../src/memory/store.js";
 import type { MemoryHealth } from "../src/tui/memory.js";
@@ -500,13 +501,14 @@ describe("management verbs", () => {
     expect(reject).toHaveBeenCalledWith(app, "baseline-mergebase-2026-08-20", "not evidence-backed");
   });
 
-  it("auto-files #bug entries into the tracker on memory load", async () => {
+  it("auto-files #bug entries through the wayfinder sink on memory load", async () => {
     const root = mkdtempSync(join(tmpdir(), "memtab-tracker-"));
     mkdirSync(join(root, ".ids"), { recursive: true });
     mkdirSync(join(root, "efforts/review-sandbox/tickets"), { recursive: true });
     writeFileSync(join(root, ".ids", "0100"), "x\n");
     const { app } = makeApp();
-    install(app, new FakeMemory(), { tracker: { root, effort: "review-sandbox", parent: "FT-0026" } });
+    const mem = new FakeMemory();
+    install(app, mem, { sink: new WayfinderIssueSink({ root, effort: "review-sandbox", parent: "FT-0026" }, mem) });
     app.hooks.digestScreen!(app, 110, 30);
     await settle();
     const tickets = readdirSync(join(root, "efforts/review-sandbox/tickets"));
@@ -744,7 +746,7 @@ describe("memory unreachable (FT-0164)", () => {
     mkdirSync(join(root, "efforts/review-sandbox/tickets"), { recursive: true });
     const { app } = makeApp();
     install(app, new UnhealthyMemory({ ok: false, namespaces: [], error: DEAD }, parseMemory(SAMPLE)) as unknown as FakeMemory, {
-      tracker: { root, effort: "review-sandbox", parent: "FT-0026" },
+      sink: new WayfinderIssueSink({ root, effort: "review-sandbox", parent: "FT-0026" }),
     });
     app.hooks.digestScreen!(app, 110, 30);
     await settle();
