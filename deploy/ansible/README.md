@@ -1,10 +1,21 @@
-# Review-sandbox provisioning (Ansible)
+# Review-sandbox provisioning (Ansible) — the advanced VM route
 
 Minimal, idempotent provisioning for the review sandbox: **one VM → one Docker
-container** (plain Ubuntu + pinned pi + node/gh/tmux + secrets + the
-prompt/agent seed) with **cloudflared on the host** forwarding
-`review.example.com` → `localhost:8787` → the container, so GitHub webhooks
-flow the moment the daemon (build slice B2) listens.
+container** (plain Ubuntu + pinned pi + node/gh/tmux + secrets; the prompts
+and agents ride the repo rsync — there is no separate seed source since
+), optionally with **cloudflared on the host** forwarding a public
+hostname → `localhost:8787` → the container.
+
+**Not deploying to a managed VM?** The primary route is the plain Docker path:
+`docker compose up` from the repo root — see `docker/daemon/README.md`. This
+Ansible route adds VM host setup, the optional tunnel, and the
+`scripts/deploy.sh` sync/rebuild/verify workflow on top of the same image.
+
+**Ingress is a choice, not a requirement**: any HTTPS proxy or tunnel that
+forwards your webhook hostname to the published port works. The cloudflared
+tasks are gated on `cloudflared_enabled` (group_vars, default `true` — the
+live deployment keeps its tunnel); set `-e cloudflared_enabled=false` to
+bring your own ingress.
 
 Asset of; written at
 the owner's direction 2026-08-13. Architecture note: running the whole sandbox
@@ -15,20 +26,28 @@ permission system.
 
 1. **VM exists** in the dev GCP project (checklist §B: e2-standard-4,
    100 GB, no external IP, OS Login + IAP).
-2. **Cloudflare tunnel exists** (checklist §A): remote-managed tunnel,
-   public hostname `review.example.com` → `http://localhost:8787`; its
-   **token** saved as `~/.config/quickreview-bot/tunnel_token` locally.
+2. **Ingress**: either a Cloudflare tunnel (remote-managed tunnel, public
+   hostname → `http://localhost:8787`; its **token** saved as
+   `~/.config/quickreview-bot/tunnel_token` locally — required only with
+   `cloudflared_enabled: true`), or your own HTTPS proxy/tunnel pointed at
+   the VM's `localhost:8787` (then set `cloudflared_enabled: false`).
 3. **Local secrets dir** `~/.config/quickreview-bot/` contains:
-   `app_id`, `app.pem`, `openai_api_key`, `webhook_secret`, `tunnel_token`.
+   `app_id`, `app.pem`, `webhook_secret` (plus `openai_api_key` optional —
+   OAuth route — and `tunnel_token` when the tunnel is enabled).
    (Never a personal credential.)
 4. Controller tooling:
    ```
    ansible-galaxy collection install community.docker ansible.posix
-   gcloud compute config-ssh
-   cp inventory.example.ini inventory.ini   # then edit
+   cp inventory.example.ini inventory.ini   # then edit — inventory.ini is
+                                            # gitignored (your real hostnames
+                                            # stay local; the example documents
+                                            # what to fill)
    ```
-5. Pin `pi_version` in `group_vars/all.yml` (and confirm `pi_npm_package`
-   against's findings) before first run.
+5. Pins ride `group_vars/all.yml` (pi, OpenViking, llama-cpp-python, …),
+   mirrored with `config.toml`; `tests/openviking.test.ts` and the
+   `scripts/deploy.sh` preflight refuse on drift. `sandbox_src` defaults to
+   the repo this playbook lives in — override with
+   `-e sandbox_src=/path/to/checkout` for a different working copy.
 
 ## Run
 
@@ -38,12 +57,11 @@ ansible-playbook -i inventory.ini playbook.yml
 ansible-playbook -i inventory.ini playbook.yml -e rebuild_image=true
 ```
 
-What it does, in order: host packages + Docker → cloudflared apt repo, install,
-service registration with the tunnel token → directory layout under
-`/opt/quickreview/` → secrets copied `0600` → the prompts/agents seeded
-into the container volume (no duplication in the tracker) →
-optional rsync of your local `review-sandbox` working copy (uncomment
-`sandbox_src` once B1+ exist) → image build → container up
+What it does, in order: host packages + Docker → (when `cloudflared_enabled`)
+cloudflared apt repo, install, service registration with the tunnel token →
+directory layout under `/opt/quickreview/` → secrets copied `0600` → rsync of
+the `sandbox_src` working copy (daemon, extensions, prompts, agents — the
+seed content rides the repo) → image build → container up
 (`restart: unless-stopped`, port bound to **127.0.0.1 only**).
 
 ## Verify
@@ -81,8 +99,9 @@ rebuilds — required for the sticky per-PR conversations, not just for auth.
 - Re-runs are safe: package installs are idempotent, the cloudflared service
   task is guarded by `creates:`, secrets/seed copies only rewrite on change,
   the container recreates only when the image or config changed.
-- The webhook port is published on loopback only; the sole ingress is the
-  tunnel. No inbound firewall rule is ever needed.
+- The webhook port is published on loopback only; ingress is whatever HTTPS
+  proxy/tunnel you point at it (the optional cloudflared service, or your
+  own). No inbound firewall rule is ever needed.
 - Image pins: pi and node are pinned in `group_vars/all.yml`; bumping them is
   a deliberate edit + `rebuild_image=true`, never automatic (spec §9).
 - Jump-in from the laptop: `ssh -t <vm> docker exec -it quickreview-sandbox

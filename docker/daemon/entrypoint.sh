@@ -1,0 +1,320 @@
+#!/usr/bin/env bash
+# Review-sandbox container entrypoint — plain Docker path.
+#
+# Non-templated equivalent of deploy/ansible/templates/entrypoint.sh.j2: every
+# Jinja variable becomes an env knob with the SAME default the group_vars
+# carry, so `docker compose up` with no environment reproduces the VM boot.
+# tests/docker-daemon.test.ts pins the invariants shared with the templated
+# boot (no interactive wizard, no vlm section, root key from the secrets
+# mount, degrade-never-block, trust layers).
+set -euo pipefail
+
+SANDBOX=/opt/quickreview/sandbox
+SECRETS=/opt/quickreview/secrets
+
+# Runtime knobs — defaults mirror deploy/ansible/group_vars/all.yml and
+# config.toml [openviking]; override via the container environment.
+OV_HOME="${QCR_OPENVIKING_HOME:-/opt/quickreview/state/openviking}"
+OV_PORT="${QCR_OPENVIKING_PORT:-1933}"
+OV_WORKERS="${QCR_OPENVIKING_WORKERS:-1}"
+OV_QUEUE_CONCURRENCY="${QCR_OPENVIKING_QUEUE_CONCURRENCY:-2}"
+OV_AUTH_MODE="${QCR_OPENVIKING_AUTH_MODE:-api_key}"
+OV_EMBEDDING_MODEL="${QCR_OPENVIKING_EMBEDDING_MODEL:-text-embedding-3-small}"
+OV_EMBEDDING_DIMENSION="${QCR_OPENVIKING_EMBEDDING_DIMENSION:-1536}"
+OV_ROOT_KEY_FILE="${QCR_OPENVIKING_ROOT_KEY_FILE:-openviking_root_key}"
+OV_REVIEWER_KEY_FILE="${QCR_OPENVIKING_REVIEWER_KEY_FILE:-openviking_reviewer_key}"
+OV_PROVISION_USERS="${QCR_OPENVIKING_PROVISION_USERS:-reviewer,companion}"
+OV_VENV="${QCR_OPENVIKING_VENV:-/opt/openviking/venv}"
+
+# The code roots all state at <sandbox>/state; point that at the dedicated
+# state volume. One-time migration if a real dir already accumulated content.
+if [[ -d "$SANDBOX/state" && ! -L "$SANDBOX/state" ]]; then
+  cp -a "$SANDBOX/state/." /opt/quickreview/state/ 2>/dev/null || true
+  rm -rf "$SANDBOX/state"
+fi
+[[ -L "$SANDBOX/state" ]] || ln -sfn /opt/quickreview/state "$SANDBOX/state"
+
+# The code resolves secrets via config.toml [github].secrets_dir =
+# ~/.config/quickreview-bot — point that at the read-only secrets mount.
+mkdir -p "$HOME/.config"
+[[ -L "$HOME/.config/quickreview-bot" ]] || ln -sfn "$SECRETS" "$HOME/.config/quickreview-bot"
+
+# OpenAI auth for pi — native, two routes (findings):
+#   1. API key: exported here so the tmux server and every pi process inherit it.
+#   2. ChatGPT-subscription OAuth: run `/login` once in any pi session; tokens
+#      persist in /home/review/.pi/agent/auth.json (a mounted volume) and take
+#      precedence over the env var (pi resolution: flag -> auth.json -> env).
+if [[ -r "$SECRETS/openai_api_key" ]]; then
+  OPENAI_API_KEY="$(< "$SECRETS/openai_api_key")"
+  export OPENAI_API_KEY
+fi
+
+# OpenViking — the context store the DAEMON supervises as a child
+# process on loopback $OV_PORT. This block prepares its state and configuration
+# and provisions its users; it never leaves a server RUNNING (the provisioning
+# step below starts one in the FOREGROUND and stops it again, so the container
+# still ends up with a single supervised process tree — the long-lived server
+# is the daemon's child, as before) and it NEVER runs the server's own setup
+# wizard (the `init` subcommand): that wizard is interactive, and an
+# interactive prompt in this container is exactly the class of stall that
+# wedged pr-5334. ov.conf is rendered below instead.
+#
+# ~/.openviking is a SYMLINK onto the state volume, so memories, the vector db
+# and ov.conf all survive an image rebuild.
+mkdir -p "$OV_HOME/workspace" || echo "openviking: could not create $OV_HOME/workspace" >&2
+# Same migration idiom as the state symlink above: a real directory that
+# accumulated content is folded onto the volume once, then replaced by the link.
+if [[ -e "$HOME/.openviking" && ! -L "$HOME/.openviking" ]]; then
+  cp -a "$HOME/.openviking/." "$OV_HOME/" 2>/dev/null || true
+  rm -rf "$HOME/.openviking"
+fi
+[[ -L "$HOME/.openviking" ]] || ln -sfn "$OV_HOME" "$HOME/.openviking"
+
+# ov.conf is RENDERED on every boot, so a knob change ships with a restart
+# rather than a hand-edit in the container. Rendered by node because ov.conf is
+# JSON and the OpenAI credential must be injected from the read-only secrets
+# mount at runtime (never baked into the image, never committed).
+#
+# Shape notes, verified against a running 0.4.15 — unknown fields are REJECTED
+# by the server, so nothing speculative goes in here:
+#   * NO `vlm` SECTION AT ALL. Extraction, summaries and digest stay off:
+#     memories are authored by sessions and the EOD curator, never extracted.
+#     (This is also why `doctor` is not the health gate — it exits 1 with no
+#     vlm configured. The daemon polls /ready.)
+#   * auth_mode comes from $QCR_OPENVIKING_AUTH_MODE (mirrored with config.toml
+#     [openviking] auth_mode), default "api_key". Loopback-only was
+#     NEVER the whole story: every review session runs INSIDE this container,
+#     so "nobody can reach the port" does not stop a review session from
+#     reading companion memory. Only the server's per-USER-key confinement
+#     does, and that confinement exists only in api_key mode — which is why
+#     the root key is read from the read-only secrets mount here and never
+#     written as a literal.
+#   * workers/queue_workers are cut for a 2-CPU cap: CPU is the measured cost
+#     (~1.63 core-seconds per ~500 B write), not RAM.
+#
+# The `||` is deliberate (the boot runs under `set -e`): a memory engine that
+# cannot be configured must never stop the reviewer from coming up. The daemon
+# supervises the server regardless — /ready simply stays false and rounds run
+# memory-less, which is the standing rule for every OpenViking call site.
+OPENVIKING_CONF="$OV_HOME/ov.conf" QCR_SECRETS="$SECRETS" \
+QCR_OV_PORT="$OV_PORT" QCR_OV_WORKERS="$OV_WORKERS" \
+QCR_OV_QUEUE_CONCURRENCY="$OV_QUEUE_CONCURRENCY" \
+QCR_OV_AUTH_MODE="$OV_AUTH_MODE" \
+QCR_OV_EMBEDDING_MODEL="$OV_EMBEDDING_MODEL" \
+QCR_OV_EMBEDDING_DIMENSION="$OV_EMBEDDING_DIMENSION" \
+QCR_OV_ROOT_KEY_FILE="$OV_ROOT_KEY_FILE" \
+node <<'OV_CONF_RENDER' || echo "openviking: ov.conf render FAILED — the daemon starts memory-less" >&2
+const fs = require("fs");
+const path = require("path");
+const home = path.dirname(process.env.OPENVIKING_CONF);
+const conf = {
+  server: {
+    host: "127.0.0.1",
+    port: Number(process.env.QCR_OV_PORT),
+    workers: Number(process.env.QCR_OV_WORKERS),
+    auth_mode: process.env.QCR_OV_AUTH_MODE,
+  },
+  storage: { workspace: path.join(home, "workspace") },
+  queue_workers: {
+    external_parse: { max_concurrent: Number(process.env.QCR_OV_QUEUE_CONCURRENCY) },
+    add_resource: {
+      max_concurrent: Number(process.env.QCR_OV_QUEUE_CONCURRENCY),
+      file_vectorization_concurrency: Number(process.env.QCR_OV_QUEUE_CONCURRENCY),
+    },
+    session_commit: { max_concurrent: Number(process.env.QCR_OV_QUEUE_CONCURRENCY) },
+  },
+  memory: {
+    extraction_enabled: false,
+    session_skill_extraction_enabled: false,
+    link_enabled: false,
+  },
+  log: { level: "INFO", output: "stdout" },
+};
+// The read-only secrets mount — one constant, taken from $SECRETS above so a
+// moved mount cannot leave this half behind.
+const secrets = process.env.QCR_SECRETS || "/opt/quickreview/secrets";
+// api_key mode needs the SERVER's own root key, and it must come from the
+// read-only secrets mount — never a literal in this script, never a value
+// baked into the image. ov.conf is written 0600 and is the only place in the
+// container that holds it; `writeOvcliConf` (src/memory/ovsession.ts) refuses
+// to hand it to a pi session and extensions/bash-guard.ts refuses to read it.
+// A missing root key DEGRADES (the server falls back to "dev", loudly) rather
+// than leaving a server nobody can authenticate to: memory never blocks.
+if (conf.server.auth_mode === "api_key") {
+  const rootFile = path.join(secrets, process.env.QCR_OV_ROOT_KEY_FILE);
+  if (fs.existsSync(rootFile)) {
+    conf.server.root_api_key = fs.readFileSync(rootFile, "utf8").trim();
+  } else {
+    conf.server.auth_mode = "dev";
+    console.warn("openviking: NO " + process.env.QCR_OV_ROOT_KEY_FILE + " in the secrets mount — falling back to auth_mode=dev. Per-user confinement is NOT enforced in that mode: provision the root key and restart.");
+  }
+}
+const keyFile = path.join(secrets, "openai_api_key");
+if (fs.existsSync(keyFile)) {
+  conf.embedding = {
+    dense: {
+      provider: "openai",
+      model: process.env.QCR_OV_EMBEDDING_MODEL,
+      dimension: Number(process.env.QCR_OV_EMBEDDING_DIMENSION),
+      input: "text",
+      api_key: fs.readFileSync(keyFile, "utf8").trim(),
+    },
+  };
+} else {
+  // Degrade, never fail: the built-in local dense embedder (llama-cpp-python,
+  // pinned in the image) keeps the server bootable without an OpenAI key.
+  console.warn("openviking: no openai_api_key in the secrets mount — falling back to the local dense embedder");
+}
+fs.mkdirSync(path.join(home, "workspace"), { recursive: true });
+const target = process.env.OPENVIKING_CONF;
+fs.writeFileSync(target, JSON.stringify(conf, null, 2) + "\n", { mode: 0o600 });
+fs.chmodSync(target, 0o600);
+console.log("openviking: ov.conf rendered at " + target + " (no vlm section; auth_mode=" + conf.server.auth_mode + " on loopback)");
+OV_CONF_RENDER
+
+# Boot provisioning — the users that make api_key mode mean
+# something. Idempotent by construction: it CREATES a missing user, LEAVES an
+# existing one exactly as it is, and never rotates or mints a key for a user
+# that has one (a rotation orphans the key already distributed elsewhere). It
+# also verifies that the reviewer key in the secrets mount actually
+# authenticates, so a mismatch is a boot log line rather than a silent memory
+# outage.
+#
+# It starts the server itself, briefly, and stops it again: the daemon is not
+# running yet, and nothing here may background a process. `|| true` plus the
+# script's own exit-0 discipline are belt and braces — an unprovisioned memory
+# engine degrades, it never stops the reviewer coming up.
+if [[ -f "$SANDBOX/scripts/openviking-provision.mjs" ]]; then
+  node "$SANDBOX/scripts/openviking-provision.mjs" \
+    --base "http://127.0.0.1:$OV_PORT" \
+    --users "$OV_PROVISION_USERS" \
+    --root-key-file "$SECRETS/$OV_ROOT_KEY_FILE" \
+    --reviewer-key-file "$SECRETS/$OV_REVIEWER_KEY_FILE" \
+    --start-server \
+    --bin "$OV_VENV/bin/openviking-server" \
+    --config "$OV_HOME/ov.conf" \
+    --host 127.0.0.1 --port "$OV_PORT" \
+    || echo "openviking: boot provisioning did not complete — the daemon starts and memory degrades until it does" >&2
+else
+  echo "openviking: scripts/openviking-provision.mjs not mounted — users not provisioned" >&2
+fi
+
+# pi extensions — register in $HOME/.pi/agent/settings.json (on the pihome
+# volume). Every pi process shares HOME=/home/review — main sessions AND the
+# isolated child processes pi-subagents spawns — so this one file covers all.
+# Idempotent MERGE, safe on every boot: the file predates the "extensions" key
+# and carries user keys (auth/defaults) that must never be clobbered. Each
+# path is appended only if absent; missing extension files hard-fail the boot
+# (a silently unregistered bash-guard would mean unguarded sessions).
+node <<'PI_EXT_MERGE'
+const fs = require("fs");
+const path = require("path");
+
+const file = path.join(process.env.HOME, ".pi", "agent", "settings.json");
+fs.mkdirSync(path.dirname(file), { recursive: true });
+let settings = {};
+if (fs.existsSync(file)) settings = JSON.parse(fs.readFileSync(file, "utf8"));
+if (!Array.isArray(settings.extensions)) settings.extensions = [];
+
+// pi-memory is NOT registered here any more — the hand-rolled memory
+// engine is retired. Memory is OpenViking, and its (vendored, patched) pi
+// extension is passed per spawn by src/sessions.ts, deliberately NOT registered
+// globally: a globally-registered memory extension would also load in the
+// isolated children pi-subagents spawns, and lens passes must do no ambient
+// memory work.
+const wanted = [
+  // pi-subagents: raw-repo extension baked into the image (Dockerfile pin).
+  "/opt/pi-extensions/pi-subagents/index.ts",
+  // Repo-shipped guard, rides the sandbox mount.
+  "/opt/quickreview/sandbox/extensions/bash-guard.ts",
+];
+for (const p of wanted) {
+  if (!fs.existsSync(p)) {
+    console.error("FATAL: pi extension missing: " + p);
+    process.exit(1);
+  }
+  if (!settings.extensions.includes(p)) settings.extensions.push(p);
+}
+// settings.json lives on the PERSISTENT pihome volume, so entries written by
+// an older image survive a rebuild. Adding the wanted list is not enough —
+// after retired pi-memory the volume still registered
+// /usr/lib/node_modules/pi-memory/index.ts, which the image no longer has. pi
+// tolerates a missing extension, so it never surfaced as a failure; it just
+// sat there misreporting what the reviewer loads. Prune anything that is not
+// on disk.
+const stale = settings.extensions.filter((p) => !fs.existsSync(p));
+if (stale.length) {
+  settings.extensions = settings.extensions.filter((p) => fs.existsSync(p));
+  console.log("pi extensions pruned (not on disk): " + stale.join(", "));
+}
+// The reviewer never blocks on interactive input (the owner, 2026-08-20 —
+// pr-5334 stalled on pi's "Trust project folder?" modal after .pi/settings.json
+// shipped). Belt: trust every project by default. Braces: pre-seed the trust
+// store for /opt/quickreview so even a settings regression cannot re-surface the
+// prompt. Third layer: sessions.ts passes --approve on every spawn.
+settings.defaultProjectTrust = "always";
+
+fs.writeFileSync(file, JSON.stringify(settings, null, 2) + "\n");
+console.log("pi extensions registered: " + settings.extensions.join(", "));
+
+const trustFile = path.join(process.env.HOME, ".pi", "agent", "trust.json");
+let trust = {};
+if (fs.existsSync(trustFile)) trust = JSON.parse(fs.readFileSync(trustFile, "utf8"));
+if (trust["/opt/quickreview"] !== true) {
+  trust["/opt/quickreview"] = true;
+  fs.writeFileSync(trustFile, JSON.stringify(trust, null, 2) + "\n");
+}
+console.log("pi project trust: defaultProjectTrust=always, /opt/quickreview pre-trusted");
+PI_EXT_MERGE
+
+# Private-repo git auth (example-app clone + per-PR fetches): the app
+# installation token over HTTPS — never a personal credential (§2).
+git config --global credential.helper \
+  "!f() { echo username=x-access-token; echo \"password=\$(\"$SANDBOX/scripts/mint-token.sh\")\"; }; f"
+
+# Build on boot when needed (fresh volume or bumped dependencies). The lockfile
+# hash marker keeps steady-state restarts instant.
+cd "$SANDBOX"
+marker=/opt/quickreview/state/.build-lock-hash
+current="$(sha256sum package-lock.json | cut -d' ' -f1)"
+if [[ ! -d dist || ! -f "$marker" || "$(cat "$marker")" != "$current" ]]; then
+  npm ci
+  npm run build
+  echo "$current" > "$marker"
+fi
+
+# tmux server = the jump-in surface (qcr attach / docker exec ... tmux attach
+# / the qcr tui embedded pane). The csi-u lines must exist before the server
+# starts or modified keys (Shift-Enter etc.) collapse before reaching pi.
+# Prefer the repo config (rides the sandbox mount, no image rebuild needed);
+# the inline heredoc below is only the no-sandbox fallback.
+if [[ -f "$SANDBOX/docker/vm/tmux.conf" ]]; then
+  cp "$SANDBOX/docker/vm/tmux.conf" "$HOME/.tmux.conf"
+else
+  cat > "$HOME/.tmux.conf" <<'TMUXCONF'
+# csi-u extended keys end-to-end (§3E /) — do not remove.
+set -g extended-keys on
+set -g extended-keys-format csi-u
+set -as terminal-features 'xterm*:extkeys'
+# Mouse wheel scrolls the pane HISTORY (tmux copy-mode), not pi's prompt list;
+# pi /copy propagates via OSC 52 through set-clipboard. Keep in sync with the
+# companion entrypoint.
+set -g mouse on
+set -g set-clipboard on
+set -as terminal-features 'xterm*:clipboard'
+set -g history-limit 50000
+# Muted look — no bright greens anywhere (operator order, 2026-08-14).
+set -g status-style 'bg=colour235,fg=colour247'
+set -g status-left-style 'fg=colour250'
+set -g status-right-style 'fg=colour244'
+set -g window-status-current-style 'fg=colour252,bold'
+set -g message-style 'bg=colour235,fg=colour250'
+set -g mode-style 'bg=colour238,fg=colour252'
+set -g pane-border-style 'fg=colour238'
+set -g pane-active-border-style 'fg=colour245'
+TMUXCONF
+fi
+tmux start-server
+tmux has-session -t main 2>/dev/null || tmux new-session -d -s main
+
+exec node "$SANDBOX/dist/src/wire.js"

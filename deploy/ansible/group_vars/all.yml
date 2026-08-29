@@ -100,12 +100,21 @@ container_memory: "8g"
 # Preflight refusal threshold on the shared box.
 min_free_disk_gb: 15
 
+# Ingress. The tunnel is OPTIONAL: any HTTPS proxy or tunnel that
+# forwards your webhook hostname to localhost:{{ webhook_port }} on the VM
+# works. `true` keeps the live deployment's cloudflared service (and then
+# `tunnel_token` must exist under secrets_src); set false (or
+# `-e cloudflared_enabled=false`) to bring your own ingress — no other task
+# depends on the tunnel.
+cloudflared_enabled: true
+
 # Controller-side sources
 secrets_src: "{{ lookup('env', 'HOME') }}/.config/quickreview-bot"
-# Expected files there: app_id, app.pem, openai_api_key, webhook_secret, tunnel_token
+# Expected files there: app_id, app.pem, webhook_secret; openai_api_key
+# optional (OAuth route); tunnel_token only when cloudflared_enabled.
 
-# The prompt/agent artifact set (seeded into the container volume).
-seed_src: "/path/to/seed-assets"
-
-# The local sandbox working copy (daemon, extensions, prompts).
-sandbox_src: "/path/to/quickreview"
+# The local sandbox working copy (daemon, extensions, prompts, the seed
+# content — prompts/ and agents/ ride this rsync; there is no separate seed
+# source). Defaults to the repo this playbook lives in;
+# override with -e for a different checkout.
+sandbox_src: "{{ playbook_dir | dirname | dirname }}"

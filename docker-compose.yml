@@ -1,0 +1,64 @@
+# Plain Docker path — build and run the review daemon on any host.
+#
+#   docker compose up -d --build
+#
+# Prerequisites: a secrets dir (default ~/.config/quickreview-bot — override
+# with QCR_SECRETS_DIR) holding at least app_id, app.pem, webhook_secret;
+# optional openai_api_key, openviking_root_key, openviking_reviewer_key.
+# Ingress is the operator's choice: any HTTPS proxy or tunnel that forwards
+# your webhook hostname to the published port works (cloudflared is one
+# option — the Ansible route in deploy/ansible/ wires it for the live VM).
+# See docker/daemon/README.md.
+#
+# Pins: the image versions (pi, OpenViking, llama-cpp-python, pi-subagents,
+# tmux) are the Dockerfile's ARG defaults, mirrored against config.toml and
+# deploy/ansible/group_vars/all.yml by tests/docker-daemon.test.ts — drift
+# refuses there. Do not override the build args casually: a bump is a
+# deliberate act recorded in ALL the mirror locations.
+name: quickreview
+
+services:
+  daemon:
+    build:
+      context: docker/daemon
+      args:
+        # The repo is bind-mounted and the entrypoint builds in it — the
+        # container user must own your checkout's files. Set QCR_UID=$(id -u)
+        # (the default 1001 matches the templated VM image).
+        REVIEW_UID: ${QCR_UID:-1001}
+    image: quickreview-sandbox:v1
+    # PID-1 discipline: with a supervised OpenViking process beside
+    # the daemon, PID 1 must reap. tini forwards signals and adopts orphans.
+    init: true
+    restart: unless-stopped
+    # Resource caps — same defaults as the live VM (a shared box). Raise via
+    # QCR_CPUS / QCR_MEMORY if the host is yours alone.
+    cpus: ${QCR_CPUS:-2}
+    mem_limit: ${QCR_MEMORY:-8g}
+    memswap_limit: ${QCR_MEMORY:-8g}
+    # The webhook port is the ONLY thing this container publishes, and on
+    # loopback by default — put your HTTPS ingress in front of it. OpenViking's
+    # port (1933) is deliberately absent: it is loopback-INSIDE-the-container,
+    # reachable by the daemon and the pi sessions and by nothing else. Do not
+    # publish it.
+    ports:
+      - "${QCR_WEBHOOK_BIND:-127.0.0.1}:${QCR_WEBHOOK_PORT:-8787}:8787"
+    volumes:
+      # The repo itself IS the sandbox (the entrypoint runs npm ci + build on
+      # first boot and symlinks <sandbox>/state onto the state volume).
+      - ./:/opt/quickreview/sandbox
+      - qcr-state:/opt/quickreview/state
+      - ${QCR_SECRETS_DIR:-~/.config/quickreview-bot}:/opt/quickreview/secrets:ro
+      # pi's home: OAuth tokens (auth.json), session JSONLs, models.json —
+      # must survive container rebuilds (sticky sessions + /login tokens).
+      - qcr-pihome:/home/review/.pi
+    environment:
+      TZ: ${TZ:-Europe/Warsaw}
+      QC_REVIEW_PORT: "8787"
+      # In-container bind must be 0.0.0.0 — the published port targets the
+      # container's eth0; host exposure stays loopback-only above.
+      QC_BIND_HOST: "0.0.0.0"
+
+volumes:
+  qcr-state:
+  qcr-pihome:

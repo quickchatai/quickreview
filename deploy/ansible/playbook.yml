@@ -32,6 +32,7 @@
         name: cloudflared
       register: cf_service
       failed_when: false
+      when: cloudflared_enabled | bool
 
     - name: "Fail: a foreign cloudflared already runs here"
       ansible.builtin.fail:
@@ -40,8 +41,9 @@
           was never installed — it is serving someone else's tunnel. The
           `cloudflared service install` step would clobber it. Wire the
           quickreview hostname into the existing tunnel instead, or run the two
-          side by side manually, then re-run with the cloudflared tasks skipped.
+          side by side manually, then re-run with `-e cloudflared_enabled=false`.
       when: >-
+        cloudflared_enabled | bool and
         not sandbox_dir.stat.exists and
         cf_service.status is defined and
         (cf_service.status.ActiveState | default('inactive')) == 'active'
@@ -53,11 +55,14 @@
         root_mount: "{{ ansible_mounts | selectattr('mount', 'equalto', '/') | first }}"
       when: (root_mount.size_available | int) < (min_free_disk_gb | int) * 1024 * 1024 * 1024
 
-- name: Host setup — packages, Docker, cloudflared tunnel
+# The cloudflared tasks below are OPTIONAL: `cloudflared_enabled`
+# defaults true in group_vars — the live deployment keeps its tunnel — but any
+# other HTTPS ingress to the published webhook port works just as well. Set
+# `-e cloudflared_enabled=false` and bring your own proxy/tunnel; nothing else
+# in this playbook depends on the tunnel existing.
+- name: Host setup — packages, Docker, cloudflared tunnel (optional)
   hosts: quickreview
   become: true
-  vars:
-    cloudflared_tunnel_token: "{{ lookup('file', secrets_src + '/tunnel_token') | trim }}"
   tasks:
     - name: Base packages
       ansible.builtin.apt:
@@ -90,30 +95,35 @@
         url: https://pkg.cloudflare.com/cloudflare-main.gpg
         dest: /usr/share/keyrings/cloudflare-main.gpg
         mode: "0644"
+      when: cloudflared_enabled | bool
 
     - name: Cloudflared apt repository
       ansible.builtin.apt_repository:
         repo: "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared {{ ansible_distribution_release }} main"
         filename: cloudflared
         state: present
+      when: cloudflared_enabled | bool
 
     - name: Install cloudflared
       ansible.builtin.apt:
         name: cloudflared
         state: present
         update_cache: true
+      when: cloudflared_enabled | bool
 
     - name: Register cloudflared as a systemd service (remote-managed tunnel)
       ansible.builtin.command:
-        cmd: cloudflared service install {{ cloudflared_tunnel_token }}
+        cmd: cloudflared service install {{ lookup('file', secrets_src + '/tunnel_token') | trim }}
         creates: /etc/systemd/system/cloudflared.service
       no_log: true
+      when: cloudflared_enabled | bool
 
     - name: Cloudflared service running
       ansible.builtin.systemd:
         name: cloudflared
         state: started
         enabled: true
+      when: cloudflared_enabled | bool
 
 - name: Sandbox container — image, secrets, seed content
   hosts: quickreview
@@ -177,24 +187,12 @@
       no_log: true
       when: lookup('ansible.builtin.fileglob', secrets_src + '/' + item) | length > 0
 
-    - name: Seed prompts (from the artifact set)
-      ansible.builtin.copy:
-        src: "{{ seed_src }}/{{ item }}"
-        dest: "{{ sandbox_root }}/sandbox/prompts/{{ item }}"
-        mode: "0644"
-      loop:
-        - conversation-system.md
-        - overseer-system.md
-        - eod-sweep.md
-        - pass-common.md
-
-    - name: Seed pass agents (from the artifact set)
-      ansible.builtin.copy:
-        src: "{{ item }}"
-        dest: "{{ sandbox_root }}/sandbox/agents/{{ item | basename }}"
-        mode: "0644"
-      with_fileglob: "{{ seed_src }}/pass-*.md"
-      when: (item | basename) != 'pass-common.md'
+    # NOTE: the two "seed from the artifact set" copy tasks
+    # that used to live here are DELETED. They required a private tracker
+    # checkout at an exact controller path, and their output was overwritten by
+    # the rsync below anyway: the repo's prompts/ and agents/ carry the same
+    # files, byte-identical to the artifact set (enforced by
+    # tests/seed-integrity.test.ts — root CLAUDE.md rule 6).
 
     - name: Sync the local sandbox working copy (daemon, extensions) when present
       ansible.posix.synchronize:
@@ -309,9 +307,11 @@
         'printf "{\n  \"maxConcurrency\": 6\n}\n" > /opt/pi-extensions/pi-subagents/config.json'
       changed_when: true
 
-    - name: Note — webhook path goes live only once the daemon (build slice B2) listens
+    - name: Note — webhook ingress
       ansible.builtin.debug:
         msg: >-
-          cloudflared forwards review.example.com -> localhost:{{ webhook_port }}
-          -> container. Until quickreviewd is built and started inside the container,
-          GitHub deliveries will 502 at the edge; that is expected pre-B2.
+          The webhook port is published on 127.0.0.1:{{ webhook_port }} only.
+          {% if cloudflared_enabled | bool %}cloudflared forwards the public
+          hostname -> localhost:{{ webhook_port }} -> container.{% else %}
+          cloudflared is disabled (cloudflared_enabled=false) — point your own
+          HTTPS proxy or tunnel at localhost:{{ webhook_port }}.{% endif %}

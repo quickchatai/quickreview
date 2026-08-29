@@ -28,3 +28,6 @@ pihome/
 *.log
 BUILD_SHA
 state-snapshots/
+# the LIVE inventory is operator-local (real hostnames); the tracked
+# template is inventory.example.ini — copy it to inventory.ini and fill in.
+deploy/ansible/inventory.ini
