@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -1205,13 +1205,17 @@ describe("the memory addendum", () => {
   });
 });
 
-describe("the corpus-derived rules (six of seven ride the quickchat profile)", () => {
-  const sandbox = join(import.meta.dirname, "..");
+// The quickchat pack is excluded from the assembled public snapshot;
+// the deployed-composition pins self-skip where it is absent.
+const corpusSandbox = join(import.meta.dirname, "..");
+const HAS_QC_PACK = existsSync(join(corpusSandbox, "profiles", "quickchat"));
+describe.skipIf(!HAS_QC_PACK)("the corpus-derived rules (six of seven ride the quickchat profile)", () => {
+  const sandbox = corpusSandbox;
   // The deployed composition: built-in generics, then the quickchat pack —
   // exactly what wire.ts assembles with `[review] profile = "quickchat"`.
   // The content pins below bind THAT configuration; the byte-equivalence
   // proof for the extraction itself lives in tests/profiles.test.ts.
-  const REGISTRY = [...PASS_ADDENDA, ...loadProfileAddenda(sandbox, "quickchat")];
+  const REGISTRY = [...PASS_ADDENDA, ...(HAS_QC_PACK ? loadProfileAddenda(sandbox, "quickchat") : [])];
   let out: string;
   let bodies: Map<string, string>;
 

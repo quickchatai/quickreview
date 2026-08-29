@@ -6,7 +6,7 @@
 // from a degraded Django check. The ratified decision this file guards for
 // the Django case: "migration renumber posts as a COMMENT, never a blocker —
 // and the check gets MORE reliable, never quieter."
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -393,7 +393,11 @@ describe("loadProfileEcosystem", () => {
   const repoRoot = process.cwd();
 
   it("reads the shipped profiles: quickchat and example-django are django, minimal is none", () => {
-    expect(loadProfileEcosystem(repoRoot, "quickchat")).toBe("django");
+    // The quickchat pack is excluded from the assembled public
+    // snapshot; its expectation applies only where the pack ships.
+    if (existsSync(join(repoRoot, "profiles", "quickchat"))) {
+      expect(loadProfileEcosystem(repoRoot, "quickchat")).toBe("django");
+    }
     expect(loadProfileEcosystem(repoRoot, "example-django")).toBe("django");
     expect(loadProfileEcosystem(repoRoot, "minimal")).toBe("none");
   });

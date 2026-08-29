@@ -15,7 +15,7 @@
 //     for the one deliberate delta vs the legacy registry: an extracted
 //     entry that used to sit mid-registry now composes at its pass's tail.
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PASS_ADDENDA, buildAgents } from "../src/include.js";
@@ -31,6 +31,9 @@ import {
 import { PROFILE_EXTENDABLE_LENSES } from "../src/heuristics.js";
 
 const sandbox = join(import.meta.dirname, "..");
+// The quickchat pack is excluded from the assembled public snapshot
+// (publish-manifest.json); the pins for that exact pack self-skip without it.
+const HAS_QC = existsSync(join(sandbox, "profiles", "quickchat"));
 
 // ---- the frozen legacy constants (verbatim from legacy src/include.ts) --
 
@@ -192,7 +195,7 @@ describe("the shipped profiles", () => {
     }
   });
 
-  it("quickchat carries the six moved corpus rules under their original ids, in registry order", () => {
+  it.skipIf(!HAS_QC)("quickchat carries the six moved corpus rules under their original ids, in registry order", () => {
     const pack = loadProfileAddenda(sandbox, "quickchat");
     expect(pack.map((a) => a.id)).toEqual(LEGACY_PACK.map((a) => a.id));
     expect(pack.map((a) => a.scope)).toEqual(LEGACY_PACK.map((a) => a.scope));
@@ -202,7 +205,7 @@ describe("the shipped profiles", () => {
 // ---- the byte-equivalence proof ------------------------------------
 
 describe("quickchat extraction is byte-preserving", () => {
-  it("every moved file's composed text is byte-identical to the legacy constant", () => {
+  it.skipIf(!HAS_QC)("every moved file's composed text is byte-identical to the legacy constant", () => {
     const pack = loadProfileAddenda(sandbox, "quickchat");
     expect(pack.length).toBe(LEGACY_PACK.length);
     for (let i = 0; i < pack.length; i++) {
@@ -230,7 +233,7 @@ describe("quickchat extraction is byte-preserving", () => {
     }
   }
 
-  it("building with the quickchat pack reproduces the compiled-in constants' output byte-for-byte", () => {
+  it.skipIf(!HAS_QC)("building with the quickchat pack reproduces the compiled-in constants' output byte-for-byte", () => {
     const expected = build([...PASS_ADDENDA, ...LEGACY_PACK]);
     const actual = build([...PASS_ADDENDA, ...loadProfileAddenda(sandbox, "quickchat")]);
     expect([...actual.keys()].sort()).toEqual([...expected.keys()].sort());
@@ -253,7 +256,10 @@ describe("quickchat extraction is byte-preserving", () => {
 
   it("the dynamic feedback-day addendum still composes LAST, after the pack", () => {
     const fb: PassAddendum = { id: "feedback-day-validate", scope: ["pass-validate"], text: "\n## FB-LAST\nx\n" };
-    const files = build([...PASS_ADDENDA, ...loadProfileAddenda(sandbox, "quickchat"), fb]);
+    // The shipped pack where present (the private tree); the example pack in
+    // the public snapshot — compose-last holds for any pack.
+    const pack = loadProfileAddenda(sandbox, HAS_QC ? "quickchat" : "example-django");
+    const files = build([...PASS_ADDENDA, ...pack, fb]);
     for (const [name, bytes] of files) {
       if (!name.startsWith("pass-validate--")) continue;
       expect(bytes.trimEnd().endsWith("## FB-LAST\nx"), name).toBe(true);
@@ -328,7 +334,7 @@ describe("loadProfileHeuristics", () => {
   });
 
   it("the shipped quickchat and example-django files load and stay inside the extendable set", () => {
-    for (const profile of ["quickchat", "example-django"]) {
+    for (const profile of HAS_QC ? ["quickchat", "example-django"] : ["example-django"]) {
       const ext = loadProfileHeuristics(sandbox, profile);
       for (const lens of [...Object.keys(ext.paths), ...Object.keys(ext.addedLines)]) {
         expect(PROFILE_EXTENDABLE_LENSES, `${profile}: ${lens}`).toContain(lens);

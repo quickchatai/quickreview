@@ -10,7 +10,7 @@
 // dry_run = false) is a GitHub mutation and is deferred to the VM cutover
 // — it cannot and must not run here.
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "../src/config.js";
@@ -119,13 +119,19 @@ afterEach(() => {
 });
 
 describe("dry-run fixture round", () => {
-  it("has dry_run false in the committed config — LIVE since the 2026-08-14 cutover", () => {
-    // Deliberately reads the LIVE config.toml (rule 1): the production flag is
-    // the owner's alone, and this pin is the tripwire against an accidental
-    // flip. Every other test in this file runs on tests/fixtures/config.toml
-    // so operator identity edits never redden the suite.
-    expect(loadConfig(join(SANDBOX, "config.toml")).dry_run).toBe(false);
-  });
+  // Live-only tripwire: the assembled public snapshot has no
+  // config.toml (adopters start from config.example.toml, dry_run = true),
+  // so the pin self-skips there — same discipline as tests/config.test.ts.
+  it.skipIf(!existsSync(join(SANDBOX, "config.toml")))(
+    "has dry_run false in the committed config — LIVE since the 2026-08-14 cutover",
+    () => {
+      // Deliberately reads the LIVE config.toml (rule 1): the production flag is
+      // the owner's alone, and this pin is the tripwire against an accidental
+      // flip. Every other test in this file runs on tests/fixtures/config.toml
+      // so operator identity edits never redden the suite.
+      expect(loadConfig(join(SANDBOX, "config.toml")).dry_run).toBe(false);
+    },
+  );
 
   it("builds the round's agent variant definitions with includes expanded", () => {
     const { cfg } = harness();

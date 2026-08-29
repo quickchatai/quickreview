@@ -9,7 +9,7 @@
 //      container's own netns — nothing is published anywhere;
 //   3. an unreachable memory engine alerts through the existing alert policy
 //      and never wedges anything.
-import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -528,8 +528,11 @@ describe("companion image carries the memory path, not a credential", () => {
 
 // ---- documentation ----------------------------------------------------------
 
-describe("provisioning is documented, not folklore", () => {
-  const doc = readFileSync(resolve(root, "docs/companion-memory-access.md"), "utf8");
+// The ops doc is private-deployment topology and is excluded from the
+// assembled public snapshot — the block self-skips where it is absent.
+const opsDocPath = resolve(root, "docs/companion-memory-access.md");
+describe.skipIf(!existsSync(opsDocPath))("provisioning is documented, not folklore", () => {
+  const doc = existsSync(opsDocPath) ? readFileSync(opsDocPath, "utf8") : "";
 
   it("documents the systemd install, the keys file and the confinement check", () => {
     expect(doc).toContain("companion-memory-forward.mjs install");

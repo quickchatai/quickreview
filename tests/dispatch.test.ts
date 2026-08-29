@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
@@ -242,7 +242,9 @@ describe("buildPassPlan", () => {
     },
   };
 
-  it("threads the profile heuristics extension into selection", async () => {
+  // Self-skips where the quickchat pack is absent (the assembled
+  // public snapshot excludes it).
+  it.skipIf(!existsSync(resolve(import.meta.dirname, "..", "profiles", "quickchat")))("threads the profile heuristics extension into selection", async () => {
     const { loadProfileHeuristics } = await import("../src/profiles.js");
     const qc = loadProfileHeuristics(resolve(import.meta.dirname, ".."), "quickchat");
     const files = [file("project/settings_prod.py", 12, 1)];

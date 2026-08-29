@@ -885,12 +885,18 @@ describe("companion image", () => {
 // rides /workspace with the exists-guard (degrade to no-subagents, never a pi
 // that won't start) and needs no rebuild. The VM keeps its image clone; the
 // pin is ONE fact in two places and must never drift.
-describe("vendored pi-subagents (companion)", () => {
-  const vendor = resolve(root, "extensions/vendor/pi-subagents");
-  const upstream = JSON.parse(readFileSync(resolve(vendor, "upstream.json"), "utf8")) as {
-    repo: string;
-    commit: string;
-  };
+// The vendored copy is unlicensed upstream and is excluded from the
+// assembled public snapshot — this block self-skips where it is
+// absent (the exists-guard in piArgv already makes runtime absence safe).
+const subagentsVendorDir = resolve(root, "extensions/vendor/pi-subagents");
+const hasSubagentsVendor = existsSync(resolve(subagentsVendorDir, "upstream.json"));
+describe.skipIf(!hasSubagentsVendor)("vendored pi-subagents (companion)", () => {
+  const vendor = subagentsVendorDir;
+  const upstream = (
+    hasSubagentsVendor
+      ? JSON.parse(readFileSync(resolve(vendor, "upstream.json"), "utf8"))
+      : { repo: "", commit: "" }
+  ) as { repo: string; commit: string };
 
   it("pins the SAME commit the VM image clones (double mirror with group_vars)", () => {
     const groupVars = readFileSync(resolve(root, "deploy/ansible/group_vars/all.yml"), "utf8");

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
   EMPTY_HEURISTICS,
@@ -20,8 +21,11 @@ import type { PrFileEntry } from "../src/github.js";
 const sandbox = join(import.meta.dirname, "..");
 /** The REAL quickchat profile's heuristics.toml — the predicates
  * moved out of the compiled-in core. Loading it here is deliberate: these
- * tests are the equivalence proof for that exact file. */
-const QC = loadProfileHeuristics(sandbox, "quickchat");
+ * tests are the equivalence proof for that exact file. The pack is excluded
+ * from the assembled public snapshot, so its equivalence proofs
+ * self-skip (HAS_QC) where it is absent. */
+const HAS_QC = existsSync(join(sandbox, "profiles", "quickchat"));
+const QC = HAS_QC ? loadProfileHeuristics(sandbox, "quickchat") : EMPTY_HEURISTICS;
 
 const f = (filename: string, additions = 1, deletions = 0): PrFile => ({ filename, additions, deletions });
 const fe = (filename: string, additions = 1, deletions = 0): PrFileEntry => ({
@@ -158,7 +162,7 @@ describe("selectLenses", () => {
     expect(selectLenses([removed])).not.toContain("pass-statelessness");
   });
 
-  it("repo-shaped predicates moved to the quickchat profile fire only WITH it", () => {
+  it.skipIf(!HAS_QC)("repo-shaped predicates moved to the quickchat profile fire only WITH it", () => {
     const profileCases: Array<[PrFile, string]> = [
       [f("project/settings_prod.py"), "pass-security"],
       [f("app/management/commands/backfill_users.py"), "pass-data-safety"],
@@ -294,7 +298,7 @@ describe("selectLenses: pass-backcompat", () => {
     expect(selectLenses([f("app/tasks/retrain.py")])).toContain("pass-backcompat");
   });
 
-  it("fires on DRF filename vocabulary and settings via the quickchat profile", () => {
+  it.skipIf(!HAS_QC)("fires on DRF filename vocabulary and settings via the quickchat profile", () => {
     expect(selectLenses([f("app/views.py")], undefined, QC)).toContain("pass-backcompat");
     expect(selectLenses([f("app/urls.py")], undefined, QC)).toContain("pass-backcompat");
     expect(selectLenses([f("project/settings_prod.py")], undefined, QC)).toContain("pass-backcompat");
@@ -553,7 +557,7 @@ const CORPUS: Array<{ name: string; files: PrFile[]; body?: string | null }> = [
 ];
 
 describe("equivalence: quickchat heuristics.toml == the pre-lift compiled-in selection", () => {
-  it("matches the frozen legacy selection EXACTLY (lenses and order) over the corpus", () => {
+  it.skipIf(!HAS_QC)("matches the frozen legacy selection EXACTLY (lenses and order) over the corpus", () => {
     for (const c of CORPUS) {
       const intent = c.body !== undefined ? { body: c.body } : undefined;
       expect(selectLenses(c.files, intent, QC), c.name).toEqual(legacySelectLenses(c.files, intent));
@@ -576,7 +580,7 @@ describe("equivalence: quickchat heuristics.toml == the pre-lift compiled-in sel
     expect(loadProfileHeuristics(sandbox, "")).toEqual({ paths: {}, addedLines: {} });
   });
 
-  it("the quickchat extension touches only profile-extendable lenses", () => {
+  it.skipIf(!HAS_QC)("the quickchat extension touches only profile-extendable lenses", () => {
     for (const lens of [...Object.keys(QC.paths), ...Object.keys(QC.addedLines)]) {
       expect(PROFILE_EXTENDABLE_LENSES, lens).toContain(lens);
     }

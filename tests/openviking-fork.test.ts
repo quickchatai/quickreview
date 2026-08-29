@@ -16,7 +16,7 @@
 //
 // A failure here means the fork drifted, not that the test is stale. Read
 // extensions/vendor/openviking-pi/README.md before "fixing" anything.
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -70,7 +70,12 @@ describe("provenance and licence", () => {
     // Deliberately the LIVE config.toml (rule 7): this is one leg of the
     // extension-commit double mirror, so it must read what deploys — a pin
     // check, not an identity check; operator identity edits stay green.
-    const cfg = parseToml(readFileSync(join(ROOT, "config.toml"), "utf8")) as any;
+    // LIVE config where present; config.example.toml (identical pin block by
+    // construction) stands in inside the assembled public snapshot.
+    const configPath = existsSync(join(ROOT, "config.toml"))
+      ? join(ROOT, "config.toml")
+      : join(ROOT, "config.example.toml");
+    const cfg = parseToml(readFileSync(configPath, "utf8")) as any;
     const ov = cfg.openviking ?? {};
     // The server version and the fork's base commit move together — the
     // extension is part of the same pinned artefact.

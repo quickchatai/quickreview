@@ -6,7 +6,7 @@
 // the reason it exists is that a silently floating memory engine is a
 // data-shape change nobody would notice until the vectors stopped matching.
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { OPENVIKING_DEFAULTS, openVikingBaseUrl, parseConfig, resolveOpenVikingPaths } from "../src/config.js";
@@ -16,7 +16,14 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // IS the drift tripwire between the deployed config and group_vars/Dockerfile
 // (rule 7) — running it on a fixture would let the live pins float. It asserts
 // pins only, never identity values, so operator edits stay green here.
-const configToml = readFileSync(resolve(root, "config.toml"), "utf8");
+// The assembled public snapshot excludes config.toml; there the
+// mirror runs against config.example.toml, whose pin blocks are identical by
+// construction — the same drift coverage, minus the live-identity values.
+const liveConfigPath = resolve(root, "config.toml");
+const configToml = readFileSync(
+  existsSync(liveConfigPath) ? liveConfigPath : resolve(root, "config.example.toml"),
+  "utf8",
+);
 const groupVars = readFileSync(resolve(root, "deploy/ansible/group_vars/all.yml"), "utf8");
 const dockerfile = readFileSync(resolve(root, "deploy/ansible/templates/Dockerfile.j2"), "utf8");
 const entrypoint = readFileSync(resolve(root, "deploy/ansible/templates/entrypoint.sh.j2"), "utf8");

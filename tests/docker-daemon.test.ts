@@ -10,13 +10,20 @@
 // secrets mount, degrade-never-block, the no-stall trust layers) and the
 // compose topology (webhook published, OpenViking port never).
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseConfig } from "../src/config.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const configToml = readFileSync(resolve(root, "config.toml"), "utf8");
+// The LIVE config.toml where present (the rule-7 drift tripwire); in the
+// assembled public snapshot — which excludes it — the mirror runs
+// against config.example.toml, whose pin blocks are identical by construction.
+const liveConfigPath = resolve(root, "config.toml");
+const configToml = readFileSync(
+  existsSync(liveConfigPath) ? liveConfigPath : resolve(root, "config.example.toml"),
+  "utf8",
+);
 const groupVars = readFileSync(resolve(root, "deploy/ansible/group_vars/all.yml"), "utf8");
 const dockerfile = readFileSync(resolve(root, "docker/daemon/Dockerfile"), "utf8");
 const entrypoint = readFileSync(resolve(root, "docker/daemon/entrypoint.sh"), "utf8");
