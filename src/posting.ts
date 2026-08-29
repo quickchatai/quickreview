@@ -102,10 +102,13 @@ export interface ReviewInput {
 /** The first-party directive paths this review's surviving injection findings
  * sit on, in finding order, deduplicated. means these are proven
  * malicious/source-to-sink cases, not routine directive prose. */
-export function directiveEscalationFiles(findings: readonly Finding[]): string[] {
+export function directiveEscalationFiles(
+  findings: readonly Finding[],
+  vocab?: import("./severity.js").DirectiveVocabulary,
+): string[] {
   const files: string[] = [];
   for (const f of findings) {
-    if (isFirstPartyDirectiveInjection(f.kind, f.path) && !files.includes(f.path)) files.push(f.path);
+    if (isFirstPartyDirectiveInjection(f.kind, f.path, vocab) && !files.includes(f.path)) files.push(f.path);
   }
   return files;
 }

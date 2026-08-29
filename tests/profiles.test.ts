@@ -20,7 +20,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PASS_ADDENDA, buildAgents } from "../src/include.js";
 import type { PassAddendum } from "../src/include.js";
-import { loadProfileAddenda, parseProfileAddendum, profileDir, reservedAddendumIds } from "../src/profiles.js";
+import {
+  loadProfileAddenda,
+  loadProfileHeuristics,
+  parseProfileAddendum,
+  parseProfileHeuristics,
+  profileDir,
+  reservedAddendumIds,
+} from "../src/profiles.js";
+import { PROFILE_EXTENDABLE_LENSES } from "../src/heuristics.js";
 
 const sandbox = join(import.meta.dirname, "..");
 
@@ -249,6 +257,82 @@ describe("quickchat extraction is byte-preserving", () => {
     for (const [name, bytes] of files) {
       if (!name.startsWith("pass-validate--")) continue;
       expect(bytes.trimEnd().endsWith("## FB-LAST\nx"), name).toBe(true);
+    }
+  });
+});
+
+// ---- lens-selection heuristics ------------------------------------
+
+describe("parseProfileHeuristics", () => {
+  const F = "/p/heuristics.toml";
+
+  it("compiles paths verbatim (case-sensitive) and added_lines as added-line probes", () => {
+    const ext = parseProfileHeuristics(
+      F,
+      `[pass-security]\npaths = ['(^|/)settings[^/]*\\.py$']\n\n[pass-delivery]\nadded_lines = ['@background_decorator']\n`,
+    );
+    const settings = ext.paths["pass-security"]![0]!;
+    expect(settings.test("project/settings_prod.py")).toBe(true);
+    expect(settings.test("project/SETTINGS_prod.py")).toBe(false); // case-sensitive, like the core
+    expect(settings.test("docs/settings_notes.md")).toBe(false);
+    const probe = ext.addedLines["pass-delivery"]![0]!;
+    expect(probe.test("@@ -1 +1,2 @@\n+@background_decorator\n def handle():")).toBe(true);
+    expect(probe.test("@@ -1,2 +1 @@\n-@background_decorator\n pass")).toBe(false); // removed line: no
+    expect(probe.test(" @background_decorator")).toBe(false); // context line: no
+  });
+
+  it("an empty file and an empty lens table are both legal (nothing to add)", () => {
+    expect(parseProfileHeuristics(F, "")).toEqual({ paths: {}, addedLines: {} });
+    expect(parseProfileHeuristics(F, "[pass-ui]\n")).toEqual({ paths: {}, addedLines: {} });
+  });
+
+  it("rejects a non-extendable lens, naming why", () => {
+    expect(() => parseProfileHeuristics(F, `[pass-intent]\npaths = ['x']\n`)).toThrow(/not an extendable lens/);
+    expect(() => parseProfileHeuristics(F, `[pass-concurrency]\npaths = ['x']\n`)).toThrow(/addable-only/);
+    expect(() => parseProfileHeuristics(F, `[pass-nope]\npaths = ['x']\n`)).toThrow(/pass-nope/);
+    expect(() => parseProfileHeuristics(F, `[pass-validate]\npaths = ['x']\n`)).toThrow(/not an extendable lens/);
+  });
+
+  it("rejects unknown keys, non-arrays, non-strings, empty patterns and bad regexes — loudly", () => {
+    expect(() => parseProfileHeuristics(F, `[pass-ui]\nglobs = ['x']\n`)).toThrow(/unknown key "globs"/);
+    expect(() => parseProfileHeuristics(F, `[pass-ui]\npaths = 'x'\n`)).toThrow(/must be an array of strings/);
+    expect(() => parseProfileHeuristics(F, `[pass-ui]\npaths = [1]\n`)).toThrow(/must be an array of strings/);
+    expect(() => parseProfileHeuristics(F, `[pass-ui]\npaths = ['']\n`)).toThrow(/empty pattern/);
+    expect(() => parseProfileHeuristics(F, `[pass-ui]\npaths = ['(unclosed']\n`)).toThrow(/not a valid RegExp/);
+    expect(() => parseProfileHeuristics(F, `[pass-ui]\nadded_lines = ['[']\n`)).toThrow(/not a valid RegExp/);
+    expect(() => parseProfileHeuristics(F, `not toml ===`)).toThrow(/not valid TOML/);
+  });
+});
+
+describe("loadProfileHeuristics", () => {
+  let root: string;
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "qcr-profiles-h-"));
+  });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  it('"" (no profile) is the empty extension without touching the filesystem', () => {
+    expect(loadProfileHeuristics(join(root, "does-not-exist"), "")).toEqual({ paths: {}, addedLines: {} });
+  });
+
+  it("a missing profile directory fails loudly; an ABSENT heuristics.toml does not", () => {
+    expect(() => loadProfileHeuristics(root, "nope")).toThrow(/profile "nope" not found/);
+    mkdirSync(profileDir(root, "bare"), { recursive: true });
+    expect(loadProfileHeuristics(root, "bare")).toEqual({ paths: {}, addedLines: {} });
+  });
+
+  it("a malformed heuristics.toml fails the load, naming the file", () => {
+    mkdirSync(profileDir(root, "bad"), { recursive: true });
+    writeFileSync(join(profileDir(root, "bad"), "heuristics.toml"), "[pass-ui]\npaths = ['(']\n");
+    expect(() => loadProfileHeuristics(root, "bad")).toThrow(/heuristics\.toml.*not a valid RegExp/);
+  });
+
+  it("the shipped quickchat and example-django files load and stay inside the extendable set", () => {
+    for (const profile of ["quickchat", "example-django"]) {
+      const ext = loadProfileHeuristics(sandbox, profile);
+      for (const lens of [...Object.keys(ext.paths), ...Object.keys(ext.addedLines)]) {
+        expect(PROFILE_EXTENDABLE_LENSES, `${profile}: ${lens}`).toContain(lens);
+      }
     }
   });
 });

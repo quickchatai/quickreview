@@ -32,6 +32,13 @@ improvement_label = "Bot improvement"
 issue_label = "bot-filed"
 # secrets dir: app_id, app.pem, openai_api_key, webhook_secret, tunnel_token
 secrets_dir = "~/.config/quickreview-bot"      # ← FILL (5): dir holding app_id, app.pem, webhook_secret, …
+# The repo's default branch: the improvement filer's PR base, the
+# replay diff base, the CLI-ops fixture base. PR review rounds always use each
+# PR's own base_ref from the GitHub API, never this.
+base_branch = "main"                         # ← FILL: your default branch ("main"/"master")
+# Base-clone directory name under the sandbox root. "" (recommended) derives
+# it from the repo slug's basename — "owner/name" ⇒ "name".
+clone_dir = ""
 
 [owner]
 # The system's ONE accountable human, as a configured role. Every
@@ -103,6 +110,10 @@ improvement_pr_max_files = 3
 improvement_pr_per_day = 1
 improvement_pr_per_week = 3
 issues_per_day = 3
+# Paths a bot improvement PR may never touch. This value REPLACES
+# the shipped default shown here — adjust to your repo's shape — but files
+# named .env* are refused unconditionally regardless of this list.
+improvement_pr_deny_prefixes = ["migrations/", "infra/", "ansible/", ".github/workflows/"]
 
 [models]
 # default for every role; tiered pass models below (replaces [models.passes])
@@ -399,10 +410,28 @@ on_base_advance = true   # the base branch moved; no PR-owned file changed => no
 escalation_mention_default = ""             # ← FILL (8): fallback GitHub login for escalation @-mentions ("" = no @)
 # repo profile — names a directory under profiles/ whose house-rule
 # addenda pack (profiles/<name>/addenda/*.md) composes onto the built pass
-# bodies after the built-in generic registry. "" = no profile (generic addenda
-# only). Ship-with options: "minimal" (empty pack), "example-django" (a worked
-# illustrative Django pack). See docs/profiles.md for authoring your own.
+# bodies after the built-in generic registry, and whose optional
+# heuristics.toml extends lens selection with your repo's file shapes
+# (framework settings globs, command dirs, flag-library names — ADD-only, the
+# generic selection core always stays). "" = no profile (generic addenda and
+# generic selection only). Ship-with options: "minimal" (empty pack),
+# "example-django" (a worked illustrative Django pack, heuristics included).
+# See docs/profiles.md for authoring your own.
 profile = ""
+
+# EXTENSIONS to the first-party directive-path vocabulary the
+# escalation flow keys on (src/severity.ts). Extend-only by design:
+# these ADD names, the built-ins (.claude/**, .cursor/**, root prompts/**,
+# AGENTS.md/AGENT.md/CLAUDE.md/.cursorrules anywhere,
+# .github/copilot-instructions.md) can never be removed — dropping one would
+# silently re-enable auto-blocking on first-party directive edits. Leave
+# empty unless your repo keeps agent directives under other names.
+[review.directives]
+extra_basenames = []           # e.g. ["COPILOT.md"]
+extra_dir_segments = []        # e.g. [".aider"] — whole subtree, any depth
+extra_root_dirs = []           # ROOT-only directive dirs, like prompts/
+extra_files = []               # exact repo-relative paths
+extra_vendored_segments = []   # extra third-party markers (case-insensitive)
 
 [slack]
 # The Slack concierge — ONE channel, one thread per PR. Tokens are

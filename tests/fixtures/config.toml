@@ -17,6 +17,9 @@ repo = "example-org/example-app"
 app_slug = "example-review"
 bot_login = "example-review[bot]"
 review_team = "example-org/review"          # team-review-requested trigger
+# neutral base branch (the code default); clone_dir stays "" so the
+# derived-from-repo-slug path ("example-app") is what tests exercise.
+base_branch = "main"
 # escalation_reviewer was removed on 2026-08-18 with the escalation mechanics:
 # the daemon never nominates a reviewer on GitHub. A PR it cannot decide is
 # parked on `awaiting_human` daemon-side (verdict NEEDS_HUMAN) and surfaced in

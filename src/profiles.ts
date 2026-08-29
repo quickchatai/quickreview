@@ -35,10 +35,12 @@
 // parse — missing frontmatter, unknown keys, a bad scope, an empty body, a
 // duplicate or reserved id — throws with the offending path. A malformed pack
 // is a LOUD build failure, never a silent skip.
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import type { EcosystemName } from "./ecosystem.js";
+import { EMPTY_HEURISTICS, PROFILE_EXTENDABLE_LENSES } from "./heuristics.js";
+import type { HeuristicsExtension } from "./heuristics.js";
 import { PASS_ADDENDA, splitFrontmatter } from "./include.js";
 import type { PassAddendum, PassAddendumScope } from "./include.js";
 
@@ -184,4 +186,107 @@ export function loadProfileEcosystem(root: string, profile: string): EcosystemNa
   throw new Error(
     `[review] profile "${profile}": ${path} names unknown ecosystem ${JSON.stringify(eco)} — use "django" or "none"`,
   );
+}
+
+// ---- lens-selection heuristics -----------------------------------
+//
+// A profile's `heuristics.toml` carries the repo-shaped lens-selection
+// predicates (framework settings-file globs, management-command dirs, a
+// product-local decorator name, …) as per-lens extra path regexes and
+// added-line probes. The generic selection core stays compiled into
+// `src/heuristics.ts selectLenses`; the extension can only ADD predicates to
+// the lenses that module already selects by shape — never remove or weaken a
+// compiled-in one, and never touch the ADDABLE-ONLY lenses or
+// the body-keyed `pass-intent`.
+//
+// File format — one table per extendable lens, two optional keys each:
+//
+//   [pass-security]
+//   paths = ['(^|/)settings[^/]*\.py$']       # RegExp sources over filenames
+//
+//   [pass-delivery]
+//   added_lines = ['@background_decorator']   # probes over ADDED patch lines
+//
+// `paths` entries are compiled verbatim (case-sensitive, like the compiled-in
+// path predicates). `added_lines` entries are wrapped as `^\+.*(?:…)` with
+// the `im` flags, so each one matches an ADDED unified-diff line containing
+// the pattern, case-insensitively. Anything malformed — an unknown lens, an
+// unknown key, a non-string entry, a regex that does not compile — throws
+// with the offending file and key named: a malformed extension is a LOUD
+// assembly failure (wire.ts loads it once at boot), never a silent skip.
+// An ABSENT heuristics.toml is not malformed: a profile that only carries
+// addenda simply extends selection with nothing.
+
+/** Parse ONE heuristics.toml's raw bytes. Throws (naming `file`) on anything
+ * malformed — the same loud-failure contract as the addenda pack. */
+export function parseProfileHeuristics(file: string, raw: string): HeuristicsExtension {
+  let doc: Record<string, unknown>;
+  try {
+    doc = parseToml(raw) as Record<string, unknown>;
+  } catch (err) {
+    throw new Error(`profile heuristics ${file}: not valid TOML — ${String(err instanceof Error ? err.message : err)}`);
+  }
+  const paths: Record<string, RegExp[]> = {};
+  const addedLines: Record<string, RegExp[]> = {};
+  const compile = (lens: string, key: string, value: unknown, wrap: (src: string) => RegExp): RegExp[] => {
+    if (!Array.isArray(value) || value.some((v) => typeof v !== "string")) {
+      throw new Error(`profile heuristics ${file}: [${lens}] ${key} must be an array of strings`);
+    }
+    return (value as string[]).map((src) => {
+      if (src.trim() === "") throw new Error(`profile heuristics ${file}: [${lens}] ${key} contains an empty pattern`);
+      try {
+        return wrap(src);
+      } catch (err) {
+        throw new Error(
+          `profile heuristics ${file}: [${lens}] ${key} pattern ${JSON.stringify(src)} is not a valid RegExp — ${String(err instanceof Error ? err.message : err)}`,
+        );
+      }
+    });
+  };
+  for (const [lens, table] of Object.entries(doc)) {
+    if (!PROFILE_EXTENDABLE_LENSES.includes(lens)) {
+      throw new Error(
+        `profile heuristics ${file}: [${lens}] is not an extendable lens — allowed: ${PROFILE_EXTENDABLE_LENSES.join(", ")} ` +
+          `(pass-intent is body-keyed, pass-placement/pass-simplicity are status/size-computed, ` +
+          `pass-concurrency/pass-ask-human are addable-only by ratified decision)`,
+      );
+    }
+    if (typeof table !== "object" || table === null || Array.isArray(table)) {
+      throw new Error(`profile heuristics ${file}: [${lens}] must be a table with "paths" and/or "added_lines" arrays`);
+    }
+    for (const [key, value] of Object.entries(table as Record<string, unknown>)) {
+      if (key === "paths") {
+        paths[lens] = compile(lens, key, value, (src) => new RegExp(src));
+      } else if (key === "added_lines") {
+        // `^\+.*(?:…)` per probe: an ADDED unified-diff line containing the
+        // pattern. Case-insensitive by contract (documented above) — the one
+        // deliberate generalisation over the compiled-in probes, which mixed
+        // `m` and `im`.
+        addedLines[lens] = compile(lens, key, value, (src) => {
+          new RegExp(src); // validate the source on its own for a clean error
+          return new RegExp(`^\\+.*(?:${src})`, "im");
+        });
+      } else {
+        throw new Error(`profile heuristics ${file}: [${lens}] unknown key "${key}" — only "paths" and "added_lines" are allowed`);
+      }
+    }
+  }
+  return { paths, addedLines };
+}
+
+/**
+ * Load the named profile's lens-heuristics extension.
+ *
+ * `""` (no profile) and a profile without a `heuristics.toml` both yield the
+ * empty extension — the generic compiled-in core alone. Everything else that
+ * is wrong throws; the caller (wire.ts, at daemon assembly) lets it crash the
+ * boot rather than review with partial selection knowledge.
+ */
+export function loadProfileHeuristics(root: string, profile: string): HeuristicsExtension {
+  if (profile === "") return EMPTY_HEURISTICS;
+  const dir = profileDir(root, profile);
+  mustBeDir(dir, `[review] profile "${profile}" not found`);
+  const file = join(dir, "heuristics.toml");
+  if (!existsSync(file)) return EMPTY_HEURISTICS;
+  return parseProfileHeuristics(file, readFileSync(file, "utf8"));
 }

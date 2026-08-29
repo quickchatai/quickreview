@@ -27,6 +27,7 @@ import type { Config } from "./config.js";
 import {
   DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN,
   DEFAULT_SESSION_COMMAND_START_LEASE_S,
+  githubCloneDir,
   openVikingBaseUrl,
 } from "./config.js";
 import {
@@ -173,7 +174,15 @@ export class PiSessionManager implements SessionHooks {
     this.root = opts.root;
     this.tmux = opts.tmux ?? new Tmux({ exec: opts.exec });
     this.worktrees =
-      opts.worktrees ?? new WorktreeManager({ root: opts.root, repo: opts.cfg.github.repo, run: opts.exec });
+      opts.worktrees ??
+      new WorktreeManager({
+        root: opts.root,
+        repo: opts.cfg.github.repo,
+        // [github] clone_dir when set, else the repo slug's basename
+        // — "example-org/example-app" keeps deriving "example-app".
+        cloneDir: githubCloneDir(opts.cfg.github),
+        run: opts.exec,
+      });
     this.piBin = opts.piBin ?? "pi";
     this.piHome = opts.piHome ?? join(opts.root, "pihome");
     this.ovSessions = opts.ovSessions;

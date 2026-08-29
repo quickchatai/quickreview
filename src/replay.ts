@@ -64,7 +64,7 @@
 // upstream repo is only ever fetched from.
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import type { Config } from "./config.js";
+import { githubCloneDir, type Config } from "./config.js";
 import { buildPassPlan } from "./dispatch.js";
 // Type-only, erased at build: `buildPassPlan` takes the file list shape the
 // files API returns, and this module builds one out of `git diff --numstat`.
@@ -124,9 +124,11 @@ export interface ScratchReplayOptions {
   scratchRoot: string;
   io: ReplayIo;
   /** The base clone the worktrees hang off. Defaults to
-   * `<sandboxRoot>/example-app`, the same clone `worktrees.ts` maintains. */
+   * `<sandboxRoot>/<githubCloneDir(cfg.github)>`, the same clone
+   * `worktrees.ts` maintains. */
   baseClone?: string;
-  /** The branch PRs of this era targeted, for the diff base. */
+  /** The branch PRs of this era targeted, for the diff base. Defaults to
+   * `[github] base_branch`. */
   baseBranch?: string;
   model?: string;
   /** How long one case's session gets before the replay gives up on it and
@@ -140,7 +142,6 @@ export interface ScratchReplayOptions {
 }
 
 const DEFAULTS = {
-  baseBranch: "master",
   timeoutMs: 20 * 60_000,
   pollMs: 5_000,
 };
@@ -297,8 +298,11 @@ export class ScratchReplay {
     assertScratchIsolation(opts.scratchRoot, opts.sandboxRoot);
     this.o = {
       ...opts,
-      baseClone: opts.baseClone ?? join(opts.sandboxRoot, "example-app"),
-      baseBranch: opts.baseBranch ?? DEFAULTS.baseBranch,
+      // both derive from [github] — the clone dir from the repo slug
+      // (githubCloneDir), the branch from base_branch — so the replay reads
+      // the same clone worktrees.ts maintains, whatever the repo is called.
+      baseClone: opts.baseClone ?? join(opts.sandboxRoot, githubCloneDir(opts.cfg.github)),
+      baseBranch: opts.baseBranch ?? opts.cfg.github.base_branch,
       model: opts.model ?? opts.cfg.models.conversation,
       timeoutMs: opts.timeoutMs ?? DEFAULTS.timeoutMs,
       pollMs: opts.pollMs ?? DEFAULTS.pollMs,

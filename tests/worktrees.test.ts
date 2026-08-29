@@ -82,7 +82,9 @@ describe("WorktreeManager", () => {
       calls.push(args);
       return { code: 0, stdout: "", stderr: "" };
     };
-    const m2 = new WorktreeManager({ root, repo: "o/n", cloneUrl: origin, run: spy });
+    // Same repo slug ⇒ same derived clone dir (the default clone dir
+    // derives from the repo's basename instead of a hardcode).
+    const m2 = new WorktreeManager({ root, repo: "example-org/example-app", cloneUrl: origin, run: spy });
     await m2.ensureBaseClone();
     expect(calls).toEqual([]); // already cloned — no second clone
   });

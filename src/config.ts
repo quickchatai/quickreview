@@ -17,6 +17,32 @@ export interface GithubConfig {
   improvement_label: string;
   issue_label: string;
   secrets_dir: string;
+  /** The reviewed repo's default branch: the base the improvement
+   * filer targets, the branch replay diffs against, and the fixture base for
+   * CLI ops. Default "main"; example-app sets "master". PR rounds do NOT
+   * read this — a round's base is always the PR's own `base_ref` from the
+   * GitHub API. */
+  base_branch: string;
+  /** Directory name of the base clone under the sandbox root.
+   * "" (the default) derives from the repo slug's basename via
+   * `githubCloneDir` — "owner/name" ⇒ "name". */
+  clone_dir: string;
+}
+
+/** Directory name of the base clone: `[github] clone_dir` when set, else the
+ * repo slug's basename ("owner/name" → "name"; a URL's trailing path segment,
+ * `.git` stripped). The live config's repo ("example-org/example-app")
+ * derives "example-app" — the legacy hardcode, now a derivation. */
+export function githubCloneDir(g: GithubConfig): string {
+  // ?? "": hand-rolled test configs predating omit both keys.
+  const explicit = (g.clone_dir ?? "").trim();
+  if (explicit) return explicit;
+  const tail = (g.repo ?? "")
+    .replace(/\.git$/, "")
+    .replace(/\/+$/, "")
+    .split("/")
+    .pop();
+  return tail || "repo";
 }
 
 export interface TuiConfig {
@@ -285,6 +311,35 @@ export const RECHECK_DEFAULTS: RecheckConfig = {
  * time refusals) and [recheck] (post-approval triggers): these shape what a
  * review says, not whether it posts.
  */
+/**
+ * [review.directives] — EXTENSIONS to the first-party directive-path
+ * vocabulary (`src/severity.ts DEFAULT_DIRECTIVE_VOCABULARY`). Extend-only by
+ * design: config ADDS names, nothing can remove a built-in — dropping, say,
+ * `CLAUDE.md` would silently re-enable auto-blocking on first-party directive
+ * edits, drifting's ratified behaviour by config typo. The shape
+ * mirrors `severity.ts DirectiveVocabularyExtras`.
+ */
+export interface ReviewDirectivesConfig {
+  /** Extra vendored/third-party path segments (matched case-insensitively). */
+  extra_vendored_segments: string[];
+  /** Extra directive-file basenames (any depth), e.g. "COPILOT.md". */
+  extra_basenames: string[];
+  /** Extra directory segments whose whole subtree is directive content. */
+  extra_dir_segments: string[];
+  /** Extra ROOT-level directory names (bind at the repo root only). */
+  extra_root_dirs: string[];
+  /** Extra exact repo-relative directive file paths. */
+  extra_files: string[];
+}
+
+export const REVIEW_DIRECTIVES_DEFAULTS: ReviewDirectivesConfig = {
+  extra_vendored_segments: [],
+  extra_basenames: [],
+  extra_dir_segments: [],
+  extra_root_dirs: [],
+  extra_files: [],
+};
+
 export interface ReviewConfig {
   /**
    * Fallback @-mention for the first-party-directive escalation comment when
@@ -297,16 +352,22 @@ export interface ReviewConfig {
    * Repo profile: names a directory under `profiles/` whose
    * house-rule addenda pack (`profiles/<name>/addenda/*.md`) is composed onto
    * the built pass bodies AFTER the built-in generic registry and BEFORE the
-   * dynamic same-day feedback addendum. "" ⇒ no profile: exactly the generic
-   * addenda set. Loaded once at daemon assembly (src/wire.ts) — a malformed
-   * pack fails the boot loudly, never a silent skip.
+   * dynamic same-day feedback addendum — and whose optional
+   * `heuristics.toml` extends lens selection with repo-shaped predicates.
+   * "" ⇒ no profile: exactly the generic addenda set and the generic
+   * selection core. Loaded once at daemon assembly (src/wire.ts) — a
+   * malformed pack or heuristics file fails the boot loudly, never a silent
+   * skip.
    */
   profile: string;
+  /** Directive-path vocabulary extensions — see the type above. */
+  directives: ReviewDirectivesConfig;
 }
 
 export const REVIEW_DEFAULTS: ReviewConfig = {
   escalation_mention_default: "",
   profile: "",
+  directives: REVIEW_DIRECTIVES_DEFAULTS,
 };
 
 /**
@@ -652,6 +713,13 @@ export interface Config {
     improvement_pr_per_day: number;
     improvement_pr_per_week: number;
     issues_per_day: number;
+    /** Path prefixes a bot improvement PR may never touch (lift of
+     * the src/improvements.ts hardcode). A configured value REPLACES the
+     * list (it is repo-shape, not an invariant — `migrations/` is Django's
+     * name for the concept); the shipped default is today's exact list, and
+     * `.env`-named files are refused unconditionally regardless of this
+     * knob. */
+    improvement_pr_deny_prefixes: string[];
   };
   models: ModelsConfig;
   pi: { package: string; version: string; session_dir: string };
@@ -849,9 +917,25 @@ function req(obj: Record<string, unknown>, key: string): unknown {
   return v;
 }
 
+/** The shipped improvement-PR path denylist: the exact pre-lift
+ * hardcode. Lives here (not in improvements.ts) so config carries the default
+ * without a runtime import cycle. */
+export const IMPROVEMENT_DENY_PREFIXES_DEFAULT: readonly string[] = [
+  "migrations/",
+  "infra/",
+  "ansible/",
+  ".github/workflows/",
+];
+
 export function parseConfig(toml: string): Config {
   const raw = parse(toml) as Record<string, any>;
-  const github: GithubConfig = { ...(req(raw, "github") as GithubConfig) };
+  // base_branch/clone_dir default so older configs keep parsing;
+  // the live config states both explicitly.
+  const github: GithubConfig = {
+    base_branch: "main",
+    clone_dir: "",
+    ...(req(raw, "github") as Partial<GithubConfig>),
+  } as GithubConfig;
   const companion = resolveCompanionPaths({ ...COMPANION_DEFAULTS, ...((raw.companion ?? {}) as Partial<CompanionConfig>) });
   // [ops] is optional so older configs keep parsing; [eod] and
   // [slack.policy] timezones default from it below, own-section value wins.
@@ -891,7 +975,10 @@ export function parseConfig(toml: string): Config {
       timezone: ops.timezone,
       ...(req(raw, "eod") as Partial<Config["eod"]>),
     } as Config["eod"],
-    caps: { ...(req(raw, "caps") as Config["caps"]) },
+    caps: {
+      improvement_pr_deny_prefixes: [...IMPROVEMENT_DENY_PREFIXES_DEFAULT],
+      ...(req(raw, "caps") as Partial<Config["caps"]>),
+    } as Config["caps"],
     models: parseModels(req(raw, "models") as Record<string, any>),
     pi: { ...(req(raw, "pi") as Config["pi"]) },
     openviking: resolveOpenVikingPaths({ ...OPENVIKING_DEFAULTS, ...((raw.openviking ?? {}) as Partial<OpenVikingConfig>) }),
@@ -902,7 +989,16 @@ export function parseConfig(toml: string): Config {
     backfill: { ...backfillDefaults(github), ...((raw.backfill ?? {}) as Partial<BackfillConfig>) },
     guards: { ...GUARDS_DEFAULTS, ...((raw.guards ?? {}) as Partial<GuardsConfig>) },
     recheck: { ...RECHECK_DEFAULTS, ...((raw.recheck ?? {}) as Partial<RecheckConfig>) },
-    review: { ...REVIEW_DEFAULTS, ...((raw.review ?? {}) as Partial<ReviewConfig>) },
+    // [review.directives] merges under its own spread so a partial table
+    // extends the defaults instead of clobbering the sibling keys.
+    review: {
+      ...REVIEW_DEFAULTS,
+      ...((raw.review ?? {}) as Partial<ReviewConfig>),
+      directives: {
+        ...REVIEW_DIRECTIVES_DEFAULTS,
+        ...(((raw.review as Record<string, any> | undefined)?.directives ?? {}) as Partial<ReviewDirectivesConfig>),
+      },
+    },
     slack: parseSlack((raw.slack ?? {}) as Record<string, any>, ops.timezone),
     owner: { ...OWNER_DEFAULTS, ...((raw.owner ?? {}) as Partial<OwnerConfig>) },
   };

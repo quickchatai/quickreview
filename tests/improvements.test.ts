@@ -87,6 +87,23 @@ describe("parseNumstat / deniedPath / checkDiffstat", () => {
     expect(res.reason).toContain("path denylist");
   });
 
+  it("the prefix list is config — a configured value replaces it, .env stays unconditional", () => {
+    // Custom list: migrations/ no longer denied, db/ is.
+    const caps = { ...cfg.caps, improvement_pr_deny_prefixes: ["db/"] };
+    expect(checkDiffstat(parseNumstat(numstat([[1, 0, "migrations/0001.sql"]])), caps).ok).toBe(true);
+    const denied = checkDiffstat(parseNumstat(numstat([[1, 0, "db/schema.sql"]])), caps);
+    expect(denied.ok).toBe(false);
+    expect(denied.reason).toContain("path denylist");
+    // deniedPath honours the same override…
+    expect(deniedPath("migrations/0001.sql", ["db/"])).toBe(false);
+    expect(deniedPath("db/schema.sql", ["db/"])).toBe(true);
+    // …and .env-named files are refused whatever the list says.
+    expect(deniedPath(".env.production", [])).toBe(true);
+    expect(checkDiffstat(parseNumstat(numstat([[1, 0, "app/.env.local"]])), { ...cfg.caps, improvement_pr_deny_prefixes: [] }).ok).toBe(false);
+    // The fixture (which omits the knob) parses to the shipped default list.
+    expect(cfg.caps.improvement_pr_deny_prefixes).toEqual(["migrations/", "infra/", "ansible/", ".github/workflows/"]);
+  });
+
   it("rejects an empty diff and binary files", () => {
     expect(checkDiffstat([], cfg.caps).ok).toBe(false);
     expect(checkDiffstat(parseNumstat("-\t-\tx.png"), cfg.caps).reason).toContain("binary");
@@ -209,7 +226,9 @@ describe("fileImprovementPr / fileIssue (dry-run)", () => {
     const push = intents()[0];
     expect(push.method).toBe("git");
     expect(push.body.target).toBe("bot/improve-clarify-retry");
-    expect(intents()[1].body).toMatchObject({ head: "bot/improve-clarify-retry", base: "master", title: "Docs: clarify retry" });
+    // base = the fixture's [github] base_branch — no more hardcoded master.
+    expect(intents()[1].body).toMatchObject({ head: "bot/improve-clarify-retry", base: cfg.github.base_branch, title: "Docs: clarify retry" });
+    expect(cfg.github.base_branch).toBe("main");
     expect(intents()[2].body.labels).toEqual([cfg.github.improvement_label]);
 
     expect(store.filedSince("improvement_pr", "1970-01-01T00:00:00.000Z")).toBe(1);

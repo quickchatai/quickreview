@@ -4,10 +4,10 @@
 // prompt: the overseer can ask, the daemon decides.
 //
 // Branch rule: the ONLY branch this system ever pushes anywhere is
-// bot/improve-<slug>. master is never pushed, never merged into, never
-// touched beyond `fetch` + read-only diffing. rubric/* branches stay local
-// (see digest.ts).
-import type { Config } from "./config.js";
+// bot/improve-<slug>. The base branch ([github] base_branch — master on
+// example-app) is never pushed, never merged into, never touched beyond
+// `fetch` + read-only diffing. rubric/* branches stay local (see digest.ts).
+import { IMPROVEMENT_DENY_PREFIXES_DEFAULT, type Config } from "./config.js";
 import type { GitHubAdapter } from "./github.js";
 import type { MutationGate } from "./gate.js";
 import type { StateStore } from "./state.js";
@@ -49,7 +49,9 @@ export interface ImprovementContext {
   run: Run;
   /** Scratch worktree path used for the checkout (removed afterwards). */
   scratchDir: string;
-  /** Base branch — master. Never pushed, never modified. */
+  /** Base branch override. Default: `[github] base_branch` off `cfg`
+   * ("main" unless configured — example-app sets "master").
+   * Never pushed, never modified. */
   base?: string;
   now?: () => Date;
 }
@@ -84,13 +86,15 @@ export function parseNumstat(out: string): NumstatEntry[] {
   return entries;
 }
 
-/** Paths the bot may never touch, whatever the diffstat says. */
-const DENY_PREFIXES = ["migrations/", "infra/", "ansible/", ".github/workflows/"];
-
-export function deniedPath(path: string): boolean {
+/** Paths the bot may never touch, whatever the diffstat says. The prefix list
+ * is config since (`[caps] improvement_pr_deny_prefixes`, shipped
+ * default = the old hardcode, `IMPROVEMENT_DENY_PREFIXES_DEFAULT` in
+ * src/config.ts); `.env`-named files are refused UNCONDITIONALLY — a secrets
+ * file is never repo-shape. */
+export function deniedPath(path: string, prefixes: readonly string[] = IMPROVEMENT_DENY_PREFIXES_DEFAULT): boolean {
   const p = path.replace(/^\.\//, "");
   const segments = p.split("/");
-  for (const prefix of DENY_PREFIXES) {
+  for (const prefix of prefixes) {
     const parts = prefix.replace(/\/$/, "").split("/");
     // match at the root or at any depth (…/migrations/foo.sql is still a migration)
     for (let i = 0; i + parts.length <= segments.length; i++) {
@@ -111,14 +115,20 @@ export interface DiffstatVerdict {
 export function checkDiffstat(entries: NumstatEntry[], caps: Config["caps"]): DiffstatVerdict {
   const files = entries.length;
   const lines = entries.reduce((n, e) => n + e.additions + e.deletions, 0);
-  const denied = entries.filter((e) => deniedPath(e.path)).map((e) => e.path);
+  const prefixes = caps.improvement_pr_deny_prefixes ?? IMPROVEMENT_DENY_PREFIXES_DEFAULT;
+  const denied = entries.filter((e) => deniedPath(e.path, prefixes)).map((e) => e.path);
   const binary = entries.filter((e) => e.binary).map((e) => e.path);
-  if (files === 0) return { ok: false, reason: "empty diff against master — nothing to file", files, lines };
+  if (files === 0) return { ok: false, reason: "empty diff against the base branch — nothing to file", files, lines };
   if (binary.length > 0) {
     return { ok: false, reason: `binary file(s) not allowed in a bot improvement: ${binary.join(", ")}`, files, lines };
   }
   if (denied.length > 0) {
-    return { ok: false, reason: `path denylist: ${denied.join(", ")} (migrations/infra/ansible/workflows/.env are off-limits)`, files, lines };
+    return {
+      ok: false,
+      reason: `path denylist: ${denied.join(", ")} (${prefixes.join(", ")} and .env files are off-limits)`,
+      files,
+      lines,
+    };
   }
   if (files > caps.improvement_pr_max_files) {
     return { ok: false, reason: `${files} files changed > cap ${caps.improvement_pr_max_files}`, files, lines };
@@ -206,14 +216,14 @@ export function botBranchFor(slug: string): string {
 // ---- the improvement-PR pipeline ------------------------------------------
 
 /**
- * file-improvement-pr: scratch worktree off fresh master → check out the
+ * file-improvement-pr: scratch worktree off the fresh base branch → check out the
  * overseer-prepared branch → daemon diffstat + rate caps → push bot/improve-<slug>
  * (gated) → open PR + label (gated) → record. Rejections come back with a
  * reason the command executor writes into the result file for the overseer.
  */
 export async function fileImprovementPr(payload: ImprovementPayload, ctx: ImprovementContext): Promise<FileOutcome> {
   const now = (ctx.now ?? (() => new Date()))();
-  const base = ctx.base ?? "master";
+  const base = ctx.base ?? ctx.cfg.github.base_branch;
   const botBranch = botBranchFor(payload.slug);
 
   const reject = (reason: string, extra: Record<string, unknown> = {}): FileOutcome => {
@@ -228,7 +238,7 @@ export async function fileImprovementPr(payload: ImprovementPayload, ctx: Improv
 
   let worktreeAdded = false;
   try {
-    // Fresh master — fetched, never pushed, never checked out for writing.
+    // Fresh base branch — fetched, never pushed, never checked out for writing.
     await ctx.run(["fetch", "origin", `${base}:refs/remotes/origin/${base}`]);
     await ctx.run(["worktree", "add", "--force", "--detach", ctx.scratchDir, payload.branch]);
     worktreeAdded = true;

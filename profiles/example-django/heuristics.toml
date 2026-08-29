@@ -1,0 +1,24 @@
+# example-django — Django/DRF lens-selection predicates.
+#
+# A worked example of `heuristics.toml`: the file-shape knowledge a Django +
+# DRF codebase adds on top of the generic compiled-in selection core. Copy and
+# edit for your repo; see docs/profiles.md for the format and the contract
+# (ADD-only — the generic core cannot be removed or weakened from here).
+
+[pass-security]
+# Django settings modules are env/config security surface.
+paths = ['(^|/)settings[^/]*\.py$']
+
+[pass-data-safety]
+# Management commands are where backfills and bulk per-row work live.
+paths = ['(^|/)management/commands/']
+
+[pass-backcompat]
+# DRF module-filename vocabulary + settings — deploy-window wire surfaces.
+paths = [
+  '(^|/)(serializers?|views?|urls?|apis?)[^/]*\.py$',
+  '(^|/)settings[^/]*\.py$',
+]
+# django-waffle; the generic core already covers "feature flag", LaunchDarkly
+# and Unleash spellings.
+added_lines = ['waffle']

@@ -62,6 +62,10 @@ export interface DaemonDeps {
   memory?: import("./memory/context.js").RoundMemorySeed;
   /** Renderer for the recheck nudge (prompts/round-recheck.md); default JSON. */
   renderRecheckPrompt?: (order: RecheckOrder) => string;
+  /** Profile lens-heuristics extension: the selected repo profile's
+   * extra per-lens selection predicates, loaded once at assembly by wire.ts.
+   * Absent ⇒ dispatch selects with the compiled-in generic core alone. */
+  heuristics?: import("./heuristics.js").HeuristicsExtension;
   /** Hand-resolved merge files between two shas (the owner, 2026-08-19 —
    * conflict resolutions are never trivial). wire.ts passes the
    * WorktreeManager's git-level auto-merge comparison. */
@@ -430,6 +434,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         renderPrompt: deps.renderPrompt,
         ...(deps.memory ? { memory: deps.memory } : {}),
         ...(deps.ecosystem ? { ecosystem: deps.ecosystem } : {}),
+        ...(deps.heuristics ? { heuristics: deps.heuristics } : {}),
         prepareWorktree: deps.prepareWorktree,
         listBaseMigrations: deps.listBaseMigrations,
         directiveAuthor: deps.directiveAuthor,

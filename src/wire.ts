@@ -28,7 +28,7 @@ import { TokenMinter } from "./githubAuth.js";
 import { FeedbackEngine, feedbackDayAddendum, type FeedbackEvent } from "./feedback.js";
 import { PASS_ADDENDA, buildAgents } from "./include.js";
 import { ecosystemFor } from "./ecosystem.js";
-import { loadProfileAddenda, loadProfileEcosystem } from "./profiles.js";
+import { loadProfileAddenda, loadProfileEcosystem, loadProfileHeuristics } from "./profiles.js";
 import { fileImprovementPr, fileIssue, type Run } from "./improvements.js";
 import { OpenVikingClient, OpenVikingSupervisor, keyFromFile, openVikingContextAssembler, openVikingStore } from "./openviking/index.js";
 import { OV_REVIEWER_KEY_SECRET, openVikingSessionLifecycle } from "./memory/ovsession.js";
@@ -444,6 +444,11 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     log,
   });
 
+  // the profile's lens-heuristics extension, loaded ONCE here so a
+  // malformed heuristics.toml fails the assembly loudly (same contract as the
+  // addenda pack below) and every dispatch selects with the same predicates.
+  const profileHeuristics = loadProfileHeuristics(root, cfg.review.profile);
+
   const daemon = createDaemon({
     cfg,
     root,
@@ -451,6 +456,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     hooks,
     renderPrompt,
     ecosystem,
+    heuristics: profileHeuristics,
     // Pinned head + one budgeted context block per round. Past the
     // deadline the round dispatches memory-less and logs the gap — memory
     // never blocks or delays a round.

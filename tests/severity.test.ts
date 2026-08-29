@@ -14,6 +14,8 @@ import {
   stripUngrammaticalTag,
   deriveVerdict,
   isAskHumanFinding,
+  DEFAULT_DIRECTIVE_VOCABULARY,
+  directiveVocabulary,
   isFirstPartyDirectiveInjection,
   isFirstPartyDirectivePath,
   normalizeReachability,
@@ -136,6 +138,40 @@ describe("first-party directive gate", () => {
     expect(isFirstPartyDirectiveInjection(undefined, ".claude/skills/x/SKILL.md")).toBe(false);
     expect(isFirstPartyDirectiveInjection("injection", "src/app.py")).toBe(false);
     expect(isFirstPartyDirectiveInjection("injection", "node_modules/pkg/CLAUDE.md")).toBe(false);
+  });
+
+  it("the vocabulary is configurable EXTEND-ONLY — extras add, built-ins never leave", () => {
+    // Every extra kind reaches the predicate…
+    const vocab = directiveVocabulary({
+      extra_basenames: ["COPILOT.md"],
+      extra_dir_segments: [".aider"],
+      extra_root_dirs: ["agent-docs"],
+      extra_files: ["docs/agent-contract.md"],
+      extra_vendored_segments: ["Extern"],
+    });
+    expect(isFirstPartyDirectivePath("backend/COPILOT.md", vocab)).toBe(true);
+    expect(isFirstPartyDirectivePath("src/.aider/notes.md", vocab)).toBe(true);
+    expect(isFirstPartyDirectivePath("agent-docs/setup.md", vocab)).toBe(true);
+    expect(isFirstPartyDirectivePath("nested/agent-docs/setup.md", vocab)).toBe(false); // root-only, like prompts/
+    expect(isFirstPartyDirectivePath("docs/agent-contract.md", vocab)).toBe(true);
+    expect(isFirstPartyDirectivePath("extern/tool/CLAUDE.md", vocab)).toBe(false); // extra vendored marker, case-insensitive
+    // …and the built-ins are still all there with extras configured.
+    expect(isFirstPartyDirectivePath("CLAUDE.md", vocab)).toBe(true);
+    expect(isFirstPartyDirectivePath("prompts/round-first.md", vocab)).toBe(true);
+    expect(isFirstPartyDirectivePath("node_modules/pkg/CLAUDE.md", vocab)).toBe(false);
+    // No extras = byte-for-byte the default vocabulary (the escalation-mention
+    // pick and the posting gate behave unchanged by default).
+    expect(directiveVocabulary()).toEqual(directiveVocabulary({}));
+    expect(directiveVocabulary({})).toEqual({
+      vendoredSegments: DEFAULT_DIRECTIVE_VOCABULARY.vendoredSegments,
+      basenames: DEFAULT_DIRECTIVE_VOCABULARY.basenames,
+      dirSegments: DEFAULT_DIRECTIVE_VOCABULARY.dirSegments,
+      rootDirs: DEFAULT_DIRECTIVE_VOCABULARY.rootDirs,
+      files: DEFAULT_DIRECTIVE_VOCABULARY.files,
+    });
+    // The injection gate honours the same vocabulary.
+    expect(isFirstPartyDirectiveInjection("injection", "backend/COPILOT.md", vocab)).toBe(true);
+    expect(isFirstPartyDirectiveInjection("injection", "backend/COPILOT.md")).toBe(false);
   });
 
   it("does not soften a surviving malicious injection merely because its path is first-party", () => {

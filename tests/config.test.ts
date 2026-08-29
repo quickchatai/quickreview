@@ -3,7 +3,15 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { MODELS_TIER_DEFAULTS, expandHome, loadConfig, parseConfig, tierModel } from "../src/config.js";
+import {
+  IMPROVEMENT_DENY_PREFIXES_DEFAULT,
+  MODELS_TIER_DEFAULTS,
+  expandHome,
+  githubCloneDir,
+  loadConfig,
+  parseConfig,
+  tierModel,
+} from "../src/config.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // the suite parses the NEUTRAL FIXTURE, not the operator's live
@@ -134,6 +142,68 @@ describe("[review]", () => {
   });
 });
 
+describe("[review.directives] (directive-vocabulary extensions)", () => {
+  it("defaults every extra list to empty — exactly today's vocabulary", () => {
+    const cfg = parseConfig(readFileSync(configPath, "utf8"));
+    expect(cfg.review.directives).toEqual({
+      extra_vendored_segments: [],
+      extra_basenames: [],
+      extra_dir_segments: [],
+      extra_root_dirs: [],
+      extra_files: [],
+    });
+  });
+
+  it("a partial [review.directives] table extends without clobbering siblings", () => {
+    const toml = readFileSync(configPath, "utf8").replace(
+      /\[review\]/,
+      '[review.directives]\nextra_basenames = ["COPILOT.md"]\n\n[review]',
+    );
+    const cfg = parseConfig(toml);
+    expect(cfg.review.directives.extra_basenames).toEqual(["COPILOT.md"]);
+    expect(cfg.review.directives.extra_dir_segments).toEqual([]);
+    expect(cfg.review.escalation_mention_default).toBe("example-maintainer");
+  });
+});
+
+describe("[github] base_branch + clone_dir", () => {
+  it("reads the fixture's explicit base branch; clone_dir defaults empty", () => {
+    const cfg = parseConfig(readFileSync(configPath, "utf8"));
+    expect(cfg.github.base_branch).toBe("main");
+    expect(cfg.github.clone_dir).toBe("");
+  });
+
+  it("base_branch defaults to main when absent — older configs keep parsing", () => {
+    const without = readFileSync(configPath, "utf8").replace(/^base_branch = .*$/m, "");
+    expect(parseConfig(without).github.base_branch).toBe("main");
+  });
+
+  it("githubCloneDir derives from the repo slug's basename unless clone_dir is set", () => {
+    const cfg = parseConfig(readFileSync(configPath, "utf8"));
+    expect(githubCloneDir(cfg.github)).toBe("example-app");
+    expect(githubCloneDir({ ...cfg.github, repo: "example-org/example-app" })).toBe("example-app");
+    expect(githubCloneDir({ ...cfg.github, repo: "https://github.com/o/n.git" })).toBe("n");
+    expect(githubCloneDir({ ...cfg.github, clone_dir: "elsewhere" })).toBe("elsewhere");
+    expect(githubCloneDir({ ...cfg.github, repo: "" })).toBe("repo");
+  });
+});
+
+describe("[caps] improvement_pr_deny_prefixes", () => {
+  it("defaults to the shipped denylist when absent (the fixture omits it)", () => {
+    const cfg = parseConfig(readFileSync(configPath, "utf8"));
+    expect(cfg.caps.improvement_pr_deny_prefixes).toEqual([...IMPROVEMENT_DENY_PREFIXES_DEFAULT]);
+    expect(cfg.caps.improvement_pr_deny_prefixes).toEqual(["migrations/", "infra/", "ansible/", ".github/workflows/"]);
+  });
+
+  it("a configured value replaces the list", () => {
+    const toml = readFileSync(configPath, "utf8").replace(
+      /issues_per_day = 3/,
+      'issues_per_day = 3\nimprovement_pr_deny_prefixes = ["db/"]',
+    );
+    expect(parseConfig(toml).caps.improvement_pr_deny_prefixes).toEqual(["db/"]);
+  });
+});
+
 describe("[owner]", () => {
   it("reads the fixture's owner identity", () => {
     const cfg = parseConfig(readFileSync(configPath, "utf8"));
@@ -215,6 +285,22 @@ describe("live config.toml (production invariants)", () => {
 
   it("keeps dry_run false — the cutover flag (rule 1, the owner's alone)", () => {
     expect(loadConfig(liveConfigPath).dry_run).toBe(false);
+  });
+
+  it("live values are stated explicitly — master base, example-app clone, shipped denylist", () => {
+    const cfg = loadConfig(liveConfigPath);
+    expect(cfg.github.base_branch).toBe("master");
+    expect(githubCloneDir(cfg.github)).toBe("example-app"); // explicit AND what the slug derives
+    expect(cfg.github.clone_dir).toBe("example-app");
+    expect(cfg.caps.improvement_pr_deny_prefixes).toEqual([...IMPROVEMENT_DENY_PREFIXES_DEFAULT]);
+    // Directive vocabulary unextended: today's exact behaviour.
+    expect(cfg.review.directives).toEqual({
+      extra_vendored_segments: [],
+      extra_basenames: [],
+      extra_dir_segments: [],
+      extra_root_dirs: [],
+      extra_files: [],
+    });
   });
 });
 

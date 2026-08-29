@@ -33,7 +33,7 @@ function stalenessSimulation(cfg: Config) {
     title: "pushed approved PR fixture",
     author: "someone",
     head_sha: fixture.head_sha,
-    base_ref: "master",
+    base_ref: cfg.github.base_branch,
     updated_at: new Date().toISOString(),
     state: "open",
     draft: false,

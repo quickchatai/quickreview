@@ -93,7 +93,7 @@ function manager(now = () => new Date("2026-08-13T10:00:00Z"), store?: StateStor
     cfg: cfg(),
     root,
     tmux: new Tmux({ exec: fakeExec }),
-    worktrees: new WorktreeManager({ root, repo: "o/n", cloneUrl: "/dev/null", run: fakeExec }),
+    worktrees: new WorktreeManager({ root, repo: "o/n", cloneDir: "example-app", cloneUrl: "/dev/null", run: fakeExec }),
     piHome: join(root, "pihome"),
     ovSessions,
     now,
@@ -363,7 +363,7 @@ describe("OpenViking identity and the PR's raw-notes session", () => {
       cfg: cfg(),
       root,
       tmux: new Tmux({ exec: fakeExec }),
-      worktrees: new WorktreeManager({ root, repo: "o/n", cloneUrl: "/dev/null", run: fakeExec }),
+      worktrees: new WorktreeManager({ root, repo: "o/n", cloneDir: "example-app", cloneUrl: "/dev/null", run: fakeExec }),
       piHome: join(root, "pihome"),
       ovSessions: {
         create: async () => {

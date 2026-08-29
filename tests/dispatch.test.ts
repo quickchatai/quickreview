@@ -242,6 +242,18 @@ describe("buildPassPlan", () => {
     },
   };
 
+  it("threads the profile heuristics extension into selection", async () => {
+    const { loadProfileHeuristics } = await import("../src/profiles.js");
+    const qc = loadProfileHeuristics(resolve(import.meta.dirname, ".."), "quickchat");
+    const files = [file("project/settings_prod.py", 12, 1)];
+    // Without the extension the settings glob is not in the generic core…
+    expect(buildPassPlan(planCfg, files).pass_plan.map((p) => p.lens)).not.toContain("pass-security");
+    // …with it, the profile predicate selects the lens through the plan.
+    const withExt = buildPassPlan(planCfg, files, undefined, undefined, qc).pass_plan.map((p) => p.lens);
+    expect(withExt).toContain("pass-security");
+    expect(withExt).toContain("pass-backcompat");
+  });
+
   it("pins risk passes to sol-high with no raise ladder", () => {
     const { pass_plan } = buildPassPlan(planCfg, [
       file("infra/main.tf", 120, 5),

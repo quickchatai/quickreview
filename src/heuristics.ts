@@ -148,49 +148,115 @@ const SIMPLICITY_BRANCH_RE = /^\+[ \t]*[)\]}]*[ \t]*(if|elif|else[ \t]+if|case|w
 const DEPS_MANIFEST_RE =
   /(^|\/)(package(-lock)?\.json|yarn\.lock|pnpm-lock\.yaml|requirements[^/]*\.txt|poetry\.lock|pyproject\.toml|Pipfile(\.lock)?|go\.(mod|sum)|Gemfile(\.lock)?|Cargo\.(toml|lock))$/;
 
+// ---- profile heuristics extension --------------------------------
+//
+// Lens selection keeps a GENERIC CORE compiled in below; the REPO-SHAPED
+// predicates (framework settings-file globs, management-command dirs, a
+// product-local decorator name, DRF filename vocabulary, a flag-library name)
+// live in the selected repo profile's `heuristics.toml`
+// (`src/profiles.ts loadProfileHeuristics`) and reach this module as extra
+// per-lens path regexes and added-line probes. The extension can only ADD
+// predicates — it never removes or weakens a compiled-in one — and it can
+// only add lenses this module could already select by shape.
+
+/** Extra per-lens selection predicates supplied by a repo profile. */
+export interface HeuristicsExtension {
+  /** lens → path regexes: any changed filename matching any of them selects
+   * the lens (same contract as the compiled-in `any()` predicates). */
+  paths: Partial<Record<string, RegExp[]>>;
+  /** lens → added-line probes, tested against each file's unified patch when
+   * one is present. The loader compiles each probe to match ADDED lines
+   * (`^\+.*(?:…)`, case-insensitive multiline). */
+  addedLines: Partial<Record<string, RegExp[]>>;
+}
+
+export const EMPTY_HEURISTICS: HeuristicsExtension = { paths: {}, addedLines: {} };
+
+/** The lenses a profile may extend: exactly the shape-selected conditionals.
+ * Deliberately NOT extendable: `pass-baseline`/`pass-validate` (always in the
+ * plan already), `pass-intent` (keyed on the PR body, never the file shape —
+ *), `pass-placement`/`pass-simplicity` (computed from code-file
+ * status/size signals, not path membership), and `pass-concurrency`/
+ * `pass-ask-human` (ADDABLE-ONLY by ratified decision, — a
+ * profile path predicate would be exactly the re-added selection those
+ * decisions reject). */
+export const PROFILE_EXTENDABLE_LENSES: readonly string[] = [
+  "pass-ui",
+  "pass-contracts",
+  "pass-data-safety",
+  "pass-security",
+  "pass-statelessness",
+  "pass-prod-risk",
+  "pass-delivery",
+  "pass-backcompat",
+];
+
 // Deterministic lens selection (spec §5): baseline always; conditional lenses
 // from the changed-file shape (path + patch-content signals), each tied to
 // the seeded lens's stated focus; validator always runs last (added by
-// dispatch, never selected here).
-export function selectLenses(files: PrFile[], intent?: { body?: string | null }): string[] {
+// dispatch, never selected here). `ext` is the selected profile's
+// extension; each conditional below ORs in its extra predicates AT ITS CORE
+// POSITION, so the emitted lens order is identical with and without a profile.
+export function selectLenses(
+  files: PrFile[],
+  intent?: { body?: string | null },
+  ext: HeuristicsExtension = EMPTY_HEURISTICS,
+): string[] {
   const lenses = new Set<string>(["pass-baseline"]);
   const names = files.map((f) => f.filename);
   const any = (re: RegExp) => names.some((n) => re.test(n));
   /** Added-line content signal — only fires when a patch is present. */
   const added = (re: RegExp) => files.some((f) => f.patch !== undefined && re.test(f.patch));
+  /** Profile-extension signal for one lens: extra path regexes ∪ extra
+   * added-line probes. */
+  const extHit = (lens: string): boolean =>
+    (ext.paths[lens] ?? []).some((re) => any(re)) || (ext.addedLines[lens] ?? []).some((re) => added(re));
 
   // UI: frontend files only — extensions or an explicit frontend/ path.
-  if (any(/\.(tsx|jsx|vue|svelte|css|scss|less|html)$/) || any(/(^|\/)frontend\//)) lenses.add("pass-ui");
+  if (any(/\.(tsx|jsx|vue|svelte|css|scss|less|html)$/) || any(/(^|\/)frontend\//) || extHit("pass-ui"))
+    lenses.add("pass-ui");
 
   // External contracts: provider payload surfaces — schema/serializer dirs,
   // wire-format files, integration/provider client dirs.
-  if (any(/(^|\/)(serializers?|schemas?|integrations?|providers?|connectors?)\//) || any(/\.(proto|graphql)$/))
+  if (
+    any(/(^|\/)(serializers?|schemas?|integrations?|providers?|connectors?)\//) ||
+    any(/\.(proto|graphql)$/) ||
+    extHit("pass-contracts")
+  )
     lenses.add("pass-contracts");
 
-  // Data safety: migrations DDL, raw SQL, backfills / management commands
-  // (bulk per-row work) — not every models/ touch.
-  if (any(/(^|\/)migrations\//) || any(/\.sql$/) || any(/(^|\/)backfills?\//) || any(/(^|\/)management\/commands\//))
+  // Data safety: migrations DDL, raw SQL, backfills (bulk per-row work) — not
+  // every models/ touch. Framework-specific command dirs (Django's
+  // management/commands/) come from the profile.
+  if (any(/(^|\/)migrations\//) || any(/\.sql$/) || any(/(^|\/)backfills?\//) || extHit("pass-data-safety"))
     lenses.add("pass-data-safety");
 
   // Security & tenancy: auth/permission surfaces, secret/crypto-shaped names,
-  // env/settings files, dependency manifests.
+  // env files, dependency manifests. Framework settings-file globs
+  // (settings*.py) come from the profile.
   if (
     any(/(^|\/)(auth|authn|authz|security|permissions|middleware|throttling)\//) ||
     any(/(secret|token|passw|crypt|oauth|jwt|csrf|cors)/i) ||
     any(/(^|\/)\.env(\.[^/]+)?$/) ||
-    any(/(^|\/)settings[^/]*\.py$/) ||
-    any(DEPS_MANIFEST_RE)
+    any(DEPS_MANIFEST_RE) ||
+    extHit("pass-security")
   )
     lenses.add("pass-security");
 
   // Statelessness: in-process state signals in the added lines (module-level
   // mutable collections, lru_cache/threading), or cache/singleton/registry
-  // shaped filenames — not every tasks/ touch.
+  // shaped filenames — not every tasks/ touch. The content probes carry
+  // Python spellings but stay COMPILED-IN as multi-language intent (decided
+  //, recorded in docs/profiles.md): they detect real cross-language
+  // smells — memoization on mutable state, in-process locks, module-level
+  // mutable collections — and a profile may ADD probes for other spellings,
+  // never remove these.
   if (
     added(/^\+.*(@lru_cache|functools\.(cache|lru_cache))/m) ||
     added(/^\+.*threading\.(Lock|local)\(/m) ||
     added(/^\+[A-Za-z_][A-Za-z0-9_]*\s*(?::[^=\n]+)?=\s*(\{\}|\[\]|set\(\)|dict\(\)|defaultdict\()/m) ||
-    any(/(^|\/)[^/]*(cache|singleton|registry)[^/]*\.[a-z]+$/i)
+    any(/(^|\/)[^/]*(cache|singleton|registry)[^/]*\.[a-z]+$/i) ||
+    extHit("pass-statelessness")
   )
     lenses.add("pass-statelessness");
 
@@ -199,16 +265,19 @@ export function selectLenses(files: PrFile[], intent?: { body?: string | null })
     any(/(^|\/)(infra|ansible|terraform|helm|k8s|kubernetes)\//) ||
     any(/(^|\/)\.github\/workflows\//) ||
     any(/\.tf$/) ||
-    any(/(^|\/)(Dockerfile[^/]*|docker-compose[^/]*\.ya?ml)$/)
+    any(/(^|\/)(Dockerfile[^/]*|docker-compose[^/]*\.ya?ml)$/) ||
+    extHit("pass-prod-risk")
   )
     lenses.add("pass-prod-risk");
 
   // Delivery semantics: at-least-once handler surfaces — webhooks, background
-  // tasks/workers/crons, queue consumers (not email/notification content dirs).
+  // tasks/workers/crons, queue consumers (not email/notification content
+  // dirs). Product-local handler markers (a repo-specific @background_decorator)
+  // come from the profile.
   if (
     any(/(^|\/)(webhooks?|tasks|jobs|workers?|crons?|consumers?|subscribers?)\//) ||
     any(/(pubsub|pub_sub|cloud_tasks|celery)/i) ||
-    added(/^\+.*@background_decorator/m)
+    extHit("pass-delivery")
   )
     lenses.add("pass-delivery");
 
@@ -231,17 +300,21 @@ export function selectLenses(files: PrFile[], intent?: { body?: string | null })
     lenses.add(SIMPLICITY_PASS);
 
   // Backcompat: deploy-window skew surfaces — wire formats, API
-  // modules, queue/task payloads, migrations, settings, feature flags. The
-  // dir arm requires a CODE file so a docs/api/ page never buys the lens.
+  // modules, queue/task payloads, migrations, feature flags. The dir arm
+  // requires a CODE file so a docs/api/ page never buys the lens. The
+  // framework-shaped FILENAME arms (serializers/views/urls .py modules,
+  // settings*.py) and framework flag-library names (django-waffle) come from
+  // the profile; the flag probe here keeps the language-agnostic
+  // spellings (feature flag itself, plus the cross-language LaunchDarkly /
+  // Unleash services).
   const codeIn = (re: RegExp) => code.some((f) => re.test(f.filename));
   if (
     codeIn(/(^|\/)(serializers?|schemas?|apis?|views?|endpoints?|routes?|controllers?|handlers?)\//) ||
-    any(/(^|\/)(serializers?|views?|urls?|apis?)[^/]*\.py$/) ||
     any(/\.(proto|graphql)$/) ||
     any(/(^|\/)migrations\//) ||
     codeIn(/(^|\/)(tasks|jobs|workers?|consumers?|queues?)\//) ||
-    any(/(^|\/)settings[^/]*\.py$/) ||
-    added(/^\+.*(feature.?flag|waffle|launch.?darkly|unleash)/im)
+    added(/^\+.*(feature.?flag|launch.?darkly|unleash)/im) ||
+    extHit(BACKCOMPAT_PASS)
   )
     lenses.add(BACKCOMPAT_PASS);
 

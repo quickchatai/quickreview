@@ -17,6 +17,7 @@ import type { GateResult } from "./gate.js";
 import type { PrFileEntry } from "./github.js";
 import { DJANGO_ECOSYSTEM, type Ecosystem } from "./ecosystem.js";
 import { INTENT_PASS, passTier, selectLenses } from "./heuristics.js";
+import type { HeuristicsExtension } from "./heuristics.js";
 import type { MigrationCollision } from "./migrations.js";
 import { VALIDATE_PASS } from "./include.js";
 import { hasNewEvidence } from "./guards.js";
@@ -31,7 +32,7 @@ import {
 } from "./memory/context.js";
 import { carryWithheldMark, classifyDelta, recheckFingerprint, type DeltaClass, type DeltaFile } from "./recheck.js";
 import { roundPostingKey } from "./posting-receipt.js";
-import { isFirstPartyDirectivePath } from "./severity.js";
+import { directiveVocabulary, isFirstPartyDirectivePath } from "./severity.js";
 import type { DispatchAnnouncer } from "./slack/announce.js";
 import { applyEvent, setPrGates } from "./statemachine.js";
 import type { PrStateRow, ReviewedHeadRow, StateStore } from "./state.js";
@@ -125,6 +126,11 @@ export interface DispatchDeps {
   /** Slack announcer (S4). Optional: absent ⇒ no Slack at all, which
    * is what the stub-wired daemon core and every non-Slack test see. */
   announce?: DispatchAnnouncer;
+  /** Profile lens-heuristics extension: the selected repo profile's
+   * extra per-lens path/added-line predicates, loaded ONCE at assembly
+   * (wire.ts, `loadProfileHeuristics`). Absent ⇒ the compiled-in generic
+   * selection core alone. */
+  heuristics?: HeuristicsExtension;
   now?: () => Date;
   log?: (msg: string, extra?: unknown) => void;
 }
@@ -236,7 +242,10 @@ async function directiveEscalationFor(
   args: { pr: number; files: PrFileEntry[]; merge_base: string; base_sha: string },
 ): Promise<{ files: string[]; mention: string } | undefined> {
   const log = deps.log ?? (() => {});
-  const directiveFiles = args.files.filter((f) => isFirstPartyDirectivePath(f.filename)).map((f) => f.filename);
+  // the vocabulary is the compiled-in default EXTENDED by
+  // [review.directives] — extension only, so default behaviour is unchanged.
+  const vocab = directiveVocabulary(deps.cfg.review.directives);
+  const directiveFiles = args.files.filter((f) => isFirstPartyDirectivePath(f.filename, vocab)).map((f) => f.filename);
   if (directiveFiles.length === 0) return undefined;
   // an unset [review] escalation_mention_default falls back to the
   // owner's GitHub login — the config default itself stays "".
@@ -544,13 +553,15 @@ export function buildPassPlan(
   /**: whose tier-forcing gate applies. Default Django — the shipped
    * pre-seam behavior; `none` never forces sol-med off a migrations path. */
   ecosystem: Ecosystem = DJANGO_ECOSYSTEM,
+  /** Profile lens-heuristics extension; absent ⇒ generic core. */
+  heuristics?: HeuristicsExtension,
 ): { pass_plan: PassPlanEntry[]; addable_lenses: string[] } {
   const defaultTier = passTier(files, {
     migrationGate: ecosystem.migrationGate(files),
     smallDiffLines: cfg.models.small_diff_lines,
   });
   const risk = new Set(cfg.models.risk_passes);
-  const lenses = [...selectLenses(files, intent), VALIDATE_PASS];
+  const lenses = [...selectLenses(files, intent, heuristics), VALIDATE_PASS];
   // pass-intent starts at terra-med whatever the round's default:
   // reading comprehension over two short texts, not a judgment over production
   // risk. It is NOT pinned — the session may raise it like any other lens.
@@ -601,9 +612,11 @@ export function buildRoundOrder(args: {
   prBody?: string;
   /**: the round's ecosystem. Absent ⇒ Django (pre-seam behavior). */
   ecosystem?: Ecosystem;
+  /** Profile lens-heuristics extension; absent ⇒ generic core. */
+  heuristics?: HeuristicsExtension;
 }): RoundOrder {
   const eco = args.ecosystem ?? DJANGO_ECOSYSTEM;
-  const { pass_plan, addable_lenses } = buildPassPlan(args.cfg, args.files, { body: args.prBody }, eco);
+  const { pass_plan, addable_lenses } = buildPassPlan(args.cfg, args.files, { body: args.prBody }, eco, args.heuristics);
   const headSha = args.tree?.head_sha || args.row.head_sha;
   return {
     pr: args.row.number,
@@ -815,7 +828,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // computing it here and again inside buildRoundOrder yields the same
       // tiers; taking the lens list off it keeps the round row and the order
       // from ever disagreeing.
-      const passPolicy = buildPassPlan(cfg, files, { body: prBody }, eco);
+      const passPolicy = buildPassPlan(cfg, files, { body: prBody }, eco, deps.heuristics);
       const plannedPasses = passPolicy.pass_plan;
       const lenses = plannedPasses.map((p) => p.lens);
       const riskPasses = new Set(cfg.models.risk_passes);
@@ -922,6 +935,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         settledDigest: settledDigest(row.number),
         issuedAt: now().toISOString(),
         ...(prBody !== undefined ? { prBody } : {}),
+        ...(deps.heuristics !== undefined ? { heuristics: deps.heuristics } : {}),
       });
 
       // The ONE memory call of this round, placed after the worktree

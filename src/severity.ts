@@ -38,16 +38,60 @@ export function normalizeReachability(value: string | undefined | null): Reachab
 
 // ---- first-party directive provenance ---------------------------
 
-/** Path segments that mark VENDORED/third-party content: a directive file
- * under one of these keeps the injection bright line — it was not authored
- * in-repo through the PR flow. */
-const VENDORED_SEGMENTS = new Set(["node_modules", "vendor", "vendors", "vendored", "third_party", "third-party", "external"]);
+/** The directive-path vocabulary the predicate below walks. lifts it
+ * into config as an EXTEND-only surface: `[review.directives]` `extra_*` keys
+ * ADD entries and nothing can remove the built-ins. Replacement is
+ * deliberately not offered — dropping, say, `CLAUDE.md` from the vocabulary
+ * would silently re-enable auto-blocking on first-party directive edits,
+ * which is's ratified behaviour drifting by config typo. A repo whose
+ * tree genuinely uses one of these names for something else loses at most an
+ * escalation comment; the reverse mistake loses a ratified guarantee. */
+export interface DirectiveVocabulary {
+  /** Path segments that mark VENDORED/third-party content: a directive file
+   * under one of these keeps the injection bright line — it was not authored
+   * in-repo through the PR flow. Matched lowercased. */
+  vendoredSegments: Set<string>;
+  /** Basenames that are agent-directive files wherever they sit in the tree. */
+  basenames: Set<string>;
+  /** Directory segments whose whole subtree is agent-directive content. */
+  dirSegments: Set<string>;
+  /** Root-level directory names whose subtree is directive content AT THE
+   * REPO ROOT ONLY — a nested `foo/prompts/` is an ordinary source dir. */
+  rootDirs: Set<string>;
+  /** Exact repo-relative file paths that are directive files. */
+  files: Set<string>;
+}
 
-/** Basenames that are agent-directive files wherever they sit in the tree. */
-const DIRECTIVE_BASENAMES = new Set(["AGENTS.md", "AGENT.md", "CLAUDE.md", ".cursorrules"]);
+/** Config-shaped EXTENSIONS to the built-in vocabulary (all optional; the
+ * shape [review.directives] parses into — see src/config.ts). */
+export interface DirectiveVocabularyExtras {
+  extra_vendored_segments?: string[];
+  extra_basenames?: string[];
+  extra_dir_segments?: string[];
+  extra_root_dirs?: string[];
+  extra_files?: string[];
+}
 
-/** Directory segments whose whole subtree is agent-directive content. */
-const DIRECTIVE_DIR_SEGMENTS = new Set([".claude", ".cursor"]);
+/** The compiled-in vocabulary — today's exact lists; the shipped default. */
+export const DEFAULT_DIRECTIVE_VOCABULARY: DirectiveVocabulary = {
+  vendoredSegments: new Set(["node_modules", "vendor", "vendors", "vendored", "third_party", "third-party", "external"]),
+  basenames: new Set(["AGENTS.md", "AGENT.md", "CLAUDE.md", ".cursorrules"]),
+  dirSegments: new Set([".claude", ".cursor"]),
+  rootDirs: new Set(["prompts"]),
+  files: new Set([".github/copilot-instructions.md"]),
+};
+
+/** Built-ins ∪ the configured extras — EXTEND-only by construction. */
+export function directiveVocabulary(extras: DirectiveVocabularyExtras = {}): DirectiveVocabulary {
+  const d = DEFAULT_DIRECTIVE_VOCABULARY;
+  return {
+    vendoredSegments: new Set([...d.vendoredSegments, ...(extras.extra_vendored_segments ?? []).map((s) => s.toLowerCase())]),
+    basenames: new Set([...d.basenames, ...(extras.extra_basenames ?? [])]),
+    dirSegments: new Set([...d.dirSegments, ...(extras.extra_dir_segments ?? [])]),
+    rootDirs: new Set([...d.rootDirs, ...(extras.extra_root_dirs ?? [])]),
+    files: new Set([...d.files, ...(extras.extra_files ?? [])]),
+  };
+}
 
 /**
  * Is `path` a FIRST-PARTY agent-directive file of the reviewed repo —
@@ -55,26 +99,35 @@ const DIRECTIVE_DIR_SEGMENTS = new Set([".claude", ".cursor"]);
  * at any depth — and NOT under a vendored tree? The predicate is deliberately
  * path-shaped and shared: dispatch uses it to pick the escalation mention,
  * the tag mapping below uses it to keep such findings off the blocker bar.
+ * `vocab` defaults to the compiled-in vocabulary, so every call without
+ * config in reach behaves exactly as before.
  */
-export function isFirstPartyDirectivePath(path: string | undefined | null): boolean {
+export function isFirstPartyDirectivePath(
+  path: string | undefined | null,
+  vocab: DirectiveVocabulary = DEFAULT_DIRECTIVE_VOCABULARY,
+): boolean {
   if (!path) return false;
   const segments = path.split("/").filter(Boolean);
   if (segments.length === 0) return false;
-  if (segments.some((s) => VENDORED_SEGMENTS.has(s.toLowerCase()))) return false;
+  if (segments.some((s) => vocab.vendoredSegments.has(s.toLowerCase()))) return false;
   const basename = segments[segments.length - 1] as string;
-  if (DIRECTIVE_BASENAMES.has(basename)) return true;
-  if (segments.some((s) => DIRECTIVE_DIR_SEGMENTS.has(s))) return true;
-  // prompts/** binds at the repo root only — a nested `foo/prompts/` is an
+  if (vocab.basenames.has(basename)) return true;
+  if (segments.some((s) => vocab.dirSegments.has(s))) return true;
+  // Root dirs bind at the repo root only — a nested `foo/prompts/` is an
   // ordinary source directory in most trees.
-  if (segments[0] === "prompts") return true;
-  if (segments.join("/") === ".github/copilot-instructions.md") return true;
+  if (vocab.rootDirs.has(segments[0] as string)) return true;
+  if (vocab.files.has(segments.join("/"))) return true;
   return false;
 }
 
 /** The gate condition: an injection-kind finding anchored on a
  * first-party directive path. Findings without a `kind` are never gated. */
-export function isFirstPartyDirectiveInjection(kind: string | undefined | null, path: string | undefined | null): boolean {
-  return kind?.trim().toLowerCase() === "injection" && isFirstPartyDirectivePath(path);
+export function isFirstPartyDirectiveInjection(
+  kind: string | undefined | null,
+  path: string | undefined | null,
+  vocab: DirectiveVocabulary = DEFAULT_DIRECTIVE_VOCABULARY,
+): boolean {
+  return kind?.trim().toLowerCase() === "injection" && isFirstPartyDirectivePath(path, vocab);
 }
 
 export interface PostTagContext {
