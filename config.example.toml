@@ -397,6 +397,12 @@ on_base_advance = true   # the base branch moved; no PR-owned file changed => no
 # attributable human login. It is a comment @-mention through the gated review
 # — never a GitHub reviewer nomination (rule 10 amendment, the owner 2026-08-19).
 escalation_mention_default = ""             # ← FILL (8): fallback GitHub login for escalation @-mentions ("" = no @)
+# repo profile — names a directory under profiles/ whose house-rule
+# addenda pack (profiles/<name>/addenda/*.md) composes onto the built pass
+# bodies after the built-in generic registry. "" = no profile (generic addenda
+# only). Ship-with options: "minimal" (empty pack), "example-django" (a worked
+# illustrative Django pack). See docs/profiles.md for authoring your own.
+profile = ""
 
 [slack]
 # The Slack concierge — ONE channel, one thread per PR. Tokens are

@@ -293,10 +293,20 @@ export interface ReviewConfig {
    * "a maintainer") — it still posts.
    */
   escalation_mention_default: string;
+  /**
+   * Repo profile: names a directory under `profiles/` whose
+   * house-rule addenda pack (`profiles/<name>/addenda/*.md`) is composed onto
+   * the built pass bodies AFTER the built-in generic registry and BEFORE the
+   * dynamic same-day feedback addendum. "" ⇒ no profile: exactly the generic
+   * addenda set. Loaded once at daemon assembly (src/wire.ts) — a malformed
+   * pack fails the boot loudly, never a silent skip.
+   */
+  profile: string;
 }
 
 export const REVIEW_DEFAULTS: ReviewConfig = {
   escalation_mention_default: "",
+  profile: "",
 };
 
 /**

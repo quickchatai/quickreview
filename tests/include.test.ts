@@ -23,6 +23,7 @@ import {
   tiersForPass,
 } from "../src/include.js";
 import { renderMigrationPrecheckDegradedNote, renderNitScopeNote } from "../src/templates.js";
+import { loadProfileAddenda } from "../src/profiles.js";
 
 /** In-memory fs for the pure expansion tests. */
 function fakeFs(files: Record<string, string>) {
@@ -1203,15 +1204,20 @@ describe("the memory addendum", () => {
   });
 });
 
-describe("the corpus-derived rules", () => {
+describe("the corpus-derived rules (six of seven ride the quickchat profile)", () => {
   const sandbox = join(import.meta.dirname, "..");
+  // The deployed composition: built-in generics, then the quickchat pack —
+  // exactly what wire.ts assembles with `[review] profile = "quickchat"`.
+  // The content pins below bind THAT configuration; the byte-equivalence
+  // proof for the extraction itself lives in tests/profiles.test.ts.
+  const REGISTRY = [...PASS_ADDENDA, ...loadProfileAddenda(sandbox, "quickchat")];
   let out: string;
   let bodies: Map<string, string>;
 
   beforeEach(() => {
     out = mkdtempSync(join(tmpdir(), "qcr-corpus-"));
     bodies = new Map();
-    for (const b of buildAgents(join(sandbox, "agents"), out, { root: sandbox })) {
+    for (const b of buildAgents(join(sandbox, "agents"), out, { root: sandbox, addenda: REGISTRY })) {
       bodies.set(b.name, readFileSync(b.output, "utf8"));
     }
   });
@@ -1243,11 +1249,11 @@ describe("the corpus-derived rules", () => {
 
   it("every corpus rule is scoped to ONE named lens and reaches no other", () => {
     for (const [id, pass, marker] of SCOPED) {
-      const entry = PASS_ADDENDA.find((a) => a.id === id);
+      const entry = REGISTRY.find((a) => a.id === id);
       expect(entry, id).toBeDefined();
       // A named list of exactly one pass — never "all", never "lenses".
       expect(entry!.scope, id).toEqual([pass]);
-      expect(addendaForPass(pass).map((a) => a.id), id).toContain(id);
+      expect(addendaForPass(pass, REGISTRY).map((a) => a.id), id).toContain(id);
       for (const [name, text] of bodies) {
         expect(text.includes(marker), `${id} in ${name}`).toBe(name.startsWith(`${pass}--`));
       }
@@ -1255,7 +1261,7 @@ describe("the corpus-derived rules", () => {
   });
 
   it("none of them reaches the validator — the veto keeps its own vocabulary", () => {
-    const ids = addendaForPass(VALIDATE_PASS).map((a) => a.id);
+    const ids = addendaForPass(VALIDATE_PASS, REGISTRY).map((a) => a.id);
     for (const [id] of SCOPED) expect(ids, id).not.toContain(id);
   });
 
@@ -1404,16 +1410,19 @@ describe("the corpus-derived rules", () => {
     }
   });
 
-  it("the registry stays byte-stable: unique ids, corpus rules contiguous, after them", () => {
-    expect(new Set(PASS_ADDENDA.map((a) => a.id)).size).toBe(PASS_ADDENDA.length);
+  it("the registry stays byte-stable: unique ids, the quickchat pack at the composed tail", () => {
+    expect(new Set(REGISTRY.map((a) => a.id)).size).toBe(REGISTRY.length);
     const ids = PASS_ADDENDA.map((a) => a.id);
-    const first = ids.indexOf("migration-discipline");
+    // the six house rules left the compiled-in registry; the one
+    // generic corpus rule (diff-leftovers) stays, ahead of the
+    // tail, preserving the generic build's byte order.
+    for (const [id] of SCOPED) {
+      if (id === "diff-leftovers") expect(ids).toContain(id);
+      else expect(ids, id).not.toContain(id);
+    }
+    const first = ids.indexOf("diff-leftovers");
     expect(first).toBeGreaterThan(ids.indexOf("memory-read-only"));
-    // The corpus rules are one unbroken run, in their declared order.
-    expect(ids.slice(first, first + SCOPED.length)).toEqual(SCOPED.map(([id]) => id));
-    // Later feedback rules append, preserving every existing
-    // built body's prior byte order while explicitly superseding old policy.
-    expect(ids.slice(first + SCOPED.length)).toEqual([
+    expect(ids.slice(first + 1)).toEqual([
       "nit-carries-a-request",
       "no-self-narration",
       "tag-grammar",
@@ -1421,5 +1430,9 @@ describe("the corpus-derived rules", () => {
       "concrete-injection-evidence",
       "concrete-injection-evidence-validate",
     ]);
+    // The quickchat pack composes AFTER every generic entry, in filename
+    // order — which the numeric prefixes pin to the old declaration order.
+    const packIds = REGISTRY.slice(PASS_ADDENDA.length).map((a) => a.id);
+    expect(packIds).toEqual(SCOPED.map(([id]) => id).filter((id) => id !== "diff-leftovers"));
   });
 });

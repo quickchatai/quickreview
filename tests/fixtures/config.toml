@@ -383,6 +383,9 @@ on_base_advance = true   # the base branch moved; no PR-owned file changed => no
 # attributable human login. It is a comment @-mention through the gated review
 # — never a GitHub reviewer nomination (rule 10 amendment, the owner 2026-08-19).
 escalation_mention_default = "example-maintainer"
+# repo profile under profiles/ ("" = no profile — the generic addenda
+# set only). Tests select a profile explicitly where one is under test.
+profile = ""
 
 [slack]
 # The Slack concierge — ONE channel, one thread per PR. Tokens are

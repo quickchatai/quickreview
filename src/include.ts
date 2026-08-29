@@ -464,12 +464,30 @@ const ASK_HUMAN_NAMED_DEFECT_VALIDATE_ADDENDUM =
 
 // ----: the corpus-derived rules ------------------------------------
 //
-// Seven entries below encode what three years of this team's own review
-// comments show they actually care about (read pass → sweep of
-// 54 measured concerns → case-by-case adjudication with
-// the owner). They are behavioural patterns, not a rubric and not a score:
+// Seven entries once lived below, encoding what three years of this team's own
+// review comments show they actually care about (read pass →
+// sweep of 54 measured concerns → case-by-case adjudication
+// with the owner). They are behavioural patterns, not a rubric and not a score:
 // the owner's steer was "some kind of rules or set of behavioural patterns that
 // will emerge — like looking very carefully at the migrations".
+//
+// moved six of the seven — migration-discipline, nullability-two-
+// halves, test-doctrine, orm-usage, declared-shape, config-placement — out of
+// this compiled-in registry into the quickchat repo profile
+// (`profiles/quickchat/addenda/`, byte-preserved; loaded by src/profiles.ts,
+// composed by wire.ts AFTER every entry here). They are this team's house
+// rules, not generic review behaviour, and a profile is where house rules
+// live. `diff-leftovers` stays: debris hygiene is generic, not house style.
+// `tests/profiles.test.ts` proves the moved pack composes byte-identically to
+// the constants it replaced.
+//
+// NOT moved, deliberately: `data-safety-no-exec` and `django-migration-orm`
+// (above). Their repo-specific evidence (the single `default` database, no
+// read replica) is woven into the same sentences that deliver the generic
+// no-exec supersession of the frozen seed, and `django-migration-orm` reads
+// "supersedes the migration gate above" — extracting either half would mean
+// rewriting bytes and breaking a positional reference, which is exactly what
+// the byte-preserving move forbids. Splitting them is a future ticket's call.
 //
 // Placement is per rule and deliberate — `docs/corpus-rule-placements.md`
 // carries the table, including the rules that went to reviewer memory, the one
@@ -477,73 +495,19 @@ const ASK_HUMAN_NAMED_DEFECT_VALIDATE_ADDENDUM =
 // all. Two discriminators did most of the work:
 //
 //   * DEFECT-shaped (a wrong declared type, a data-losing migration split)
-//     binds here, where a blank-slate leaf reads it every round. CONVENTION-
-//     shaped (which module a constant lives in, the logging kwarg that is
-//     silently dropped) went to reviewer memory, which the passes look up with
-//     `viking_search` — a convention drifts, and one of these already did.
+//     binds in an addendum, where a blank-slate leaf reads it every round.
+//     CONVENTION-shaped (which module a constant lives in, the logging kwarg
+//     that is silently dropped) went to reviewer memory, which the passes look
+//     up with `viking_search` — a convention drifts, and one of these already
+//     did.
 //   * A rule about WHICH LENS RUNS is not a rule about how a lens judges, so
 //     the missing-migration trigger went to the round templates instead.
-//
-// Two of the entries are also ANTI-rules — global mocks and new-column
-// nullability are house style, and the corpus shows reviewers arguing against
-// them. Left unsaid, a lens would rediscover the argument and post it.
-
-// §"Migrations: four of the five uncovered sub-rules kept". R2
-// (collision with master) is daemon-side already, R7 (deploy-window NOT NULL)
-// is pass-backcompat's, R5 (prove the lock on a prod copy) is out of scope by
-// scoping rule 2 — and R6 (reversibility) was REJECTED by the owner, which is
-// why it appears here as a thing never to raise rather than as a silence.
-const MIGRATION_DISCIPLINE_ADDENDUM =
-  "\n## Migration discipline — the team's four standing rules (sandbox rule)\nMigrations are the most rule-shaped writing in three years of this team's own review comments: the same four objections recur in near-identical words across years. Apply them as findings at your lens's ordinary severity, with the two exceptions named below.\n\n1. **One migration per PR.** Two or more migration files in one PR is usually a squash that never happened. This is housekeeping, not correctness: raise it as a `[nit]` or a `[question]`, never as a blocker, and never when the migrations genuinely depend on each other (a schema change this PR then backfills — see rule 3).\n2. **A migration never imports application code.** No `from myapp.models import Thing` and no import of a service, serializer or constant at module scope. Use `apps.get_model(\"app\", \"Model\")` inside the `RunPython` callable instead. A migration must run against the schema as of its own point in history; an imported model class is today's, so the migration silently changes meaning — or dies — every time the model moves under it.\n3. **Schema DDL and data changes belong in separate migrations.** A file that both alters the schema and runs a `RunPython`/`RunSQL` data step is a real defect, and the reason is specific: if the data step raises, the schema change has already been applied but the migration is NOT recorded in `django_migrations`. The database is then in a state Django cannot reason about — nothing further applies until someone opens a psql session and drops the objects by hand. Say that consequence in `detail`; \"split these for clarity\" is the weak version of a strong finding.\n4. **The model changed and there is no migration.** A new, removed or altered field, a changed `db_index`/`unique`/`choices`/`default` on a model — with no migration file anywhere in the PR — is a finding, because `makemigrations` will demand one at deploy time and the branch will not start. Check the model diff against the migration files the PR adds, not against the migration directory as a whole.\n\n**Never raise migration reversibility.** Do not ask for `RunSQL(..., reverse_sql=RunSQL.noop)`, a `reverse_code`, or \"make this migration reversible\" — not as a blocker, not as a nit, at no confidence. It was raised in the corpus and it was **rejected on the merits** (the owner, 2026-08-24): **the rollback unit here is the deployment, not the migration.** A bad deploy is rolled back as a deployment and then fixed by rolling forward, so a reverse path is close to irrelevant. What that makes MANDATORY instead is backward compatibility — old code must keep working against the new schema, because a deployment rollback lands you there — and that is `pass-backcompat`'s territory, not yours.\n";
-
-// §"The four settled": nullability read as a live disagreement between
-// two reviewers for years and is one rule with two halves — `mhale` requires
-// `null=True` for the deploy window, `gfrost` objects to the column STAYING
-// nullable. Both were right about different moments. The half a single-PR
-// review can act on is the anti-rule; the deferred half is a question, and its
-// tracking machinery is, not this entry's.
-const NULLABILITY_TWO_HALVES_ADDENDUM =
-  "\n## A new column is nullable for the window, then tightened (sandbox rule)\nOne rule, two halves, and the corpus shows two reviewers each defending one of them for years as though they disagreed.\n\n**The first half is an anti-rule: `null=True, blank=True` on a NEWLY ADDED column is the required shape, not a modelling defect.** During the deploy window the old pods are still running and still writing rows that have no value for the new column; a column added `NOT NULL` breaks those writes. Never raise the nullability of a new column as a finding, never ask for the `NOT NULL` to land in this PR, and never treat `blank=True` beside it as sloppiness.\n\n**The second half is the one that gets lost: the column is meant to be tightened once the window has passed and any backfill has run.** Where a PR adds a nullable column and neither its body nor its code shows that the tightening is planned, that is worth exactly one `[question]` — \"is the follow-up that makes this NOT NULL planned, and what backfills it?\" — attached to the model or migration. It is **never a blocker**, and it never asks THIS PR to do the tightening: the tightening belongs to a later deploy by construction, so demanding it here is demanding the bug back.\n\nA column that was ALREADY nullable and stays nullable is not this rule; judge it on its own merits, if at all.\n";
-
-// four of gfrost's eleven, all "keep", plus the two settled
-// test rules. `pass-baseline` owns tests (the corpus's number-one topic at
-// 10.0%) and it is always-on, so this is where they bind. Two of the five are
-// anti-rules — the corpus contains reviewers arguing FOR removing
-// `assert_called_once_with` and AGAINST global mocks, and the owner settled both
-// the other way.
-const TEST_DOCTRINE_ADDENDUM =
-  "\n## How this team tests — five standing expectations (sandbox rule)\nTests are the single most-reviewed topic in this team's history. Three of these are findings; two are anti-rules that stop you re-litigating something already settled.\n\n1. **Assert on the DATABASE, not only on the response.** When the changed path writes, a test that stops at the HTTP response has not shown the row exists or that its fields are right. Read the row back and assert on it. Raise the gap at your lens's ordinary severity when the write IS the behaviour under test.\n2. **Assert the observable effect, not `status_code == 200`.** A status assertion proves the view returned; it proves nothing about what the change did. Name, in the finding, the effect the test should be asserting instead — the row, the emitted event, the returned field, the call that should not have happened.\n3. **`assert_called_once_with` stays — with `pformat`.** Settled (the owner, 2026-08-24) between two reviewers who each had half of it: keep the assertion, because it checks the inputs and the call count together, and attach `pformat(mock.call_args)` (or `pformat(log_output)`) to the assert message so the failure is readable at 2am instead of \"expected call not found\". **Never ask for `assert_called_once_with` to be removed or replaced** — asking for the readable failure output is the finding, and it is a `[nit]`.\n4. **Global mocks are house style — never campaign against them.** Do not raise \"move this to a local mock\", \"avoid global mocks\", or \"this fixture is too far from the test\". The trade was weighed and decided the other way (the owner, 2026-08-24): less duplication, and the suite is already built on them. A global mock that is WRONG for this test — mocking the thing under test, or a mock this test then re-mocks — is a different finding and still yours.\n5. **`parametrize` is a suggestion, never a demand.** Where several tests differ only in their input data you MAY suggest folding them into one `@pytest.mark.parametrize` with the case table hoisted above the test — phrased as an option, at `[nit]`, once. Never insist, never block, and do not raise it where the cases differ in more than their data: a parametrized test is frequently harder to read than three plain ones, which is why this is softened rather than enforced.\n";
-
-// #17 (Python-side ORM, kept) + #27 (bulk_create, kept WITH named
-// exceptions) +'s finding that `.count()` vs `len()` was never a
-// contradiction — one principle applied to opposite situations. Both halves
-// are stated because a lens taught only one half fires on correct code.
-const ORM_USAGE_ADDENDUM =
-  "\n## ORM usage — make the database do the work, exactly once (sandbox rule)\n**Query efficiency runs in BOTH directions, and it is one rule: do not make Python do work the database can do, and do not make the database redo work you already hold.** The corpus reads as a contradiction on this and is not — the same reviewer argued both sides, correctly, about opposite situations:\n\n- The queryset has NOT been evaluated and only a number or a boolean is wanted: `len(qs)` / `bool(list(qs))` pulls every row and every column into Python. Use `.count()` / `.exists()`.\n- The queryset HAS already been evaluated (iterated, `list()`-ed, cached in a template): `.count()` fires a fresh query for something already in memory — twice over if it is called twice. Use `len()`.\n- The same logic decides `.values_list()`, `.only()`, aggregate-vs-loop, and filtering in the query rather than in a comprehension.\n\n**Read which side of the line the call site is on before raising.** The direction is the finding; the method name is not. A finding that says \"use `.count()`\" without establishing that the queryset was unevaluated is as wrong as the code it complains about — say in `evidence` where the queryset is evaluated.\n\n**`.objects.create()` in a loop is `bulk_create`/`bulk_update` — with two named exceptions.** Before raising it, rule both out (the owner, 2026-08-24):\n\n- **the code needs the primary keys back** — `bulk_create` does not return them on every backend, so a loop is the correct shape when the ids feed the next statement; and\n- **the set is strictly bounded and small by construction** — a fixed handful of rows from a literal, an enum, or a validated max — where the batching buys nothing.\n\nIf either holds there is **no finding**. Say which you checked in `evidence`; a bulk-create finding that has not addressed the ids question is the single most likely way this rule fires on correct code.\n";
-
-// #15 (type lies) + concerns 11 (enum-not-magic-string, one of
-// only two team-wide concerns blocking ABOVE the corpus baseline). The
-// convention half — annotate every signature, prefer a Pydantic model to a
-// bare dict — went to reviewer memory instead: it is authoring style, already
-// written into the reviewed repo's own agent notes, and minting it as a
-// per-round finding class is nit volume the treadmill rule exists to stop.
-const DECLARED_SHAPE_ADDENDUM =
-  "\n## The declared shape must be honest, and closed where the values are (sandbox rule)\n**A declared type that contradicts the body is a defect — one of the two is a lie.** `-> str` on a function with a `return None` path; `Optional[X]` on a value no path leaves unset; a parameter annotated `dict` that every caller passes a fixed set of keys to; a `check_*` that raises or a `validate_*` that returns a bool. **Say which side you believe is wrong and why** — sometimes the annotation is stale and sometimes the code is, the remedies are opposite, and a finding that does not name which is unactionable. Anchor it at the signature and quote the contradicting line in `evidence`.\n\n**A value with a fixed set of possibilities is an enum, not a magic string.** `TextChoices` on a model field, an `Enum` or `Literal` in Python, a named constant where neither fits. This one is worth stating plainly because the measurement is unusual: it is one of only two concerns in three years of this team's reviews that they block on **well above** their own baseline rate. A bare string literal that is compared or assigned in more than one place, or that a model column constrains, is a real finding — not a passing nit. A literal used exactly once, locally, is not.\n\nNeither of these is \"add the missing annotations\": completing an otherwise honest signature is a house convention, not a defect. If it matters on this diff, keep it a `[nit]`, and look the convention up in memory rather than asserting it.\n";
-
 // #12 ("leftover?", 66 findings, 95% one reviewer, blocked on 1.5%).
 // Kept, but the shape matters: one comment listing the debris, never a thread
 // per line — this class is pure hygiene and the nit treadmill is what the
 // review already pays too much for.
 const DIFF_LEFTOVERS_ADDENDUM =
   "\n## Leftovers — debris this change dragged along (sandbox rule)\nCommented-out code, a `print`/debug logger left behind, a TODO the author wrote to themselves, an unrelated reformat, the old name of a symbol that was renamed, an import or fixture nothing uses any more, a file the change stopped needing. It is one of this team's most repeated review remarks and it is worth keeping.\n\n**Raise it once, as a single `[nit]` listing the locations** — one comment naming each spot, never one thread per line, and never a blocker: this is hygiene, it is not a `P0`–`P2`, and it must never consume the merge gate. It is a finding only when the debris is **inside this diff**; pre-existing debris on lines this PR did not touch is `out-of-scope`, however tempting.\n";
-
-// concern 21 (config placement, n=52) — the OTHER team-wide concern
-// blocking above baseline, and the one with the highest unresolved-at-merge
-// rate of all 54. It is scoped to `pass-placement` rather than `pass-baseline`
-// because "where should this value live" is literally that lens's question,
-// and because the P2 cap it already carries is the right ceiling for it.
-const CONFIG_PLACEMENT_ADDENDUM =
-  "\n## Where a VALUE lives is a placement decision too (sandbox rule)\nYour lens asks where code belongs; this team asks the same question of values, and asks it often. A new constant, threshold, timeout, feature flag, URL, model name or credential-shaped string has a home in this repo, and inline at the use site is usually not it. The candidate homes are Django **settings**, the **environment** (with its terraform declaration), or a module-level **`consts.py`** — and choosing between them is the judgment:\n\n- differs per environment, or is a secret ⇒ environment + terraform;\n- the same everywhere but read from more than one place ⇒ settings or `consts.py`;\n- genuinely local, used once, and meaningless elsewhere ⇒ it is fine where it is, and there is no finding.\n\n**Name the home you would move it to and say why that one** — your lens already requires naming the better home, and this is that requirement applied to a value. **Read the repo's own layout at the pinned sha before you name a file**: this team's homes have moved before, and a finding that cites a module that no longer plays that role is worse than silence.\n\nTwo measurements make this worth raising properly rather than in passing: it is one of only two concerns in three years of this team's reviews that they block on **above** their own baseline rate, and it has the **highest rate of threads still unresolved at merge** of any concern measured. Your `P2` cap is unchanged.\n";
 
 // ----: cut output that carries no reasoning -------------------------
 //
@@ -611,14 +575,11 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
   { id: "concurrency-trigger", scope: [CONCURRENCY_PASS], text: CONCURRENCY_TRIGGER_ADDENDUM },
   { id: "ask-human-trigger", scope: [ASK_HUMAN_PASS], text: ASK_HUMAN_TRIGGER_ADDENDUM },
   { id: "ask-human-named-defect-validate", scope: [VALIDATE_PASS], text: ASK_HUMAN_NAMED_DEFECT_VALIDATE_ADDENDUM },
-  // the corpus-derived rules, each scoped to the lens that owns it.
-  { id: "migration-discipline", scope: ["pass-data-safety"], text: MIGRATION_DISCIPLINE_ADDENDUM },
-  { id: "nullability-two-halves", scope: ["pass-backcompat"], text: NULLABILITY_TWO_HALVES_ADDENDUM },
-  { id: "test-doctrine", scope: ["pass-baseline"], text: TEST_DOCTRINE_ADDENDUM },
-  { id: "orm-usage", scope: ["pass-baseline"], text: ORM_USAGE_ADDENDUM },
-  { id: "declared-shape", scope: ["pass-baseline"], text: DECLARED_SHAPE_ADDENDUM },
+  // the one corpus-derived rule that is generic review behaviour.
+  // Its six house-rule siblings ride `profiles/quickchat/addenda/` since
+  // (see the banner above); wire.ts composes a profile pack after
+  // every entry in this registry.
   { id: "diff-leftovers", scope: ["pass-baseline"], text: DIFF_LEFTOVERS_ADDENDUM },
-  { id: "config-placement", scope: ["pass-placement"], text: CONFIG_PLACEMENT_ADDENDUM },
   // the three unreasoned shapes. Lens-side rules first, then the one
   // validator entry that holds the veto for all three.
   { id: "nit-carries-a-request", scope: "lenses", text: NIT_CARRIES_A_REQUEST_ADDENDUM },

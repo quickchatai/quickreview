@@ -27,6 +27,7 @@ import { makePostingGuard } from "./guards.js";
 import { TokenMinter } from "./githubAuth.js";
 import { FeedbackEngine, feedbackDayAddendum, type FeedbackEvent } from "./feedback.js";
 import { PASS_ADDENDA, buildAgents } from "./include.js";
+import { loadProfileAddenda } from "./profiles.js";
 import { fileImprovementPr, fileIssue, type Run } from "./improvements.js";
 import { OpenVikingClient, OpenVikingSupervisor, keyFromFile, openVikingContextAssembler, openVikingStore } from "./openviking/index.js";
 import { OV_REVIEWER_KEY_SECRET, openVikingSessionLifecycle } from "./memory/ovsession.js";
@@ -507,6 +508,15 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       // regenerated on every ingest and expired on ops-day change (the
       // hourly tick below), so a mid-day restart picks today's feedback up
       // and yesterday's never leaks into a new day.
+      // the repo-profile addenda pack, loaded ONCE at assembly so a
+      // malformed pack fails the boot loudly (never a silent skip) and every
+      // rebuild composes the same bytes. Composition order is fixed here:
+      // built-in generics, then the profile pack, then the same-day feedback
+      // addendum last.
+      const profileAddenda = loadProfileAddenda(root, cfg.review.profile);
+      if (cfg.review.profile !== "") {
+        log(`profile ${cfg.review.profile}: ${profileAddenda.length} addenda loaded`);
+      }
       let builtDay = opsDay(cfg.ops.timezone);
       const rebuildAgents = (day?: string): void => {
         builtDay = day ?? opsDay(cfg.ops.timezone);
@@ -516,7 +526,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           tiers: cfg.models.tiers,
           riskPasses: cfg.models.risk_passes,
           validateTier: cfg.models.validate_tier,
-          ...(fb ? { addenda: [...PASS_ADDENDA, fb] } : {}),
+          addenda: [...PASS_ADDENDA, ...profileAddenda, ...(fb ? [fb] : [])],
         });
         log(`built ${built.length} pass agents into state/agents${fb ? " (+ same-day feedback addendum)" : ""}`);
       };
