@@ -1,0 +1,31 @@
+{
+  "$comment": "GitHub App manifest for quickreviewd. Permissions and events are DERIVED FROM CODE — the mapping is documented in docs/github-app-setup.md and pinned by tests/github-app-manifest.test.ts (the event list must equal src/webhook.ts interpretEvent's accepted set; the write levels must cover every src/gate.ts MutationKind). Replace the placeholder URLs before use; the name is what your App slug is derived from.",
+  "name": "quickreview",
+  "url": "https://example.com/your-quickreviewd-fork",
+  "description": "Automated PR reviewer: reviews triggered pull requests, posts reviews through a single gated mutation path, and rechecks approved PRs when new evidence lands.",
+  "public": false,
+  "hook_attributes": {
+    "url": "https://REPLACE-WITH-YOUR-WEBHOOK-HOST/webhook",
+    "active": true
+  },
+  "redirect_url": "http://127.0.0.1:8788/manifest-callback",
+  "default_permissions": {
+    "actions": "read",
+    "checks": "read",
+    "contents": "write",
+    "issues": "write",
+    "members": "read",
+    "metadata": "read",
+    "pull_requests": "write",
+    "statuses": "read"
+  },
+  "default_events": [
+    "check_suite",
+    "issue_comment",
+    "pull_request",
+    "pull_request_review",
+    "pull_request_review_comment",
+    "push",
+    "workflow_run"
+  ]
+}
