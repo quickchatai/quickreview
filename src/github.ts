@@ -525,7 +525,7 @@ export class GitHubAdapter {
 
   /** Open PRs whose latest bot APPROVED review no longer matches the head.
    * Ported from the old flow: `first: 100`, `UPDATED_AT DESC`, review author
-   * `example-review[bot]`. */
+   * the configured `[github] bot_login`. */
   async stalenessScan(): Promise<StalePr[]> {
     const q = `repo:${this.cfg.github.repo} is:pr is:open sort:updated-desc`;
     const data = await this.graphql<{

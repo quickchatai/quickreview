@@ -442,6 +442,7 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
         templatePath: join(sandboxRoot(), "prompts", "companion-day-open.md"),
         injectDir: companion.hostInjectDir(),
         localDigestHeadline: () => latestDigestHeadline(),
+        ownerName: full.owner.name,
       });
       const report = await rollover.run();
       if (report.verdict.kind === "rollover") {

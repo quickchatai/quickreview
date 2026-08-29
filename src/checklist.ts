@@ -2,7 +2,7 @@
 //
 // Nine items; seven are automated here (① ② ④ ⑤ ⑦ ⑧ ⑨) and two are
 // guided-manual (③ ⑥ — the live test PRs, the only places where dry_run is
-// ever off, and that is the owner's act on the VM, never this code's).
+// ever off, and that is the operator's act on the VM, never this code's).
 //
 // Every probe takes its dependencies injected: local fixtures drive them on
 // this machine, the real daemon/adapter/tmux drive them on the VM. Nothing
@@ -287,8 +287,10 @@ export async function probeRestartRecovery(deps: RestartProbeDeps): Promise<Prob
 // ---- ③ ⑥ guided-manual -------------------------------------------------------
 
 /** The two live test-PR items. Never automated: they are the only steps that
- * run with `dry_run` off, and running them is the owner's act on the VM. */
-export const MANUAL_ITEMS: Array<{ item: string; name: string; instructions: string[] }> = [
+ * run with `dry_run` off, and running them is the operator's act on the VM.
+ * identity prose renders from config, never from a hardcoded login. */
+export function manualItems(botLogin = "the review App bot"): Array<{ item: string; name: string; instructions: string[] }> {
+  return [
   {
     item: "③",
     name: "live test PR — full pipeline (dry_run OFF)",
@@ -297,7 +299,7 @@ export const MANUAL_ITEMS: Array<{ item: string; name: string; instructions: str
       '"AI review requested" label. Then, with dry_run set to false FOR THIS ITEM ONLY:',
       "  - the trigger is consumed and verified gone (label removed / team request cleared)",
       '  - "AI review in progress" cycles, then "Automatic Review" lands',
-      "  - the review is posted as example-review[bot]",
+      `  - the review is posted as ${botLogin}`,
       "  - the per-PR worktree is created and removed again",
       "  - verdict/pr-<n>-round-1.json is written and valid",
       "Restore dry_run = true afterwards. The cutover flip is a separate, later act.",
@@ -315,11 +317,12 @@ export const MANUAL_ITEMS: Array<{ item: string; name: string; instructions: str
       "Restore dry_run = true afterwards.",
     ],
   },
-];
+  ];
+}
 
-export function renderManualItems(): string {
+export function renderManualItems(botLogin?: string): string {
   const lines: string[] = ["Guided-manual items (never automated — run these by hand on the VM):", ""];
-  for (const m of MANUAL_ITEMS) {
+  for (const m of manualItems(botLogin)) {
     lines.push(`${m.item} ${m.name}`);
     for (const l of m.instructions) lines.push(`   ${l}`);
     lines.push("");
@@ -337,6 +340,9 @@ export interface ChecklistDeps {
   digest: DigestProbeDeps;
   tmux: TmuxProbeDeps;
   restart: RestartProbeDeps;
+  /**: `[github] bot_login`, rendered into the guided-manual prose.
+   * Absent ⇒ the role wording ("the review App bot"). */
+  bot_login?: string;
 }
 
 export function renderTable(results: ProbeResult[]): string {
@@ -390,7 +396,7 @@ export async function runChecklist(deps: ChecklistDeps, print: (s: string) => vo
     "",
     renderTable(results),
     "",
-    renderManualItems(),
+    renderManualItems(deps.bot_login),
   ].join("\n");
   print(report);
   return { results, report, exitCode: exitCodeFor(results) };

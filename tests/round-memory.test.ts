@@ -227,6 +227,17 @@ describe("the pinned head is guaranteed", () => {
     expect(ensurePinnedHead("body", MEMORY_LESS)).toBe("body");
     expect(renderPinnedHeadSection(MEMORY_LESS)).toBe("");
   });
+
+  it("frames the head with the configured owner name, degrading to the role", () => {
+    const mem = seeded();
+    expect(renderPinnedHeadSection(mem, "the owner")).toContain("These are the owner's own words");
+    expect(renderPinnedHeadSection(mem)).toContain("These are the owner's own words");
+    expect(renderPinnedHeadSection(mem, "  ")).toContain("These are the owner's own words");
+    // Detection keys on the head CONTENT, so the framing name can never make
+    // ensurePinnedHead double-prepend.
+    const out = ensurePinnedHead(`${renderPinnedHeadSection(mem, "Someone Else")}\nbody`, mem, "the owner");
+    expect(out.split(mem.head)).toHaveLength(2);
+  });
 });
 
 describe("the shipped round templates carry both sections", () => {

@@ -153,6 +153,7 @@ export async function cmdChecklist(parts?: ProductionParts): Promise<number> {
       statusPath: join(root, "state", "status.json"),
       adoptExistingSessions: async () => (await p.sessions.adopt()).adopted,
     },
+    bot_login: cfg.github.bot_login,
   };
   try {
     const run = await runChecklist(deps);

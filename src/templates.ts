@@ -348,9 +348,9 @@ export function renderAddableLenses(addable: string[]): string {
  * about memory — the stub-wired daemon core, every legacy test — renders
  * exactly the prompt it rendered before: both memory sections come out empty.
  */
-export function roundVars(order: RoundOrder, memory: RoundMemory = MEMORY_LESS): TemplateVars {
+export function roundVars(order: RoundOrder, memory: RoundMemory = MEMORY_LESS, ownerName?: string): TemplateVars {
   return {
-    pinned_head: renderPinnedHeadSection(memory),
+    pinned_head: renderPinnedHeadSection(memory, ownerName),
     context_block: renderContextBlockSection(memory),
     n: String(order.pr),
     title: order.title,
@@ -386,14 +386,16 @@ export function roundVars(order: RoundOrder, memory: RoundMemory = MEMORY_LESS):
  * guaranteed structurally: templates place `{{pinned_head}}` where it reads
  * best, and `ensurePinnedHead` prepends it to any rendered prompt that does not
  * already carry it, so no template edit can silently drop the owner's standing
- * instructions.
+ * instructions. `ownerName` (`[owner] name`) only shapes the head's
+ * framing prose; detection stays keyed on the head content itself.
  */
 export function renderRoundPrompt(
   templateText: string,
   order: RoundOrder,
   memory: RoundMemory = MEMORY_LESS,
+  ownerName?: string,
 ): string {
-  return ensurePinnedHead(render(templateText, roundVars(order, memory)), memory);
+  return ensurePinnedHead(render(templateText, roundVars(order, memory, ownerName)), memory, ownerName);
 }
 
 export interface ConversationPromptVars {

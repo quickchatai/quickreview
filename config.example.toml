@@ -25,6 +25,16 @@ issue_label = "bot-filed"
 # secrets dir: app_id, app.pem, openai_api_key, webhook_secret, tunnel_token
 secrets_dir = "~/.config/quickreview-bot"      # ← FILL (5): dir holding app_id, app.pem, webhook_secret, …
 
+[owner]
+# The system's ONE accountable human, as a configured role. Every
+# identity surface renders from here: Slack prose, the companion day-open
+# labels, the pinned-memory head framing, the escalation-mention fallback.
+# Empty values degrade to neutral wording ("the owner" / "the operator").
+name = ""                         # ← FILL: the operator's display name for rendered prose
+slack_id = ""                     # ← FILL (if enabling Slack): U…; required then, and a [slack.users] key
+                                  # (legacy alias on input: [slack] legacy_owner_slack_id)
+github_login = ""                 # ← FILL: operator GitHub login; escalation-mention fallback
+
 [server]
 hostname = ""                                # ← FILL (6): the public webhook hostname
 port = 8787                                  # loopback only; cloudflared on the host fronts it
@@ -390,7 +400,7 @@ channel = ""                      # ← FILL (9, if enabling Slack): the ONE cha
 channel_kind = "public"           # "public" | "private" (private needs an invite)
 bot_token_file = "slack_bot_token"   # xoxb-…
 app_token_file = "slack_app_token"   # xapp-…, connections:write, socket mode only
-legacy_owner_slack_id = ""             # ← FILL (10, if enabling Slack): operator member id (U…); must also key [slack.users]
+legacy_owner_slack_id = ""             # LEGACY alias of [owner] slack_id — set the [owner] key instead
 post_min_interval_ms = 1100       # Slack chat.postMessage is ~1 msg/s per channel
 reconnect_backoff_ms = [1000, 2000, 5000, 15000, 30000]
 server_ping_timeout_ms = 30000    # no server ping within this ⇒ reconnect

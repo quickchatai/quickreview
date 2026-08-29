@@ -29,7 +29,10 @@ describe("shipped config.toml [slack]", () => {
   it("ships disabled — turning Slack on is a deliberate deploy-time act", () => {
     expect(cfg.slack.enabled).toBe(false);
     expect(cfg.slack.channel).toBe("");
-    expect(cfg.slack.legacy_owner_slack_id).toBe("");
+    // the owner id lives on [owner]; the legacy [slack] key is
+    // consumed at parse time and never carried on the parsed shape.
+    expect("legacy_owner_slack_id" in cfg.slack).toBe(false);
+    expect(cfg.owner.slack_id).toBe("");
   });
 
   it("carries the ratified policy numbers", () => {
@@ -113,14 +116,32 @@ describe("boot validation", () => {
     );
   });
 
-  it("fails loud when legacy_owner_slack_id is empty", () => {
-    expect(() => withSlack(`[slack]\nenabled = true\nchannel = "C1"\nlegacy_owner_slack_id = ""\n`)).toThrow(/non-empty `legacy_owner_slack_id`/);
+  it("fails loud when the owner Slack id is empty — the error names the NEW key", () => {
+    expect(() => withSlack(`[slack]\nenabled = true\nchannel = "C1"\nlegacy_owner_slack_id = ""\n`)).toThrow(/non-empty `\[owner\] slack_id`/);
   });
 
-  it("fails loud when legacy_owner_slack_id is absent from [slack.users]", () => {
+  it("fails loud when the owner Slack id is absent from [slack.users]", () => {
     expect(() =>
       withSlack(`[slack]\nenabled = true\nchannel = "C1"\nlegacy_owner_slack_id = "U0MAT"\n[slack.users]\nU0OTHER = "someone"\n`),
     ).toThrow(/must appear as a key in \[slack.users\]/);
+  });
+
+  // ----: the legacy [slack] legacy_owner_slack_id alias ----------------
+  it("folds a set legacy legacy_owner_slack_id into [owner] slack_id", () => {
+    const cfg = withSlack(enabled());
+    expect(cfg.owner.slack_id).toBe("U0MAT");
+    expect("legacy_owner_slack_id" in cfg.slack).toBe(false);
+  });
+
+  it("prefers [owner] slack_id when both are set and equal", () => {
+    const base = shipped.slice(0, shipped.indexOf("\n[slack]")).replace('slack_id = ""', 'slack_id = "U0MAT"');
+    const cfg = parseConfig(`${base}\n${enabled()}\n`);
+    expect(cfg.owner.slack_id).toBe("U0MAT");
+  });
+
+  it("rejects a conflicting legacy/new pair, naming the new key", () => {
+    const base = shipped.slice(0, shipped.indexOf("\n[slack]")).replace('slack_id = ""', 'slack_id = "U0OTHER"');
+    expect(() => parseConfig(`${base}\n${enabled()}\n`)).toThrow(/set `\[owner\] slack_id` only/);
   });
 
   it("rejects a bogus channel_kind", () => {

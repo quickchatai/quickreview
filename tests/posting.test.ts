@@ -7,7 +7,7 @@ import {
   INLINE_COMMENT_CAP,
   inlineBody,
   renderDirectiveEscalationComment,
-  REVIEW_FOOTER,
+  reviewFooter,
   submitReview,
   type Finding,
 } from "../src/posting.js";
@@ -144,7 +144,11 @@ describe("assembleReview", () => {
     expect(body.indexOf("### Blockers")).toBeLessThan(body.indexOf("### Nits"));
     expect(body.indexOf("### Nits")).toBeLessThan(body.indexOf("### Questions"));
     expect(body).toContain("`app/x.py:2`");
-    expect(body.trimEnd().endsWith(REVIEW_FOOTER)).toBe(true);
+    expect(body.trimEnd().endsWith(reviewFooter())).toBe(true);
+    // no configured login degrades to the role, never a personal name.
+    expect(reviewFooter()).toContain("`the review bot`");
+    expect(reviewFooter("example-review[bot]")).toContain("`example-review[bot]`");
+    expect(body).not.toContain("owner_legacy");
     expect(body).not.toContain("### Start here");
   });
 

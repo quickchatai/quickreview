@@ -361,7 +361,10 @@ describe("patchConfigToml", () => {
     const cfg = parseConfig(patched);
     expect(cfg.slack.channel).toBe("C0ABCDEFG");
     expect(cfg.slack.channel_kind).toBe("private");
-    expect(cfg.slack.legacy_owner_slack_id).toBe("U0OWNER");
+    // the wizard writes the legacy [slack] key; parseConfig folds it
+    // into [owner] slack_id and drops it from the parsed slack shape.
+    expect(cfg.owner.slack_id).toBe("U0OWNER");
+    expect("legacy_owner_slack_id" in cfg.slack).toBe(false);
     expect(cfg.slack.users).toEqual({ U0OWNER: "mhale", U0TEAM: "teammate" });
     expect(cfg.slack.enabled).toBe(false);
     expect(cfg.slack.policy).toEqual(before.slack.policy);
@@ -373,7 +376,7 @@ describe("patchConfigToml", () => {
     const live = patched.replace(/^enabled = false/m, "enabled = true");
     const cfg = parseConfig(live);
     expect(cfg.slack.enabled).toBe(true);
-    expect(cfg.slack.legacy_owner_slack_id in cfg.slack.users).toBe(true);
+    expect(cfg.owner.slack_id in cfg.slack.users).toBe(true);
   });
 
   it("is rejected by the daemon when legacy_owner_slack_id is not in the map", () => {

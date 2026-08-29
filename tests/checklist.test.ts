@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  MANUAL_ITEMS,
+  manualItems,
   diffQueues,
   exitCodeFor,
   probeDigest,
@@ -279,10 +279,17 @@ describe("table + exit code + manual items", () => {
   });
 
   it("guided-manual items are text only — ③ and ⑥, never automated", () => {
-    expect(MANUAL_ITEMS.map((m) => m.item)).toEqual(["③", "⑥"]);
+    expect(manualItems().map((m) => m.item)).toEqual(["③", "⑥"]);
     const text = renderManualItems();
     expect(text).toContain("never automated");
     expect(text).toContain("Restore dry_run = true afterwards");
+  });
+
+  it("renders the configured bot login into the manual prose", () => {
+    expect(renderManualItems("example-review[bot]")).toContain("the review is posted as example-review[bot]");
+    // No configured login degrades to the role, never to a personal name.
+    expect(renderManualItems()).toContain("the review is posted as the review App bot");
+    expect(renderManualItems()).not.toContain("owner_legacy");
   });
 
   it("safeProbe turns a throwing probe into a failed item", async () => {

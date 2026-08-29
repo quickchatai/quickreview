@@ -94,6 +94,19 @@ describe("[review]", () => {
   });
 });
 
+describe("[owner]", () => {
+  it("reads the fixture's owner identity", () => {
+    const cfg = parseConfig(readFileSync(configPath, "utf8"));
+    expect(cfg.owner).toEqual({ name: "Example Owner", slack_id: "", github_login: "example-owner" });
+  });
+
+  it("defaults every field when [owner] is absent — older configs keep parsing", () => {
+    const without = readFileSync(configPath, "utf8").replace(/\[owner\][\s\S]*?(?=\n\[server\])/, "");
+    const cfg = parseConfig(without);
+    expect(cfg.owner).toEqual({ name: "", slack_id: "", github_login: "" });
+  });
+});
+
 describe("[models] tiered pass scheme", () => {
   const cfg = parseConfig(readFileSync(configPath, "utf8"));
 

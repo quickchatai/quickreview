@@ -394,7 +394,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   };
 
   const renderPrompt = (order: RoundOrder, memory: RoundMemory): string =>
-    renderRoundPrompt(readFileSync(join(root, "prompts", roundTemplateFile(order.round_type)), "utf8"), order, memory);
+    renderRoundPrompt(readFileSync(join(root, "prompts", roundTemplateFile(order.round_type)), "utf8"), order, memory, cfg.owner.name);
   // The recheck's own template — a nudge, not a round order.
   const renderRecheck = (order: RecheckOrder): string =>
     renderRecheckPrompt(readFileSync(join(root, "prompts", RECHECK_TEMPLATE_FILE), "utf8"), order);

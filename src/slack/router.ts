@@ -47,7 +47,9 @@ function isOwnPostedTs(store: StateStore, ts: string): boolean {
 /** Rights tier of a Slack member id. Config is the ONLY input besides the id. */
 export function computeTier(cfg: Config, slackUser: string | null | undefined): SlackTier {
   if (!slackUser) return "ignored";
-  if (cfg.slack.legacy_owner_slack_id && slackUser === cfg.slack.legacy_owner_slack_id) return "owner_legacy";
+  // The tier NAME stays "owner_legacy" for now — renaming the tier vocabulary is
+  //; only the id's config home moved.
+  if (cfg.owner.slack_id && slackUser === cfg.owner.slack_id) return "owner_legacy";
   if (Object.prototype.hasOwnProperty.call(cfg.slack.users, slackUser)) return "author";
   // Ratified widening: an unmapped id gets read-only everything, but NO own-PR
   // resolution — there is no login to resolve, so it must name PRs by number.

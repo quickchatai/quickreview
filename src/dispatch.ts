@@ -283,7 +283,9 @@ async function directiveEscalationFor(
   const log = deps.log ?? (() => {});
   const directiveFiles = args.files.filter((f) => isFirstPartyDirectivePath(f.filename)).map((f) => f.filename);
   if (directiveFiles.length === 0) return undefined;
-  const fallback = deps.cfg.review.escalation_mention_default;
+  // an unset [review] escalation_mention_default falls back to the
+  // owner's GitHub login — the config default itself stays "".
+  const fallback = deps.cfg.review.escalation_mention_default || deps.cfg.owner.github_login;
   const sha = args.merge_base || args.base_sha;
   let author: { login: string | null; name: string; email: string } | null = null;
   if (deps.directiveAuthor && sha) {

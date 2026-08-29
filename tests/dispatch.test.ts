@@ -932,6 +932,26 @@ describe("first-party directive escalation pick", () => {
     expect(JSON.parse(ev.payload)).toMatchObject({ source: "config-default" });
   });
 
+  it("falls back to [owner] github_login when the [review] knob is unset", async () => {
+    const cfg = structuredClone(baseCfg);
+    cfg.review.escalation_mention_default = "";
+    queue(74, "2026-08-13T10:00:00Z", { head: "sha70" });
+    adapter.files.set(74, [file("CLAUDE.md")]);
+    const { hooks, orders } = recordingHooks();
+    await dispatchOnce({
+      cfg,
+      store,
+      adapter,
+      hooks,
+      prepareWorktree: async () => tree,
+      directiveAuthor: async () => null,
+    });
+    expect(orders[0]!.order.first_party_directives).toEqual({
+      files: ["CLAUDE.md"],
+      mention: cfg.owner.github_login, // "example-owner" from the fixture
+    });
+  });
+
   it("degrades to the fallback — never a lost round — when the author lookup throws or is absent", async () => {
     queue(72, "2026-08-13T10:00:00Z", { head: "sha70" });
     adapter.files.set(72, [file("prompts/system.md")]);

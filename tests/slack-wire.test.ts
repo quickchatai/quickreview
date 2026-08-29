@@ -116,7 +116,7 @@ beforeEach(() => {
   cfg = parseConfig(shipped);
   cfg.slack.enabled = true;
   cfg.slack.channel = CHANNEL;
-  cfg.slack.legacy_owner_slack_id = OWNER;
+  cfg.owner.slack_id = OWNER;
   cfg.slack.users = { [OWNER]: "mhale" };
 });
 

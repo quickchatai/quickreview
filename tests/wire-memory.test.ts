@@ -30,7 +30,9 @@ describe("wire.ts: the memory phase is actually connected", () => {
   });
 
   it("the round renderer receives the assembled seed", () => {
-    expect(wire).toMatch(/renderRoundPrompt\(.*, order, memory\)/);
+    // the owner name rides along so the pinned-head framing renders
+    // from config.
+    expect(wire).toMatch(/renderRoundPrompt\(.*, order, memory, cfg\.owner\.name\)/);
     expect(wire).toMatch(/renderPrompt = \(order: RoundOrder, memory: RoundMemory\)/);
   });
 

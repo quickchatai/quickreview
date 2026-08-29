@@ -95,7 +95,8 @@ export interface InterpretDeps {
   botCommentPr: (id: number) => number | undefined;
 }
 
-/** `example-review[bot]` is @-mentioned as `@example-review`. */
+/** The configured bot (`[github] bot_login`, e.g. `some-app[bot]`) is
+ * @-mentioned as the login without its `[bot]` suffix (`@some-app`). */
 export function mentionsBot(body: string, botLogin: string): boolean {
   const handle = botLogin.replace(/\[bot\]$/, "");
   if (!handle) return false;

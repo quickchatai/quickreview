@@ -72,7 +72,7 @@ export function refOf(e: MemoryEntry): MemoryRef {
 /**
  * Every mutation memory supports.
  *
- * `add` vs `note` is a real distinction, not a spelling: `add` is the owner
+ * `add` vs `note` is a real distinction, not a spelling: `add` is the operator
  * typing an entry (the store tags it as hand-written), `note` is a machine
  * writer appending an entry that already carries its own tag and must be
  * stored verbatim. Collapsing them would let the daemon's `#feedback` lines

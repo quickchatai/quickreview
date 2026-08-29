@@ -53,12 +53,14 @@ export function userRef(cfg: Config, githubLogin: string): string {
 }
 
 // escalationRef() was removed on 2026-08-18: there is no nominated escalation
-// reviewer any more. Parked PRs are addressed to the owner, via legacyOwnerRef().
+// reviewer any more. Parked PRs are addressed to the owner, via ownerRef().
 
-/** the owner — by mention when his id is configured, by name otherwise. */
-export function legacyOwnerRef(cfg: Config): string {
-  const id = cfg.slack.legacy_owner_slack_id.trim();
-  return id ? mention(id) : "the owner";
+/** The owner — by mention when their Slack id is configured, by configured
+ * name otherwise, and by the neutral role when neither is set. */
+export function ownerRef(cfg: Config): string {
+  const id = cfg.owner.slack_id.trim();
+  if (id) return mention(id);
+  return cfg.owner.name.trim() || "the owner";
 }
 
 export function prUrl(cfg: Config, pr: number): string {
@@ -137,7 +139,7 @@ export function verdictMessage(cfg: Config, m: VerdictMessageInput): string {
   if (m.summary !== null && m.summary.trim() !== "") lines.push(escapeMrkdwn(m.summary));
   lines.push(`<${m.review_url ?? prUrl(cfg, m.pr)}|review on GitHub>`);
   if (m.verdict === "NEEDS_HUMAN") {
-    lines.push(`parked for a person — ${legacyOwnerRef(cfg)}, the merge decision is yours`);
+    lines.push(`parked for a person — ${ownerRef(cfg)}, the merge decision is yours`);
   }
   return lines.join("\n");
 }
@@ -206,7 +208,7 @@ export function causeMessage(cfg: Config, m: CauseMessageInput): string {
     case "round.overdue":
       return (
         `⏱ #${m.pr} round ${m.round_no} blew its ${m.deadline_min}-min deadline — ` +
-        `parked on awaiting_human for ${legacyOwnerRef(cfg)}. No verdict was posted.`
+        `parked on awaiting_human for ${ownerRef(cfg)}. No verdict was posted.`
       );
     case "round.malformed_verdict":
       return `⚠️ #${m.pr} round ${m.round_no} ended without a usable verdict — parked on awaiting_human, no approval was implied.`;
@@ -225,7 +227,7 @@ export function causeMessage(cfg: Config, m: CauseMessageInput): string {
     case "slack.cap_reached":
       return (
         `🔇 I've hit today's answer budget (${m.cap} turns). Verdicts and alerts keep posting; ` +
-        `questions resume at midnight (or ask ${legacyOwnerRef(cfg)}).`
+        `questions resume at midnight (or ask ${ownerRef(cfg)}).`
       );
     // ---- OFF in v1 (config-disabled), templated so the flag is all it takes --
     case "reconcile.storm":

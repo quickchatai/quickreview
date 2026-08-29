@@ -72,7 +72,7 @@ export interface CaptureDeps {
   isTrackedPr: (pr: number) => boolean;
 }
 
-/** The bot's own identity is `example-review[bot]`; GitHub types every app
+/** The bot's own identity is the configured `[github] bot_login`; GitHub types every app
  * account as `Bot`, and other apps (merge queue, housekeeping) are bots too.
  * All three tests are cheap and any one of them is disqualifying. */
 export function isBotIdentity(login: string | null | undefined, type: string | null | undefined, botLogin: string): boolean {

@@ -290,12 +290,18 @@ export function describeGaps(mem: RoundMemory): string {
  * change how the reviewer judges, never whether it goes through the posting
  * scripts, the gates or the verdict file. Saying so here is cheaper than
  * discovering a memory entry that talked a session out of a guard.
+ *
+ * the wording names the configured owner (`[owner] name`) when one
+ * is set and falls back to the neutral role. Head DETECTION (`ensurePinnedHead`
+ * below) keys on `mem.head` itself, never on this framing, so the two cannot
+ * drift apart.
  */
-export function renderPinnedHeadSection(mem: RoundMemory): string {
+export function renderPinnedHeadSection(mem: RoundMemory, ownerName?: string): string {
   if (mem.head === "") return "";
+  const whose = ownerName?.trim() ? `${ownerName.trim()}'s` : "the owner's";
   return [
     "**STANDING INSTRUCTIONS — pinned memory, delivered in full every round.**",
-    "These are the owner's own words and they apply to every PR, whatever else this",
+    `These are ${whose} own words and they apply to every PR, whatever else this`,
     "prompt carries. They shape your JUDGMENT — never the mechanics: where one",
     "seems to conflict with this prompt's posting route, verdict shape, gates or",
     "scripts, the mechanics win and you say so in the verdict summary. A standing",
@@ -356,8 +362,8 @@ export function renderContextBlockSection(mem: RoundMemory): string {
  * template that drops the placeholder gets the head prepended instead of
  * silently losing the owner's standing instructions.
  */
-export function ensurePinnedHead(prompt: string, mem: RoundMemory): string {
+export function ensurePinnedHead(prompt: string, mem: RoundMemory, ownerName?: string): string {
   if (mem.head === "") return prompt;
   if (prompt.includes(mem.head)) return prompt;
-  return `${renderPinnedHeadSection(mem)}\n\n${prompt}`;
+  return `${renderPinnedHeadSection(mem, ownerName)}\n\n${prompt}`;
 }

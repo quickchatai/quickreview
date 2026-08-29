@@ -13,6 +13,7 @@ import {
   pickupMessage,
   reRoundMessage,
   supersededMessage,
+  ownerRef,
   userRef,
   verdictMessage,
 } from "../src/slack/messages.js";
@@ -24,7 +25,7 @@ beforeEach(() => {
   cfg = parseConfig(shipped);
   cfg.slack.enabled = true;
   cfg.slack.channel = "C_REVIEW";
-  cfg.slack.legacy_owner_slack_id = "U_MAT";
+  cfg.owner.slack_id = "U_MAT";
   cfg.slack.users = { U_MAT: "mhale", U_ALICE: "alice" };
   cfg.github.repo = "example-org/example-app";
   cfg.github.escalation_reviewer = "mhale";
@@ -44,6 +45,14 @@ describe("escaping and refs", () => {
 
   it("escapes an unmapped login rather than letting it inject markup", () => {
     expect(userRef(cfg, "<@U_FAKE>")).toBe("&lt;@U_FAKE&gt;");
+  });
+
+  it("ownerRef mentions the configured owner id, then falls back to the configured name, then the role", () => {
+    expect(ownerRef(cfg)).toBe("<@U_MAT>");
+    cfg.owner.slack_id = "";
+    expect(ownerRef(cfg)).toBe("Example Owner"); // fixture [owner] name
+    cfg.owner.name = "";
+    expect(ownerRef(cfg)).toBe("the owner");
   });
 
   it("formats a gap in minutes under an hour and h+min above it", () => {

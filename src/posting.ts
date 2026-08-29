@@ -30,9 +30,14 @@ import {
 /** GitHub caps a single review at 50 inline comments (ported constraint). */
 export const INLINE_COMMENT_CAP = 50;
 
-export const REVIEW_FOOTER =
-  "_Automated review by `example-review[bot]` (quickreview sandbox). " +
-  "Reply to any comment to discuss; ask for a human reviewer if you want this escalated._";
+/** The review-body footer, naming the configured bot identity (:
+ * `[github] bot_login` — never a hardcoded login). "" degrades to the role. */
+export function reviewFooter(botLogin?: string): string {
+  return (
+    `_Automated review by \`${botLogin?.trim() || "the review bot"}\` (quickreview sandbox). ` +
+    "Reply to any comment to discuss; ask for a human reviewer if you want this escalated._"
+  );
+}
 
 export interface Finding {
   severity: Severity;
@@ -86,6 +91,12 @@ export interface ReviewInput {
    * findings actually contain a first-party directive injection.
    */
   escalation_mention?: string;
+  /**
+   * the configured `[github] bot_login`, rendered into the review
+   * footer. Absent ⇒ the footer names the role ("the review bot") — never a
+   * hardcoded personal login.
+   */
+  bot_login?: string;
 }
 
 /** The first-party directive paths this review's surviving injection findings
@@ -343,7 +354,7 @@ export function renderBody(
     section("Start here", start);
   }
 
-  out.push("", REVIEW_FOOTER);
+  out.push("", reviewFooter(input.bot_login));
   return out.join("\n");
 }
 

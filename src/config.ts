@@ -158,7 +158,6 @@ export interface SlackConfig {
   bot_token_file: string;
   /** File name under [github].secrets_dir holding the xapp- socket token. */
   app_token_file: string;
-  legacy_owner_slack_id: string;
   post_min_interval_ms: number;
   reconnect_backoff_ms: number[];
   server_ping_timeout_ms: number;
@@ -210,7 +209,6 @@ export const SLACK_DEFAULTS: SlackConfig = {
   channel_kind: "public",
   bot_token_file: "slack_bot_token",
   app_token_file: "slack_app_token",
-  legacy_owner_slack_id: "",
   post_min_interval_ms: 1100,
   reconnect_backoff_ms: [1000, 2000, 5000, 15000, 30000],
   server_ping_timeout_ms: 30000,
@@ -296,6 +294,34 @@ export interface ReviewConfig {
 
 export const REVIEW_DEFAULTS: ReviewConfig = {
   escalation_mention_default: "",
+};
+
+/**
+ * [owner] — the system's ONE accountable human, as a configured role
+ *. Every identity surface renders from here: Slack fallback prose,
+ * the companion day-open role label, the pinned-memory head framing, and the
+ * escalation-mention fallback. Empty values degrade to neutral wording
+ * ("the owner" / "the operator"), never to a hardcoded personal name.
+ */
+export interface OwnerConfig {
+  /** Display name for rendered prose. "" ⇒ neutral wording. */
+  name: string;
+  /**
+   * Slack member id (U…). When [slack] is enabled it must be non-empty and a
+   * key of [slack.users] — the rules that used to bind `legacy_owner_slack_id`.
+   * Legacy alias on INPUT only: a set `[slack] legacy_owner_slack_id` feeds this
+   * when it is empty; nothing reads the legacy key after load.
+   */
+  slack_id: string;
+  /** GitHub login; the fallback for [review] escalation_mention_default when
+   * that knob is unset. */
+  github_login: string;
+}
+
+export const OWNER_DEFAULTS: OwnerConfig = {
+  name: "",
+  slack_id: "",
+  github_login: "",
 };
 
 /** Per-model spend rates, keyed by bare model id (e.g. "gpt-5.6-sol"). */
@@ -596,6 +622,7 @@ export interface Config {
   recheck: RecheckConfig;
   review: ReviewConfig;
   slack: SlackConfig;
+  owner: OwnerConfig;
 }
 
 /** Defaults for [backfill], derived from the already-parsed [github] block. */
@@ -823,7 +850,21 @@ export function parseConfig(toml: string): Config {
     recheck: { ...RECHECK_DEFAULTS, ...((raw.recheck ?? {}) as Partial<RecheckConfig>) },
     review: { ...REVIEW_DEFAULTS, ...((raw.review ?? {}) as Partial<ReviewConfig>) },
     slack: parseSlack((raw.slack ?? {}) as Record<string, any>),
+    owner: { ...OWNER_DEFAULTS, ...((raw.owner ?? {}) as Partial<OwnerConfig>) },
   };
+  // Legacy alias: a set `[slack] legacy_owner_slack_id` feeds
+  // [owner] slack_id when that is empty; a conflicting pair is an error that
+  // names the NEW key. After this fold nothing reads the legacy key.
+  const legacyOwnerSlackId = String((raw.slack as Record<string, any> | undefined)?.legacy_owner_slack_id ?? "").trim();
+  if (legacyOwnerSlackId) {
+    if (!cfg.owner.slack_id.trim()) {
+      cfg.owner.slack_id = legacyOwnerSlackId;
+    } else if (cfg.owner.slack_id.trim() !== legacyOwnerSlackId) {
+      throw new Error(
+        "config.toml: legacy [slack] legacy_owner_slack_id and [owner] slack_id are both set and differ — set `[owner] slack_id` only",
+      );
+    }
+  }
   for (const k of [
     "repo", "app_slug", "bot_login", "review_team",
     "trigger_label", "in_progress_label", "reviewed_label", "improvement_label",
@@ -839,7 +880,7 @@ export function parseConfig(toml: string): Config {
   }
   // Shape checks are pure, so they fire on every parse (tests included);
   // the token-file check is I/O and lives in validateSlackConfig.
-  checkSlackShape(cfg.slack);
+  checkSlackShape(cfg.slack, cfg.owner);
   return cfg;
 }
 
@@ -853,9 +894,12 @@ function parseSlack(raw: Record<string, any>): SlackConfig {
     };
   }
   const { causes: _drop, ...policyScalars } = rawPolicy;
+  // `legacy_owner_slack_id` is the legacy alias for [owner] slack_id —
+  // consumed by parseConfig's fold, never carried on the parsed shape.
+  const { legacy_owner_slack_id: _legacyOwnerId, ...rawScalars } = raw;
   const slack: SlackConfig = {
     ...SLACK_DEFAULTS,
-    ...(raw as Partial<SlackConfig>),
+    ...(rawScalars as Partial<SlackConfig>),
     users: { ...((raw.users ?? {}) as Record<string, string>) },
     policy: { ...SLACK_POLICY_DEFAULTS, ...(policyScalars as Partial<SlackPolicyConfig>), causes },
   };
@@ -874,8 +918,10 @@ export function slackTokenPath(cfg: Config, which: "bot" | "app"): string {
 }
 
 /** Pure (I/O-free) part of Slack boot validation. When disabled, nothing at
- * all is required — the concierge is simply not there. */
-function checkSlackShape(slack: SlackConfig): void {
+ * all is required — the concierge is simply not there. The owner's Slack id
+ * (`[owner] slack_id`, legacy alias `[slack] legacy_owner_slack_id`)
+ * carries the same rules the legacy key always had. */
+function checkSlackShape(slack: SlackConfig, owner: OwnerConfig): void {
   if (!slack.enabled) return;
   const fail = (msg: string): never => {
     throw new Error(`config.toml [slack]: ${msg}`);
@@ -884,9 +930,9 @@ function checkSlackShape(slack: SlackConfig): void {
   if (slack.channel_kind !== "public" && slack.channel_kind !== "private") {
     fail(`channel_kind must be "public" or "private" (got ${JSON.stringify(slack.channel_kind)})`);
   }
-  if (!slack.legacy_owner_slack_id.trim()) fail("enabled = true requires a non-empty `legacy_owner_slack_id`");
-  if (!(slack.legacy_owner_slack_id in slack.users)) {
-    fail(`legacy_owner_slack_id '${slack.legacy_owner_slack_id}' must appear as a key in [slack.users] (it is the only source of own-PR rights)`);
+  if (!owner.slack_id.trim()) fail("enabled = true requires a non-empty `[owner] slack_id`");
+  if (!(owner.slack_id in slack.users)) {
+    fail(`[owner] slack_id '${owner.slack_id}' must appear as a key in [slack.users] (it is the only source of own-PR rights)`);
   }
 }
 
@@ -909,7 +955,7 @@ export const fsSecretReader: SecretReader = (path) => {
  * into a read-only half-presence in the channel. Disabled ⇒ nothing is read.
  */
 export function validateSlackConfig(cfg: Config, deps: { readSecret?: SecretReader } = {}): void {
-  checkSlackShape(cfg.slack);
+  checkSlackShape(cfg.slack, cfg.owner);
   if (!cfg.slack.enabled) return;
   const read = deps.readSecret ?? fsSecretReader;
   for (const which of ["bot", "app"] as const) {

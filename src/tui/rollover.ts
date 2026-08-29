@@ -159,11 +159,17 @@ function oneLine(text: string, max = TURN_MAX_CHARS): string {
   return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
 }
 
-function renderTurns(turns: Turn[], budget: number): string {
+/** The user-turn role label: the configured owner name, or the
+ * neutral role when none is configured. */
+function ownerLabel(ownerName?: string): string {
+  return ownerName?.trim() || "the operator";
+}
+
+function renderTurns(turns: Turn[], budget: number, ownerName?: string): string {
   const lines: string[] = [];
   let used = 0;
   for (const t of turns) {
-    const line = `- **${t.role === "user" ? "the owner" : "you"}**: ${oneLine(t.text)}`;
+    const line = `- **${t.role === "user" ? ownerLabel(ownerName) : "you"}**: ${oneLine(t.text)}`;
     if (used + line.length > budget) break;
     lines.push(line);
     used += line.length + 1;
@@ -177,16 +183,16 @@ function renderTurns(turns: Turn[], budget: number): string {
  * opening of the day tells the companion how yesterday started, how it ended,
  * and how much it is not being shown.
  */
-export function compactConversation(turns: Turn[], budget: number = SUMMARY_MAX_CHARS): string {
+export function compactConversation(turns: Turn[], budget: number = SUMMARY_MAX_CHARS, ownerName?: string): string {
   if (turns.length === 0) return "";
   const head = turns.slice(0, HEAD_TURNS);
   const tail = turns.length > HEAD_TURNS ? turns.slice(Math.max(HEAD_TURNS, turns.length - TAIL_TURNS)) : [];
   const skipped = turns.length - head.length - tail.length;
   const half = Math.floor((budget - 200) / 2);
-  const sections = [`Yesterday: ${turns.length} turns (${turns.filter((t) => t.role === "user").length} from the owner).`];
-  sections.push(`**How it opened**\n${renderTurns(head, half)}`);
+  const sections = [`Yesterday: ${turns.length} turns (${turns.filter((t) => t.role === "user").length} from ${ownerLabel(ownerName)}).`];
+  sections.push(`**How it opened**\n${renderTurns(head, half, ownerName)}`);
   if (skipped > 0) sections.push(`…${skipped} turn${skipped === 1 ? "" : "s"} elided…`);
-  if (tail.length > 0) sections.push(`**How it ended**\n${renderTurns(tail, half)}`);
+  if (tail.length > 0) sections.push(`**How it ended**\n${renderTurns(tail, half, ownerName)}`);
   const out = sections.join("\n\n");
   return out.length <= budget ? out : `${out.slice(0, budget - 1)}…`;
 }
@@ -324,6 +330,9 @@ export interface RolloverOptions {
   injectDir: string;
   /** Offline digest headline, when the feed snapshot has none. */
   localDigestHeadline?: () => string | undefined;
+  /** `[owner] name` — the user-turn label in the day-open summary.
+   * Absent/empty ⇒ "the operator". */
+  ownerName?: string;
   now?: () => Date;
   env?: NodeJS.ProcessEnv;
   timeZone?: string;
@@ -432,7 +441,7 @@ export class CompanionRollover {
     return renderDayOpen(template, {
       date,
       digest: digestLine(snap, this.opts.localDigestHeadline?.()),
-      yesterday_summary: compactConversation(turns),
+      yesterday_summary: compactConversation(turns, undefined, this.opts.ownerName),
       yesterday_tail: conversationTail(turns),
       open_alerts: openAlerts(this.cfg.alerts_dir, this.opts.policyStatePath, date),
       snapshot_summary: snapshotSummary(snap),

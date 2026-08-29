@@ -167,6 +167,20 @@ describe("conversation parsing and compaction", () => {
     expect(summary).toContain("…"); // per-turn truncation too
   });
 
+  it("labels user turns with the configured owner name, or the neutral role", () => {
+    const turns: Turn[] = [
+      { role: "user", text: "hello" },
+      { role: "assistant", text: "hi" },
+    ];
+    const named = compactConversation(turns, undefined, "the owner");
+    expect(named).toContain("from the owner");
+    expect(named).toContain("- **the owner**: hello");
+    const bare = compactConversation(turns);
+    expect(bare).toContain("from the operator");
+    expect(bare).toContain("- **the operator**: hello");
+    expect(bare).not.toContain("the owner");
+  });
+
   it("is empty for an empty conversation, and the tail is bounded", () => {
     expect(compactConversation([])).toBe("");
     expect(conversationTail([])).toBe("");
