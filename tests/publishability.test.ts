@@ -39,20 +39,21 @@ interface ManifestEntry {
 }
 interface PublishManifest {
   exclude: ManifestEntry[];
-  pending_reseed: ManifestEntry[];
+  /** Dies with the reseed; the assembled tree may lack it. */
+  pending_reseed?: ManifestEntry[];
 }
 
 const manifest = JSON.parse(
   readFileSync(join(repoRoot, "publish-manifest.json"), "utf8"),
 ) as PublishManifest;
+const pendingReseed = manifest.pending_reseed ?? [];
 
 /** A manifest `path` ending in "/" is a directory prefix; otherwise exact. */
 function matchesEntry(path: string, entry: ManifestEntry): boolean {
   return entry.path.endsWith("/") ? path.startsWith(entry.path) : path === entry.path;
 }
 const isExcluded = (path: string) => manifest.exclude.some((e) => matchesEntry(path, e));
-const isPendingReseed = (path: string) =>
-  manifest.pending_reseed.some((e) => matchesEntry(path, e));
+const isPendingReseed = (path: string) => pendingReseed.some((e) => matchesEntry(path, e));
 
 // ---------------------------------------------------------------------------
 // (a) The token denylist — documented, case-insensitive substrings.
@@ -231,15 +232,17 @@ function trackedFiles(): string[] {
 
 describe("publish-manifest.json", () => {
   it("every entry carries a path and a non-empty reason", () => {
-    for (const entry of [...manifest.exclude, ...manifest.pending_reseed]) {
+    for (const entry of [...manifest.exclude, ...pendingReseed]) {
       expect(entry.path, JSON.stringify(entry)).toBeTruthy();
       expect(entry.reason?.trim().length ?? 0, `${entry.path}: reason required`).toBeGreaterThan(10);
     }
   });
 
   it("every pending_reseed entry cites — the section dies with that reseed", () => {
-    expect(manifest.pending_reseed.length).toBeGreaterThan(0);
-    for (const entry of manifest.pending_reseed) {
+    // The section is OPTIONAL: it is deleted when the reseed lands,
+    // and the assembled public tree may carry a manifest without it
+    // (then the token scan bites on prompts//agents//seeds/ too — the point).
+    for (const entry of pendingReseed) {
       expect(entry.reason, entry.path).toContain("");
     }
   });
@@ -247,7 +250,7 @@ describe("publish-manifest.json", () => {
   it("directory entries end with '/' and match at least one tracked file (or are known-untracked belts)", () => {
     const tracked = trackedFiles();
     const KNOWN_UNTRACKED = new Set(["deploy/ansible/inventory.ini", ".claude/worktrees/", "config.toml"]);
-    for (const entry of [...manifest.exclude, ...manifest.pending_reseed]) {
+    for (const entry of [...manifest.exclude, ...pendingReseed]) {
       if (KNOWN_UNTRACKED.has(entry.path)) continue;
       const hits = tracked.filter((p) => matchesEntry(p, entry));
       expect(hits.length, `${entry.path} matches nothing tracked — stale manifest entry`).toBeGreaterThan(0);
@@ -304,9 +307,12 @@ describe("publishability lint", () => {
       expect(notices, `notices must cover ${component}`).toContain(component);
     }
     // pi-subagents is unlicensed upstream: the notices must say it is NOT
-    // redistributed, and the manifest must exclude it.
+    // redistributed, and while the vendored copy is tracked (the
+    // private tree) the manifest must exclude it. The assembled public tree
+    // does not carry it at all — absence satisfies the same invariant.
     expect(notices).toMatch(/pi-subagents[\s\S]{0,400}NOT redistributed|NOT redistributed[\s\S]{0,400}pi-subagents/i);
-    expect(isExcluded("extensions/vendor/pi-subagents/index.ts")).toBe(true);
+    const vendoredTracked = trackedFiles().some((p) => p.startsWith("extensions/vendor/pi-subagents/"));
+    if (vendoredTracked) expect(isExcluded("extensions/vendor/pi-subagents/index.ts")).toBe(true);
   });
 
   it("(c) config.example.toml exists and passes full config validation", () => {
@@ -337,9 +343,17 @@ describe("publishability lint", () => {
     expect(planted[0]!.path).toBe("src/planted-control.ts");
     expect(planted[0]!.line).toBe(1);
 
-    // …while the two exemption channels behave as declared:
-    expect(scanFiles([{ path: "docs/retro/planted.md", text: "the owner" }])).toEqual([]); // excluded
-    expect(scanFiles([{ path: "prompts/planted.md", text: "the owner" }])).toEqual([]); // pending_reseed
+    // …while the exemption channels behave as declared. The exclude/
+    // pending_reseed probes are conditional: the assembled tree
+    // carries an EMPTY exclude (exclusions applied at assembly), and the
+    // pending_reseed section dies with the reseed — in each case a
+    // planted token must then be CAUGHT, not exempted.
+    const retroPlant = scanFiles([{ path: "docs/retro/planted.md", text: "the owner" }]);
+    if (isExcluded("docs/retro/planted.md")) expect(retroPlant).toEqual([]);
+    else expect(retroPlant).not.toEqual([]);
+    const seedPlant = scanFiles([{ path: "prompts/planted.md", text: "the owner" }]);
+    if (isPendingReseed("prompts/planted.md")) expect(seedPlant).toEqual([]); // pending_reseed
+    else expect(seedPlant).not.toEqual([]);
     expect(scanFiles([{ path: "LICENSE", text: "Copyright Quickchat AI" }])).toEqual([]); // allowlisted token
     expect(scanFiles([{ path: "LICENSE", text: "my-vm" }])).not.toEqual([]); // …but only the GRANTED token
   });
