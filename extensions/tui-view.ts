@@ -8,7 +8,7 @@
 // the owner's ssh credential, for the owner's own screen, and written to a file on
 // a bind mount. Nothing here opens a socket, spawns a process, or asks the TUI
 // to go and get anything. That is not a matter of taste: the TUI's reach is
-// real (`src/tui/remote.ts` runs `ssh my-vm …`, and the deploy tab can run
+// real (`src/tui/remote.ts` runs `ssh <host> …`, and the deploy tab can run
 // `deploy.sh sync`), and root CLAUDE.md rule 8 says the companion holds NO VM
 // credential. A `tui_*` tool that could trigger a fetch would let the companion
 // make the TUI act on the VM on its behalf — laundering the operator's access
@@ -73,7 +73,7 @@ export function readFeedFile(dir: string, name: string): ReadResult {
       ok: false,
       error:
         `The TUI has published no ${name}. It is probably not running — and I cannot fetch it: ` +
-        `these tools only read what the TUI already wrote. Ask the owner whether his TUI is up.`,
+        `these tools only read what the TUI already wrote. Ask the owner whether their TUI is up.`,
     };
   }
 }

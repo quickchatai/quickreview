@@ -281,13 +281,13 @@ embedding_dimension = 1536
 # model = "openai-codex/gpt-5.6-sol"
 # repo_dir = ""                   # host review-sandbox repo → /workspace (rw);
 #                                 # empty = this sandbox root
-# tracker_dir = "~/src/tracker"   # → /tracker (rw)
-# tracker_docs_dir = "~/src/tracker-docs"
+# tracker_dir = "~/projects/your-tracker"                  # → /tracker (rw)
+# tracker_docs_dir = "~/projects/your-tracker-docs"
 #                                 # → /tracker-docs (READ-ONLY): the tracker
 #                                 # protocol the companion follows. Outside
 #                                 # tracker_dir, so it needs its own mount.
-# reviewed_repo_dir = "~/src/example-app"
-#                                 # → /reviewed-repo (READ-ONLY): the
+# reviewed_repo_dir = "~/projects/your-reviewed-repo"
+#                                 # → mounted READ-ONLY into the container: the
 #                                 # reviewed repo's source, so the companion
 #                                 # can read the code a review is about. Never
 #                                 # writable — and a missing checkout just
@@ -352,8 +352,8 @@ recheck_pr_state_before_post = true  # re-read the PR right before posting; merg
 # blocks exactly like a failing test.
 block_approve_on_red_ci = true       # red/pending CI ⇒ approval withheld, review posts as COMMENT
 # Also the owner 2026-08-19: a head with ZERO check-runs (conflicted PR, CI not
-# started) carries no execution evidence — withhold there too. The reviewed repo
-# always runs CI, so `none` here means something is wrong, not "no CI setup".
+# started) carries no execution evidence — withhold there too. Set true for a repo that
+# always runs CI (then `none` means something is wrong, not "no CI setup").
 no_checks_is_red = true              # zero checks at head ⇒ approval withheld until checks pass
 # Guard 5: the head the round actually reviewed must still
 # be the PR's live head at posting time. Sessions export QCR_EXPECTED_HEAD

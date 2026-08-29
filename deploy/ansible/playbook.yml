@@ -188,7 +188,7 @@
       when: lookup('ansible.builtin.fileglob', secrets_src + '/' + item) | length > 0
 
     # NOTE: the two "seed from the artifact set" copy tasks
-    # that used to live here are DELETED. They required a private tracker
+    # that used to live here are DELETED. They required a private sibling
     # checkout at an exact controller path, and their output was overwritten by
     # the rsync below anyway: the repo's prompts/ and agents/ carry the same
     # files, byte-identical to the artifact set (enforced by

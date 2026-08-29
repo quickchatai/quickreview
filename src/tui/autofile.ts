@@ -77,7 +77,7 @@ export interface AutoFiled {
 }
 
 export interface TrackerPaths {
-  /** The tracker root (…/issue-tracker/tracker). */
+  /** The tracker root (the local issue tracker's root directory). */
   root: string;
   effort: string; // "review-sandbox"
   parent: string; // map id, "FT-0026"

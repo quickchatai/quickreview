@@ -184,7 +184,7 @@ export function shellQuote(arg: string): string {
  * `spawnSync`, which blocks the stack forever, and the timers of any ssh
  * in flight at that moment never run again. Those children then outlive the
  * generation that spawned them — measured live at 4h58m against a wedged
- * ControlMaster (the `my-vm` block carries no `ServerAliveInterval`, so a
+ * ControlMaster (an ssh-config block with no `ServerAliveInterval`, so a
  * network blip hangs the master and every slave riding it).
  *
  * Hence this set and `killInFlightSsh`: whoever is about to freeze the loop

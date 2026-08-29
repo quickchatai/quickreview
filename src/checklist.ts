@@ -295,7 +295,7 @@ export function manualItems(botLogin = "the review App bot"): Array<{ item: stri
     item: "③",
     name: "live test PR — full pipeline (dry_run OFF)",
     instructions: [
-      "Open a trivial doc-change PR on example-org/example-app and add the",
+      "Open a trivial doc-change PR on the reviewed repo and add the",
       '"AI review requested" label. Then, with dry_run set to false FOR THIS ITEM ONLY:',
       "  - the trigger is consumed and verified gone (label removed / team request cleared)",
       '  - "AI review in progress" cycles, then "Automatic Review" lands',

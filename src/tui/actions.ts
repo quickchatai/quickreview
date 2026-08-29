@@ -7,7 +7,7 @@
 // schema, and executes it against the `TuiDriver` the wiring supplies.
 //
 // RATIFIED (the owner): actions execute INSTANTLY — there is no
-// confirm gate. the owner accepted the risk explicitly: everything a request
+// confirm gate. The owner accepted the risk explicitly: everything a request
 // can do is something his own keyboard can do on the TUI (tab switches,
 // selections, filters, quick-messages, the deploy-tab buttons), the request
 // files are on his own machine, and the executed trace lands on the notice

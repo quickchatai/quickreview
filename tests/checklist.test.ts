@@ -53,7 +53,7 @@ describe("① tunnel + HMAC probe", () => {
       seen.push(h);
       return fakeReceiver(u, h, b);
     };
-    const r = await probeTunnelHmac({ url: "http://127.0.0.1:8787/webhook", webhookSecret: SECRET, post, hostname: "review.example.com" });
+    const r = await probeTunnelHmac({ url: "http://127.0.0.1:8787/webhook", webhookSecret: SECRET, post, hostname: "review.example.dev" });
     expect(r.pass).toBe(true);
     expect(r.detail).toContain("signed -> 200");
     expect(r.detail).toContain("forged -> 403");

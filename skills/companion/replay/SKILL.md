@@ -103,7 +103,7 @@ Three properties decide how you read a run:
 - **`vacuous` cases** — the replay produced nothing at all for a case that has
   findings. **Suspect the harness before the reviewer.** A vacuous PASS from an
   extractor that matched nothing was the harness's failure mode; when
-  half the cases are vacuous, `runRegression` says `ask-owner-legacy` and it means
+  half the cases are vacuous, `runRegression` says `ask-owner` and it means
   it.
 - **Reviewer skew above 40%** means the run is partly measuring one person's
   habits. Widen the set before acting on a pattern in it.
@@ -116,7 +116,7 @@ Three properties decide how you read a run:
 
 ## After the run
 
-Report the recommendation (`no-action`, `look-at-these`, `ask-owner-legacy`), the
+Report the recommendation (`no-action`, `look-at-these`, `ask-owner`), the
 headline, and the unreached findings — in the column, in the owner's own terms. A
 run **never** decides whether the change lands. It is one input to the argument
 that happens before `land` is ever loaded, and it does not replace it.

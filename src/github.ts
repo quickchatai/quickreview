@@ -712,7 +712,7 @@ export class GitHubAdapter {
     // It is the sibling marker, not a second spelling of the one above: it
     // addresses the PR author's AI implementer ("do not answer this yourself —
     // ask a person and bring the answer back"), so what a human owes the thread
-    // is the ANSWER, not the resolution. the owner rejected borrowing the
+    // is the ANSWER, not the resolution. The owner rejected borrowing the
     // human-only machinery for it (§5: it "forces a person into every
     // thread"), and the ordinary path already lands in the right place — the
     // only caller is ping-pong, so the bot resolves such a thread only after

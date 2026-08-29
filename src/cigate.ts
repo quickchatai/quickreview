@@ -131,7 +131,7 @@ export function classifyCi(allChecks: readonly CheckSummary[]): CiState {
  * or CI that has not started — carries no execution evidence, so approval
  * waits for checks to appear and pass. The flag stays off by default so a
  * repo with no CI at all is never permanently wedged (the original
- * exemption); example-app turns it on in config.toml.
+ * exemption); the original deployment turns it on in its config.
  */
 export function ciBlocksApproval(state: CiState, opts: { noChecksIsRed?: boolean } = {}): boolean {
   if (state === "none") return opts.noChecksIsRed === true;

@@ -28,7 +28,7 @@ function fakeModule(opts: { bound?: number; throwOnCreate?: boolean } = {}): {
     },
   };
   const mod: ForwardModule = {
-    parseArgs: (argv, env) => ({ cfg: { binds: ["198.51.100.1", "127.0.0.1"], port: 1933, sshHost: "my-vm", container: "quickreview-sandbox", argv, env } }),
+    parseArgs: (argv, env) => ({ cfg: { binds: ["198.51.100.1", "127.0.0.1"], port: 1933, sshHost: "VM", container: "quickreview-sandbox", argv, env } }),
     createForwarder: (cfg) => {
       created += 1;
       cfgSeen = cfg;
@@ -173,7 +173,7 @@ describe("MemoryForward", () => {
   it("hands the real script's own parseArgs the config — no second config source", async () => {
     const { fwd, f } = build([false]);
     await fwd.ensure();
-    expect(f.cfgSeen()).toMatchObject({ port: 1933, sshHost: "my-vm" });
+    expect(f.cfgSeen()).toMatchObject({ port: 1933, sshHost: "VM" });
   });
 });
 

@@ -42,7 +42,7 @@ function publishPullHead(pr: number, sha: string): void {
 }
 
 function mgr(): WorktreeManager {
-  return new WorktreeManager({ root, repo: "example-org/example-app", cloneUrl: origin });
+  return new WorktreeManager({ root, repo: "exampleorg/example-app", cloneUrl: origin });
 }
 
 beforeEach(() => {
@@ -62,7 +62,7 @@ afterEach(() => {
 
 describe("cloneUrlFor", () => {
   it("derives an https URL from owner/name", () => {
-    expect(cloneUrlFor("example-org/example-app")).toBe("https://github.com/example-org/example-app.git");
+    expect(cloneUrlFor("exampleorg/example-app")).toBe("https://github.com/exampleorg/example-app.git");
   });
 
   it("passes explicit URLs and local paths through", () => {
@@ -84,7 +84,7 @@ describe("WorktreeManager", () => {
     };
     // Same repo slug ⇒ same derived clone dir (the default clone dir
     // derives from the repo's basename instead of a hardcode).
-    const m2 = new WorktreeManager({ root, repo: "example-org/example-app", cloneUrl: origin, run: spy });
+    const m2 = new WorktreeManager({ root, repo: "exampleorg/example-app", cloneUrl: origin, run: spy });
     await m2.ensureBaseClone();
     expect(calls).toEqual([]); // already cloned — no second clone
   });
@@ -283,7 +283,7 @@ describe("listMigrationFiles", () => {
   });
 });
 
-// the owner, 2026-08-19 (amendment): a clean merge stays trivial; a
+// The owner, 2026-08-19 (amendment): a clean merge stays trivial; a
 // hand-resolved conflict must be named so the recheck reviews it — the
 // dropped-master-change bug lives exactly in the difference between git's own
 // auto-merge and what the author committed.

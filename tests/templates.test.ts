@@ -677,7 +677,7 @@ const recheckOrder: RecheckOrder = {
   issued_at: "2026-08-18T10:00:00Z",
 };
 
-// the owner, 2026-08-19: hand-resolved merge files get an explicit audit block
+// The owner, 2026-08-19: hand-resolved merge files get an explicit audit block
 // telling the session to diff against BOTH parents; clean deltas get nothing.
 describe("conflict audit note", () => {
   it("renders the audit block only when resolved files exist", () => {

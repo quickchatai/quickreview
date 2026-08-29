@@ -527,7 +527,7 @@ export async function nodeReplayIo(opts: { cfg: Config; sandboxRoot: string; scr
 export interface RegressionArgs {
   setPath?: string;
   /** Base clone to take the case trees out of. Defaults to the sandbox's own
-   * `example-app` clone — named here so a machine without one can still run
+   * reviewed-repo clone — named here so a machine without one can still run
    * the harness against a clone it does have. */
   clonePath?: string;
   changeUnderTest: string;

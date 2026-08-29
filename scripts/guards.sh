@@ -273,7 +273,7 @@ guard_require_green_ci() { # guard_require_green_ci <head-sha>
       die "CI is ${state} at ${head:0:7} on #$PR — APPROVE is unavailable (guard 4). Post the full review as a COMMENT via scripts/post-review.sh, say plainly that no blockers were found and that approval is withheld pending green CI, and set \"approval_withheld\": true in the verdict file."
       ;;
     none)
-      # the owner 2026-08-19: in a CI-running repo, zero checks at the head
+      # The owner 2026-08-19: in a CI-running repo, zero checks at the head
       # (conflicted PR, CI not started) is no execution evidence — withhold.
       if [[ "$(cfg guards no_checks_is_red 2>/dev/null || true)" == "true" ]]; then
         die "no CI has run at ${head:0:7} on #$PR — APPROVE is unavailable (guard 4, no_checks_is_red). Post the full review as a COMMENT via scripts/post-review.sh, say approval is withheld until checks run green, and set \"approval_withheld\": true in the verdict file."

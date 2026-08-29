@@ -61,7 +61,7 @@ troubleshooting:
                      reboot the 4h shared connection is gone until you do
   ▲ DATA STALE       ssh works but status.json stopped updating — the
                      container is down or the daemon hung (qcr-side:
-                     ssh my-vm sudo docker ps / docker logs)
+                     ssh <host> sudo docker ps / docker logs)
   keys lost in pi    the outer terminal must speak csi-u (kitty/ghostty/
                      wezterm/iterm2); running inside an outer tmux needs
                      extended-keys passthrough there too
@@ -556,7 +556,7 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
     // publish the operator's view: the last painted frame plus the
     // derived state behind it. Two triggers, one throttle: the poll below (so
     // it keeps up with the daemon) and every repaint (so it keeps up with
-    // the owner's keystrokes — "what is on his screen" is only true if it
+    // the owner's keystrokes — "what is on their screen" is only true if it
     // tracks the screen). Files only: this NEVER injects a companion turn,
     // and the companion reads it on demand through the `tui_*` tools.
     const publishView = (): void => {
@@ -695,7 +695,7 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
         // Same reasoning covers in-flight ssh: the per-call SIGKILL in
         // `realSshRunner` is a timer on the loop that spawnSync is about to
         // freeze, so a capture/poll/why still running at reload time is
-        // orphaned FOREVER. Against a wedged ControlMaster (the `my-vm`
+        // orphaned FOREVER. Against a wedged ControlMaster (an ssh-config
         // config block sets no ServerAliveInterval, so a network blip hangs
         // the master and every slave riding it) those children never exit on
         // their own either: measured live at 4h58m, with 26 stacked

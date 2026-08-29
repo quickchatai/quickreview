@@ -76,7 +76,7 @@ describe("the good path and its one carve-out", () => {
   });
 
   it("a block the author ACCEPTED AND FIXED never appears as a candidate", () => {
-    // the owner was explicit: this is the review working, not a deviation.
+    // The owner was explicit: this is the review working, not a deviation.
     // Block → fix → approve must produce nothing in ANY family.
     const f = facts({ pr: 5001, rounds: [round(1, "REQUEST_CHANGES"), round(2, "APPROVE")], rounds_reported: 2 });
     expect(isPerfectPath(f)).toBe(false);

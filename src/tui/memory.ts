@@ -21,7 +21,7 @@
 // UNREACHABLE, loudly — see `MemoryHealth` below, and the MEMORY STORE row
 // the tab paints (`src/tui/memforward.ts`).
 //
-// BOTH KEYS, NEVER AN ADMIN KEY. the owner's surfaces hold two OpenViking USER
+// BOTH KEYS, NEVER AN ADMIN KEY. The owner's surfaces hold two OpenViking USER
 // keys — `reviewer` (what the daemon and every review session hold; the server
 // confines it to `user/reviewer/`) and `companion`. The tab builds ONE client
 // per user and merges their timelines, which is what makes companion memory

@@ -5,7 +5,7 @@
 //
 // Branch rule: the ONLY branch this system ever pushes anywhere is
 // bot/improve-<slug>. The base branch ([github] base_branch — master on
-// example-app) is never pushed, never merged into, never touched beyond
+// the reviewed repo) is never pushed, never merged into, never touched beyond
 // `fetch` + read-only diffing. rubric/* branches stay local (see digest.ts).
 import { IMPROVEMENT_DENY_PREFIXES_DEFAULT, type Config } from "./config.js";
 import type { GitHubAdapter } from "./github.js";
@@ -50,7 +50,7 @@ export interface ImprovementContext {
   /** Scratch worktree path used for the checkout (removed afterwards). */
   scratchDir: string;
   /** Base branch override. Default: `[github] base_branch` off `cfg`
-   * ("main" unless configured — example-app sets "master").
+   * ("main" unless configured — the original deployment sets "master").
    * Never pushed, never modified. */
   base?: string;
   now?: () => Date;

@@ -27,7 +27,7 @@ beforeEach(() => {
   cfg.slack.channel = "C_REVIEW";
   cfg.owner.slack_id = "U_MAT";
   cfg.slack.users = { U_MAT: "mhale", U_ALICE: "alice" };
-  cfg.github.repo = "example-org/example-app";
+  cfg.github.repo = "exampleorg/example-app";
   cfg.github.escalation_reviewer = "mhale";
 });
 
@@ -77,7 +77,7 @@ describe("pickup (the thread root)", () => {
         lenses: ["pass-baseline", "pass-validate"],
       }),
     ).toBe(
-      "👀 *<https://github.com/example-org/example-app/pull/5263|#5263 Add rate limiting>* — review started for <@U_ALICE>\n" +
+      "👀 *<https://github.com/exampleorg/example-app/pull/5263|#5263 Add rate limiting>* — review started for <@U_ALICE>\n" +
         "_round 1 · first review · 7 files, +120/−34 · lenses: pass-baseline, pass-validate_",
     );
   });
@@ -128,7 +128,7 @@ describe("verdict (in-thread)", () => {
     ).toBe(
       "<@U_ALICE> ✅ *APPROVED* — round 2, 14 min\n" +
         "Nothing blocking; the retry loop is bounded now.\n" +
-        "<https://github.com/example-org/example-app/pull/5263|review on GitHub>",
+        "<https://github.com/exampleorg/example-app/pull/5263|review on GitHub>",
     );
   });
 
@@ -141,7 +141,7 @@ describe("verdict (in-thread)", () => {
     expect(
       verdictMessage(cfg, { pr: 7, author: "alice", round_no: 1, verdict: "APPROVE", summary: null, duration_min: 2 }),
     ).toBe(
-      "<@U_ALICE> ✅ *APPROVED* — round 1, 2 min\n<https://github.com/example-org/example-app/pull/7|review on GitHub>",
+      "<@U_ALICE> ✅ *APPROVED* — round 1, 2 min\n<https://github.com/exampleorg/example-app/pull/7|review on GitHub>",
     );
   });
 
@@ -169,7 +169,7 @@ describe("verdict (in-thread)", () => {
     expect(text).toBe(
       "<@U_ALICE> 🚨 *NEEDS A HUMAN* — round 4, 21 min\n" +
         "Auth path changed.\n" +
-        "<https://github.com/example-org/example-app/pull/5263|review on GitHub>\n" +
+        "<https://github.com/exampleorg/example-app/pull/5263|review on GitHub>\n" +
         "parked for a person — <@U_MAT>, the merge decision is yours",
     );
     // The line must not claim a GitHub review request; none is made.

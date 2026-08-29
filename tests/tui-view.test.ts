@@ -334,7 +334,7 @@ describe("the tools read already-fetched state and can NEVER become a fetcher", 
     .join("\n");
 
   it("imports nothing that could reach the VM, the network, or a subprocess", () => {
-    // The TUI's own reach is real (ssh my-vm, deploy.sh sync). The
+    // The TUI's own reach is real (ssh to the VM, deploy.sh sync). The
     // companion holds no VM credential, so a `tui_*` tool that could trigger a
     // fetch would launder the operator's access through a read verb.
     for (const forbidden of ["node:child_process", "node:net", "node:http", "node:https", "node:dgram", "node:worker_threads"]) {

@@ -113,7 +113,7 @@ it, and `dry_run` is the owner's alone in either direction.
 
 The highest-yield surface in the corpus, and the one you touch least directly.
 **It becomes a tracker ticket, and the owner acts on it.** Nothing reaches
-`example-app` until he moves.
+the reviewed repo until they move.
 
 - Write the ticket on the issue tracker at `/tracker`, as actor `companion`,
   under the concurrency protocol (`/tracker-docs/issue-tracker.md`).

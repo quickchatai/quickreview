@@ -242,7 +242,7 @@ if (trust["/opt/quickreview"] !== true) {
 console.log("pi project trust: defaultProjectTrust=always, /opt/quickreview pre-trusted");
 PI_EXT_MERGE
 
-# Private-repo git auth (example-app clone + per-PR fetches): the app
+# Private-repo git auth (reviewed-repo clone + per-PR fetches): the app
 # installation token over HTTPS — never a personal credential (§2).
 git config --global credential.helper \
   "!f() { echo username=x-access-token; echo \"password=\$(\"$SANDBOX/scripts/mint-token.sh\")\"; }; f"

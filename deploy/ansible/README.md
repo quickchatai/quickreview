@@ -34,7 +34,7 @@ permission system.
 3. **Local secrets dir** `~/.config/quickreview-bot/` contains:
    `app_id`, `app.pem`, `webhook_secret` (plus `openai_api_key` optional —
    OAuth route — and `tunnel_token` when the tunnel is enabled).
-   (Never a personal credential.)
+   (Never any personal token.)
 4. Controller tooling:
    ```
    ansible-galaxy collection install community.docker ansible.posix

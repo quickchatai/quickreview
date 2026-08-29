@@ -17,7 +17,7 @@
 //
 // The two halves are asymmetric on purpose:
 //
-//   * pinnedHead() is EXACT and GUARANTEED. the owner's standing instructions
+//   * pinnedHead() is EXACT and GUARANTEED. The owner's standing instructions
 //     are delivered verbatim, in full, every round, so it reads the stored
 //     bytes through the store's sweep — never a search, whose budget and tier
 //     degradation could silently truncate an instruction.
@@ -66,7 +66,7 @@ export class OpenVikingContextAssembler implements ContextAssembler {
   }
 
   /**
-   * the owner's pinned standing instructions, oldest first, verbatim.
+   * The owner's pinned standing instructions, oldest first, verbatim.
    *
    * "" means the store did not answer OR nothing is pinned — the round path
    * treats both as a gap on purpose (`degraded` in `RoundMemory`), because a

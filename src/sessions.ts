@@ -179,7 +179,7 @@ export class PiSessionManager implements SessionHooks {
         root: opts.root,
         repo: opts.cfg.github.repo,
         // [github] clone_dir when set, else the repo slug's basename
-        // — "example-org/example-app" keeps deriving "example-app".
+        // — "acme/widget-app" keeps deriving "widget-app".
         cloneDir: githubCloneDir(opts.cfg.github),
         run: opts.exec,
       });

@@ -37,10 +37,10 @@ function cfg(slackEnabled: boolean): Config {
   return {
     dry_run: true,
     github: {
-      repo: "example-org/example-app",
+      repo: "exampleorg/example-app",
       app_slug: "example-review",
       bot_login: "example-review[bot]",
-      review_team: "example-org/review",
+      review_team: "exampleorg/review",
       escalation_reviewer: "mhale",
       trigger_label: "AI review requested",
       in_progress_label: "AI review in progress",

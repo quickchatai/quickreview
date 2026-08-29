@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -181,7 +181,7 @@ describe("[github] base_branch + clone_dir", () => {
   it("githubCloneDir derives from the repo slug's basename unless clone_dir is set", () => {
     const cfg = parseConfig(readFileSync(configPath, "utf8"));
     expect(githubCloneDir(cfg.github)).toBe("example-app");
-    expect(githubCloneDir({ ...cfg.github, repo: "example-org/example-app" })).toBe("example-app");
+    expect(githubCloneDir({ ...cfg.github, repo: "acme/widget-app" })).toBe("widget-app");
     expect(githubCloneDir({ ...cfg.github, repo: "https://github.com/o/n.git" })).toBe("n");
     expect(githubCloneDir({ ...cfg.github, clone_dir: "elsewhere" })).toBe("elsewhere");
     expect(githubCloneDir({ ...cfg.github, repo: "" })).toBe("repo");
@@ -278,7 +278,11 @@ describe("loadConfig", () => {
 // stays false (rule 1 — LIVE since the 2026-08-14 cutover; the flag is
 // the owner's alone). Identity assertions live on the fixture above, so an
 // adopter editing repo/app/team/ssh values never reddens the suite.
-describe("live config.toml (production invariants)", () => {
+// config.toml is the live production file and is EXCLUDED from the
+// public snapshot (publish-manifest.json) — this block self-skips when the
+// file is absent, so a fresh public clone stays green; on the private tree
+// it always runs.
+describe.skipIf(!existsSync(liveConfigPath))("live config.toml (production invariants)", () => {
   it("parses and passes full config validation", () => {
     expect(() => loadConfig(liveConfigPath)).not.toThrow();
   });

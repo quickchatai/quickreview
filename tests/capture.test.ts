@@ -15,7 +15,7 @@ import type { SessionHooks } from "../src/types.js";
 import { handleDelivery, signBody } from "../src/webhook.js";
 
 const cfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
-const BOT = cfg.github.bot_login; // example-review[bot]
+const BOT = cfg.github.bot_login; // the fixture bot login
 const SECRET = "it's a secret to everybody";
 const PR = 4242;
 

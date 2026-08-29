@@ -144,7 +144,7 @@ const snapshot: StatusSnapshot = {
       title: "fix(ci): sanitize branch names",
       head_sha: "786ebb7",
       stale_recheck: 0,
-      author: "owner_legacy",
+      author: "author1",
       updated_at: "2026-08-20T09:00:00Z",
       rounds: 1,
       last_verdict: "APPROVE",
@@ -168,7 +168,7 @@ const boardView: BoardView = {
   eventsScroll: 0,
   help: false,
   now: new Date("2026-08-20T12:00:00Z"),
-  repo: "example-org/example-app",
+  repo: "exampleorg/example-app",
   pi: { pr: 5265, lines: ["pi output"], missing: false, stale: false, offset: 2 },
   piFocus: true,
 };
@@ -213,7 +213,7 @@ function frames(): Array<[string, Frame]> {
   return [
     ["board", renderBoard(boardView, 120, 40)],
     ["board-help", renderBoard({ ...boardView, help: true, eventsFocus: false }, 120, 40)],
-    ["memory", renderMemoryView(memState, false, "2026-08-19", 120, 40, "example-org/example-app")],
+    ["memory", renderMemoryView(memState, false, "2026-08-19", 120, 40, "exampleorg/example-app")],
     ["digest", renderDigestTab(memState.digest, [], false, "2026-08-20", 120, 40)],
     ["deploy", renderDeployTab(deployState, false, 120, 40)],
     ["metrics", renderMetrics(metricsView, 120, 40)],

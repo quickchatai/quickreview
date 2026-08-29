@@ -87,7 +87,7 @@ describe("local proposal store (state/rubric/ in THIS repo — the companion wri
 
 describe("gh improvements read (still remote — the ONLY ssh this module produces)", () => {
   it("reads both lists with the mint-token credential", () => {
-    const s = improvementsArgv(cfg, "example-org/example-app").join(" ");
+    const s = improvementsArgv(cfg, "exampleorg/example-app").join(" ");
     expect(s).toContain("mint-token.sh");
     expect(s).toContain("head:bot/improve");
     expect(s).toContain("--label bot-filed");

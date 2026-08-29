@@ -272,7 +272,7 @@ export function selectLenses(
 
   // Delivery semantics: at-least-once handler surfaces — webhooks, background
   // tasks/workers/crons, queue consumers (not email/notification content
-  // dirs). Product-local handler markers (a repo-specific @background_decorator)
+  // dirs). Product-local handler markers (e.g. a repo-specific @background_decorator)
   // come from the profile.
   if (
     any(/(^|\/)(webhooks?|tasks|jobs|workers?|crons?|consumers?|subscribers?)\//) ||

@@ -1225,7 +1225,7 @@ export class App {
   // ---- mouse selection → clipboard --------------------------------
   //
   // Turning mouse reporting on takes the terminal's own selection away, so the
-  // TUI owes one back. the owner, 2026-08-21: "99% I select something to copy
+  // TUI owes one back. The owner, 2026-08-21: "99% I select something to copy
   // it" — so there is no copy key and no copy mode. Release IS the copy.
   //
   // RECTANGULAR, not linear. The screen is columns side by side — list next to

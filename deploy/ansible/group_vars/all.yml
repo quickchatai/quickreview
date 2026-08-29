@@ -1,7 +1,7 @@
 ---
 # Review-sandbox provisioning knobs — vendored working copy (the
 # tracker asset is the historical record). Target: the EXISTING shared `VM`
-# VM in your-dev-project (e2-standard-4); the container is capped, the VM is not
+# VM in the operator's GCP project (e2-standard-4); the container is capped, the VM is not
 # ours to resize.
 
 sandbox_root: /opt/quickreview          # on the VM

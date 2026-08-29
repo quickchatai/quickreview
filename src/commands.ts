@@ -129,7 +129,7 @@ export function validateCommand(raw: unknown): ValidationResult {
     // Retired commands get their own reason. `prompts/overseer-system.md` is
     // frozen seeded content (CLAUDE.md rule 6) and still advertises
     // mark-escalation-worthy, so the overseer will keep emitting it until
-    // the owner ratifies a reseed — it should learn why, not just "unknown".
+    // The owner ratifies a reseed — it should learn why, not just "unknown".
     if (name === "mark-escalation-worthy") {
       return {
         ok: false,

@@ -497,7 +497,7 @@ describe("the wheel scrolls the companion column, not the tab behind it", () => 
 
 describe("drag-to-copy", () => {
   // Turning mouse reporting on takes the terminal's own selection away, so the
-  // TUI owes one back. the owner: "99% I select something to copy it" — release
+  // TUI owes one back. The owner: "99% I select something to copy it" — release
   // IS the copy; there is no copy key and no copy mode.
   function harness(cols = 60, rows = 12, withSidebar = false) {
     const out = new EventEmitter() as unknown as NodeJS.WriteStream;

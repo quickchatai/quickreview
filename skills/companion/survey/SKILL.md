@@ -126,7 +126,7 @@ the ones you are actually recommending.
 > nothing at ten rounds. Two families are dark: disagreement and dismissal both
 > need the `feedback_signals` ledger, which has no local copy.
 
-the owner's reasoning, recorded: he has to be able to tell it actually looked. An
+The owner's reasoning, recorded: they have to be able to tell it actually looked. An
 empty survey that says "nothing" is indistinguishable from a survey that failed,
 and inventing a marginal candidate to have something to say is worse than both.
 

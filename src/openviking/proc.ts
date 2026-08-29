@@ -5,7 +5,7 @@
 // a 2-core quota. So the heartbeat carries both, and CPU is a RATE — which
 // needs two samples, hence the small stateful sampler rather than a pure read.
 //
-// Monitoring only. the owner ratified this WITHOUT an RSS watchdog and without
+// Monitoring only. The owner ratified this WITHOUT an RSS watchdog and without
 // auto-restart on a memory budget; do not add one under another name.
 import { readFileSync } from "node:fs";
 import type { ProcSample } from "./types.js";

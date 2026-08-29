@@ -6,7 +6,7 @@
 // schema and no reader; the raise-side candidates file existed in 3 of 105.
 // The reasoning evaporated, and's adjudication doctrine,
 // "how often the review backs down" metric and's per-round volume
-// survey all need it. the owner chose the reopened findings telemetry under that
+// survey all need it. The owner chose the reopened findings telemetry under that
 // name: a schema'd file the session writes, parsed by the daemon
 // into queryable rows.
 //

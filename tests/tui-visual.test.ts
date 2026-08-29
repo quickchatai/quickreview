@@ -50,7 +50,7 @@ const snapshot: StatusSnapshot = {
       title: "fix(ci): sanitize branch names",
       head_sha: "786ebb790",
       stale_recheck: 0,
-      author: "owner_legacy",
+      author: "author1",
       updated_at: "2026-08-14T09:00:00Z",
       rounds: 1,
       last_verdict: null,
@@ -74,7 +74,7 @@ const view = (over: Partial<BoardView> = {}): BoardView => ({
   eventsScroll: 0,
   help: false,
   now: NOW,
-  repo: "example-org/example-app",
+  repo: "exampleorg/example-app",
   ...over,
 });
 
@@ -157,7 +157,7 @@ describe("rich board", () => {
   it("PR rows carry author, age, round count and verdict chip", () => {
     const text = renderBoard(view(), 140, 40).lines.map(stripAnsi).join("\n");
     expect(text).toContain("⚑ #5265 jbennett 12m r3 ✗RC fix(ui)");
-    expect(text).toContain("▶ #5277 owner_legacy 3h r1 fix(ci)");
+    expect(text).toContain("▶ #5277 author1 3h r1 fix(ci)");
   });
 
   it("renders the colored legend under the list", () => {
@@ -180,7 +180,7 @@ describe("rich board", () => {
 
   it("embeds OSC-8 links on PR numbers when a repo is known", () => {
     const raw = renderBoard(view(), 140, 40).lines.join("\n");
-    expect(raw).toContain("https://github.com/example-org/example-app/pull/5265");
+    expect(raw).toContain("https://github.com/exampleorg/example-app/pull/5265");
   });
 
   it("detail pane renders description, labels and comments when enriched", async () => {
@@ -196,14 +196,14 @@ describe("rich board", () => {
       threads: { open: 0, total: 0 },
       description: "Frames the CTA buttons as the visitor sees them.\nSecond line.",
       labels: ["AI review requested", "frontend"],
-      comments: [{ author: "owner_legacy", body: "please also check mobile", created_at: "2026-08-14T11:00:00Z" }],
+      comments: [{ author: "author1", body: "please also check mobile", created_at: "2026-08-14T11:00:00Z" }],
     };
     const text = renderBoard(view({ detail, selected: 1 }), 140, 44).lines.map(stripAnsi).join("\n");
     expect(text).toContain("DESCRIPTION");
     expect(text).toContain("Frames the CTA buttons");
     expect(text).toContain("[AI review requested]");
     expect(text).toContain("COMMENTS");
-    expect(text).toContain("owner_legacy 1h ago");
+    expect(text).toContain("author1 1h ago");
     expect(text).toContain("  please also check mobile"); // body wraps on its own indented line now
     expect(text).toContain("by jbennett");
   });

@@ -113,7 +113,7 @@ beforeEach(() => {
   cfg.slack.channel = "C_REVIEW";
   cfg.owner.slack_id = "U_MAT";
   cfg.slack.users = { U_MAT: "mhale", U_ALICE: "alice" };
-  cfg.github.repo = "example-org/example-app";
+  cfg.github.repo = "exampleorg/example-app";
   cfg.github.escalation_reviewer = "mhale";
   slack = new FakeSlack();
   dir = mkdtempSync(join(tmpdir(), "qcr-slack-hooks-"));
@@ -130,7 +130,7 @@ describe("dispatch hook", () => {
     expect(orders).toHaveLength(1);
     expect(slack.posts).toHaveLength(1);
     expect(slack.posts[0].text.split("\n")[0]).toBe(
-      "👀 *<https://github.com/example-org/example-app/pull/5263|#5263 Add rate limiting>* — review started for <@U_ALICE>",
+      "👀 *<https://github.com/exampleorg/example-app/pull/5263|#5263 Add rate limiting>* — review started for <@U_ALICE>",
     );
     expect(slack.posts[0].text.split("\n")[1]).toContain("_round 1 · first review · 1 files, +120/−34 · lenses: ");
     expect(store.slackThreadForPr(5263)).toBeDefined();
@@ -208,7 +208,7 @@ describe("verdict hooks", () => {
         text:
           "<@U_ALICE> ✅ *APPROVED* — round 1, 14 min\n" +
           "Nothing blocking; the retry loop is bounded now.\n" +
-          "<https://github.com/example-org/example-app/pull/5263|review on GitHub>",
+          "<https://github.com/exampleorg/example-app/pull/5263|review on GitHub>",
       },
     ]);
   });

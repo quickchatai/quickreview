@@ -20,7 +20,7 @@ const POLL_MS = 2_000;
 const SYSTEM_PROMPT = [
   "# Smoke session",
   "",
-  "You are a throwaway smoke-test session for the review sandbox.",
+  "You are a throwaway smoke-test session for the quickreview sandbox.",
   "Do not read, write, or modify any files. Do not run any commands.",
   `When you receive any message, reply with exactly one line: ${MARKER}`,
   "",

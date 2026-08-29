@@ -523,7 +523,7 @@ describe("remote argv builders", () => {
 
   it("builds the interactive attach argv with -tt and -it", () => {
     expect(attachArgv(TUI_DEFAULTS, "pr-5012")).toEqual([
-      "-tt", "my-vm", "sudo", "docker", "exec", "-it", "quickreview-sandbox", "tmux",
+      "-tt", "VM", "sudo", "docker", "exec", "-it", "quickreview-sandbox", "tmux",
       "set-window-option", "-t", "pr-5012", "window-size", "latest", ";",
       "attach", "-t", "pr-5012",
     ]);

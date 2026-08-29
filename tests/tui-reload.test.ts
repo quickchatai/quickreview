@@ -99,7 +99,7 @@ describe("HotReloader", () => {
   //. The reloader used to defer on an `isBusy()` predicate, which the
   // TUI wired to App.isBusy() — true while the companion column has focus. So
   // a build landed, the reload was held, and the change you had just asked the
-  // companion for silently never appeared. the owner: "any change made is
+  // companion for silently never appeared. The owner: "any change made is
   // reload, I prefer broken in between than not knowing why nothing changed."
   // There is no condition left to assert, so these pin the ABSENCE of one.
   it("never defers — a reload fires even while a surface owns the keyboard", () => {

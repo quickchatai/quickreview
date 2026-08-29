@@ -79,7 +79,7 @@ describe("parseUserId", () => {
 
   it("rejects a channel id or a handle", () => {
     expect(wiz.parseUserId("C0ABCDEFG").ok).toBe(false);
-    expect(wiz.parseUserId("@owner_legacy").ok).toBe(false);
+    expect(wiz.parseUserId("@morgan").ok).toBe(false);
   });
 });
 

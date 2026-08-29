@@ -360,7 +360,7 @@ describe("runRecheck", () => {
     expect(h.store.getPr(PR)?.state).toBe("tracked");
   });
 
-  // the owner, 2026-08-19 (amendment): a hand-resolved conflict is
+  // The owner, 2026-08-19 (amendment): a hand-resolved conflict is
   // never trivial — the resolved file escapes the base-merge ownership rule
   // and the session is asked to audit it against both merge parents.
   it("a resolved conflict file turns an otherwise-trivial base merge into a session recheck", async () => {
@@ -550,7 +550,7 @@ describe("recheck decisions", () => {
     expect(kinds()).toContain("recheck_upheld");
   });
 
-  // the owner, 2026-08-19: an explicit session uphold carries a withheld
+  // The owner, 2026-08-19: an explicit session uphold carries a withheld
   // approval to the examined head; a request_changes kills the mark outright.
   it("uphold carries the withheld-approval mark to the upheld head", async () => {
     store.recordApprovalWithheld(PR, { head_sha: OLD, ci_state: "red", reason: "red-ci" });

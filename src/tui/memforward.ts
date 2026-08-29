@@ -6,7 +6,7 @@
 // should notice". That reasoning stands for the COMPANION — but it made the
 // TUI's own Memory & learning tab depend on a unit the operator had to install
 // first, and an uninstalled unit renders as MEMORY UNREACHABLE, which reads
-// like a broken server rather than a missing local service. the owner asked for
+// like a broken server rather than a missing local service. The owner asked for
 // the forward to run inside the TUI (2026-08-21). This module is that, without
 // giving up the property was protecting:
 //

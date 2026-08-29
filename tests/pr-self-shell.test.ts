@@ -42,10 +42,10 @@ const CONFIG = (secretsDir: string) =>
     "dry_run = true",
     "",
     "[github]",
-    'repo = "example-org/example-app"',
+    'repo = "exampleorg/example-app"',
     'bot_login = "example-review[bot]"',
     'trigger_label = "AI review requested"',
-    'review_team = "example-org/review"',
+    'review_team = "exampleorg/review"',
     `secrets_dir = "${secretsDir}"`,
     "",
   ].join("\n");

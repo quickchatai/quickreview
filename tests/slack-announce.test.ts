@@ -103,7 +103,7 @@ beforeEach(() => {
   cfg.slack.channel = "C_REVIEW";
   cfg.owner.slack_id = "U_MAT";
   cfg.slack.users = { U_MAT: "mhale", U_ALICE: "alice" };
-  cfg.github.repo = "example-org/example-app";
+  cfg.github.repo = "exampleorg/example-app";
   cfg.github.escalation_reviewer = "mhale";
   slack = new FakeSlack();
 });
@@ -170,7 +170,7 @@ describe("root-on-first-event (DP-2a)", () => {
     expect(slack.posts).toHaveLength(2);
     expect(slack.posts[1].thread_ts).toBe(root);
     expect(slack.posts[1].text).toBe(
-      "👀 *<https://github.com/example-org/example-app/pull/5263|#5263 Add rate limiting>* — review started for <@U_ALICE>\n" +
+      "👀 *<https://github.com/exampleorg/example-app/pull/5263|#5263 Add rate limiting>* — review started for <@U_ALICE>\n" +
         "_round 1 · first review · 7 files, +120/−34 · lenses: pass-baseline, pass-validate_",
     );
     expect(slack.posts[1].text).not.toContain("🔄");

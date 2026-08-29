@@ -178,13 +178,13 @@ describe("conversation parsing and compaction", () => {
       { role: "user", text: "hello" },
       { role: "assistant", text: "hi" },
     ];
-    const named = compactConversation(turns, undefined, "the owner");
-    expect(named).toContain("from the owner");
-    expect(named).toContain("- **the owner**: hello");
+    const named = compactConversation(turns, undefined, "Casey");
+    expect(named).toContain("from Casey");
+    expect(named).toContain("- **Casey**: hello");
     const bare = compactConversation(turns);
     expect(bare).toContain("from the operator");
     expect(bare).toContain("- **the operator**: hello");
-    expect(bare).not.toContain("the owner");
+    expect(bare).not.toContain("Casey");
   });
 
   it("is empty for an empty conversation, and the tail is bounded", () => {

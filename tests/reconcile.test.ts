@@ -610,7 +610,7 @@ describe("stale-trigger residue sweep", () => {
     const { hooks } = recordingHooks();
     await reconcileOnce({ cfg, store, adapter: gh, hooks });
 
-    // the owner re-labels the PR: an explicit human trigger, days later.
+    // The owner re-labels the PR: an explicit human trigger, days later.
     applyEvent(store, 5180, { type: "trigger", source: "label" }, { author: "alice" }, { now: () => new Date("2026-08-20T09:00:00Z") });
     const row = store.getPr(5180)!;
     expect(row.state).toBe("queued");

@@ -10,7 +10,7 @@
 //     companion container ──▶ 198.51.100.1:1933      (docker bridge `qcr-memory`)
 //                              │  this process, on the host
 //                              ▼
-//     ssh my-vm ──▶ sudo docker exec -i quickreview-sandbox
+//     ssh <vm-host> ──▶ sudo docker exec -i quickreview-sandbox
 //                              ▼
 //                      node stdio↔TCP bridge ──▶ 127.0.0.1:1933  (OpenViking)
 //

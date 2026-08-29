@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { applyBoardFilter, applyMemoryFilter, filterLabel, isEmptyBoardFilter, memoryFilterLabel } from "../src/tui/filters.js";
 
 const prs = [
-  { number: 1, state: "reviewing", author: "JBennett" },
+  { number: 1, state: "reviewing", author: "JAdamska" },
   { number: 2, state: "queued", author: "mnovak" },
   { number: 3, state: "reviewing", author: "mnovak" },
   { number: 4, state: "awaiting_author" }, // no author field at all
@@ -11,7 +11,7 @@ const prs = [
 
 describe("applyBoardFilter", () => {
   it("author matches as a case-insensitive substring", () => {
-    expect(applyBoardFilter(prs, { author: "bennett" }).map((p) => p.number)).toEqual([1]);
+    expect(applyBoardFilter(prs, { author: "adamska" }).map((p) => p.number)).toEqual([1]);
     expect(applyBoardFilter(prs, { author: "NOVAK" }).map((p) => p.number)).toEqual([2, 3]);
   });
 

@@ -71,7 +71,7 @@ function fakeTransport(): FakeTransport {
       return { ok: true, ts: a.ts };
     },
     async usersInfo(id) {
-      return { id, display_name: id === ALICE ? "Alice Nowak" : "the owner", is_bot: false };
+      return { id, display_name: id === ALICE ? "Alice Nowak" : "Morgan", is_bot: false };
     },
     async authTest() {
       return { user_id: "U0BOT", bot_id: "B0BOT", team_id: "T0" };

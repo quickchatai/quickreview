@@ -83,7 +83,7 @@ describe("classifyCi", () => {
   });
 });
 
-// the owner, 2026-08-19: only the MOST RECENT run of each check name counts —
+// The owner, 2026-08-19: only the MOST RECENT run of each check name counts —
 // GitHub auto-cancels superseded runs, and their permanent cancelled husks
 // were withholding every approval forever (live: 4× sync cancelled + 3× sync
 // success at #5288's head, red under the old any-run rule).
@@ -118,7 +118,7 @@ describe("latest-run-per-name", () => {
   });
 });
 
-// the owner, 2026-08-19: zero checks at a head withholds approval too when the
+// The owner, 2026-08-19: zero checks at a head withholds approval too when the
 // repo normally runs CI (conflicted PR / CI not started = no execution
 // evidence). Off by default — a no-CI repo must never be wedged.
 describe("no_checks_is_red", () => {
@@ -179,7 +179,7 @@ describe("the round templates carry the gate in their Decide step", () => {
   });
 
   it.each(templates)("%s defers to the pr-checks.sh CLASSIFIED verdict and the latest-run rule", (name) => {
-    // the owner, 2026-08-19: sessions re-deriving CI from the raw run list is
+    // The owner, 2026-08-19: sessions re-deriving CI from the raw run list is
     // exactly the loop that burned rounds on cancelled husks — the CLASSIFIED
     // line (same table as classifyCi/guards.sh) is the single verdict source.
     const text = read(name);
@@ -189,9 +189,9 @@ describe("the round templates carry the gate in their Decide step", () => {
   });
 
   it.each(templates)("%s withholds on a zero-checks head, matching this repo's no_checks_is_red = true", (name) => {
-    // the owner, 2026-08-19: a conflicted / CI-less head carries no execution
+    // The owner, 2026-08-19: a conflicted / CI-less head carries no execution
     // evidence. The code default stays exempt (a no-CI repo must never wedge);
-    // example-app's config and its templates both gate it.
+    // the original deployment's config and templates both gate it.
     const text = read(name);
     expect(text).toContain("`CLASSIFIED: none`");
     expect(text).toContain("also withholds approval in this repo");

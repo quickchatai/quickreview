@@ -278,7 +278,7 @@ export class FeedWriter {
 
   /**
    * publish the operator's view. Called from the poll AND from every
-   * repaint (a repaint follows a keystroke, and "what is on his screen" is only
+   * repaint (a repaint follows a keystroke, and "what is on their screen" is only
    * true if it tracks keystrokes), throttled to `VIEW_MIN_INTERVAL_MS`.
    *
    * Returns false when the throttle skipped this call — never an error: a

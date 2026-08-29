@@ -3,7 +3,7 @@
 Working contract for the parallel build of the always-visible companion right
 column. Every module below is coded against these signatures **exactly**, so
 the pieces meet without a negotiation round. Decisions come from the map
-[Companion right-panel UX](../../issue-tracker/tracker/efforts/companion-panel-ux/map.md)
+the companion right-panel UX effort (internal design history)
 ; this file is mechanics only, not decisions.
 
 ## Geometry

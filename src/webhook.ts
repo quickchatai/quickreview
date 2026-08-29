@@ -376,7 +376,7 @@ export function handleDelivery(
 
   // Deploy-window drain (2026-08-25): while draining, every authentic
   // delivery is answered 200 and DROPPED — not interpreted, not recorded.
-  // the owner chose dropping over recording: GitHub never auto-retries either
+  // The owner chose dropping over recording: GitHub never auto-retries either
   // way, and the reconcile poll is the single recovery path once the drain
   // lifts. Counted so the lift log line can say how many the poll has to make
   // up. GET /health is untouched (it never reaches this function).

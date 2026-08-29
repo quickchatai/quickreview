@@ -171,7 +171,7 @@ describe("rate limits and retries", () => {
 describe("users.info cache", () => {
   it("caches by user id — a second lookup makes no second fetch", async () => {
     const f = fakeFetch(() => ({
-      payload: { ok: true, user: { id: "U1", name: "owner_legacy", profile: { display_name: "matt" }, is_bot: false } },
+      payload: { ok: true, user: { id: "U1", name: "morgan", profile: { display_name: "matt" }, is_bot: false } },
     }));
     const api = build(f.fetchFn);
 
@@ -187,7 +187,7 @@ describe("users.info cache", () => {
 
   it("re-fetches once the TTL has expired", async () => {
     let clock = 1_000_000;
-    const f = fakeFetch(() => ({ payload: { ok: true, user: { id: "U1", real_name: "the owner" } } }));
+    const f = fakeFetch(() => ({ payload: { ok: true, user: { id: "U1", real_name: "Morgan" } } }));
     const api = build(f.fetchFn, { userCacheTtlSec: 60, now: () => clock });
 
     await api.usersInfo("U1");

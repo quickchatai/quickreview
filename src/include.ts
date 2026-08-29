@@ -429,7 +429,7 @@ const MEMORY_READ_ONLY_ADDENDUM =
 // place it binds.
 //
 // The add protocol (`round-first.md`) lets the session run any lens from
-// `addable_lenses` "with a one-line stated reason". the owner's decision
+// `addable_lenses` "with a one-line stated reason". The owner's decision
 // is that one line is too weak to license THIS lens: the session
 // must name the read-then-write it suspects — a code shape, not a worry.
 //
@@ -452,7 +452,7 @@ const ASK_HUMAN_TRIGGER_ADDENDUM =
   "\n## You were added on demand — and the answer must be OUTSIDE the repo (sandbox rule)\nYou are not a planned lens. No path predicate selects you: \"code whose intent is not written down anywhere\" has no filename, and whether the answer lives in the repo is only visible once the diff has been read. You run because the PR's session read the diff and named a question it believes only a person can answer, and added you through the round's add protocol.\n\n**The trigger is the location of the answer, never the shape of the question.** Raise a finding only when the answer lives (a) outside the diff AND outside the implementer's own prompt — product intent, a decision taken months ago, a conversation it was not in; (b) above the implementation — should this exist at all; or (c) in why the change was necessary, where the spec and the PR body are silent. Before every finding, go looking for the answer in the repository at the pinned sha — the caller, the sibling implementation, the settings, the tests, the repo's own `CLAUDE.md`/`AGENTS.md` — and say in `evidence` what you searched. **If a careful reader could answer it from the repo, the question is dead**: the implementer wrote this code and can answer most intent questions itself, and sending it to a human for those is pure noise. `NONE` is the ordinary output.\n\n**Every finding opens with the exact tag `[ask your human]`** as the first thing on the first line of the body, before the posting tag. That marker is a routing instruction to the PR author's AI implementer — *do not answer this yourself; put it to the person you are working for and bring their answer back to this thread* — and the reviewed repo's agent directives key on it appearing there. It is **not** `[check this]`, which means \"a human reviewer should verify this\" and whose threads no one but a human may resolve; never use one tag for the other and never put both on one comment.\n\nIf your task string names no question and no reason to believe the answer is outside the code — only \"ask about intent\" or a file name — say so in one line and return `NONE`. A fishing expedition for unanswerable questions is exactly how this lens would turn into a wall of unread threads. This rule binds THIS lens only; it changes nothing about how any other addable lens is added.\n";
 
 // (validator half): the named-defect bar, enforced where the veto is.
-// the owner's line on — "it can only block if it says what is wrong under
+// The owner's line on — "it can only block if it says what is wrong under
 // the bad answer. Not 'unclear' — an actual described failure." A felt
 // uncertainty that blocks IS blocking-on-uncertainty, which the map rejected by
 // name; a named conditional failure is an ordinary finding at the ordinary bar.
@@ -468,13 +468,13 @@ const ASK_HUMAN_NAMED_DEFECT_VALIDATE_ADDENDUM =
 // review comments show they actually care about (read pass →
 // sweep of 54 measured concerns → case-by-case adjudication
 // with the owner). They are behavioural patterns, not a rubric and not a score:
-// the owner's steer was "some kind of rules or set of behavioural patterns that
+// The owner's steer was "some kind of rules or set of behavioural patterns that
 // will emerge — like looking very carefully at the migrations".
 //
 // moved six of the seven — migration-discipline, nullability-two-
 // halves, test-doctrine, orm-usage, declared-shape, config-placement — out of
-// this compiled-in registry into the quickchat repo profile
-// (`profiles/quickchat/addenda/`, byte-preserved; loaded by src/profiles.ts,
+// this compiled-in registry into the live deployment's repo profile
+// (its addenda pack, byte-preserved; loaded by src/profiles.ts,
 // composed by wire.ts AFTER every entry here). They are this team's house
 // rules, not generic review behaviour, and a profile is where house rules
 // live. `diff-leftovers` stays: debris hygiene is generic, not house style.
@@ -511,7 +511,7 @@ const DIFF_LEFTOVERS_ADDENDUM =
 
 // ----: cut output that carries no reasoning -------------------------
 //
-// THE FRAMING, AND IT GOVERNS EVERY WORD BELOW. the owner declined reading volume
+// THE FRAMING, AND IT GOVERNS EVERY WORD BELOW. The owner declined reading volume
 // as a target outright (2026-08-24): *"Reading by a human is no longer expected
 // or necessary. I agree that overly verbose findings are bad, but we should not
 // sacrifice the reasoning of why for the problem we point out."* The reader is
@@ -576,7 +576,7 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
   { id: "ask-human-trigger", scope: [ASK_HUMAN_PASS], text: ASK_HUMAN_TRIGGER_ADDENDUM },
   { id: "ask-human-named-defect-validate", scope: [VALIDATE_PASS], text: ASK_HUMAN_NAMED_DEFECT_VALIDATE_ADDENDUM },
   // the one corpus-derived rule that is generic review behaviour.
-  // Its six house-rule siblings ride `profiles/quickchat/addenda/` since
+  // Its six house-rule siblings ride the live deployment's profile addenda pack since
   // (see the banner above); wire.ts composes a profile pack after
   // every entry in this registry.
   { id: "diff-leftovers", scope: ["pass-baseline"], text: DIFF_LEFTOVERS_ADDENDUM },

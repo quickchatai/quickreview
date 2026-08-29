@@ -254,7 +254,7 @@ export function isAskHumanFinding(kind?: string | null, lens?: string | null): b
 // itself, in the round that deferred, through the daemon's existing capped
 // issue path — no confirmation step. **No ticket, no deferral.**
 //
-// WHY A THIRD TAG RATHER THAN REUSING ONE OF THE TWO. the owner's decision
+// WHY A THIRD TAG RATHER THAN REUSING ONE OF THE TWO. The owner's decision
 // (amendment): a deferral is neither of the other two things, and a
 // marker that means three things routes nothing — the same argument that got
 // `[ask your human]` its own tag on instead of a second meaning for
