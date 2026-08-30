@@ -88,6 +88,8 @@ const NON_SEEDED = [
   // the first-run greeting + calibration interview — post-seed, ours.
   "prompts/companion-first-run.md",
   "prompts/slack-overseer-appendix.md",
+  // the onboarding wizard's system prompt — post-seed, ours to edit.
+  "prompts/onboarding.md",
 ] as const;
 
 function sha256(path: string): string {

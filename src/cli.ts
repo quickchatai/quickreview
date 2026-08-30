@@ -550,6 +550,47 @@ export async function cmdCompanion(sub: string | undefined): Promise<void> {
   }
 }
 
+/** `qcr onboard` — the guided setup wizard: pi at the pinned
+ * version via npx (works from a bare clone; pi stays a non-dependency), the
+ * onboarding prompt + extension + a restricted tool set, then the TUI handoff
+ * when the checklist verifies complete. Resumable: run it again after a crash
+ * and completed steps are re-verified, not repeated. */
+export async function cmdOnboard(): Promise<number> {
+  const { piPinFromPackageJson, onboardingSessionDir, runOnboard } = await import("./onboard/launch.js");
+  const { checklistComplete } = await import("./onboard/engine.js");
+  const { spawn } = await import("node:child_process");
+  const root = sandboxRoot();
+  // Pin source: config.toml [pi] when it loads; package.json's "pi" block on a
+  // bare clone (config.toml is written later, BY onboarding). Same pinned
+  // version by the rule-7 mirror discipline.
+  let pin: { package: string; version: string } | null = null;
+  try {
+    const { package: pkg, version } = loadConfig().pi;
+    pin = { package: pkg, version };
+  } catch {
+    pin = piPinFromPackageJson(root);
+  }
+  if (!pin) throw new Error('onboard: pi pin not found (need config.toml [pi] or the package.json "pi" block)');
+  mkdirSync(onboardingSessionDir(root), { recursive: true });
+  const run = (cmd: string, args: string[]): Promise<number> =>
+    new Promise((resolvePromise) => {
+      const child = spawn(cmd, args, { stdio: "inherit", cwd: root, env: { ...process.env, QCR_ROOT: root } });
+      child.on("error", (err) => {
+        console.error(`onboard: ${cmd} failed to start: ${err.message}`);
+        resolvePromise(1);
+      });
+      child.on("close", (code) => resolvePromise(code ?? 1));
+    });
+  return runOnboard({
+    pin,
+    root,
+    spawn: run,
+    isComplete: () => checklistComplete(join(root, "state")),
+    log: (line) => console.log(line),
+    cliPath: join(root, "dist", "src", "cli.js"),
+  });
+}
+
 export async function main(argv: string[]): Promise<void> {
   const json = argv.includes("--json");
   argv = argv.filter((a) => a !== "--json");
@@ -628,6 +669,10 @@ export async function main(argv: string[]): Promise<void> {
     }
     case "companion":
       return cmdCompanion(rest[0]);
+    case "onboard": {
+      process.exitCode = await cmdOnboard();
+      return;
+    }
     case "drain": {
       process.exitCode = await cmdDrain(rest);
       return;
@@ -638,7 +683,7 @@ export async function main(argv: string[]): Promise<void> {
     }
     default:
       console.log(
-        "usage: qcr <status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|tui [pr|overseer]|drain <on|off>|" +
+        "usage: qcr <onboard|status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|tui [pr|overseer]|drain <on|off>|" +
           "companion <up|down|status|rebuild>|backfill [--dry-run] [--limit <n>]|checklist|compare <pr...>|" +
           "regression [--set <path>] [--clone <path>] [--change <name>] [--limit <n>] [--out <path>]>",
       );

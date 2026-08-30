@@ -101,6 +101,20 @@ declare module "@earendil-works/pi-coding-agent" {
     details?: Record<string, unknown>;
   }
 
+  /** Context handed to a registered tool's `execute` (5th positional arg).
+   *
+   * VERIFY-ON-PIN, whole interface: nothing here is declared in the findings.
+   * `shutdown` is the deferred session shutdown the onboarding finish tool
+   * calls — assumed to end the pi session cleanly AFTER the current
+   * tool result is delivered (idle-deferral) with exit code 0; both halves of
+   * that assumption are unverified against the pinned version and belong to
+   * the named onboarding smoke step. Callers must probe for it and degrade
+   * (tell the operator to /exit) when absent. */
+  export interface PiToolContext {
+    shutdown?(): void | Promise<void>;
+    [key: string]: unknown;
+  }
+
   /** A tool definition passed to `pi.registerTool`.
    *
    * VERIFY-ON-PIN, every field: modelled on the five `registerTool` calls in
@@ -124,7 +138,7 @@ declare module "@earendil-works/pi-coding-agent" {
       params: Record<string, unknown>,
       signal?: AbortSignal,
       onUpdate?: unknown,
-      ctx?: unknown,
+      ctx?: PiToolContext,
     ): PiToolResult | Promise<PiToolResult>;
   }
 
