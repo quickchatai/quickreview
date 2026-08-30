@@ -18,7 +18,7 @@ import { describe, expect, it } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { MUTATION_KINDS, type MutationKind } from "../src/gate.js";
+import { APP_SELF_CONFIG_KINDS, MUTATION_KINDS, type AppSelfConfigKind, type MutationKind } from "../src/gate.js";
 import { parseConfig } from "../src/config.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -63,8 +63,11 @@ const EVENT_PERMISSION: Record<string, string> = {
 /** The permission each gated mutation writes through (src/github.ts REST and
  * GraphQL paths; push_branch is the improvements git push, rule 4's one
  * sanctioned branch family). A new MutationKind fails to compile until it is
- * added here — which is the point. */
-const KIND_WRITE_PERMISSION: Record<MutationKind, string> = {
+ * added here — which is the point. The app-self-config class is
+ * excluded BY TYPE: those routes are authed by the App JWT and address the
+ * App's own configuration, so no installation permission grants them; a new
+ * kind still has to be classified one way or the other to compile. */
+const KIND_WRITE_PERMISSION: Record<Exclude<MutationKind, AppSelfConfigKind>, string> = {
   add_label: "issues", // POST /issues/{n}/labels
   remove_label: "issues", // DELETE /issues/{n}/labels/{label}
   delete_team_review_request: "pull_requests", // DELETE /pulls/{n}/requested_reviewers
@@ -103,10 +106,21 @@ describe("github-app-manifest ↔ webhook handler", () => {
 
 describe("github-app-manifest ↔ mutation gate", () => {
   it("grants write on the permission behind every MutationKind", () => {
+    const selfConfig = APP_SELF_CONFIG_KINDS as readonly string[];
     for (const kind of MUTATION_KINDS) {
-      const perm = KIND_WRITE_PERMISSION[kind];
+      if (selfConfig.includes(kind)) continue; // JWT-authed; see below
+      const perm = KIND_WRITE_PERMISSION[kind as Exclude<MutationKind, AppSelfConfigKind>];
       expect(manifest.default_permissions[perm], `kind "${kind}" writes through ${perm} and needs write`).toBe("write");
     }
+  });
+
+  it("the app-self-config class needs NO installation permission — it rides the App JWT", () => {
+    // PATCH /app/hook/config is an App-level route: the installation the
+    // manifest describes grants nothing there, and nothing extra is asked for.
+    for (const kind of APP_SELF_CONFIG_KINDS) {
+      expect(Object.keys(KIND_WRITE_PERMISSION)).not.toContain(kind);
+    }
+    expect(Object.keys(manifest.default_permissions).sort()).not.toContain("app_hook_config");
   });
 });
 

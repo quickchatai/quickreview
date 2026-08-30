@@ -656,9 +656,46 @@ export function assertIanaTimeZone(tz: string, where: string): string {
   return tz;
 }
 
+/**
+ * [ingress] — the webhook ingress shape. `tunnel-file` turns on the
+ * hostname-file watcher: a tunnel sidecar writes its assigned bare
+ * public hostname (e.g. `abc.trycloudflare.com`, trailing newline tolerated)
+ * to `hostname_file`, and the daemon re-points the App's own webhook URL when
+ * it changes — through the app-self-config gate class, which executes even in
+ * dry-run (ratified rule-1 amendment, 2026-08-30). `none` (the default, and
+ * what an absent section means) starts nothing at all.
+ */
+export interface IngressConfig {
+  /** "none" ⇒ no watcher is ever constructed; "tunnel-file" ⇒ self-heal on. */
+  shape: "none" | "tunnel-file";
+  /** File the tunnel sidecar writes the bare public hostname into. Empty ⇒
+   * `<root>/state/ingress/hostname` (see ingressHostnameFile). */
+  hostname_file: string;
+  /** Settle time after a file change before the re-point runs — quick-tunnel
+   * sidecars write, then sometimes rewrite, within a second or two. */
+  debounce_ms: number;
+  /** The reliable path: a periodic sweep backs up fs.watch (the fast path),
+   * exactly like the verdict watcher. */
+  sweep_interval_s: number;
+}
+
+export const INGRESS_DEFAULTS: IngressConfig = {
+  shape: "none",
+  hostname_file: "",
+  debounce_ms: 3000,
+  sweep_interval_s: 300,
+};
+
+/** The hostname file's resolved path — the one place the default is spelled. */
+export function ingressHostnameFile(cfg: Config, root: string): string {
+  const configured = cfg.ingress.hostname_file.trim();
+  return configured ? expandHome(configured) : join(root, "state", "ingress", "hostname");
+}
+
 export interface Config {
   dry_run: boolean;
   ops: OpsConfig;
+  ingress: IngressConfig;
   github: GithubConfig;
   server: { hostname: string; port: number };
   daemon: {
@@ -965,9 +1002,15 @@ export function parseConfig(toml: string): Config {
       "[ops] timezone",
     ),
   };
+  // [ingress] is optional: absent ⇒ shape "none", nothing starts.
+  const ingress: IngressConfig = { ...INGRESS_DEFAULTS, ...((raw.ingress ?? {}) as Partial<IngressConfig>) };
+  if (!["none", "tunnel-file"].includes(ingress.shape)) {
+    throw new Error(`config.toml [ingress]: shape must be "none" or "tunnel-file" (got ${JSON.stringify(ingress.shape)})`);
+  }
   const cfg: Config = {
     dry_run: Boolean(req(raw, "dry_run")),
     ops,
+    ingress,
     github,
     server: { ...(req(raw, "server") as Config["server"]) },
 // Both knobs default so legacy configs keep parsing.

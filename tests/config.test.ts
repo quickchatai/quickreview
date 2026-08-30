@@ -8,6 +8,7 @@ import {
   MODELS_TIER_DEFAULTS,
   expandHome,
   githubCloneDir,
+  ingressHostnameFile,
   loadConfig,
   parseConfig,
   tierModel,
@@ -258,6 +259,30 @@ describe("[models] tiered pass scheme", () => {
   it("tierModel resolves the full spec for a tier", () => {
     expect(tierModel(cfg, "terra-med")).toBe("openai-codex/gpt-5.6-terra:medium");
     expect(tierModel(cfg, "sol-high")).toBe("openai-codex/gpt-5.6-sol:high");
+  });
+});
+
+describe("[ingress] (webhook-URL self-heal)", () => {
+  const shipped = readFileSync(configPath, "utf8");
+
+  it("defaults to shape 'none' when absent — no watcher ever starts", () => {
+    const cfg = parseConfig(shipped);
+    expect(cfg.ingress).toEqual({ shape: "none", hostname_file: "", debounce_ms: 3000, sweep_interval_s: 300 });
+  });
+
+  it("parses the tunnel-file shape with its knobs", () => {
+    const cfg = parseConfig(`${shipped}\n[ingress]\nshape = "tunnel-file"\nhostname_file = "/shared/hostname"\ndebounce_ms = 500\nsweep_interval_s = 60\n`);
+    expect(cfg.ingress).toEqual({ shape: "tunnel-file", hostname_file: "/shared/hostname", debounce_ms: 500, sweep_interval_s: 60 });
+    expect(ingressHostnameFile(cfg, "/root")).toBe("/shared/hostname");
+  });
+
+  it("defaults the hostname file under state/ when unset", () => {
+    const cfg = parseConfig(`${shipped}\n[ingress]\nshape = "tunnel-file"\n`);
+    expect(ingressHostnameFile(cfg, "/opt/quickreview/sandbox")).toBe("/opt/quickreview/sandbox/state/ingress/hostname");
+  });
+
+  it("rejects an unknown shape loudly at parse time", () => {
+    expect(() => parseConfig(`${shipped}\n[ingress]\nshape = "carrier-pigeon"\n`)).toThrowError(/\[ingress\]: shape must be/);
   });
 });
 

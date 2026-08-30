@@ -5,7 +5,7 @@
 import type { CheckSummary } from "./cigate.js";
 import type { Config } from "./config.js";
 import { CHECK_THIS_RE, DEFERRED_RE } from "./severity.js";
-import { MutationGate, type MutationIntent, type GateResult } from "./gate.js";
+import { APP_SELF_CONFIG_KINDS, MutationGate, type MutationIntent, type GateResult } from "./gate.js";
 import { TokenMinter, type FetchFn } from "./githubAuth.js";
 
 export interface PrConversation {
@@ -31,6 +31,13 @@ export interface PrRef {
   draft: boolean;
   merged: boolean;
   labels: string[];
+}
+
+/** The App's own webhook configuration (`GET /app/hook/config`, JWT-authed). */
+export interface AppWebhookConfig {
+  url: string;
+  content_type: string;
+  insecure_ssl: string;
 }
 
 export interface RequestedReviewers {
@@ -224,7 +231,9 @@ export class GitHubAdapter {
     return payload.data as T;
   }
 
-  /** The mutation executor wired into the gate when dry_run is off. */
+  /** The mutation executor the gate runs when it decides a mutation is real —
+   * every kind in live mode, and the app-self-config class in
+   * dry-run too. The gate, never a call site, makes that decision. */
   executeMutation = async (intent: MutationIntent): Promise<unknown> => {
     if (intent.method === "git") throw new Error("git pushes are executed by the caller, not the REST executor");
     if (intent.path === "/graphql") {
@@ -234,7 +243,12 @@ export class GitHubAdapter {
       }
       return this.graphql(body.query, body.variables as Record<string, unknown>);
     }
-    return this.request(intent.method, intent.path, intent.body);
+    // App-self-config intents address the App's OWN configuration:
+    // GitHub authenticates those routes with the App JWT, not an installation
+    // token — the same auth split request() already carries for the
+    // /app/hook/deliveries read.
+    const auth = (APP_SELF_CONFIG_KINDS as readonly string[]).includes(intent.kind) ? "jwt" : "installation";
+    return this.request(intent.method, intent.path, intent.body, auth);
   };
 
   // ---- triggered-set queries (reads) -------------------------------------
@@ -562,6 +576,37 @@ export class GitHubAdapter {
 
   async listWebhookDeliveries(perPage = 100): Promise<Array<{ id: number; guid: string; status: string; delivered_at: string }>> {
     return this.request("GET", `/app/hook/deliveries?per_page=${perPage}`, undefined, "jwt");
+  }
+
+  // ---- the App's own webhook configuration ---------------------
+
+  /** The App's own webhook config — the self-heal's read-back source. Direct
+   * JWT read, like the deliveries listing above. */
+  async getAppWebhookConfig(): Promise<AppWebhookConfig> {
+    const res = await this.request<{ url?: string; content_type?: string; insecure_ssl?: string }>(
+      "GET",
+      "/app/hook/config",
+      undefined,
+      "jwt",
+    );
+    return { url: res.url ?? "", content_type: res.content_type ?? "", insecure_ssl: res.insecure_ssl ?? "" };
+  }
+
+  /**
+   * Re-point the App's OWN webhook URL (`PATCH /app/hook/config`, JWT-authed).
+   * The one member of the app-self-config gate class (ratified rule-1
+   * amendment, the owner, 2026-08-30): it touches only the App's own
+   * configuration, never the reviewed repo, and the gate executes it for real
+   * even in dry-run — loudly logged, with the note naming old and new URL.
+   */
+  async updateOwnWebhookUrl(newUrl: string, oldUrl: string): Promise<GateResult> {
+    return this.gate.execute({
+      kind: "update_own_webhook_url",
+      method: "PATCH",
+      path: "/app/hook/config",
+      body: { url: newUrl },
+      note: `re-point own App webhook URL ${oldUrl || "(unknown)"} → ${newUrl}`,
+    });
   }
 
   // ---- mutations (all through the gate) ----------------------------------

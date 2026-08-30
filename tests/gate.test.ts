@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MUTATION_KINDS, MutationGate, type MutationIntent } from "../src/gate.js";
+import { APP_SELF_CONFIG_KINDS, MUTATION_KINDS, MutationGate, type MutationIntent } from "../src/gate.js";
 
 let dir: string;
 
@@ -109,6 +109,9 @@ describe("the closed mutation vocabulary", () => {
         // the bot superseding ITS OWN stale non-APPROVED review. No kind
         // for dismissing approvals or another identity's review exists.
         "supersede_own_review",
+        // The one app-self-config kind (ratified rule-1 amendment, 2026-08-30):
+        // the App re-pointing ITS OWN webhook URL. Never touches the repo.
+        "update_own_webhook_url",
       ].sort(),
     );
     // request_reviewer was retired with the escalation mechanics (2026-08-18).
@@ -173,5 +176,101 @@ describe("forceLive (supersede_own_review only — the owner, 2026-08-13)", () =
     expect(executor).not.toHaveBeenCalled();
     expect(result.executed).toBe(false);
     expect(readdirSync(join(dir, "dryrun"))).toHaveLength(1);
+  });
+});
+
+describe("the app-self-config gate class (ratified rule-1 amendment, 2026-08-30)", () => {
+  const repoint: MutationIntent = {
+    kind: "update_own_webhook_url",
+    method: "PATCH",
+    path: "/app/hook/config",
+    body: { url: "https://new.trycloudflare.com/webhook" },
+    note: "re-point own App webhook URL https://old.trycloudflare.com/webhook → https://new.trycloudflare.com/webhook",
+  };
+
+  it("is a CLOSED SET containing exactly update_own_webhook_url — adding a second kind fails here", () => {
+    // Mirrors the forceLive pin: widening the class is the owner's ratification,
+    // never an edit that survives CI. Deep equality, not containment.
+    expect([...APP_SELF_CONFIG_KINDS]).toEqual(["update_own_webhook_url"]);
+  });
+
+  it("every class member is a declared mutation kind", () => {
+    for (const kind of APP_SELF_CONFIG_KINDS) expect(MUTATION_KINDS).toContain(kind);
+  });
+
+  it("the session shell route never learns this kind — only the daemon self-configures the App", () => {
+    // The shell mirror needs no change precisely because sessions have no
+    // business here; this pins that they never grew one.
+    for (const script of ["post-review.sh", "approve-pr.sh", "reply-thread.sh", "guards.sh"]) {
+      const body = readFileSync(join(process.cwd(), "scripts", script), "utf8");
+      for (const kind of APP_SELF_CONFIG_KINDS) expect(body).not.toContain(kind);
+      expect(body).not.toContain("/app/hook/config");
+    }
+  });
+
+  it("executes update_own_webhook_url FOR REAL in dry-run, writing no dryrun record", async () => {
+    const executor = vi.fn(async () => ({ ok: true }));
+    const log = vi.fn();
+    const gate = new MutationGate(true, join(dir, "dryrun"), executor, undefined, undefined, log);
+    const result = await gate.execute(repoint);
+    expect(executor).toHaveBeenCalledOnce();
+    expect(result.executed).toBe(true);
+    expect(existsSync(join(dir, "dryrun"))).toBe(false);
+  });
+
+  it("logs loudly on every execution, naming old and new URL via the note", async () => {
+    const log = vi.fn();
+    const gate = new MutationGate(true, join(dir, "dryrun"), async () => ({}), undefined, undefined, log);
+    await gate.execute(repoint);
+    expect(log).toHaveBeenCalledOnce();
+    const line = String(log.mock.calls[0]![0]);
+    expect(line).toContain("APP-SELF-CONFIG");
+    expect(line).toContain("update_own_webhook_url");
+    expect(line).toContain("despite dry_run");
+    expect(line).toContain("https://old.trycloudflare.com/webhook");
+    expect(line).toContain("https://new.trycloudflare.com/webhook");
+  });
+
+  it("logs loudly in live mode too (without the dry-run wording)", async () => {
+    const log = vi.fn();
+    const gate = new MutationGate(false, join(dir, "dryrun"), async () => ({}), undefined, undefined, log);
+    await gate.execute(repoint);
+    expect(log).toHaveBeenCalledOnce();
+    const line = String(log.mock.calls[0]![0]);
+    expect(line).toContain("APP-SELF-CONFIG");
+    expect(line).not.toContain("despite dry_run");
+  });
+
+  it("EVERY other kind stays suppressed to state/dryrun in dry-run — adversarial sweep", async () => {
+    const executor = vi.fn(async () => ({ ok: true }));
+    const gate = new MutationGate(true, join(dir, "dryrun"), executor);
+    const others = MUTATION_KINDS.filter((k) => !(APP_SELF_CONFIG_KINDS as readonly string[]).includes(k));
+    expect(others.length).toBe(MUTATION_KINDS.length - 1);
+    for (const kind of others) {
+      const result = await gate.execute({ ...intent, kind });
+      expect(result.executed).toBe(false);
+      expect(result.dryRunFile).toBeTruthy();
+    }
+    expect(executor).not.toHaveBeenCalled();
+    expect(readdirSync(join(dir, "dryrun"))).toHaveLength(others.length);
+  });
+
+  it("forceLive on update_own_webhook_url still throws — the forceLive exception did not widen", async () => {
+    const executor = vi.fn(async () => ({ ok: true }));
+    const gate = new MutationGate(true, join(dir, "dryrun"), executor);
+    await expect(gate.execute({ ...repoint, forceLive: true })).rejects.toThrow(/forceLive is not allowed/);
+    expect(executor).not.toHaveBeenCalled();
+  });
+
+  it("unknown kinds are still rejected and request_reviewer is still not a kind", async () => {
+    const gate = new MutationGate(true, join(dir, "dryrun"), async () => ({}));
+    for (const kind of ["request_reviewer", "update_app_config", "dismiss_review"]) {
+      await expect(
+        gate.execute({ kind: kind as never, method: "PATCH", path: "/app/hook/config", note: "smuggled" }),
+      ).rejects.toThrow(/unknown mutation kind/);
+    }
+    expect(existsSync(join(dir, "dryrun"))).toBe(false);
+    expect(MUTATION_KINDS).not.toContain("request_reviewer");
+    expect(APP_SELF_CONFIG_KINDS as readonly string[]).not.toContain("request_reviewer");
   });
 });

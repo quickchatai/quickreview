@@ -5,6 +5,9 @@
 # executed) and every identity is empty. The ~10 values a new operator must
 # supply are marked "← FILL (n)" — grep for FILL. Flip dry_run to false only
 # as a deliberate, ratified cutover act, never as part of setup.
+# ONE mutation class is exempt and executes for real even here: the App
+# re-pointing its OWN webhook URL (see [ingress] below) — it can never touch
+# the reviewed repo, and every execution is logged loudly.
 
 dry_run = true
 
@@ -53,6 +56,22 @@ github_login = ""                 # ← FILL: operator GitHub login; escalation-
 [server]
 hostname = ""                                # ← FILL (6): the public webhook hostname
 port = 8787                                  # loopback only; cloudflared on the host fronts it
+
+# [ingress] — webhook-URL self-heal, for tunnels whose hostname
+# ROTATES (the laptop quick-tunnel route). The tunnel sidecar writes
+# its assigned bare hostname (e.g. "abc.trycloudflare.com") to `hostname_file`;
+# the daemon watches it and re-points the GitHub App's own webhook URL on
+# change (JWT-authed PATCH /app/hook/config, read-back verified). This is the
+# ONE mutation class that executes even in dry_run — ratified 2026-08-30 as a
+# rule-1 amendment, loudly logged, structurally closed to this one kind; it
+# touches only the App's own configuration, never the reviewed repo. Off by
+# default: with the section absent (or shape = "none") no watcher ever starts —
+# a stable hostname (named tunnel, VM route) needs none of this.
+#[ingress]
+#shape = "tunnel-file"                       # "none" (default) | "tunnel-file"
+#hostname_file = ""                          # "" ⇒ <root>/state/ingress/hostname
+#debounce_ms = 3000                          # settle time after a file change
+#sweep_interval_s = 300                      # polling backstop behind fs.watch
 
 [daemon]
 poll_interval_s = 300

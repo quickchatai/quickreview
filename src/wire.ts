@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import {
   fsSecretReader,
+  ingressHostnameFile,
   loadConfig,
   openVikingBaseUrl,
   sandboxRoot,
@@ -49,6 +50,7 @@ import type { RecheckOrder } from "./recheck.js";
 import { RECHECK_TEMPLATE_FILE, renderRecheckPrompt, renderRoundPrompt, roundTemplateFile } from "./templates.js";
 import { nodeExec } from "./tmux.js";
 import type { RoundOrder, SessionHooks } from "./types.js";
+import { WebhookHealer } from "./webhookheal.js";
 
 export interface ProductionParts {
   cfg: Config;
@@ -432,6 +434,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // awaited: there is deliberately NO boot ordering, and rounds run
   // memory-less until `/ready` passes.
   let openviking: OpenVikingSupervisor | null = null;
+  // the webhook-URL self-heal. Only ever constructed when [ingress]
+  // shape = "tunnel-file" — a daemon without the tunnel shape configured
+  // never starts the watcher.
+  let webhookHeal: WebhookHealer | null = null;
 
   // The origin store is built HERE, before the daemon, because both halves of
   // "who caused this turn" write to it: the router (Slack turns) and every
@@ -452,6 +458,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // malformed heuristics.toml fails the assembly loudly (same contract as the
   // addenda pack below) and every dispatch selects with the same predicates.
   const profileHeuristics = loadProfileHeuristics(root, cfg.review.profile);
+
+  // The gate's loud line (app-self-config executions) goes to the
+  // daemon log; the default console fallback covers any unwired gate.
+  gate.setLog(log);
 
   const daemon = createDaemon({
     cfg,
@@ -725,6 +735,24 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       commands = buildLocalCommandWatcher({ root, deps: commandDeps, store: d.store, slack, log: (l) => log(l) });
       await commands.start();
 
+      // Webhook-URL self-heal: only under the tunnel-file ingress
+      // shape. The gated PATCH rides the app-self-config class, so it executes
+      // even in dry-run (ratified rule-1 amendment, 2026-08-30) — loudly.
+      if (cfg.ingress.shape === "tunnel-file") {
+        webhookHeal = new WebhookHealer({
+          hostnameFile: ingressHostnameFile(cfg, root),
+          readConfig: () => adapter.getAppWebhookConfig(),
+          updateUrl: (newUrl, oldUrl) => adapter.updateOwnWebhookUrl(newUrl, oldUrl),
+          logEvent: (kind, payload) => d.store.logEvent(kind, null, payload),
+          anomaly: (detail) => d.store.logAnomaly("webhook_heal", null, null, detail, detail),
+          log,
+          debounceMs: cfg.ingress.debounce_ms,
+          sweepIntervalMs: cfg.ingress.sweep_interval_s * 1000,
+        });
+        webhookHeal.start();
+        log(`webhookheal: watching ${ingressHostnameFile(cfg, root)} (ingress shape tunnel-file)`);
+      }
+
       // Daemon-clock EOD ([eod]-timezone wall time; pi schedulers deliberately unused).
       // Curation must never touch the owner's pinned entries. The
       // watchdog fingerprints the pinned area around the sweep and raises an
@@ -805,6 +833,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       eod?.stop();
       heartbeat?.stop();
       commands?.stop();
+      webhookHeal?.stop();
+      webhookHeal = null;
       // SIGTERM then SIGKILL after a bounded grace — a memory engine must not
       // be able to hold the daemon's exit open.
       if (openviking) {

@@ -399,3 +399,59 @@ describe("live mode", () => {
     ).rejects.toThrow(/git pushes/);
   });
 });
+
+describe("the App's own webhook config (app-self-config class)", () => {
+  /** Header-aware recorder — the auth split (JWT vs installation) is the point. */
+  function buildWithHeaders(handler: (url: string, init: RequestInit) => unknown, dryRun = true) {
+    const calls: Array<Call & { auth: string }> = [];
+    const fetchFn = (async (url: string | URL, init: RequestInit = {}) => {
+      const headers = (init.headers ?? {}) as Record<string, string>;
+      calls.push({
+        url: String(url),
+        method: init.method ?? "GET",
+        body: init.body ? JSON.parse(String(init.body)) : undefined,
+        auth: headers.authorization ?? "",
+      });
+      const payload = handler(String(url), init);
+      return { ok: true, status: 200, json: async () => payload, text: async () => JSON.stringify(payload) } as unknown as Response;
+    }) as unknown as FetchFn;
+    let adapter!: GitHubAdapter;
+    const gate = new MutationGate(dryRun, dryrunDir, (intent) => adapter.executeMutation(intent), undefined, undefined, () => {});
+    adapter = new GitHubAdapter(cfg, minter, gate, fetchFn, "https://api.github.com");
+    return { adapter, calls };
+  }
+
+  it("reads GET /app/hook/config directly on the App JWT (never an installation token)", async () => {
+    const { adapter, calls } = buildWithHeaders(() => ({ url: "https://old.example.com/webhook", content_type: "json", insecure_ssl: "0" }));
+    const config = await adapter.getAppWebhookConfig();
+    expect(config).toEqual({ url: "https://old.example.com/webhook", content_type: "json", insecure_ssl: "0" });
+    expect(calls[0]).toMatchObject({ url: "https://api.github.com/app/hook/config", method: "GET", auth: "Bearer jwt.fake.token" });
+  });
+
+  it("updateOwnWebhookUrl PATCHes through the gate on the App JWT — and EXECUTES in dry-run (app-self-config)", async () => {
+    const { adapter, calls } = buildWithHeaders(() => ({ url: "https://new.trycloudflare.com/webhook" }), true);
+    const result = await adapter.updateOwnWebhookUrl("https://new.trycloudflare.com/webhook", "https://old.example.com/webhook");
+    // The ratified rule-1 amendment: real execution despite dry-run, no dryrun record.
+    expect(result.executed).toBe(true);
+    expect(readdirSync(dryrunDir)).toHaveLength(0);
+    expect(calls[0]).toMatchObject({
+      url: "https://api.github.com/app/hook/config",
+      method: "PATCH",
+      body: { url: "https://new.trycloudflare.com/webhook" },
+      auth: "Bearer jwt.fake.token",
+    });
+  });
+
+  it("the intent's note names old and new URL (the gate's loud line rides it)", async () => {
+    const { adapter } = buildWithHeaders(() => ({}));
+    const seen: string[] = [];
+    const originalExecute = adapter.gate.execute.bind(adapter.gate);
+    (adapter.gate as { execute: typeof originalExecute }).execute = async (intent) => {
+      seen.push(intent.note);
+      return originalExecute(intent);
+    };
+    await adapter.updateOwnWebhookUrl("https://new.trycloudflare.com/webhook", "https://old.example.com/webhook");
+    expect(seen[0]).toContain("https://old.example.com/webhook");
+    expect(seen[0]).toContain("https://new.trycloudflare.com/webhook");
+  });
+});

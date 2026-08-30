@@ -25,7 +25,12 @@ export type MutationKind =
   // stale non-APPROVED reviews after posting a new one. The adapter enforces
   // owner+state guards; dismissing an approval or another identity's review
   // remains structurally impossible.
-  | "supersede_own_review";
+  | "supersede_own_review"
+  // App-self-config class (ratified rule-1 amendment, the owner, 2026-08-30,
+  //): re-point the GitHub App's OWN webhook URL
+  // (JWT-authed PATCH /app/hook/config). Touches only the App's own
+  // configuration — never the reviewed repo. See APP_SELF_CONFIG_KINDS.
+  | "update_own_webhook_url";
 
 /**
  * The same set at RUNTIME. The union above is erased at compile time, so on
@@ -45,7 +50,30 @@ export const MUTATION_KINDS: readonly MutationKind[] = [
   "create_pull",
   "push_branch",
   "supersede_own_review",
+  "update_own_webhook_url",
 ];
+
+/**
+ * The app-self-config gate class (ratified by the owner, 2026-08-30, in-session,
+ * as a rule-1 amendment — recorded in spec): mutations that touch
+ * ONLY the GitHub App's own configuration and can never reach the reviewed
+ * repo. The gate EXECUTES this class even when `dry_run = true`, loudly
+ * logged every time, because new users run dry-run during exactly the window
+ * the webhook self-heal matters.
+ *
+ * The class is a CLOSED SET, pinned exactly like the forceLive bypass: it
+ * contains exactly `update_own_webhook_url`, and tests/gate.test.ts asserts
+ * deep equality against that one-element list, so adding a second kind fails
+ * a test. Widening it is the owner's call, never an in-flight improvement.
+ * `forceLive` semantics are untouched — the gate still throws on forceLive
+ * for anything but `supersede_own_review`, this kind included.
+ */
+export const APP_SELF_CONFIG_KINDS = ["update_own_webhook_url"] as const satisfies readonly MutationKind[];
+
+/** The class as a TYPE, so a `Record<MutationKind, …>` elsewhere can exclude
+ * it deliberately (the App-manifest permission map: these are JWT-authed and
+ * need no installation permission at all) instead of forgetting it. */
+export type AppSelfConfigKind = (typeof APP_SELF_CONFIG_KINDS)[number];
 
 export interface MutationIntent {
   kind: MutationKind;
@@ -100,6 +128,8 @@ export class MutationGate {
     private readonly executor: MutationExecutor,
     private readonly now: () => Date = () => new Date(),
     private guard?: MutationGuard,
+    private logFn: (msg: string, extra?: unknown) => void = (msg, extra) =>
+      console.log(`[quickreviewd] ${msg}`, extra ?? ""),
   ) {}
 
   get isDryRun(): boolean {
@@ -111,6 +141,13 @@ export class MutationGate {
    * rather than a constructor-only dependency. */
   setGuard(guard: MutationGuard): void {
     this.guard = guard;
+  }
+
+  /** Attach the production logger (same late-binding shape as setGuard). The
+   * default logs to the console, so the app-self-config loud line can never
+   * be silenced by an unwired gate. */
+  setLog(logFn: (msg: string, extra?: unknown) => void): void {
+    this.logFn = logFn;
   }
 
   async execute(intentIn: MutationIntent): Promise<GateResult> {
@@ -135,6 +172,18 @@ export class MutationGate {
         return blocked;
       }
       if (decision.intent) intent = decision.intent;
+    }
+    // The app-self-config class (see APP_SELF_CONFIG_KINDS): executes for real
+    // even in dry-run — the ratified rule-1 amendment — and every execution is
+    // loud. The intent's `note` names old and new URL, so the line does too.
+    if ((APP_SELF_CONFIG_KINDS as readonly string[]).includes(intent.kind)) {
+      this.logFn(
+        `gate: APP-SELF-CONFIG "${intent.kind}" executing FOR REAL${this.dryRun ? " despite dry_run (ratified rule-1 amendment, 2026-08-30)" : ""} — ${intent.note}`,
+      );
+      const response = await this.executor(intent);
+      const executed: GateResult = { executed: true, response };
+      await this.guard?.after?.(intent, executed);
+      return executed;
     }
     if (this.dryRun && !intent.forceLive) {
       mkdirSync(this.dryrunDir, { recursive: true });
