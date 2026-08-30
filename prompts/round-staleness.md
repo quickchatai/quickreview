@@ -117,9 +117,10 @@ invalidate the approval?**
 
 Launch every planned pass via the **`subagent` tool** — one `subagent` call per
 row, using that row's *subagent to call* name, **all in ONE assistant turn** so
-pi-subagents runs them in parallel. Never fan passes out via bash — no
+they run in parallel (the extension caps how many run at once). Never fan passes out via bash — no
 `pi --no-session` subprocesses, ever; the `subagent` tool is the only pass
-launcher. Every task string is blank-slate and self-contained: worktree
+launcher. Every task string is blank-slate and self-contained (a pass runs at
+the sandbox root — never pass a `cwd`, cite absolute paths): worktree
 `{{worktree}}` @ `{{head_sha}}`, PR #{{n}} + claims digest, the lens's focus
 files **restricted to the post-approval delta**, the SETTLED list, the gate
 notes, and an explicit **staleness note**: "this PR was already approved at an
@@ -142,11 +143,12 @@ passes that DID run. If `pass-validate` itself is unresolvable, produce no
 verdict at all — an overdue round is the correct outcome, a stand-in review
 is not.
 
-**The stock `researcher`/`scout`/`worker` agents are off-limits, by name.**
-They ship with the subagent extension pinned to models and web extensions that
-cannot run in this container — permanently dead weight. The daemon unregisters
-them; if one still appears in the agent list, that is the degraded path: never
-call it, for any purpose, and never treat it as a fallback for a lens.
+**Only the built pass agents exist — any foreign agent name is off-limits.**
+The agent list is exactly the daemon-built pass set; stock
+`researcher`/`scout`/`worker` agents no longer exist (the extension that
+shipped them is retired). If an agent outside the pass plan's names ever
+appears in the list anyway, that is the degraded path: never call it, for any
+purpose, and never treat it as a fallback for a lens.
 
 **Raise protocol.** You MAY swap a pass to a higher-tier variant from its "may
 raise to" column when the diff's semantic complexity demands it — each raise

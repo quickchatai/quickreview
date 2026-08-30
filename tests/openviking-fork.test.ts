@@ -130,9 +130,21 @@ describe("PATCH 1 — ledger-pin is the sole owner of compaction", () => {
 });
 
 describe("PATCH 2 — no ambient work in a subagent leaf", () => {
-  const PI_SUBAGENT_ARGV = [
+  // The retired third-party extension's child argv (kept: an older container
+  // may still run it, and the detector must keep reading it as a leaf).
+  const LEGACY_SUBAGENT_ARGV = [
     "/usr/bin/node", "/opt/pi/index.js",
     "--mode", "json", "-p", "--no-session", "--no-skills", "--no-extensions",
+  ];
+  // pi's NATIVE subagent extension's child argv (read statically
+  // from the pinned 0.84.4 tarball's examples/extensions/subagent/index.ts:
+  // no --no-skills, no --no-extensions — but -p / --no-session / --mode json
+  // are all present, and any one of them is enough).
+  const NATIVE_SUBAGENT_ARGV = [
+    "/usr/bin/node", "/opt/pi/index.js",
+    "--mode", "json", "-p", "--no-session",
+    "--model", "openai-codex/gpt-5.6-sol:high",
+    "--tools", "read,grep,find,ls,viking_search,viking_read",
   ];
   const SHEPHERD_ARGV = [
     "/usr/bin/node", "/opt/pi/index.js",
@@ -144,9 +156,10 @@ describe("PATCH 2 — no ambient work in a subagent leaf", () => {
     "--name", "pr-42",
   ];
 
-  it("reads a pi-subagents child argv as a leaf", () => {
-    expect(isLeafProcess(PI_SUBAGENT_ARGV, {})).toBe(true);
-    // Any one of the flags is enough — pi-subagents may reorder or drop some.
+  it("reads a subagent child argv as a leaf — native and legacy shapes both", () => {
+    expect(isLeafProcess(NATIVE_SUBAGENT_ARGV, {})).toBe(true);
+    expect(isLeafProcess(LEGACY_SUBAGENT_ARGV, {})).toBe(true);
+    // Any one of the flags is enough — an extension may reorder or drop some.
     for (const flag of LEAF_ARGV_FLAGS) {
       expect(isLeafProcess(["node", "pi", flag], {})).toBe(true);
     }

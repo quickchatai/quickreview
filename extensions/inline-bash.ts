@@ -1,6 +1,7 @@
 /**
  * VENDORED VERBATIM (2026-08-25) from the pinned pi package's shipped example:
- * @earendil-works/pi-coding-agent@0.84.1 examples/extensions/inline-bash.ts.
+ * @earendil-works/pi-coding-agent examples/extensions/inline-bash.ts
+ * (copied at 0.84.1; re-compared byte-identical at the 0.84.4 pin).
  * Copied rather than referenced in-image because the load path must survive a
  * pi version bump and be guardable host-side like every other /workspace
  * extension. Re-copy on a pi pin bump (rule 7); do not hand-edit below this

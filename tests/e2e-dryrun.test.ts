@@ -151,7 +151,9 @@ describe("dry-run fixture round", () => {
         const text = readFileSync(agent.output, "utf8");
         expect(text).not.toContain("{{include:");
         expect(text).toContain("FINDINGS <lens> PR#<n>"); // the shared output contract
-        expect(text).toMatch(/^model: openai-codex\/gpt-5\.6-(sol|terra)$/m); // spec split into model+thinking
+        // the whole spec rides `model:` (pi --model takes the
+        // :thinking suffix; the native subagent extension reads only model).
+        expect(text).toMatch(/^model: openai-codex\/gpt-5\.6-(sol|terra):(low|medium|high)$/m);
         expect(text).toMatch(/^thinking: (medium|high)$/m);
         expect(text).toContain("## Execution policy"); // no-exec addendum on every variant
       }

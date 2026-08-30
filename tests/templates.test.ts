@@ -624,13 +624,23 @@ describe("shipped round templates", () => {
       expect(text).toMatch(/re-read this section — never a\s+sibling PR/);
     });
 
-    // half 1 — the dead stock agents are banned by name in the
-    // template (the belt to the extension-side unregistration's braces).
-    it(`${roundTemplateFile(rt)} declares the stock researcher/scout/worker agents off-limits by name`, () => {
-      expect(text).toContain("**The stock `researcher`/`scout`/`worker` agents are off-limits, by name.**");
-      expect(text).toContain("cannot run in this container");
-      expect(text).toContain("The daemon unregisters\nthem");
+    // half 1, reworded: with the native extension the
+    // agent list IS the built pass set (no stock agents ship any more), and
+    // any foreign agent name stays banned as the degraded path — never a
+    // stand-in for a lens.
+    it(`${roundTemplateFile(rt)} declares foreign agent names off-limits (only built passes exist)`, () => {
+      expect(text).toContain("**Only the built pass agents exist — any foreign agent name is off-limits.**");
+      expect(text).toContain("stock\n`researcher`/`scout`/`worker` agents no longer exist");
       expect(text).toContain("never treat it as a fallback for a lens");
+    });
+
+    // children run at the sandbox root: the glue strips task `cwd`
+    // (a child in the reviewed worktree would load that repo's .pi/ config
+    // under always-on trust), so the template must demand absolute paths and
+    // forbid passing a cwd.
+    it(`${roundTemplateFile(rt)} tells the session passes run at the sandbox root with absolute paths`, () => {
+      expect(text).toContain("never pass a `cwd`");
+      expect(text).toMatch(/absolute/);
     });
 
     it(`${roundTemplateFile(rt)} makes blocker comments lead with the consequence`, () => {

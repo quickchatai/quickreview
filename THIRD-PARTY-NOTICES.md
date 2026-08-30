@@ -22,8 +22,9 @@ its license, and where the full text and provenance live in this tree.
 ## extensions/inline-bash.ts — pi example extension
 
 - Upstream: the pi coding agent package
-  `@earendil-works/pi-coding-agent@0.84.1`, file
-  `examples/extensions/inline-bash.ts`, vendored verbatim (2026-08-25).
+  `@earendil-works/pi-coding-agent`, file
+  `examples/extensions/inline-bash.ts`, vendored verbatim (2026-08-25 at
+  0.84.1; byte-identical at the current 0.84.4 pin).
 - License: **MIT** (the pi package's license). The MIT text as it applies to
   this file:
 
@@ -61,18 +62,17 @@ its license, and where the full text and provenance live in this tree.
   `deploying`, `runbook` and `feedback-mining` skills. The `skills/companion/`
   directory at the repository root is likewise first-party.
 
-## pi-subagents — NOT redistributed
+## Subagents — no third-party component
 
-- Upstream: <https://github.com/amosblomqvist/pi-subagents>, pinned commit
-  `1f541897588b995144f0bb8e71a335d1c85b1e62`.
-- License: **unlicensed upstream** — the pinned commit carries no LICENSE
-  file. Per the licensing analysis, this code ships in **no public
-  commit**: `extensions/vendor/pi-subagents/` is excluded from the published
-  tree (`publish-manifest.json`), and deployments fetch it at image build
-  time from the upstream repository (the VM Dockerfile already works this
-  way). The in-tree `agents/` prompts and `config.json` overlaid onto it are
-  first-party. If upstream grants a license (request drafted),
-  this entry and the exclusion are revisited.
+Subagents run on pi's **first-party** subagent extension, shipped inside the
+pinned `@earendil-works/pi-coding-agent` npm package
+(`examples/extensions/subagent/`, MIT like the rest of pi) and loaded at
+runtime from the installed package by the first-party
+`extensions/subagents.ts` — nothing is vendored or redistributed, so no
+notice entry is needed. (History: the unlicensed third-party
+amosblomqvist/pi-subagents extension that used to fill this role was removed
+entirely on 2026-08-30 —'s licensing question dissolved by removal,
+.)
 
 ## npm dependencies
 

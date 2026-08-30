@@ -152,4 +152,14 @@ declare module "@earendil-works/pi-coding-agent" {
 
   /** VERIFY-ON-PIN: extensions are default-exported activation functions. */
   export type Extension = (pi: Pi) => void | Promise<void>;
+
+  // ---- package-root helpers ------------------------------------
+  // VERIFIED statically against the published 0.84.4 tarball: both are public
+  // exports of the package root (dist/index.js re-exports them from
+  // dist/config.js). Used by extensions/subagents.ts to import the native
+  // subagent example from the INSTALLED (= pinned) package.
+  /** Absolute path of the installed package's `examples/` directory. */
+  export function getExamplesPath(): string;
+  /** The installed pi package version. */
+  export const VERSION: string;
 }

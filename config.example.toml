@@ -134,8 +134,9 @@ validate_tier = "sol-high"
 small_diff_lines = 150
 
 [models.tiers]
-# PassTier → model spec; buildAgents splits the `:thinking` suffix into the
-# separate pi-subagents `model`/`thinking` frontmatter fields at build time.
+# PassTier → model spec; the whole spec (incl. the `:thinking` suffix) rides
+# the built agent's `model:` field — pi's --model accepts the suffix, and the
+# native subagent extension reads only that field.
 "terra-med" = "openai-codex/gpt-5.6-terra:medium"
 "sol-med" = "openai-codex/gpt-5.6-sol:medium"
 "sol-high" = "openai-codex/gpt-5.6-sol:high"
@@ -166,8 +167,12 @@ evidence_timeout_s = 60           # evidence copier: per-remote-read
 # VERIFY-ON-PIN: package + version mirrored in package.json "pi" block and the
 # ansible group_vars; the image never floats.
 package = "@earendil-works/pi-coding-agent"
-version = "0.84.1"
+version = "0.84.4"
 session_dir = "state/pi-sessions"
+# Process-wide subagent fan-out cap: enforced by the first-party
+# glue over pi's native subagent extension (extensions/subagents.ts). The
+# deployed VM runs 6 (six lens passes per round); the code default is 4.
+subagent_max_concurrency = 6
 
 [memory]
 # Round seeding — how much memory rides each round prompt and how

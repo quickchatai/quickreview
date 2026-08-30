@@ -1,11 +1,12 @@
 // Build-time `{{include:path}}` preprocessing for agent/prompt markdown.
 //
-// pi-subagents has no native include mechanism (§1: an agent is a
+// The subagent extension has no native include mechanism (an agent is a
 // markdown file with YAML frontmatter whose body becomes the subagent system
-// prompt — nothing more). So the shared `prompts/pass-common.md` contract is
-// expanded here, at build time, into a generated agents directory that the
-// extension is pointed at. The seeded `agents/pass-*.md` sources stay
-// canonical and unedited.
+// prompt — nothing more; true of the retired third-party pi-subagents and of
+// pi's own first-party extension alike). So the shared
+// `prompts/pass-common.md` contract is expanded here, at build time, into a
+// generated agents directory that discovery is pointed at. The seeded
+// `agents/pass-*.md` sources stay canonical and unedited.
 //
 // Rules:
 //  - `{{include:<path>}}` — path is relative to the sandbox root.
@@ -18,10 +19,11 @@
 // `<pass>--<tier>.md`. Risk passes (config models.risk_passes) build only the
 // sol-high variant; pass-validate builds every tier at or above its floor
 // (models.validate_tier); every other pass builds all three tiers. The tier's
-// model spec ("provider/model:thinking") is split into the SEPARATE
-// pi-subagents `model` and `thinking` frontmatter fields. The addendum
-// registry (`PASS_ADDENDA`, lens-keyed) is composed onto every BUILT body in
-// registry order — seeds untouched.
+// model spec ("provider/model:thinking") goes into `model:` WHOLE (the native
+// extension reads only that field, and pi's --model accepts the :thinking
+// suffix); `thinking:` is still rewritten for human accuracy. The
+// addendum registry (`PASS_ADDENDA`, lens-keyed) is composed onto every BUILT
+// body in registry order — seeds untouched.
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, resolve, join } from "node:path";
 import { MODELS_TIER_DEFAULTS } from "./config.js";
@@ -189,9 +191,9 @@ const AGENT_SPAWN_TOOLS = new Set(["subagent", "subagents", "task", "agent", "ag
  *
  * The seeds under `agents/` are canonical (CLAUDE.md rule 6) and today list
  * only read-only tools — this is the enforcement that keeps that true no
- * matter what a future seed says, applied to the files pi-subagents actually
- * reads. A `tools:` line that names nothing else is dropped entirely rather
- * than left empty (an empty list is not the same statement as no list).
+ * matter what a future seed says, applied to the files agent discovery
+ * actually reads. A `tools:` line that names nothing else is dropped entirely
+ * rather than left empty (an empty list is not the same statement as no list).
  */
 export function stripAgentSpawnTools(frontmatter: string): string {
   const re = /^tools:[ \t]*(.*)$/m;
@@ -217,12 +219,15 @@ export function stripAgentSpawnTools(frontmatter: string): string {
  * would be a second author of the reviewer's memory with none of the
  * accounting.
  *
- * There are two layers, and this list is the outer one. pi-subagents builds a
- * child's argv with `--no-extensions` plus the extensions providing the tools
- * the agent's frontmatter names, so this allowlist decides which memory tools
- * exist inside a leaf at all. The inner layer is the vendored fork's own PATCH
- * 2, which withholds `viking_write` in any leaf process regardless of what the
- * frontmatter says.
+ * There are two layers, and this list is the outer one: the frontmatter
+ * `tools:` line becomes the child's `--tools` allowlist, so it decides which
+ * memory tools a leaf could ever activate. (At the current pin the OpenViking
+ * extension does not load inside a child at all — children load only the
+ * global settings.json extensions, and it rides per-spawn argv — so these two
+ * names sit inert in the child's allowlist; pi ignores allowlisted names with
+ * no provider, verified statically at 0.84.4.) The inner layer is the
+ * vendored fork's own PATCH 2, which withholds `viking_write` in any leaf
+ * process regardless of what the frontmatter says.
  */
 export const LEAF_MEMORY_TOOLS: readonly string[] = ["viking_search", "viking_read"];
 
@@ -235,7 +240,7 @@ const MEMORY_TOOL_RE = /^viking_/i;
  * Any other `viking_*` tool a seed might name is dropped first, so a future
  * seed carrying `viking_write` cannot smuggle a write surface into a leaf —
  * same enforcement stance as `stripAgentSpawnTools`, applied to the files
- * pi-subagents actually reads.
+ * agent discovery actually reads.
  *
  * A pass with NO `tools:` line is left alone. An absent list means "whatever
  * the harness gives you" while a present one is an allowlist, so adding the
@@ -253,9 +258,11 @@ export function applyMemoryTools(frontmatter: string, tools: readonly string[] =
   return frontmatter.replace(re, `tools: ${[...kept, ...tools].join(", ")}`);
 }
 
-/** Split a "provider/model:thinking" spec into pi-subagents' SEPARATE
- * `model` and `thinking` frontmatter fields. Only a recognized thinking
- * level after the last colon is treated as a suffix. */
+/** Split a "provider/model:thinking" spec into its model and thinking halves.
+ * Only a recognized thinking level after the last colon is treated as a
+ * suffix. The built `model:` field keeps the WHOLE spec (pi's
+ * --model accepts the suffix); the split feeds the `thinking:` field and the
+ * BuiltAgent record. */
 export function splitModelSpec(spec: string): { model: string; thinking: string | null } {
   const m = /^(.+):(off|minimal|low|medium|high)$/.exec(spec);
   return m ? { model: m[1] as string, thinking: m[2] as string } : { model: spec, thinking: null };
@@ -703,7 +710,7 @@ export interface BuiltAgent {
  * `validateTier` is the validator's FLOOR, not a pin: dispatch
  * raises `pass-validate` to the round's highest lens tier, so every tier at or
  * above the floor must have a built variant on disk or that raise would name
- * an agent pi-subagents cannot find. */
+ * an agent the subagent tool cannot find. */
 export function tiersForPass(pass: string, riskPasses: string[], validateTier: PassTier): PassTier[] {
   if (riskPasses.includes(pass)) return ["sol-high"];
   if (pass === VALIDATE_PASS) return tiersAtOrAbove(validateTier);
@@ -712,10 +719,10 @@ export function tiersForPass(pass: string, riskPasses: string[], validateTier: P
 
 /**
  * Preprocess every `agents/pass-*.md` in `srcDir` into per-tier variant files
- * `<pass>--<tier>.md` in `outDir` — the directory the register-lens-agents
- * extension reads and registers with pi-subagents at session spawn (VERIFIED
- * live 2026-08-18: pi-subagents' own agents dir is hardcoded to its install
- * dir; a config file cannot repoint it — see extensions/register-lens-agents.ts).
+ * `<pass>--<tier>.md` in `outDir` — the directory the native subagent
+ * extension discovers through its "user" scope (the container
+ * entrypoints symlink ~/.pi/agent/agents at outDir, so the built passes are
+ * exactly what a session's `subagent` tool can name).
  */
 export function buildAgents(srcDir: string, outDir: string, opts: BuildAgentsOptions = {}): BuiltAgent[] {
   const root = opts.root ?? resolve(srcDir, "..");
@@ -751,13 +758,20 @@ export function buildAgents(srcDir: string, outDir: string, opts: BuildAgentsOpt
       // read-only memory tools to what remains.
       frontmatter = stripAgentSpawnTools(frontmatter);
       frontmatter = applyMemoryTools(frontmatter);
-      frontmatter = applyModelOverride(frontmatter, model);
+      // the FULL spec ("provider/model:thinking") goes into `model:`.
+      // The native subagent extension reads only the `model` frontmatter field
+      // and passes it verbatim as `--model`, and pi's CLI accepts the
+      // `:<thinking>` suffix as a shorthand (verified statically at 0.84.4,
+      // dist/main.js) — that is how per-tier thinking survives the fan-out.
+      // The separate `thinking:` field is still rewritten so the built file
+      // stays human-accurate, but the native extension ignores it.
+      frontmatter = applyModelOverride(frontmatter, spec);
       if (thinking !== null) frontmatter = applyThinkingOverride(frontmatter, thinking);
       const out = join(outDir, `${name}.md`);
       // Atomic per-file: rebuilds now happen at webhook time while
-      // sessions may be registering agents — a truncate-then-write window
-      // would let register-lens-agents cache a half-written pass for a whole
-      // round. tmp+rename in the same dir is atomic on POSIX.
+      // a session's subagent tool may be discovering agents — a
+      // truncate-then-write window would hand it a half-written pass for a
+      // whole round. tmp+rename in the same dir is atomic on POSIX.
       const tmp = `${out}.tmp`;
       writeFileSync(tmp, joinFrontmatter({ ...doc, frontmatter, body }));
       renameSync(tmp, out);
@@ -765,8 +779,8 @@ export function buildAgents(srcDir: string, outDir: string, opts: BuildAgentsOpt
     }
   }
   // Sweep stale definitions (e.g. the pre-tier un-suffixed builds): anything
-  // pi-subagents could list that this build did not produce would bypass the
-  // tier scheme entirely. `.md.tmp` leftovers from a crashed rebuild go too.
+  // agent discovery could list that this build did not produce would bypass
+  // the tier scheme entirely. `.md.tmp` leftovers from a crashed rebuild go too.
   const produced = new Set(built.map((b) => `${b.name}.md`));
   for (const f of readdirSync(outDir)) {
     if ((f.endsWith(".md") && !produced.has(f)) || f.endsWith(".md.tmp")) rmSync(join(outDir, f), { force: true });

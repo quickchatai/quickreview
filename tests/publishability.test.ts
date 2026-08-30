@@ -137,6 +137,8 @@ const ALLOWLIST: AllowlistEntry[] = [
   { path: "tests/tui-companion.test.ts", tokens: ["quickchat"], reason: "pins the /example-app mount contract and the shipped reviewed_repo_dir default" },
   { path: "skills/companion/evidence/SKILL.md", tokens: ["quickchat"], reason: "companion doctrine references the /example-app mount by its frozen path" },
   { path: "skills/companion/land/SKILL.md", tokens: ["quickchat"], reason: "companion doctrine references the reviewed repo's mount/name — frozen alongside the companion seed" },
+  { path: "docker/companion/agents/explore.md", tokens: ["quickchat"], reason: "companion agent references the /example-app reviewed-repo mount point (relocation of the first-party agent set; path frozen with the companion seed)" },
+  { path: "docker/companion/agents/evidence.md", tokens: ["quickchat"], reason: "companion agent references the /example-app reviewed-repo mount point (relocation; path frozen with the companion seed)" },
 
   // -- Live-deployment defaults the private installation still boots from
   //    (its config.toml deliberately leaves these unset). Lifting them into
@@ -305,16 +307,18 @@ describe("publishability lint", () => {
   it("(b) THIRD-PARTY-NOTICES.md exists and rolls up every vendored component", () => {
     const notices = readFileSync(join(repoRoot, "THIRD-PARTY-NOTICES.md"), "utf8");
     expect(notices.length).toBeGreaterThan(1500);
-    for (const component of ["openviking-pi", "inline-bash", ".claude/skills", "pi-subagents"]) {
+    for (const component of ["openviking-pi", "inline-bash", ".claude/skills"]) {
       expect(notices, `notices must cover ${component}`).toContain(component);
     }
-    // pi-subagents is unlicensed upstream: the notices must say it is NOT
-    // redistributed, and while the vendored copy is tracked (the
-    // private tree) the manifest must exclude it. The assembled public tree
-    // does not carry it at all — absence satisfies the same invariant.
-    expect(notices).toMatch(/pi-subagents[\s\S]{0,400}NOT redistributed|NOT redistributed[\s\S]{0,400}pi-subagents/i);
-    const vendoredTracked = trackedFiles().some((p) => p.startsWith("extensions/vendor/pi-subagents/"));
-    if (vendoredTracked) expect(isExcluded("extensions/vendor/pi-subagents/index.ts")).toBe(true);
+    // the unlicensed third-party pi-subagents extension is REMOVED
+    // — subagents are pi's own first-party extension inside the pinned pi
+    // package, loaded from the install path, so nothing is vendored or
+    // redistributed. The tree must stay clean of the old copy (re-vendoring
+    // it would resurrect the licensing problem), and the notices must
+    // still explain where subagents come from so a license audit finds the
+    // answer rather than a gap.
+    expect(notices).toMatch(/first-party.{0,200}subagent|subagent.{0,200}first-party/is);
+    expect(trackedFiles().some((p) => p.startsWith("extensions/vendor/pi-subagents/"))).toBe(false);
   });
 
   it("(c) config.example.toml exists and passes full config validation", () => {

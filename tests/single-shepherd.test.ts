@@ -1,7 +1,8 @@
 // The single-shepherd invariant (docs/single-shepherd-invariant.md): one main
 // pi per PR owns the review, the daemon only nudges, every agent runs through
-// the pi-subagents extension launched by that one pi, and it is never given two
-// instructions at once.
+// the `subagent` tool (pi's native subagent extension, loaded per spawn by the
+// first-party glue) launched by that one pi, and it is never given
+// two instructions at once.
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -234,6 +235,29 @@ describe("buildAgents — built passes cannot launch agents", () => {
     buildAgents(src, out, { riskPasses: [], validateTier: "terra-med" });
     expect(readFileSync(join(src, "pass-ui.md"), "utf8")).toBe(seed);
   });
+});
+
+// ---- S3: children never get the subagent tool (no nested fan-out) ---------
+//
+// the native extension's children spawn WITHOUT per-spawn argv
+// extensions and load only the global settings.json list. The glue therefore
+// rides argv (pinned in tests/sessions.test.ts / tests/tui-companion.test.ts),
+// and the global registration lists in BOTH container boots must never grow a
+// subagents entry — that is the structural guarantee that a leaf cannot fan
+// out, and it holds no matter what a frontmatter says.
+describe("subagents glue is never registered globally", () => {
+  const root = join(import.meta.dirname, "..");
+  for (const file of ["deploy/ansible/templates/entrypoint.sh.j2", "docker/daemon/entrypoint.sh"]) {
+    it(`${file}: the global extension list carries no subagent loader`, () => {
+      const text = readFileSync(join(root, file), "utf8");
+      const wanted = /const wanted = \[([\s\S]*?)\];/.exec(text)?.[1] ?? "";
+      const paths = [...wanted.matchAll(/"([^"]+)"/g)].map((m) => m[1] ?? "");
+      expect(paths.length).toBeGreaterThan(0);
+      for (const p of paths) {
+        expect(p, `${p} must not hand children an agent launcher or memory`).not.toMatch(/subagent|openviking|register-lens/);
+      }
+    });
+  }
 });
 
 // ---- S3: bash is never an agent launcher ----------------------------------

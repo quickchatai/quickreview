@@ -20,9 +20,7 @@ ARG TZ=Europe/Warsaw
 ARG TMUX_VERSION=3.5a
 ARG NODE_MAJOR=22
 ARG PI_NPM_PACKAGE=@earendil-works/pi-coding-agent
-ARG PI_VERSION=0.84.1
-ARG PI_SUBAGENTS_REPO=https://github.com/amosblomqvist/pi-subagents.git
-ARG PI_SUBAGENTS_COMMIT=1f541897588b995144f0bb8e71a335d1c85b1e62
+ARG PI_VERSION=0.84.4
 ARG OPENVIKING_VERSION=0.4.15
 ARG LLAMA_CPP_PYTHON_VERSION=0.3.35
 ARG OPENVIKING_VENV=/opt/openviking/venv
@@ -70,19 +68,15 @@ RUN npm install -g "${PI_NPM_PACKAGE}@${PI_VERSION}"
 # and pi-memory also hooks `session_before_compact`, which extensions/
 # ledger-pin.ts must own alone.
 
-# pi-subagents extension — amosblomqvist/pi-subagents is a raw extension repo
-# (no package.json, NOT on npm; the npm/pi.dev "pi-subagents" name belongs to
-# nicobailon's unrelated package). Pin by exact commit; verify the checkout.
-# config.json (maxConcurrency 6 — spec §5, six lens passes per round) is baked
-# here: the Ansible route writes it post-start with `docker exec -u root`, but
-# a plain `docker compose up` has no post-start hook, so the image carries it.
-RUN git clone "${PI_SUBAGENTS_REPO}" /opt/pi-extensions/pi-subagents \
-    && git -C /opt/pi-extensions/pi-subagents checkout --detach "${PI_SUBAGENTS_COMMIT}" \
-    && [ "$(git -C /opt/pi-extensions/pi-subagents rev-parse HEAD)" = "${PI_SUBAGENTS_COMMIT}" ] \
-    && rm -rf /opt/pi-extensions/pi-subagents/.git \
-    && test -f /opt/pi-extensions/pi-subagents/index.ts \
-    && echo "${PI_SUBAGENTS_COMMIT}" > /opt/pi-extensions/pi-subagents/.pinned-commit \
-    && printf '{\n  "maxConcurrency": 6\n}\n' > /opt/pi-extensions/pi-subagents/config.json
+# RETIRED: the third-party pi-subagents clone layer. Subagents are
+# pi's own first-party extension, shipped inside the pinned pi package above
+# (examples/extensions/subagent) and loaded from the install path by
+# extensions/subagents.ts — the pi layer's version pin covers it, and the
+# fan-out cap now rides config.toml [pi] subagent_max_concurrency instead of
+# a baked config.json. The layer hard-fails if the shipped example is missing
+# from the published package.
+RUN test -f "$(npm root -g)/${PI_NPM_PACKAGE}/examples/extensions/subagent/index.ts" \
+    || { echo "FATAL: pi ${PI_VERSION} does not ship examples/extensions/subagent" >&2; exit 1; }
 
 # OpenViking — the context store the daemon supervises on loopback (1933 by
 # default; the port is a runtime knob, see the entrypoint). Its own venv so
@@ -97,8 +91,8 @@ RUN git clone "${PI_SUBAGENTS_REPO}" /opt/pi-extensions/pi-subagents \
 # Both versions come from the ARG mirror above (== config.toml [openviking] ==
 # group_vars); a literal here would be exactly the drift the pin prevents. The
 # layer hard-fails unless the INSTALLED distribution reports the pinned version
-# and the server entry point exists — the same provenance discipline the pi and
-# pi-subagents pins above get.
+# and the server entry point exists — the same provenance discipline the pi
+# pin above gets.
 #
 # The vendored pi extension's upstream base commit is pinned too, in
 # config.toml [openviking] extension_commit + extensions/vendor/openviking-pi/

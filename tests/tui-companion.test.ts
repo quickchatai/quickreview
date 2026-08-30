@@ -191,8 +191,12 @@ describe("CompanionLifecycle argv", () => {
       // /feed. Reads only — it cannot fetch (see extensions/tui-view.ts).
       "--extension",
       `${CONTAINER.workspace}/extensions/tui-view.ts`,
-      // (vendor/pi-subagents is exists-guarded like openviking, so it is
-      // absent here — the vendored-copy test below covers the present case.)
+      // the first-party subagents glue over pi's OWN subagent
+      // extension. Unconditional like every other repo extension — a failed
+      // native import inside it degrades to "no subagent tool", never a pi
+      // that won't start.
+      "--extension",
+      `${CONTAINER.workspace}/extensions/subagents.ts`,
       // 2026-08-25: the bright-line vetoes — frozen seeds, no-GitHub,
       // no-discard (extensions/companion-guard.ts). Unconditional: it rides
       // the same mount as every other repo extension.
@@ -677,7 +681,7 @@ describe("companion image", () => {
   const dockerfile = readFileSync(resolve(root, "docker/companion/Dockerfile"), "utf8");
   const entrypoint = readFileSync(resolve(root, "docker/companion/entrypoint.sh"), "utf8");
   const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")) as {
-    pi: { package: string; version: string; extensions: Record<string, string> };
+    pi: { package: string; version: string; extensions?: Record<string, string> };
   };
 
   it("pins pi to the same version as package.json", () => {
@@ -691,7 +695,7 @@ describe("companion image", () => {
   // one writing a local MEMORY.md nobody reads, and one hooking
   // `session_before_compact`, which extensions/ledger-pin.ts must own alone.
   it("installs NO memory extension — memory is OpenViking over the host forward", () => {
-    expect(pkg.pi.extensions["pi-memory"]).toBeUndefined();
+    expect(pkg.pi.extensions?.["pi-memory"]).toBeUndefined();
     // Mechanism, not mention: the historical note explaining WHY they are gone
     // is allowed to name them; an install layer is not.
     const installs = dockerfile.split("\n").filter((l) => /^\s*(RUN|&&)\s+npm install/.test(l));
@@ -881,74 +885,70 @@ describe("companion image", () => {
   });
 });
 
-// 2026-08-25: pi-subagents in the companion — vendored, not image-baked, so it
-// rides /workspace with the exists-guard (degrade to no-subagents, never a pi
-// that won't start) and needs no rebuild. The VM keeps its image clone; the
-// pin is ONE fact in two places and must never drift.
-// The vendored copy is unlicensed upstream and is excluded from the
-// assembled public snapshot — this block self-skips where it is
-// absent (the exists-guard in piArgv already makes runtime absence safe).
-const subagentsVendorDir = resolve(root, "extensions/vendor/pi-subagents");
-const hasSubagentsVendor = existsSync(resolve(subagentsVendorDir, "upstream.json"));
-describe.skipIf(!hasSubagentsVendor)("vendored pi-subagents (companion)", () => {
-  const vendor = subagentsVendorDir;
-  const upstream = (
-    hasSubagentsVendor
-      ? JSON.parse(readFileSync(resolve(vendor, "upstream.json"), "utf8"))
-      : { repo: "", commit: "" }
-  ) as { repo: string; commit: string };
+// subagents in the companion — pi's OWN first-party subagent
+// extension, loaded from the INSTALLED pinned package by the first-party glue
+// extensions/subagents.ts. Nothing is vendored (the unlicensed third-party
+// pi-subagents copy is deleted — re-vendoring it would resurrect
+// licensing problem), so there is no commit mirror left to drift: the pi
+// version pin covers the extension. The companion agent set rides
+// docker/companion/agents/, discovered through the native "user" scope via
+// the entrypoint's ~/.pi/agent/agents symlink.
+describe("native subagents (companion)", () => {
+  const agentsDir = resolve(root, "docker/companion/agents");
 
-  it("pins the SAME commit the VM image clones (double mirror with group_vars)", () => {
-    const groupVars = readFileSync(resolve(root, "deploy/ansible/group_vars/all.yml"), "utf8");
-    const m = /^pi_subagents_commit:\s*"([0-9a-f]{40})"/m.exec(groupVars);
-    expect(m?.[1]).toBe(upstream.commit);
-    expect(/^pi_subagents_repo:\s*"(.+)"/m.exec(groupVars)?.[1]).toBe(upstream.repo);
-  });
-
-  it("loads via piArgv only when the vendored copy exists on the host", () => {
-    const withVendor: CompanionFs = {
-      exists: (p) => p === `${CFG.repo_dir}/extensions/vendor/pi-subagents/index.ts`,
-      read: () => undefined,
-      mode: () => undefined,
-    };
-    const argv = new CompanionLifecycle(CFG, async () => OK, {}, noDirs, withVendor).piArgv();
+  it("the glue rides piArgv from /workspace — first-party, unconditional", () => {
+    const argv = new CompanionLifecycle(CFG, async () => OK, {}, noDirs, { exists: () => false, read: () => undefined, mode: () => undefined }).piArgv();
     const at = argv.indexOf(SUBAGENTS.extension);
     expect(at).toBeGreaterThan(0);
     expect(argv[at - 1]).toBe("--extension");
     // In-container path, off the /workspace mount — never an image path.
-    expect(SUBAGENTS.extension).toBe(`${CONTAINER.workspace}/extensions/vendor/pi-subagents/index.ts`);
-    // Absent vendor dir ⇒ absent flag, and pi still starts.
-    const bare = new CompanionLifecycle(CFG, async () => OK, {}, noDirs, { exists: () => false, read: () => undefined, mode: () => undefined }).piArgv();
-    expect(bare).not.toContain(SUBAGENTS.extension);
+    expect(SUBAGENTS.extension).toBe(`${CONTAINER.workspace}/extensions/subagents.ts`);
   });
 
-  it("carries the companion agent set, not the stock one", () => {
-    const agents = readdirSync(resolve(vendor, "agents")).sort();
+  it("the vendored third-party copy stays deleted", () => {
+    expect(existsSync(resolve(root, "extensions/vendor/pi-subagents"))).toBe(false);
+    const groupVars = readFileSync(resolve(root, "deploy/ansible/group_vars/all.yml"), "utf8");
+    expect(/^pi_subagents_commit:/m.test(groupVars)).toBe(false);
+    expect(/^pi_subagents_repo:/m.test(groupVars)).toBe(false);
+    // And the build no longer needs the legacy-scope exclusion.
+    expect(readFileSync(resolve(root, "tsconfig.json"), "utf8")).not.toContain("extensions/vendor/pi-subagents");
+  });
+
+  it("carries the companion agent set in its first-party home", () => {
+    const agents = readdirSync(agentsDir).sort();
     expect(agents).toEqual(["evidence.md", "explore.md", "study.md"]);
     for (const file of agents) {
-      const body = readFileSync(resolve(vendor, "agents", file), "utf8");
+      const body = readFileSync(resolve(agentsDir, file), "utf8");
+      // The native loader requires string name + description or it silently
+      // skips the file — pin both.
+      expect(body).toMatch(/^name: [a-z]+$/m);
+      expect(body).toMatch(/^description: .+$/m);
       // ChatGPT OAuth is the only credential in the container: an anthropic/
       // model or a web tool would be's dead weight all over again.
-      expect(body).toMatch(/^model: openai-codex\//m);
+      // The :thinking suffix rides the model field — the native extension
+      // reads no `thinking:` frontmatter (pi --model accepts the suffix).
+      expect(body).toMatch(/^model: openai-codex\/[^\s:]+:(off|minimal|low|medium|high)$/m);
+      expect(body).not.toMatch(/^thinking:/m);
       expect(body).not.toMatch(/anthropic\//);
       expect(body).not.toMatch(/web_search|web_fetch/);
-      // Read-only leaves: no write/edit, and no nested fan-out.
-      expect(/^tools: .*(write|edit)/m.test(body)).toBe(false);
+      // Read-only leaves: no write/edit, no bash, and no nested fan-out.
+      expect(/^tools: .*(write|edit|bash)/m.test(body)).toBe(false);
       expect(body).not.toMatch(/^tools: .*subagent/m);
       expect(body).not.toMatch(/^subagent_agents:/m);
     }
   });
 
-  it("caps concurrency at 4 for a desktop (the VM runs 6)", () => {
-    const cfg = JSON.parse(readFileSync(resolve(vendor, "config.json"), "utf8")) as { maxConcurrency: number };
-    expect(cfg.maxConcurrency).toBe(4);
+  it("the entrypoint links user-scope discovery at the agent set (symlink-or-absent only)", () => {
+    const entry = readFileSync(resolve(root, "docker/companion/entrypoint.sh"), "utf8");
+    expect(entry).toContain('"/workspace/docker/companion/agents"');
+    expect(entry).toContain("fs.symlinkSync(companionAgents, agentsLink)");
+    expect(entry).toContain("is not a symlink — NOT touching it");
   });
 
-  it("is excluded from the tsc build — jiti loads the source; the legacy scope would break the build", () => {
-    const tsconfig = readFileSync(resolve(root, "tsconfig.json"), "utf8");
-    expect(tsconfig).toContain("extensions/vendor/pi-subagents");
-    // The pinned upstream really does import the legacy scope — if a rebase
-    // ever moves it to @earendil-works, the exclusion (and this test) can go.
-    expect(readFileSync(resolve(vendor, "index.ts"), "utf8")).toContain("@mariozechner/pi-coding-agent");
+  it("keeps the desktop cap at 4 — the glue's default, no env override in piArgv", () => {
+    // The VM's 6 rides QCR_SUBAGENT_MAX_CONCURRENCY (sessions.ts buildEnv);
+    // the companion deliberately sets nothing and inherits the default 4.
+    const argv = new CompanionLifecycle(CFG, async () => OK, {}, noDirs, { exists: () => false, read: () => undefined, mode: () => undefined }).piArgv();
+    expect(argv.join(" ")).not.toContain("QCR_SUBAGENT_MAX_CONCURRENCY");
   });
 });

@@ -141,19 +141,19 @@ export const MEMORY = {
   extension: `${CONTAINER.workspace}/extensions/vendor/openviking-pi/index.ts`,
 } as const;
 
-/** The vendored pi-subagents extension (2026-08-25) — same pinned commit the
- * VM image clones (deploy/ansible/group_vars pi_subagents_commit; the mirror
- * is pinned by tests/tui-companion.test.ts). Vendored rather than image-baked
- * so it rides the /workspace mount with the host-side exists-guard: a missing
- * dir degrades to a companion without subagents, never a pi that won't start,
- * and installing it needs no `qcr companion rebuild`. Its agents/ dir carries
- * the COMPANION agent set (explore/evidence/study — stock researcher/scout/
- * worker are removed at vendor time: their anthropic-model + web-tool pins
- * cannot run under ChatGPT OAuth, the dead weight). Children run
- * --no-extensions, so a subagent can never fan out further, reach memory, or
- * load the guard it doesn't need — leaves, structurally. */
+/** The first-party subagents glue — loads pi's OWN subagent
+ * extension out of the installed pinned package (no vendored copy, nothing
+ * that can drift from the rule-7 pin) and pins scope + the process-wide
+ * concurrency cap; see extensions/subagents.ts. The companion agent set
+ * (explore/evidence/study) lives in docker/companion/agents/, which the
+ * entrypoint symlinks to ~/.pi/agent/agents — the native extension's
+ * default "user" discovery scope. Children spawn as isolated
+ * `pi --mode json -p --no-session` processes that never load per-spawn argv
+ * extensions, so a subagent cannot fan out further or reach memory —
+ * leaves, structurally (the glue additionally strips per-task cwd, so a
+ * child never runs where repo-controlled `.pi/` config could load). */
 export const SUBAGENTS = {
-  extension: `${CONTAINER.workspace}/extensions/vendor/pi-subagents/index.ts`,
+  extension: `${CONTAINER.workspace}/extensions/subagents.ts`,
 } as const;
 
 /** The three env names the keys file must define. Values are NEVER read into a
@@ -347,10 +347,6 @@ export class CompanionLifecycle {
     // missing extension must degrade to memory-less, never to a pi that
     // refuses to start (the companion never wedges).
     const openviking = this.fs.exists(this.hostVendorExtension()) ? ["--extension", MEMORY.extension] : [];
-    // Same degrade guard for the vendored pi-subagents copy: present → the
-    // `subagent` tool with the companion agent set; absent → under-equipped,
-    // never unable to start.
-    const subagents = this.fs.exists(this.hostVendorSubagents()) ? ["--extension", SUBAGENTS.extension] : [];
     return [
       "pi",
       // --approve: pre-trust project-local .pi resources for this run. Without
@@ -383,7 +379,15 @@ export class CompanionLifecycle {
       // structural and not a promise. QCR_FEED_DIR (below) points it at the
       // same dir the FeedWriter writes. VERIFY-ON-PIN: `--extension <path>`.
       `${CONTAINER.workspace}/extensions/tui-view.ts`,
-      ...subagents,
+      "--extension",
+      // first-party glue over pi's OWN subagent extension (loaded
+      // out of the installed pinned package — see SUBAGENTS above and
+      // extensions/subagents.ts). First-party and always in the repo, so it
+      // loads unconditionally like inject-bridge; a failed native import
+      // inside it degrades to "no subagent tool", never a pi that won't
+      // start. No QCR_SUBAGENT_MAX_CONCURRENCY here: the glue's default cap
+      // is the desktop 4.
+      SUBAGENTS.extension,
       "--extension",
       // 2026-08-25: the companion's bright lines (frozen seeds, no-GitHub,
       // no-discard in the shared checkout) as tool_call vetoes — see the
@@ -392,8 +396,9 @@ export class CompanionLifecycle {
       `${CONTAINER.workspace}/extensions/companion-guard.ts`,
       "--extension",
       // 2026-08-25: `!{cmd}` inline expansion in typed prompts — vendored
-      // verbatim from pi 0.84.1's shipped examples (see its header). QoL for
-      // the operator typing into the mirrored terminal.
+      // verbatim from the pinned pi package's shipped examples (see its
+      // header; byte-identical at 0.84.1 and 0.84.4). QoL for the operator
+      // typing into the mirrored terminal.
       `${CONTAINER.workspace}/extensions/inline-bash.ts`,
       "--model",
       this.cfg.model,
@@ -461,11 +466,6 @@ export class CompanionLifecycle {
    */
   reviewedRepoPresent(): boolean {
     return this.cfg.reviewed_repo_dir !== "" && this.fs.exists(this.cfg.reviewed_repo_dir);
-  }
-
-  /** Host side of the vendored pi-subagents extension (same bind mount). */
-  hostVendorSubagents(): string {
-    return `${this.cfg.repo_dir}/extensions/vendor/pi-subagents/index.ts`;
   }
 
   /** Host side of the vendored extension (the repo is bind-mounted). */

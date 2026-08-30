@@ -1,47 +1,47 @@
 # `.pi/` — pi project configuration for the review sandbox
 
-## How the lens agents reach pi-subagents (verified live, 2026-08-18)
+## How the lens agents reach the subagent tool
 
-This directory used to ship a `subagents.config.json` (`agentsDir`,
-`maxConcurrency`, `defaultModel`). **That file was inert** — the first live
-phase-3 deploy proved the pinned pi-subagents commit (`1f54189`) reads:
-
-- agent .md files ONLY from `<its own install dir>/agents/` (the root-owned
-  image path holding its stock researcher/scout/worker), and
-- config ONLY from `<its own install dir>/config.json` — and the only key it
-  honours is `maxConcurrency` (default 4).
-
-The old VERIFY-ON-PIN assumptions in this README anticipated exactly that
-outcome; this is their burn-down. The actual wiring is now:
+Subagents run on **pi's own first-party subagent extension**, shipped inside
+the pinned pi npm package (`examples/extensions/subagent/`). The third-party
+amosblomqvist/pi-subagents extension — and with it the `globalThis`
+registration hook, the image clone layer and the vendored copy — was removed
+entirely on 2026-08-30 (owner's order; the unlicensed dependency is dissolved
+by removal, →). The wiring is now:
 
 | concern | mechanism |
 |---|---|
-| lens agent discovery | `extensions/register-lens-agents.ts` (per-session `--extension` argv) reads the daemon-built `state/agents/*.md` and registers each via the `globalThis.__pi_subagents.registerAgent` hook the pinned extension exposes for exactly this purpose |
-| `maxConcurrency: 6` | written to `/opt/pi-extensions/pi-subagents/config.json` by an ansible task after every container (re)create — the path is an image layer, so it resets on recreate and must be re-written per deploy |
-| per-agent model | pinned in each built agent's frontmatter by `src/include.ts` (never a default — the container auth is ChatGPT OAuth, provider prefix `openai-codex/`) |
+| the extension itself | `extensions/subagents.ts` (per-session `--extension` argv; also the companion's `piArgv`) dynamic-imports the native extension from the INSTALLED pi package (`getExamplesPath()`), so it can never drift from the rule-7 pin |
+| lens agent discovery | the native "user" scope reads `~/.pi/agent/agents`, which the container entrypoints symlink at the daemon-built `state/agents/` (VM) / `docker/companion/agents/` (companion); the glue pins `agentScope` so repo-controlled `.pi/agents` dirs are unreachable |
+| concurrency cap | process-wide weighted semaphore in the glue — `QCR_SUBAGENT_MAX_CONCURRENCY` per session from `config.toml [pi] subagent_max_concurrency` (VM 6); default 4 (companion) |
+| child confinement | children spawn as `pi --mode json -p --no-session`; they load only the global settings.json extensions (bash-guard — never the subagents glue or the memory extension, which ride argv), so a pass cannot fan out and does no ambient memory work; the glue also strips every task `cwd`, so a child never runs where a reviewed repo's `.pi/` project config could load |
+| per-agent model | pinned in each built agent's frontmatter by `src/include.ts` as the FULL `provider/model:thinking` spec — pi's `--model` accepts the thinking suffix (never a default — the container auth is ChatGPT OAuth, provider prefix `openai-codex/`) |
 
-Load-order note (load-bearing): pi-subagents rides the global
-`~/.pi/agent/settings.json` (every pi process, children included); the
-register extension rides per-session argv only. Children therefore never see
-the pass agents — a pass cannot fan out into another pass, which structurally
-enforces the passes-are-leaves rule.
+Load-order note (load-bearing): the subagents glue rides per-session argv
+only; children see only the global `~/.pi/agent/settings.json` extensions.
+Children therefore never get the `subagent` tool — a pass cannot fan out into
+another pass, which structurally enforces the passes-are-leaves rule.
 
-## Facts about pi-subagents (§1 + live verification)
+## Facts about the native subagent extension (read at the 0.84.4 pin)
 
-- subagents are markdown files with YAML frontmatter; the body becomes the
-  subagent's system prompt;
-- frontmatter fields: `name` (required, the tool-call id), `tools`, `model`,
-  `thinking`, `subagent_agents`;
+- agents are markdown files with YAML frontmatter; the body becomes the
+  subagent's system prompt (`--append-system-prompt` via temp file);
+- frontmatter fields: `name` + `description` (both required — a file missing
+  either is silently skipped by discovery), `tools`, `model`. There is no
+  `thinking` field: the thinking level rides the `model:` value's
+  `:<level>` suffix;
 - each subagent is an **isolated pi process with zero inherited context**, and
   returns **text only**;
-- parallel `subagent` calls in one turn are bounded by `maxConcurrency`.
+- the tool has three modes (single / `tasks` parallel array / `chain`); the
+  round templates use one single-mode call per pass, all in one turn, and the
+  glue's semaphore bounds however many arrive at once.
 
 ## Why `state/agents` and not `agents/`
 
-pi-subagents has **no include mechanism**. The nine `agents/pass-*.md` files
-share `prompts/pass-common.md` via `{{include:…}}`, so definitions are
+The subagent extension has **no include mechanism**. The `agents/pass-*.md`
+files share `prompts/pass-common.md` via `{{include:…}}`, so definitions are
 expanded at **build time** by `src/include.ts`
 (`buildAgents("agents", "state/agents")`), which also applies per-pass model
 overrides and the `PASS_ADDENDA` registry. `agents/` holds the canonical,
-frozen-seed sources; `state/agents/` holds the generated definitions the
-register extension actually loads. The daemon regenerates the dir on start.
+frozen-seed sources; `state/agents/` holds the generated definitions that
+agent discovery actually loads. The daemon regenerates the dir on start.

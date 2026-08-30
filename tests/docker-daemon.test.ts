@@ -57,12 +57,18 @@ describe("plain Dockerfile — ARG defaults mirror the pinned sources of truth",
     expect(cfg.openviking.bin).toBe(`${arg("OPENVIKING_VENV")}/bin/openviking-server`);
   });
 
-  it("pi-subagents: repo and commit == group_vars", () => {
-    expect(arg("PI_SUBAGENTS_REPO")).toBe(gv("pi_subagents_repo"));
-    expect(arg("PI_SUBAGENTS_COMMIT")).toBe(gv("pi_subagents_commit"));
-    // The checkout is verified and the .git dir stripped, same as the template.
-    expect(dockerfile).toContain("rev-parse HEAD");
-    expect(dockerfile).toContain(".pinned-commit");
+  // the third-party pi-subagents clone layer is RETIRED — subagents
+  // are pi's own first-party extension inside the pinned pi package. The
+  // image must verify the shipped example exists (a pi release that dropped
+  // it would otherwise fail silently at session time) and must never grow the
+  // clone back (that would resurrect the unlicensed dependency).
+  it("verifies pi ships the native subagent example; no third-party clone layer", () => {
+    expect(dockerfile).toContain("examples/extensions/subagent/index.ts");
+    expect(dockerfile).not.toContain("pi_subagents");
+    expect(dockerfile).not.toContain("PI_SUBAGENTS");
+    expect(dockerfile).not.toContain("amosblomqvist");
+    expect(gv("pi_subagents_commit")).toBeUndefined();
+    expect(gv("pi_subagents_repo")).toBeUndefined();
   });
 
   it("tmux/node/webhook-port defaults == group_vars", () => {
@@ -97,8 +103,11 @@ describe("plain Dockerfile — ARG defaults mirror the pinned sources of truth",
     expect(llama).toBeLessThan(ov);
   });
 
-  it("bakes the pi-subagents config.json the ansible route writes post-start", () => {
-    expect(dockerfile).toContain('"maxConcurrency": 6');
+  it("carries no baked subagent concurrency file — the cap rides config.toml", () => {
+    expect(dockerfile).not.toContain("maxConcurrency");
+    expect(playbook).not.toContain("maxConcurrency");
+    // The knob that replaced it, mirrored here so it cannot silently vanish.
+    expect(cfg.pi.subagent_max_concurrency).toBe(6);
   });
 
   it("sets HOME explicitly beside the uid-parameterized user (the lesson)", () => {
@@ -173,16 +182,26 @@ describe("plain entrypoint — same invariants as the templated boot", () => {
     expect(entrypoint).toContain('trust["/opt/quickreview"] = true');
   });
 
-  it("registers pi-subagents and bash-guard, hard-failing when either is missing", () => {
-    expect(entrypoint).toContain("/opt/pi-extensions/pi-subagents/index.ts");
+  it("registers ONLY bash-guard globally, hard-failing when it is missing", () => {
     expect(entrypoint).toContain("/opt/quickreview/sandbox/extensions/bash-guard.ts");
     expect(entrypoint).toContain("FATAL: pi extension missing");
-    // pi-memory stays retired — no global memory extension. The
-    // `wanted` registration list carries exactly the two paths above (the
-    // pi-memory name survives only in explanatory comments).
+    // pi-memory stays retired — no global memory extension. And
+    // no global subagents entry either — subagent children load
+    // exactly this list, so a globally-registered subagents glue would hand
+    // every LEAF the subagent tool (nested fan-out, rule 9 broken). The
+    // `wanted` registration list carries exactly the one path above.
     const wanted = /const wanted = \[([\s\S]*?)\];/.exec(entrypoint)?.[1] ?? "";
     const paths = [...wanted.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
-    expect(paths).toEqual(["/opt/pi-extensions/pi-subagents/index.ts", "/opt/quickreview/sandbox/extensions/bash-guard.ts"]);
+    expect(paths).toEqual(["/opt/quickreview/sandbox/extensions/bash-guard.ts"]);
+  });
+
+  // the native "user" discovery scope reads ~/.pi/agent/agents; the
+  // boot links it at the daemon-built lens passes — symlink-or-absent only,
+  // never clobbering a real directory.
+  it("links the pi user agents dir at the built state/agents", () => {
+    expect(entrypoint).toContain('"/opt/quickreview/sandbox/state/agents"');
+    expect(entrypoint).toContain("fs.symlinkSync(builtAgents, agentsLink)");
+    expect(entrypoint).toContain("is not a symlink — NOT touching it");
   });
 });
 

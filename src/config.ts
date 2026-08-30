@@ -722,7 +722,16 @@ export interface Config {
     improvement_pr_deny_prefixes: string[];
   };
   models: ModelsConfig;
-  pi: { package: string; version: string; session_dir: string };
+  pi: {
+    package: string;
+    version: string;
+    session_dir: string;
+    /** Process-wide subagent fan-out cap the glue extension enforces per
+     * session (rides the command line as
+     * QCR_SUBAGENT_MAX_CONCURRENCY). Default 4 — the companion/desktop
+     * number; the VM config sets 6, the old pi-subagents config.json value. */
+    subagent_max_concurrency: number;
+  };
   openviking: OpenVikingConfig;
   memory: MemoryConfig;
   tui: TuiConfig;
@@ -980,7 +989,11 @@ export function parseConfig(toml: string): Config {
       ...(req(raw, "caps") as Partial<Config["caps"]>),
     } as Config["caps"],
     models: parseModels(req(raw, "models") as Record<string, any>),
-    pi: { ...(req(raw, "pi") as Config["pi"]) },
+    pi: {
+      subagent_max_concurrency: 4,
+      ...(req(raw, "pi") as Omit<Config["pi"], "subagent_max_concurrency"> &
+        Partial<Pick<Config["pi"], "subagent_max_concurrency">>),
+    },
     openviking: resolveOpenVikingPaths({ ...OPENVIKING_DEFAULTS, ...((raw.openviking ?? {}) as Partial<OpenVikingConfig>) }),
     memory: { ...MEMORY_DEFAULTS, ...((raw.memory ?? {}) as Partial<MemoryConfig>) },
     tui: { ...TUI_DEFAULTS, ...((raw.tui ?? {}) as Partial<TuiConfig>) },

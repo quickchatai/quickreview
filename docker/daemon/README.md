@@ -68,7 +68,6 @@ The image versions are ARG defaults in the `Dockerfile`:
 | `PI_VERSION` / `PI_NPM_PACKAGE` | `config.toml [pi]` = `group_vars pi_version`/`pi_npm_package` |
 | `OPENVIKING_VERSION` | `config.toml [openviking] version` = `group_vars openviking_version` |
 | `LLAMA_CPP_PYTHON_VERSION` | same triple mirror (undeclared-but-required embedder dep) |
-| `PI_SUBAGENTS_COMMIT` / `_REPO` | `group_vars pi_subagents_commit`/`_repo` |
 | `TMUX_VERSION`, `NODE_MAJOR`, `OPENVIKING_VENV`, `WEBHOOK_PORT` | `group_vars` |
 
 `tests/docker-daemon.test.ts` fails the moment a default drifts from
@@ -90,8 +89,9 @@ Runtime knobs (OpenViking port/workers/auth mode/key file names/…) are
 - The no-stall trust layers ride the image/entrypoint: `defaultProjectTrust =
   "always"` and a pre-seeded `trust.json` for `/opt/quickreview` (the third
   layer, `--approve`, is on every pi spawn in `src/sessions.ts`).
-- pi-subagents' `config.json` (maxConcurrency 6) is baked at build time —
-  the Ansible route writes it post-start via `docker exec` instead.
+- Subagents are pi's own first-party extension inside the pinned pi package
+  — both images only verify the shipped example exists; the fan-out
+  cap rides `config.toml [pi] subagent_max_concurrency`, not an image file.
 - The one intentional difference: versions arrive as build ARGs instead of
   Jinja variables, and runtime knobs as env vars instead of template
   interpolation. Same defaults, same refusal-on-drift.

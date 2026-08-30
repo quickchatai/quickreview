@@ -201,16 +201,17 @@ describe("buildAgents", () => {
     // every built pass gets — the seed itself is untouched.
     expect(
       alpha.startsWith(
-        "---\nname: pass-alpha--terra-med\ndescription: a\ntools: read, bash, viking_search, viking_read\nmodel: openai-codex/gpt-5.6-terra\n",
+        "---\nname: pass-alpha--terra-med\ndescription: a\ntools: read, bash, viking_search, viking_read\nmodel: openai-codex/gpt-5.6-terra:medium\n",
       ),
     ).toBe(true);
     expect(alpha).toContain("thinking: medium\n");
     const high = readFileSync(join(out, "pass-alpha--sol-high.md"), "utf8");
     expect(high).toContain("name: pass-alpha--sol-high\n");
-    expect(high).toContain("model: openai-codex/gpt-5.6-sol\n");
+    // the model field carries the WHOLE spec — the native subagent
+    // extension reads only `model:`, and pi's --model accepts the :thinking
+    // suffix. The separate thinking field stays as human documentation.
+    expect(high).toContain("model: openai-codex/gpt-5.6-sol:high\n");
     expect(high).toContain("thinking: high\n");
-    // The thinking suffix never leaks into the model field.
-    expect(high).not.toContain("model: openai-codex/gpt-5.6-sol:high");
   });
 
   it("grants every built pass exactly two read-only memory tools", () => {
@@ -283,7 +284,7 @@ describe("buildAgents", () => {
     ]);
     expect(built.filter((b) => b.pass === "pass-beta")).toHaveLength(3);
     const validate = readFileSync(join(out, "pass-validate--terra-med.md"), "utf8");
-    expect(validate).toContain("model: openai-codex/gpt-5.6-terra\n");
+    expect(validate).toContain("model: openai-codex/gpt-5.6-terra:medium\n");
     expect(validate).toContain("thinking: medium\n");
   });
 
@@ -298,7 +299,7 @@ describe("buildAgents", () => {
       },
       models: { "pass-beta--sol-high": "openai-codex/override-model" },
     });
-    expect(readFileSync(join(out, "pass-alpha--terra-med.md"), "utf8")).toContain("model: openai-codex/custom-terra\n");
+    expect(readFileSync(join(out, "pass-alpha--terra-med.md"), "utf8")).toContain("model: openai-codex/custom-terra:low\n");
     expect(readFileSync(join(out, "pass-alpha--terra-med.md"), "utf8")).toContain("thinking: low\n");
     const beta = built.find((b) => b.name === "pass-beta--sol-high");
     expect(beta?.model).toBe("openai-codex/override-model");
@@ -326,13 +327,13 @@ describe("buildAgents", () => {
     // The floor variant takes the tier's spec, split the usual way…
     const floor = readFileSync(join(out, "pass-validate--sol-med.md"), "utf8");
     expect(floor).toContain("name: pass-validate--sol-med\n");
-    expect(floor).toContain("model: openai-codex/gpt-5.6-sol\n");
+    expect(floor).toContain("model: openai-codex/gpt-5.6-sol:medium\n");
     expect(floor).toContain("thinking: medium\n");
     // …and the per-variant override wins over it, exactly as for a lens.
     const high = built.find((b) => b.name === "pass-validate--sol-high")!;
     expect(high.model).toBe("openai-codex/override-validate");
     expect(high.thinking).toBe("high");
-    expect(readFileSync(high.output, "utf8")).toContain("model: openai-codex/override-validate\n");
+    expect(readFileSync(high.output, "utf8")).toContain("model: openai-codex/override-validate:high\n");
   });
 
   it("ignores non pass-* files", () => {

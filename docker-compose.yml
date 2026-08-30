@@ -10,7 +10,7 @@
 # option — the Ansible route in deploy/ansible/ wires it for the live VM).
 # See docker/daemon/README.md.
 #
-# Pins: the image versions (pi, OpenViking, llama-cpp-python, pi-subagents,
+# Pins: the image versions (pi, OpenViking, llama-cpp-python,
 # tmux) are the Dockerfile's ARG defaults, mirrored against config.toml and
 # deploy/ansible/group_vars/all.yml by tests/docker-daemon.test.ts — drift
 # refuses there. Do not override the build args casually: a bump is a

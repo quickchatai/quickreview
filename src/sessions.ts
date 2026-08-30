@@ -227,20 +227,22 @@ export class PiSessionManager implements SessionHooks {
       // sidecar for the operator TUI. It observes pi events only; no session
       // scheduling or daemon state passes through it.
       join(this.root, "extensions", "round-progress.ts"),
-      // Registers the built state/agents lens passes with pi-subagents via its
-      // globalThis hook (live finding 2026-08-18: the extension's agents dir is
-      // hardcoded, our old .pi/subagents.config.json was inert). Rides argv on
-      // purpose: pi-subagents' child processes load only the global settings
-      // extensions, so passes stay unregistered inside a leaf.
-      join(this.root, "extensions", "register-lens-agents.ts"),
+      // first-party glue over pi's OWN subagent extension, imported
+      // at runtime from the installed pinned package (nothing vendored,
+      // nothing that can drift from the rule-7 pin). The built state/agents
+      // passes reach it through the native "user" discovery scope — the VM
+      // entrypoint symlinks ~/.pi/agent/agents to state/agents. Rides argv on
+      // purpose: children load only the global settings extensions, so the
+      // subagent tool never exists inside a leaf and a pass cannot fan out.
+      join(this.root, "extensions", "subagents.ts"),
       // The vendored + patched OpenViking extension: the memory
       // tools a session reaches. LAST on purpose — it is the only extension
       // here we did not write, and pi registers handlers in load order, so
       // ours (ledger-pin above all) are in place before it arrives.
       //
-      // It rides argv for the same reason register-lens-agents does: a
-      // pi-subagents child is built with --no-extensions, so a lens pass gets
-      // no memory surface at all. Its own PATCH 2 is the second layer.
+      // It rides argv for the same reason the subagents glue does: a subagent
+      // child loads no argv extensions, so a lens pass gets no memory surface
+      // at all. Its own PATCH 2 is the second layer.
       //
       // Its four patches are load-bearing — read
       // extensions/vendor/openviking-pi/README.md before touching this line.
@@ -346,6 +348,11 @@ export class PiSessionManager implements SessionHooks {
       QCR_LEDGER_FILE: this.ledgerPath(session),
       QCR_SECRETS_DIR: this.cfg.github.secrets_dir,
       QCR_PI_VERSION: this.cfg.pi.version,
+      // the process-wide subagent fan-out cap the glue extension
+      // enforces (config.toml [pi] subagent_max_concurrency; VM runs 6 — the
+      // old pi-subagents config.json number — the glue's own default is the
+      // companion's 4).
+      QCR_SUBAGENT_MAX_CONCURRENCY: String(this.cfg.pi.subagent_max_concurrency),
       ...(this.commandStore && this.commandStore.path !== ":memory:"
         ? {
             QCR_STATE_DB: this.commandStore.path,

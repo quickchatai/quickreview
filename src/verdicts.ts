@@ -858,8 +858,8 @@ export class VerdictWatcher {
   private globalStoreDir(): string | undefined {
     const configured = this.deps.usage?.globalStoreDir;
     if (configured === null) return undefined;
-    // pi-subagents' isolated children skip --session-dir → pi HOME global
-    // store (in-container /home/review/.pi/agent/sessions). Best-effort.
+    // The subagent tool's isolated children skip --session-dir → pi HOME
+    // global store (in-container /home/review/.pi/agent/sessions). Best-effort.
     return configured ?? join(homedir(), ".pi", "agent", "sessions");
   }
 

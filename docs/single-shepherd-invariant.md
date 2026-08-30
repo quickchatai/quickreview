@@ -27,8 +27,11 @@ gates, escalation criteria) rendered into a wake file, or a ping-pong wake.
 The daemon never launches a pass, never runs `pi`, and never picks a lens at
 runtime.
 
-**S3 — Every agent runs through the pi-subagents extension, launched by the
-PR's main pi.** The main pi is the only scheduler of agents. Passes are
+**S3 — Every agent runs through the `subagent` tool, launched by the
+PR's main pi.** (Since that tool is pi's own first-party subagent
+extension, loaded from the installed pi package by `extensions/subagents.ts`;
+the invariant predates and survives the third-party pi-subagents extension it
+replaced.) The main pi is the only scheduler of agents. Passes are
 **leaves**: a pass never launches another agent and never posts to GitHub.
 
 **S4 — One instruction at a time per main pi.** A round in flight is never
@@ -58,8 +61,10 @@ prompt-side reinforcement below goes through the build-time addendum in
 any agent-spawning tool (`subagent`, `subagents`, `task`, `agent`, `agents`,
 `dispatch`) should a seed ever grow one, and the addendum appended to
 every built agent states the leaf rule outright. The seeds stay byte-identical;
-only `state/agents/*.md` — what pi-subagents actually reads — carries the
-enforcement.
+only `state/agents/*.md` — what agent discovery actually reads — carries the
+enforcement. (Structurally, children also never load the subagents glue: it
+rides per-spawn argv, and a child process loads only the global settings.json
+extensions — so the `subagent` tool does not exist inside a leaf at all.)
 
 ### G2 — bash-guard names the agent-spawn class explicitly
 

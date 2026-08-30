@@ -176,11 +176,16 @@ fi
 
 # pi extensions — register in $HOME/.pi/agent/settings.json (on the pihome
 # volume). Every pi process shares HOME=/home/review — main sessions AND the
-# isolated child processes pi-subagents spawns — so this one file covers all.
-# Idempotent MERGE, safe on every boot: the file predates the "extensions" key
-# and carries user keys (auth/defaults) that must never be clobbered. Each
-# path is appended only if absent; missing extension files hard-fail the boot
-# (a silently unregistered bash-guard would mean unguarded sessions).
+# isolated child processes the subagent tool spawns — so this one file covers
+# all. Idempotent MERGE, safe on every boot: the file predates the
+# "extensions" key and carries user keys (auth/defaults) that must never be
+# clobbered. Each path is appended only if absent; missing extension files
+# hard-fail the boot (a silently unregistered bash-guard would mean unguarded
+# sessions). ONLY bash-guard belongs here: subagent children load exactly this
+# list, so a globally-registered subagents glue would hand every LEAF the
+# subagent tool (nested fan-out — rule 9 broken), and a globally-registered
+# memory extension would do ambient memory work inside leaves. Both ride
+# per-spawn argv in src/sessions.ts instead.
 node <<'PI_EXT_MERGE'
 const fs = require("fs");
 const path = require("path");
@@ -195,12 +200,16 @@ if (!Array.isArray(settings.extensions)) settings.extensions = [];
 // engine is retired. Memory is OpenViking, and its (vendored, patched) pi
 // extension is passed per spawn by src/sessions.ts, deliberately NOT registered
 // globally: a globally-registered memory extension would also load in the
-// isolated children pi-subagents spawns, and lens passes must do no ambient
-// memory work.
+// isolated children the subagent tool spawns, and lens passes must do no
+// ambient memory work.
+// the third-party pi-subagents entry is gone the same way pi-memory
+// went — the native subagent extension rides per-spawn argv via
+// extensions/subagents.ts (a global entry would arm leaves with fan-out; the
+// prune below retires the stale /opt/pi-extensions path on older volumes).
 const wanted = [
-  // pi-subagents: raw-repo extension baked into the image (Dockerfile pin).
-  "/opt/pi-extensions/pi-subagents/index.ts",
-  // Repo-shipped guard, rides `deploy.sh sync`.
+  // Repo-shipped guard, rides `deploy.sh sync`. Subagent children load this
+  // (they spawn without --no-extensions at the 0.84.4 pin), which puts the
+  // exec-policy guard inside leaves too.
   "/opt/quickreview/sandbox/extensions/bash-guard.ts",
 ];
 for (const p of wanted) {
@@ -240,6 +249,28 @@ if (trust["/opt/quickreview"] !== true) {
   fs.writeFileSync(trustFile, JSON.stringify(trust, null, 2) + "\n");
 }
 console.log("pi project trust: defaultProjectTrust=always, /opt/quickreview pre-trusted");
+
+// agent discovery for the native subagent extension. Its default
+// "user" scope reads $HOME/.pi/agent/agents; link that at the daemon-built
+// lens passes (state/agents, written by buildAgents at wire start — a
+// dangling link until the first build is fine, discovery just sees none).
+// Symlink-or-absent only: a REAL directory here is someone's own agents and
+// is never clobbered — loud log instead, because lens passes will then not
+// resolve ("Unknown agent" = STOP in the round templates, never a stand-in).
+const agentsLink = path.join(process.env.HOME, ".pi", "agent", "agents");
+const builtAgents = "/opt/quickreview/sandbox/state/agents";
+try {
+  const st = fs.lstatSync(agentsLink, { throwIfNoEntry: false });
+  if (st && !st.isSymbolicLink()) {
+    console.error("WARNING: " + agentsLink + " exists and is not a symlink — NOT touching it; lens agents will not resolve");
+  } else {
+    if (st) fs.unlinkSync(agentsLink);
+    fs.symlinkSync(builtAgents, agentsLink);
+    console.log("pi user agents dir -> " + builtAgents);
+  }
+} catch (e) {
+  console.error("WARNING: could not link " + agentsLink + ": " + e.message);
+}
 PI_EXT_MERGE
 
 # Private-repo git auth (reviewed-repo clone + per-PR fetches): the app

@@ -26,8 +26,9 @@ import type { StatusSnapshot } from "../state.js";
 import { whyArgv, type SshRunner } from "./remote.js";
 
 /** Roles a round bundle can carry, in copy order. `transcript` carries the pass
- * output too: lens passes run as pi-subagents inside the PR's one session, so
- * their output IS the session JSONL (root rule 9 — passes are leaves). */
+ * output too: lens passes run as subagent children inside the PR's one
+ * session, so their output IS the session JSONL (root rule 9 — passes are
+ * leaves). */
 export const EVIDENCE_ROLES = ["transcript", "ledger", "prompt", "verdict"] as const;
 export type EvidenceRole = (typeof EVIDENCE_ROLES)[number];
 

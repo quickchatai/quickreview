@@ -6,19 +6,33 @@
 // publishes that ephemeral state under state/round-progress/. It never drives
 // a session and never writes daemon state.
 //
-// VERIFY-ON-PIN (pi 0.84.1): tool_execution_start/update/end payload keys are
-// probed defensively because the local build intentionally carries only
-// ambient extension types; an unfamiliar payload degrades to parent activity,
-// never to a session failure.
+// VERIFY-ON-PIN (probed at 0.84.1; result shapes re-read statically against
+// the 0.84.4 tarball): tool_execution_start/update/end payload
+// keys are probed defensively because the local build intentionally carries
+// only ambient extension types; an unfamiliar payload degrades to parent
+// activity, never to a session failure.
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Pi, PiEventPayload } from "@earendil-works/pi-coding-agent";
 import type { LiveAgentProgress, LiveAgentStatus, RoundProgressSnapshot } from "../src/round-progress.js";
 import { parseSessionCommandMarker } from "../src/session-command.js";
 
+/**
+ * One subagent's slot in the tool result's `details.results` array.
+ *
+ * Two shapes have shipped here: the retired third-party pi-subagents carried a
+ * `progress` record (status/durationMs/toolCount/lastMessage/error), while
+ * pi's native subagent extension carries `exitCode` (-1 = still
+ * running in parallel mode), `stopReason`/`errorMessage`, and the raw
+ * `messages` transcript. Both are probed defensively — an unfamiliar payload
+ * degrades to parent activity, never to a session failure.
+ */
 interface SubagentResultLike {
   agent?: unknown;
   exitCode?: unknown;
+  stopReason?: unknown;
+  errorMessage?: unknown;
+  messages?: unknown;
   progress?: {
     status?: unknown;
     durationMs?: unknown;
@@ -94,18 +108,54 @@ function currentTool(progress: SubagentResultLike["progress"]): string | undefin
   return args ? `${name}: ${args.slice(0, 120)}` : name;
 }
 
-function asAgent(result: SubagentResultLike, fallbackAgent?: string): LiveAgentProgress | undefined {
+/** Tool-call / assistant-text extraction from the native shape's transcript. */
+function nativeMessageParts(result: SubagentResultLike): { toolCount: number; lastText?: string; lastTool?: string } {
+  if (!Array.isArray(result.messages)) return { toolCount: 0 };
+  let toolCount = 0;
+  let lastText: string | undefined;
+  let lastTool: string | undefined;
+  for (const msg of result.messages.map(record)) {
+    if (msg?.role !== "assistant" || !Array.isArray(msg.content)) continue;
+    for (const part of msg.content.map(record)) {
+      if (part?.type === "toolCall") {
+        toolCount += 1;
+        lastTool = text(part.name) ?? lastTool;
+      } else if (part?.type === "text") {
+        lastText = text(part.text) ?? lastText;
+      }
+    }
+  }
+  return { toolCount, lastText, lastTool };
+}
+
+function asAgent(result: SubagentResultLike, fallbackAgent?: string, live = false): LiveAgentProgress | undefined {
   const agent = text(result.agent) ?? fallbackAgent;
   if (!agent) return undefined;
   const progress = result.progress;
-  const error = text(progress?.error);
+  const native = nativeMessageParts(result);
+  const error = text(progress?.error) ?? text(result.errorMessage);
+  // Native failure signals: a non-zero exit, or a stopReason of error/aborted.
+  const nativeFailed =
+    (typeof result.exitCode === "number" && result.exitCode > 0) ||
+    result.stopReason === "error" ||
+    result.stopReason === "aborted";
+  const st: LiveAgentStatus =
+    progress?.status === "completed" || progress?.status === "failed" || progress?.status === "running"
+      ? progress.status
+      : nativeFailed
+        ? "failed"
+        : live || result.exitCode === -1 || result.exitCode === undefined
+          ? "running"
+          : status(undefined, result.exitCode);
+  const tool = currentTool(progress) ?? (live ? native.lastTool : undefined);
+  const last = text(progress?.lastMessage) ?? native.lastText;
   return {
     agent,
-    status: status(progress?.status, result.exitCode),
+    status: st,
     duration_ms: number(progress?.durationMs),
-    tool_count: number(progress?.toolCount),
-    ...(currentTool(progress) ? { current_tool: currentTool(progress) } : {}),
-    ...(text(progress?.lastMessage) ? { last_message: text(progress?.lastMessage) } : {}),
+    tool_count: number(progress?.toolCount) || native.toolCount,
+    ...(tool ? { current_tool: tool } : {}),
+    ...(last ? { last_message: last } : {}),
     ...(error ? { error } : {}),
   };
 }
@@ -229,9 +279,14 @@ export default function activate(pi: Pi): void {
     if (!snapshot) return;
     const fallback = callAgents.get(toolId(event));
     const reported = resultsFrom(event, "partialResult");
+    // Native parallel mode marks a still-running slot with exitCode -1 and a
+    // finished one with its real exit code; single/chain slots keep exitCode 0
+    // while streaming, so mid-update they read as running regardless.
+    const mode = record(record(event.partialResult)?.details)?.mode;
     let changed = false;
     for (const result of reported) {
-      const agent = asAgent(result, fallback);
+      const stillLive = mode === "parallel" ? result.exitCode === -1 : true;
+      const agent = asAgent(result, fallback, stillLive);
       if (!agent) continue;
       const key = executionKey(toolId(event), agent.agent);
       const previous = agents.get(key);

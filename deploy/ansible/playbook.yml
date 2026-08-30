@@ -297,15 +297,11 @@
           # container's eth0; host exposure stays 127.0.0.1-only above.
           QC_BIND_HOST: "0.0.0.0"
 
-    - name: pi-subagents runtime config — maxConcurrency 6 (spec §5, six lens passes per round)
-      # The pinned extension reads ONLY <its own dir>/config.json (root-owned
-      # image layer, resets on every container recreate — hence per-deploy).
-      # Written after container start; pi processes read it at spawn, so
-      # sessions pick it up as they (re)spawn.
-      ansible.builtin.command: >-
-        docker exec -u root {{ image_name }} bash -c
-        'printf "{\n  \"maxConcurrency\": 6\n}\n" > /opt/pi-extensions/pi-subagents/config.json'
-      changed_when: true
+    # RETIRED: the post-start pi-subagents config.json write that
+    # set the fan-out cap to 6. The cap now rides config.toml [pi]
+    # subagent_max_concurrency, delivered per session as
+    # QCR_SUBAGENT_MAX_CONCURRENCY and enforced by extensions/subagents.ts —
+    # nothing image-side to rewrite per deploy any more.
 
     - name: Note — webhook ingress
       ansible.builtin.debug:

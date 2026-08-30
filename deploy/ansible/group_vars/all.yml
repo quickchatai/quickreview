@@ -15,21 +15,14 @@ node_major: "22"
 # 2026-08-13). The image never floats — bumping is a deliberate edit +
 # `-e rebuild_image=true`.
 pi_npm_package: "@earendil-works/pi-coding-agent"
-pi_version: "0.84.1"
+pi_version: "0.84.4"
 
-# pi extensions — same discipline as pi_version: exact pins, never floating,
-# bumping is a deliberate edit + `-e rebuild_image=true`.
-#
-# pi-subagents: the package we depend on is amosblomqvist/pi-subagents
-# (§1, package.json `pi.extensions`). It is a RAW extension repo with
-# no package.json — it is NOT on npm, and the npm/pi.dev name "pi-subagents"
-# belongs to nicobailon's UNRELATED package (verified 2026-08-14: npm
-# repository.url = nicobailon/pi-subagents; github.com/amosblomqvist/
-# pi-subagents exists separately and does not redirect). So it is pinned by
-# exact git commit (main HEAD, committed 2026-05-22, checked 2026-08-14) and
-# baked into the image by clone+checkout, not npm install.
-pi_subagents_repo: "https://github.com/amosblomqvist/pi-subagents.git"
-pi_subagents_commit: "1f541897588b995144f0bb8e71a335d1c85b1e62"
+# RETIRED: pi_subagents_repo/pi_subagents_commit. The third-party
+# amosblomqvist/pi-subagents extension is removed entirely — subagents are
+# pi's own first-party extension, shipped INSIDE the pinned pi package
+# (examples/extensions/subagent) and loaded from the installed package by
+# extensions/subagents.ts, so there is no separate pin to drift. Re-adding a
+# clone step here would resurrect the unlicensed dependency deleted.
 
 # RETIRED: pi_memory_package/pi_memory_version and
 # qmd_npm_package/qmd_version. The hand-rolled memory engine is gone — memory

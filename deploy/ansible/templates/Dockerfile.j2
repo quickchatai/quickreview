@@ -44,15 +44,13 @@ RUN npm install -g {{ pi_npm_package }}@{{ pi_version }}
 # and pi-memory also hooks `session_before_compact`, which extensions/
 # ledger-pin.ts must own alone.
 
-# pi-subagents extension — amosblomqvist/pi-subagents is a raw extension repo
-# (no package.json, NOT on npm; the npm/pi.dev "pi-subagents" name belongs to
-# nicobailon's unrelated package). Pin by exact commit; verify the checkout.
-RUN git clone {{ pi_subagents_repo }} /opt/pi-extensions/pi-subagents \
-    && git -C /opt/pi-extensions/pi-subagents checkout --detach {{ pi_subagents_commit }} \
-    && [ "$(git -C /opt/pi-extensions/pi-subagents rev-parse HEAD)" = "{{ pi_subagents_commit }}" ] \
-    && rm -rf /opt/pi-extensions/pi-subagents/.git \
-    && test -f /opt/pi-extensions/pi-subagents/index.ts \
-    && echo "{{ pi_subagents_commit }}" > /opt/pi-extensions/pi-subagents/.pinned-commit
+# RETIRED: the third-party pi-subagents clone layer. Subagents are
+# pi's own first-party extension, shipped inside the pinned pi package above
+# (examples/extensions/subagent) and loaded from the install path by
+# extensions/subagents.ts — the pi layer's version pin covers it. The layer
+# hard-fails if the shipped example is missing from the published package.
+RUN test -f "$(npm root -g)/{{ pi_npm_package }}/examples/extensions/subagent/index.ts" \
+    || { echo "FATAL: pi {{ pi_version }} does not ship examples/extensions/subagent" >&2; exit 1; }
 
 # OpenViking — the context store the daemon supervises on loopback {{ openviking_port }}.
 # Its own venv so its ~90 Python deps never collide with anything system-side.
@@ -66,8 +64,8 @@ RUN git clone {{ pi_subagents_repo }} /opt/pi-extensions/pi-subagents \
 # Both versions come from group_vars (the triple mirror with config.toml
 # [openviking]); a literal here would be exactly the drift the pin prevents.
 # The layer hard-fails unless the INSTALLED distribution reports the pinned
-# version and the server entry point exists — the same provenance discipline the
-# pi and pi-subagents pins above get.
+# version and the server entry point exists — the same provenance discipline
+# the pi pin above gets.
 #
 # The vendored pi extension's upstream base commit is pinned too, in
 # config.toml [openviking] extension_commit + extensions/vendor/openviking-pi/

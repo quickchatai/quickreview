@@ -121,7 +121,7 @@ small_diff_lines = 150
 
 [models.tiers]
 # PassTier → model spec; buildAgents splits the `:thinking` suffix into the
-# separate pi-subagents `model`/`thinking` frontmatter fields at build time.
+# built agent's whole `model:` field incl. the `:thinking` suffix.
 "terra-med" = "openai-codex/gpt-5.6-terra:medium"
 "sol-med" = "openai-codex/gpt-5.6-sol:medium"
 "sol-high" = "openai-codex/gpt-5.6-sol:high"
@@ -152,8 +152,9 @@ evidence_timeout_s = 60           # evidence copier: per-remote-read
 # VERIFY-ON-PIN: package + version mirrored in package.json "pi" block and the
 # ansible group_vars; the image never floats.
 package = "@earendil-works/pi-coding-agent"
-version = "0.84.1"
+version = "0.84.4"
 session_dir = "state/pi-sessions"
+subagent_max_concurrency = 6
 
 [memory]
 # Round seeding — how much memory rides each round prompt and how

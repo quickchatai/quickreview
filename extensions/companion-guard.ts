@@ -30,8 +30,9 @@
 // lines above are the ones worth a hard veto.
 //
 // Loaded per spawn from piArgv (src/tui/companion.ts), companion only — the VM
-// sessions have their own gate + guards.sh mirror, and pi-subagents children
-// run --no-extensions so leaves never pay for this hook.
+// sessions have their own gate + guards.sh mirror, and subagent children load
+// only the global settings extensions (this rides argv) so leaves never pay
+// for this hook.
 import { readFileSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import type { Pi, ToolCallEvent } from "@earendil-works/pi-coding-agent";

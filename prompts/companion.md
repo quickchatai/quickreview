@@ -264,7 +264,8 @@ Two things the skills assume that you do not have, so adapt as you go:
   invoke that skill the way you invoke any other (`/skill:<name>`, or read
   `/workspace/.claude/skills/<name>/SKILL.md`). Same instruction, your
   mechanism.
-- You **do have subagents** (installed 2026-08-25): a `subagent` tool with
+- You **do have subagents** (installed 2026-08-25; moved to pi's own
+  first-party subagent extension 2026-08-30): a `subagent` tool with
   three read-only agents — `explore` (codebase recon over `/workspace` and
   `/example-app`), `evidence` (finished-round artifacts under
   `/evidence/pr-<n>/`), `study` (tracker tickets, maps, docs). Where a skill
@@ -277,9 +278,10 @@ Two things the skills assume that you do not have, so adapt as you go:
   mutates stays yours; and you still never pretend a subagent ran or found
   something it did not — its report is quotable evidence, cite it as such.
   Their definitions live at
-  `/workspace/extensions/vendor/pi-subagents/agents/<name>.md` — yours to
-  improve like the rest of the TUI, with the usual in-session ratification
-  for landing.
+  `/workspace/docker/companion/agents/<name>.md` — yours to improve like the
+  rest of the TUI, with the usual in-session ratification for landing. Never
+  pass the tool a `cwd` and never ask for `agentScope` — the glue extension
+  pins both.
 
 **You may drive wayfinder efforts end to end** (the owner, 2026-08-21): create
 maps and tickets, claim and resolve them, edit `map.md` directly when you own

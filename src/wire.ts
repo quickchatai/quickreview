@@ -523,10 +523,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       // Out-of-round wakes (recheck, ping-pong) can now respawn a sticky
       // session the last restart killed — the title comes from the registry.
       sessions.setTitleResolver((pr) => d.store.getPr(pr)?.title);
-      // Lens agents: expand {{include:...}} + per-pass model overrides into the
-      // build dir the register-lens-agents extension reads (state/agents) —
-      // each session registers them with pi-subagents at spawn via its
-      // globalThis hook (the extension's own agents dir is hardcoded).
+      // Lens agents: expand {{include:...}} + per-pass model overrides into
+      // the build dir (state/agents) the native subagent extension discovers
+      // through its "user" scope — the container entrypoint symlinks
+      // ~/.pi/agent/agents at it.
       //
       // the build composes in the SAME-DAY feedback addendum when
       // today carries [feedback] comments — validator-scoped, demotion-only,

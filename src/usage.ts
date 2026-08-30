@@ -6,7 +6,7 @@
 // output, ...}}} (assistant messages carry usage) and model_change records
 // {provider, modelId} which set the attribution for subsequent messages.
 //
-// pi-subagents' isolated child processes do NOT get --session-dir, so their
+// The subagent tool's isolated child processes do NOT get --session-dir, so their
 // transcripts land in the pi HOME global store (~/.pi/agent/sessions, in the
 // container /home/review/.pi/agent/sessions). Those files carry no session
 // marker we control, so they are matched by file mtime falling inside the

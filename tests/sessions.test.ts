@@ -49,7 +49,7 @@ const cfg = (): Config =>
       issues_per_day: 3,
     },
     models: { default: "openai/gpt-5.6-sol", conversation: "openai/conv", overseer: "openai/over", passes: {} },
-    pi: { package: "@earendil-works/pi-coding-agent", version: "0.84.1", session_dir: "state/pi-sessions" },
+    pi: { package: "@earendil-works/pi-coding-agent", version: "0.84.4", session_dir: "state/pi-sessions", subagent_max_concurrency: 6 },
     // Only the fields sessions.ts reads: the loopback endpoint the
     // sessions authenticate against, and the SERVER's ov.conf — passed so the
     // fork's root-key guard reads the real file instead of guessing from HOME.
@@ -183,8 +183,20 @@ describe("buildPiCommand", () => {
     const paths = manager().extensionPaths();
     expect(paths).toContain(join(root, "extensions", "round-progress.ts"));
     expect(paths.indexOf(join(root, "extensions", "round-progress.ts"))).toBeLessThan(
-      paths.indexOf(join(root, "extensions", "register-lens-agents.ts")),
+      paths.indexOf(join(root, "extensions", "subagents.ts")),
     );
+  });
+
+  // the subagents glue (pi's native subagent extension loaded from
+  // the installed package) rides per-spawn argv, NEVER a settings.json entry —
+  // children load only the global settings extensions, so a leaf never gets
+  // the subagent tool and a pass cannot fan out (rule 9, structurally).
+  it("loads the first-party subagents glue on argv in every parent session", () => {
+    const paths = manager().extensionPaths();
+    expect(paths).toContain(join(root, "extensions", "subagents.ts"));
+    // The retired register-lens-agents hook must not come back.
+    expect(paths.join("\n")).not.toContain("register-lens-agents");
+    expect(paths.join("\n")).not.toContain("pi-subagents");
   });
 
   it("loads the vendored OpenViking fork, after ledger-pin", () => {
@@ -196,8 +208,9 @@ describe("buildPiCommand", () => {
     // compaction handler is deleted (PATCH 1), but the ordering is the
     // belt-and-braces half of that invariant.
     expect(paths.indexOf(join(root, "extensions", "ledger-pin.ts"))).toBeLessThan(paths.indexOf(ov));
-    // It rides argv, not a settings.json discovery dir: pi-subagents children
-    // are built with --no-extensions, so leaves get no memory surface.
+    // It rides argv, not a settings.json discovery dir: subagent children
+    // load only the global settings extensions, so leaves get no memory
+    // surface (the native children spawn without argv extensions).
     const argv = buildPiCommand({
       piBin: "pi", model: "m", sessionDir: "d", systemPromptPath: "p",
       extensionPaths: paths, sessionName: "pr-1",
@@ -269,8 +282,11 @@ describe("birth", () => {
         "OPENVIKING_BASE_URL", "OPENVIKING_CLI_CONFIG_FILE", "OPENVIKING_CONFIG_FILE",
         "OPENVIKING_PEER_ID", "OPENVIKING_URL", "OPENVIKING_USER",
         "PATH", "QCR_INJECT_DIR", "QCR_LEDGER_FILE", "QCR_OV_SESSION_ID",
-        "QCR_PI_VERSION", "QCR_PR", "QCR_SANDBOX_ROOT", "QCR_SECRETS_DIR", "QCR_SESSION_NAME", "TERM",
+        "QCR_PI_VERSION", "QCR_PR", "QCR_SANDBOX_ROOT", "QCR_SECRETS_DIR", "QCR_SESSION_NAME",
+        // the process-wide subagent fan-out cap for the glue.
+        "QCR_SUBAGENT_MAX_CONCURRENCY", "TERM",
       ]);
+      expect(env.QCR_SUBAGENT_MAX_CONCURRENCY).toBe("6");
       // No credential of any kind reached the environment.
       for (const [k, v] of Object.entries(env)) {
         expect(k, `${k} must not look like an OpenViking key`).not.toMatch(/OPENVIKING.*KEY/);

@@ -16,14 +16,11 @@
     "types": ["node"]
   },
   "include": ["src/**/*.ts", "extensions/**/*.ts"],
-  // Two VENDORED-VERBATIM extensions are excluded from the BUILD only — pi
-  // loads their .ts source via jiti at runtime, and both use pi API surface
-  // our deliberately-minimal ambient pi-api.d.ts does not declare (and
-  // vendor/pi-subagents additionally imports the legacy `@mariozechner/*`
-  // scope, resolved by pi's own loader, absent from our node_modules).
-  // Typechecking them would fail every build without making the runtime any
-  // safer, and widening the ambient types for someone else's code would erode
-  // the VERIFY-ON-PIN discipline. Provenance + pins: their file headers /
-  // upstream.json, mirrored by tests/tui-companion.test.ts.
-  "exclude": ["node_modules", "dist", "tests", "extensions/vendor/pi-subagents", "extensions/inline-bash.ts"]
+  // One VENDORED-VERBATIM extension is excluded from the BUILD only — pi
+  // loads its .ts source via jiti at runtime, and it uses pi API surface our
+  // deliberately-minimal ambient pi-api.d.ts does not declare. Typechecking
+  // it would fail every build without making the runtime any safer, and
+  // widening the ambient types for someone else's code would erode the
+  // VERIFY-ON-PIN discipline. Provenance + pin: its file header.
+  "exclude": ["node_modules", "dist", "tests", "extensions/inline-bash.ts"]
 }

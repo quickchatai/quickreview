@@ -191,6 +191,29 @@ if (trust["/workspace"] !== true) {
   fs.writeFileSync(trustFile, JSON.stringify(trust, null, 2) + "\n");
 }
 console.log("pi project trust: defaultProjectTrust=always, /workspace pre-trusted");
+
+// agent discovery for the native subagent extension (loaded by the
+// first-party glue extensions/subagents.ts — the vendored pi-subagents is
+// removed). The native default "user" scope reads $HOME/.pi/agent/agents;
+// link that at the companion agent set (explore/evidence/study) riding the
+// /workspace mount. Same degrade discipline as the skills dirs: a missing
+// /workspace leaves the link dangling and discovery simply finds no agents —
+// an under-equipped companion, never one that won't start. Symlink-or-absent
+// only: a REAL directory here is someone's own agents and is never clobbered.
+const agentsLink = process.env.HOME + "/.pi/agent/agents";
+const companionAgents = "/workspace/docker/companion/agents";
+try {
+  const st = fs.lstatSync(agentsLink, { throwIfNoEntry: false });
+  if (st && !st.isSymbolicLink()) {
+    console.log("!! " + agentsLink + " exists and is not a symlink — NOT touching it; the companion agent set is not discoverable");
+  } else {
+    if (st) fs.unlinkSync(agentsLink);
+    fs.symlinkSync(companionAgents, agentsLink);
+    console.log("pi user agents dir -> " + companionAgents);
+  }
+} catch (e) {
+  console.log("!! could not link " + agentsLink + ": " + e.message);
+}
 PI_EXT_MERGE
 
 # OpenAI auth: the OAuth route (`/login` once inside a pi session) persists in
