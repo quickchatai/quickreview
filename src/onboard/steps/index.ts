@@ -6,8 +6,9 @@
 // of them.
 import type { OnboardingStep } from "../engine.js";
 import { llmAuthStep } from "./llmauth.js";
+import { memoryStep } from "./memory.js";
 import { preflightStep } from "./preflight.js";
 
 export function defaultSteps(): OnboardingStep[] {
-  return [preflightStep(), llmAuthStep()];
+  return [preflightStep(), llmAuthStep(), memoryStep()];
 }

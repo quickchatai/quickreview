@@ -41,9 +41,23 @@
 // not come up. `--strict` (tests, manual runs) is the only way to get a
 // non-zero exit.
 //
+// MINTING lives here too, and is NOT part of the boot path.
+// `main()` below never mints: the boot container ensures users and verifies the
+// reviewer key, exactly as before. The onboarding wizard
+// (`src/onboard/steps/memory.ts`) imports `mintRootKey` / `mintUserKeys` to
+// close the documented "mint one, once" gap with an actual command. The mint
+// helpers are PURE of the filesystem — they generate a value or ask the server
+// for one and RETURN it; where each key may be written is the step's business,
+// and the confinement rules there are absolute (root + reviewer into the
+// daemon-side secrets, the companion key ONLY into the operator's key file).
+// Minting is idempotent by construction: a user that already exists keeps the
+// key it already has (read back from the admin listing), and nothing here ever
+// rotates one.
+//
 // Zero dependencies and plain JS on purpose: the entrypoint runs it before the
 // TypeScript build, on a container that may have no `dist/` yet.
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -125,6 +139,59 @@ export function usersFromListing(body) {
 }
 
 /**
+ * user → key out of a listing, when the listing carries keys.
+ *
+ * A root/admin listing answers each user with its key in plaintext (verified
+ * against 0.4.15, asset 17). That is what makes minting idempotent
+ * WITHOUT rotating: a user that already exists hands its existing key back, so
+ * the wizard can distribute it instead of issuing a second one. Tolerant of the
+ * same envelope/item shapes as `usersFromListing`; users whose item carries no
+ * key are simply absent from the map (never guessed, never rotated).
+ */
+export function userKeysFromListing(body) {
+  const list = Array.isArray(body) ? body
+    : Array.isArray(body?.result) ? body.result
+    : Array.isArray(body?.data) ? body.data
+    : Array.isArray(body?.users) ? body.users
+    : Array.isArray(body?.data?.users) ? body.data.users
+    : Array.isArray(body?.result?.users) ? body.result.users
+    : null;
+  const out = {};
+  if (!Array.isArray(list)) return out;
+  for (const item of list) {
+    if (!item || typeof item !== "object") continue;
+    const name = item.user_id ?? item.user ?? item.id ?? item.name;
+    const key = item.api_key ?? item.user_key ?? item.key;
+    if (typeof name === "string" && name.trim() !== "" && typeof key === "string" && key.trim() !== "") {
+      out[name.trim()] = key.trim();
+    }
+  }
+  return out;
+}
+
+/** The key a create-user response minted, or "" when it carried none. */
+export function keyFromCreate(body) {
+  for (const c of [body?.result, body?.data, body]) {
+    if (!c || typeof c !== "object") continue;
+    const key = c.user_key ?? c.api_key ?? c.key;
+    if (typeof key === "string" && key.trim() !== "") return key.trim();
+  }
+  return "";
+}
+
+/**
+ * A cryptographically strong SERVER root key.
+ *
+ * The root key is the one key in the system nobody issues for us: ov.conf's
+ * `server.root_api_key` is whatever value the secrets file holds, so "mint one,
+ * once" means generating one here. 32 random bytes, base64url — no separators,
+ * so it survives every env-file, TOML and shell hop it travels through.
+ */
+export function mintRootKey(rand = randomBytes) {
+  return Buffer.from(rand(32)).toString("base64url");
+}
+
+/**
  * The idempotence core, pure: what a provisioning run would DO given what is
  * already there. `existing === null` (an unreadable listing) creates NOTHING —
  * guessing wrong here means minting a duplicate identity for a user who
@@ -180,11 +247,14 @@ async function call(fetchFn, url, init, timeoutMs) {
  */
 export async function listUsers({ base, account, rootKey, fetchFn = fetch, timeoutMs = DEFAULTS.requestTimeoutMs }) {
   const r = await call(fetchFn, `${base}${adminUsersPath(account)}`, { method: "GET", headers: adminHeaders(rootKey) }, timeoutMs);
-  if (r.status < 200 || r.status >= 300) return { users: null, status: r.status, detail: r.error ?? `HTTP ${r.status}` };
+  if (r.status < 200 || r.status >= 300) return { users: null, keys: {}, status: r.status, detail: r.error ?? `HTTP ${r.status}` };
   if (r.body && typeof r.body === "object" && r.body.status === "error") {
-    return { users: null, status: r.status, detail: `error envelope: ${String(r.body.error?.message ?? r.body.error ?? "")}` };
+    return { users: null, keys: {}, status: r.status, detail: `error envelope: ${String(r.body.error?.message ?? r.body.error ?? "")}` };
   }
-  return { users: usersFromListing(r.body), status: r.status, detail: `HTTP ${r.status}` };
+  // `keys` is only ever READ by the wizard's mint path, so an
+  // existing user's already-distributed key can be re-used instead of rotated.
+  // The boot path ignores it and never writes a key anywhere.
+  return { users: usersFromListing(r.body), keys: userKeysFromListing(r.body), status: r.status, detail: `HTTP ${r.status}` };
 }
 
 /** Create ONE user. A 409 is success: the user already exists. */
@@ -197,11 +267,91 @@ export async function createUser({ base, account, user, rootKey, fetchFn = fetch
     { method: "POST", headers: adminHeaders(rootKey), body: JSON.stringify({ user_id: user, user, role: "user" }) },
     timeoutMs,
   );
-  if (r.status === 409) return { ok: true, existed: true, detail: "HTTP 409 — already present" };
+  if (r.status === 409) return { ok: true, existed: true, key: "", detail: "HTTP 409 — already present" };
   if (r.status >= 200 && r.status < 300 && !(r.body && r.body.status === "error")) {
-    return { ok: true, existed: false, detail: `HTTP ${r.status}` };
+    // The server MINTS the user's key at creation and returns it here — this is
+    // the only moment it is ever handed out. The boot path discards it; the
+    // wizard's mint path is what places it.
+    return { ok: true, existed: false, key: keyFromCreate(r.body), detail: `HTTP ${r.status}` };
   }
-  return { ok: false, existed: false, detail: r.error ?? `HTTP ${r.status}` };
+  return { ok: false, existed: false, key: "", detail: r.error ?? `HTTP ${r.status}` };
+}
+
+/**
+ * Ensure every wanted user exists and RETURN the key each one holds.
+ *
+ * The mint capability the "mint one, once" docs described and no command
+ * implemented. Idempotent by construction, in three layers:
+ *
+ *   * a user that exists keeps its key — read back from the admin listing,
+ *     never re-issued (a rotation orphans the copy already distributed to the
+ *     operator's PC and to the daemon's secrets mount);
+ *   * a user that is missing is created, and the key the server mints in that
+ *     response is the one returned;
+ *   * an UNREADABLE listing creates nothing at all (`planProvision`'s rule): a
+ *     wrong guess here mints a duplicate identity for a user who already has
+ *     one, and a degraded memory engine always beats a wrong one.
+ *
+ * Users whose key could not be learned come back in `missing` — the caller
+ * reports them; it must never invent or rotate one. Never throws, never writes
+ * a file, never logs a key value.
+ */
+export async function mintUserKeys({ base, account, users, rootKey, fetchFn = fetch, log = () => {} }) {
+  const report = { keys: {}, created: [], kept: [], missing: [], ok: true, detail: "" };
+  if (!rootKey) {
+    report.ok = false;
+    report.detail = "no root key — admin calls cannot authenticate";
+    report.missing = [...users];
+    return report;
+  }
+  const listing = await listUsers({ base, account, rootKey, fetchFn });
+  const plan = planProvision(listing.users, users);
+  if (plan.unknown.length > 0) {
+    report.ok = false;
+    report.detail = `could not read the user listing (${listing.detail}) — creating nothing`;
+    report.missing = plan.unknown;
+    return report;
+  }
+  for (const user of plan.keep) {
+    const known = listing.keys?.[user];
+    if (known) {
+      report.keys[user] = known;
+      report.kept.push(user);
+      log(`openviking: user ${user} already exists — keeping its existing key (never rotated)`);
+    } else {
+      report.missing.push(user);
+      report.ok = false;
+      log(`openviking: user ${user} already exists but the server did not hand back its key — NOT rotating`);
+    }
+  }
+  for (const user of plan.create) {
+    const created = await createUser({ base, account, user, rootKey, fetchFn });
+    if (!created.ok) {
+      report.missing.push(user);
+      report.ok = false;
+      log(`openviking: could not create user ${user} (${created.detail})`);
+      continue;
+    }
+    if (created.key) {
+      report.keys[user] = created.key;
+      report.created.push(user);
+      log(`openviking: user ${user} created and its key minted`);
+      continue;
+    }
+    // Created (or raced into existence) without a key in the response: ask the
+    // listing rather than issuing a second key.
+    const after = await listUsers({ base, account, rootKey, fetchFn });
+    const known = after.keys?.[user];
+    if (known) {
+      report.keys[user] = known;
+      (created.existed ? report.kept : report.created).push(user);
+    } else {
+      report.missing.push(user);
+      report.ok = false;
+      log(`openviking: user ${user} exists but no key could be read back — NOT rotating`);
+    }
+  }
+  return report;
 }
 
 /**
