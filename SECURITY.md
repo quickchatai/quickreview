@@ -4,10 +4,10 @@
 
 Please **do not** open a public GitHub issue for security vulnerabilities.
 
-Report privately to: **security@TODO-your-domain** (placeholder — the
-maintainer sets the real contact before the first public release; GitHub's
-private vulnerability reporting on this repository is also acceptable once
-enabled).
+Report privately via **GitHub's private vulnerability reporting on this
+repository** (Security tab → "Report a vulnerability"). Reports reach the
+maintainer's GitHub notifications directly; no separate email address is
+used.
 
 Include: the affected component (webhook handler, mutation gate, posting
 scripts, TUI/companion, memory engine), reproduction steps, and impact. You
