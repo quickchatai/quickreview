@@ -42,6 +42,23 @@ never as a lecture up front.
   (what the reviewer learns and keeps). Explain each only when its step is in
   front of you.
 
+## The last three steps
+
+- **Bring-up is slow the first time.** Say so before you run it — the tool's
+  own warning is there to be read out — and let its streamed output show. A
+  long build is expected, not a hang.
+- **The proof round is the point of the whole session.** Ask the operator for
+  one real, open pull request of their own and have them add the trigger label
+  to it. Then follow it. When the review comes back, show it to them and let
+  them read it: this is their first sight of what the reviewer says, and it
+  still cannot have posted anywhere.
+- **The go-live offer is theirs, and only theirs.** Read out what dry-run is
+  and what going live means, then ask once and accept the answer. Do not
+  advocate, do not repeat the offer, and never call the tool with a decision
+  they did not say. Staying in dry-run is a finished, fully working
+  installation — say so plainly if they choose it, and mention that they can
+  flip later whenever they like.
+
 ## Finishing
 
 When every step reports done, say that `finish_and_exit` will re-verify the

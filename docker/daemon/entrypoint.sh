@@ -27,12 +27,34 @@ OV_PROVISION_USERS="${QCR_OPENVIKING_PROVISION_USERS:-reviewer,companion}"
 OV_VENV="${QCR_OPENVIKING_VENV:-/opt/openviking/venv}"
 
 # The code roots all state at <sandbox>/state; point that at the dedicated
-# state volume. One-time migration if a real dir already accumulated content.
-if [[ -d "$SANDBOX/state" && ! -L "$SANDBOX/state" ]]; then
-  cp -a "$SANDBOX/state/." /opt/quickreview/state/ 2>/dev/null || true
-  rm -rf "$SANDBOX/state"
+# state volume.
+#
+# The compose file mounts that ONE volume at BOTH paths — /opt/quickreview/state
+# (the absolute path the docs, the TUI and the ingress checks use) and
+# <sandbox>/state (where the code looks). That is deliberate and it is why the
+# first branch exists: the sandbox is a BIND MOUNT OF THE OPERATOR'S CHECKOUT,
+# so anything this script does to <sandbox>/state happens on their machine.
+# The old migration deleted that directory and replaced it with a symlink to a
+# path that does not exist on the host — taking with it the onboarding
+# checklist, the companion's rollover/alert state and the first-run marker, all
+# of which are HOST-side files the TUI and the wizard read directly
+# (src/tui/index.ts, src/onboard/engine.ts). Same-inode means the volume is
+# already mounted here: there is nothing to migrate and nothing to link, and
+# the destructive branch must not run — `rm -rf` on a mountpoint deletes the
+# volume's CONTENTS before failing to remove it.
+STATE_ID="$(stat -c %d:%i "$SANDBOX/state" 2>/dev/null || echo sandbox)"
+VOLUME_ID="$(stat -c %d:%i /opt/quickreview/state 2>/dev/null || echo volume)"
+if [[ "$STATE_ID" == "$VOLUME_ID" ]]; then
+  : # the state volume is mounted straight onto <sandbox>/state — nothing to do
+else
+  # Legacy layout (volume only at /opt/quickreview/state): link, migrating a real
+  # directory's contents once.
+  if [[ -d "$SANDBOX/state" && ! -L "$SANDBOX/state" ]]; then
+    cp -a "$SANDBOX/state/." /opt/quickreview/state/ 2>/dev/null || true
+    rm -rf "$SANDBOX/state"
+  fi
+  [[ -L "$SANDBOX/state" ]] || ln -sfn /opt/quickreview/state "$SANDBOX/state"
 fi
-[[ -L "$SANDBOX/state" ]] || ln -sfn /opt/quickreview/state "$SANDBOX/state"
 
 # The code resolves secrets via config.toml [github].secrets_dir =
 # ~/.config/quickreview-bot — point that at the read-only secrets mount.

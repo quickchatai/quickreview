@@ -226,6 +226,29 @@ describe("docker-compose topology", () => {
     expect(compose).toContain("./:/opt/quickreview/sandbox");
   });
 
+  // the sandbox is a bind mount of the OPERATOR'S checkout, and
+  // <root>/state holds host-side files the TUI and the onboarding wizard read
+  // directly (the checklist, the companion's rollover/alert state, the
+  // first-run marker). The entrypoint used to delete that directory and leave
+  // a symlink to a path that exists only inside the container. Both volumes
+  // are therefore mounted at BOTH spellings, and the entrypoint detects the
+  // double mount by inode instead of running its destructive migration.
+  it("the state and ingress volumes are mounted at both the absolute and the sandbox path", () => {
+    expect(compose).toContain("qcr-state:/opt/quickreview/state");
+    expect(compose).toContain("qcr-state:/opt/quickreview/sandbox/state");
+    expect(compose).toContain("qcr-ingress:/opt/quickreview/state/ingress");
+    expect(compose).toContain("qcr-ingress:/opt/quickreview/sandbox/state/ingress");
+  });
+
+  it("the entrypoint never rm -rf's the operator's state dir when the volume is already mounted there", () => {
+    expect(entrypoint).toContain('STATE_ID="$(stat -c %d:%i "$SANDBOX/state" 2>/dev/null || echo sandbox)"');
+    expect(entrypoint).toContain('VOLUME_ID="$(stat -c %d:%i /opt/quickreview/state 2>/dev/null || echo volume)"');
+    // The destructive legacy branch survives, but only behind the inode guard.
+    const guarded = entrypoint.slice(entrypoint.indexOf("STATE_ID="), entrypoint.indexOf("# The code resolves secrets"));
+    expect(guarded).toContain('if [[ "$STATE_ID" == "$VOLUME_ID" ]]; then');
+    expect(guarded.indexOf('if [[ "$STATE_ID" == "$VOLUME_ID" ]]; then')).toBeLessThan(guarded.indexOf('rm -rf "$SANDBOX/state"'));
+  });
+
   it("PID 1 reaps (init: true) — the daemon supervises a second process", () => {
     expect(compose).toMatch(/^\s+init: true$/m);
   });

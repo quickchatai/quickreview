@@ -64,7 +64,18 @@ services:
       # The repo itself IS the sandbox (the entrypoint runs npm ci + build on
       # first boot and symlinks <sandbox>/state onto the state volume).
       - ./:/opt/quickreview/sandbox
+      # The state volume, mounted at BOTH paths on purpose:
+      # /opt/quickreview/state is the absolute path the docs, the TUI's
+      # remote_state_dir and the ingress checks use, and <sandbox>/state is
+      # where the code itself looks. Mounting it over the sandbox path is what
+      # stops the entrypoint from replacing the operator's OWN state/ directory
+      # — the sandbox is a bind mount of their checkout, and that directory
+      # holds host-side files the TUI and the onboarding wizard read directly
+      # (the onboarding checklist, the companion's rollover and alert state,
+      # the first-run marker). The entrypoint detects the double mount by inode
+      # and skips its legacy symlink migration.
       - qcr-state:/opt/quickreview/state
+      - qcr-state:/opt/quickreview/sandbox/state
       # The tunnel sidecar's ONLY shared surface: the one directory holding
       # the hostname file the self-heal watcher reads (contract,
       # <root>/state/ingress/hostname — the default `[ingress] hostname_file`
@@ -72,6 +83,9 @@ services:
       # so the sidecar never sees the rest of the state volume: no SQLite, no
       # memory, no dry-run record.
       - qcr-ingress:/opt/quickreview/state/ingress
+      # …and, for the same reason as the state volume above, at the sandbox
+      # path too, so both spellings of the hostname file are the SAME file.
+      - qcr-ingress:/opt/quickreview/sandbox/state/ingress
       - ${QCR_SECRETS_DIR:-~/.config/quickreview-bot}:/opt/quickreview/secrets:ro
       # pi's home: OAuth tokens (auth.json), session JSONLs, models.json —
       # must survive container rebuilds (sticky sessions + /login tokens).
