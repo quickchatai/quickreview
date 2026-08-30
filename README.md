@@ -164,5 +164,5 @@ docker compose logs -f daemon                   # daemon logs
 
 ## License
 
-Apache-2.0 (see [LICENSE](LICENSE)); third-party attributions in
+MIT (see [LICENSE](LICENSE)); third-party attributions in
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

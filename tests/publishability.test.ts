@@ -91,7 +91,6 @@ interface AllowlistEntry {
 const ALLOWLIST: AllowlistEntry[] = [
   // -- Legal attribution: Quickchat AI is the copyright holder / public org.
   { path: "LICENSE", tokens: ["quickchat"], reason: "outbound license copyright line — Quickchat AI is the copyright holder" },
-  { path: "docs/alternatives/LICENSE-MIT.txt", tokens: ["quickchat"], reason: "prepared alternative license — same copyright holder" },
   { path: "package.json", tokens: ["quickchat"], reason: "repository placeholder URL under the copyright holder's public org" },
   { path: "extensions/vendor/openviking-pi/NOTICE", tokens: ["quickchat"], reason: "Apache-2.0 §4(b) modification notice names the vendoring party — legal attribution" },
   { path: "extensions/vendor/openviking-pi/patches/0000-vendoring-and-build-conformance.patch", tokens: ["quickchat"], reason: "recorded patch series adding the NOTICE — provenance record, never edited after the fact" },
@@ -295,9 +294,11 @@ describe("publishability lint", () => {
 
   it("(b) LICENSE exists and is a real license", () => {
     const license = readFileSync(join(repoRoot, "LICENSE"), "utf8");
-    expect(license.length).toBeGreaterThan(9000);
-    expect(license).toContain("Apache License");
-    expect(license).toContain("Copyright 2026 Quickchat AI");
+    // MIT (the owner's recorded choice,, 2026-08-30) is ~1.1KB —
+    // the floor guards against an empty/placeholder file, not a long text.
+    expect(license.length).toBeGreaterThan(900);
+    expect(license).toContain("MIT License");
+    expect(license).toContain("Copyright (c) 2026 Quickchat AI");
   });
 
   it("(b) THIRD-PARTY-NOTICES.md exists and rolls up every vendored component", () => {

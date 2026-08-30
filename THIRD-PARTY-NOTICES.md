@@ -1,6 +1,6 @@
 # Third-party notices
 
-This repository is licensed under the Apache License 2.0 (see `LICENSE`). It
+This repository is licensed under the MIT License (see `LICENSE`). It
 redistributes the third-party components below. Each entry names the upstream,
 its license, and where the full text and provenance live in this tree.
 
@@ -29,7 +29,7 @@ its license, and where the full text and provenance live in this tree.
 
   > MIT License
   >
-  > Copyright (c) the pi authors (`@earendil-works/pi-coding-agent`)
+  > Copyright (c) 2025 Mario Zechner
   >
   > Permission is hereby granted, free of charge, to any person obtaining a
   > copy of this software and associated documentation files (the
@@ -54,7 +54,7 @@ its license, and where the full text and provenance live in this tree.
 
 - Upstream: <https://github.com/mattpocock/skills>, pinned by commit in
   `.claude/skills/VENDORED.md`.
-- License: **MIT** (Copyright (c) Matt Pocock). Full text:
+- License: **MIT** (Copyright (c) 2026 Matt Pocock). Full text:
   `.claude/skills/LICENSE`.
 - First-party exceptions (authored for this project, licensed under the
   repository's own `LICENSE`, NOT part of the upstream set): the
