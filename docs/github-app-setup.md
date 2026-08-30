@@ -25,7 +25,19 @@ the review-team trigger) only means something there.
 
 GitHub's [manifest flow](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest)
 creates the App from a JSON blob and hands back the App ID, private key and
-webhook secret in one exchange:
+webhook secret in one exchange.
+
+> **`qcr onboard` does all of this for you**. The wizard's GitHub App
+> step serves the page below on your own machine, submits *this* manifest file
+> (never a copy), receives the code on a loopback callback, exchanges it, and
+> writes `app_id` / `app.pem` / `webhook_secret` into the secrets dir with the
+> same validation and `0600` permissions as `deploy/collect-secrets.sh` — so no
+> credential passes through your clipboard. It then guides the install click,
+> verifies it through the App's own installation listing, and creates the
+> trigger labels. The steps below are the manual equivalent; they must stay in
+> step with the wizard.
+
+Manually:
 
 1. Edit `deploy/github-app-manifest.json`: set `name` (your App's name — the
    **slug** is derived from it), `url` (any homepage), and
