@@ -22,12 +22,13 @@
 // Nothing here writes anything anywhere. It reads the state store, reads the
 // dry-run directory, and records what it saw on the checklist — the record the
 // go-live step later demands before it will even offer the flip.
-import type { CheckResult, OnboardingStep, ProcessRunner, StepContext, StepReport } from "../engine.js";
+import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 import { sandboxReviewFrom, type DryrunRecord, type ReviewSnapshot } from "../../compare.js";
-import { CONTAINER_DRYRUN_DIR, daemonExec, daemonIsRunning, readConfigText, rootOf } from "./compose.js";
+import { CONTAINER_DRYRUN_DIR, readConfigText, rootOf } from "./compose.js";
 import { CHOICE_KEYS } from "./configfill.js";
 import { readTomlKey } from "./ingress.js";
 import { DEFAULT_LABELS } from "./githubapp.js";
+import { stackTransportFor, type StackTransport, type TransportOptions } from "./transport.js";
 
 export const PROOF_STEP_ID = "proof_round";
 /** The completed-proof record. The go-live step will not offer the flip
@@ -128,12 +129,12 @@ export interface DryrunRead {
 
 /**
  * Read `state/dryrun/` from inside the daemon container: list, then read the
- * newest few. Through `docker compose exec`, because on the compose route the
- * state lives on the daemon's own volume — the same route the ingress step
- * uses to read the published tunnel hostname.
+ * newest few. Through the transport's `exec`, because the state lives on the
+ * daemon's own volume — `docker compose exec` on this machine, `ssh <alias>
+ * sudo docker exec` on the server route, and this function never learns which.
  */
-export async function readContainerDryrun(runner: ProcessRunner, root: string, limit = 40): Promise<DryrunRead> {
-  const list = await daemonExec(runner, root, ["ls", "-1", CONTAINER_DRYRUN_DIR]);
+export async function readContainerDryrun(transport: StackTransport, limit = 40): Promise<DryrunRead> {
+  const list = await transport.exec(["ls", "-1", CONTAINER_DRYRUN_DIR]);
   if (list.code !== 0) {
     return {
       records: [],
@@ -150,7 +151,7 @@ export async function readContainerDryrun(runner: ProcessRunner, root: string, l
   const wanted = names.slice(Math.max(0, names.length - limit));
   const records: DryrunRecord[] = [];
   for (const name of wanted) {
-    const cat = await daemonExec(runner, root, ["cat", `${CONTAINER_DRYRUN_DIR}/${name}`]);
+    const cat = await transport.exec(["cat", `${CONTAINER_DRYRUN_DIR}/${name}`]);
     if (cat.code !== 0) continue;
     try {
       records.push({ ...(JSON.parse(cat.stdout) as DryrunRecord), file: name });
@@ -185,6 +186,10 @@ export interface ProofStepOptions {
   sleep?: (ms: number) => Promise<void>;
   /** How many dry-run files to read back (newest wins). */
   dryrunLimit?: number;
+  /** The stack transport's options. WHICH transport is never an option here —
+   * `stackTransportFor` decides it from the recorded topology, so the proof
+   * round is the same act on a laptop and on a server. */
+  transport?: TransportOptions;
 }
 
 function triggerLabelOf(root: string): string {
@@ -218,8 +223,8 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
     ctx.adapters.log?.(`${PROOF_STEP_ID}: ${line}`);
   }
 
-  async function observe(ctx: StepContext, root: string, pr: number): Promise<{ obs: RoundObservation | null; detail: string }> {
-    const r = await daemonExec(ctx.adapters.runner, root, ["node", "dist/src/cli.js", "why", String(pr), "--json"]);
+  async function observe(transport: StackTransport, pr: number): Promise<{ obs: RoundObservation | null; detail: string }> {
+    const r = await transport.exec(["node", "dist/src/cli.js", "why", String(pr), "--json"]);
     if (r.code !== 0) {
       return { obs: null, detail: (r.stderr || r.stdout).trim() || `\`qcr why\` in the daemon container exited ${r.code}` };
     }
@@ -237,7 +242,6 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
       "dry-run record, so they judge the output while it is still impossible for it to have posted to GitHub. If nothing " +
       "happens, or the round fails, it says what to check rather than waiting forever.",
     order: 76,
-    enabled: (choices) => choices[CHOICE_KEYS.topology] !== "vm",
     parameters: {
       type: "object",
       properties: {
@@ -251,6 +255,7 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
 
     async run(ctx): Promise<StepReport> {
       const root = rootOf(ctx.adapters);
+      const transport = stackTransportFor(ctx, opts.transport);
       const repo = repoOf(ctx.choices, root);
       const label = triggerLabelOf(root);
       const pr = prFrom(ctx.input, ctx.choices);
@@ -271,14 +276,16 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
           ],
         };
       }
-      if (!(await daemonIsRunning(ctx.adapters.runner, root))) {
+      if (!(await transport.running())) {
         return {
           ok: false,
           checks: [
             {
               name: "stack",
               ok: false,
-              detail: "the daemon container is not running, so no round can start — Fix: run the bring-up step, then this one",
+              detail:
+                `the daemon container is not running ${transport.where}, so no round can start — Fix: run the bring-up step ` +
+                "for your topology (compose here, the deploy on the server route), then this one",
             },
           ],
         };
@@ -287,7 +294,7 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
       log(ctx, `following #${pr} — checking the daemon's state every ${Math.round(pollIntervalMs / 1000)}s, up to ${pollAttempts} times`);
       let last = "";
       for (let attempt = 1; attempt <= pollAttempts; attempt += 1) {
-        const { obs, detail } = await observe(ctx, root, pr);
+        const { obs, detail } = await observe(transport, pr);
         if (obs === null) {
           return {
             ok: false,
@@ -296,7 +303,7 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
                 name: "state-store",
                 ok: false,
                 detail:
-                  `could not read the daemon's state (${detail}) — Fix: \`docker compose logs --tail 200 daemon\`. The daemon ` +
+                  `could not read the daemon's state (${detail}) — Fix: \`${transport.logsCommand(200)}\`. The daemon ` +
                   "builds itself on first boot, so give it a minute after bring-up and run this step again",
               },
             ],
@@ -305,10 +312,10 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
         const outcome = classifyRounds(obs);
         if (outcome.kind === "done") {
           log(ctx, `round ${outcome.round.round_no} finished with ${outcome.round.verdict}`);
-          return finish(ctx, root, pr, outcome.round);
+          return finish(ctx, transport, pr, outcome.round);
         }
         if (outcome.kind === "failed") {
-          return { ok: false, checks: [roundFailedCheck(outcome.round, pr)] };
+          return { ok: false, checks: [roundFailedCheck(outcome.round, pr, transport)] };
         }
         last =
           outcome.kind === "running"
@@ -317,7 +324,7 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
         log(ctx, `${last} — attempt ${attempt}/${pollAttempts}`);
         if (attempt < pollAttempts) await sleep(pollIntervalMs);
       }
-      return { ok: false, checks: [timeoutCheck(pr, repo, label, last, pollAttempts, pollIntervalMs)] };
+      return { ok: false, checks: [timeoutCheck(pr, repo, label, last, pollAttempts, pollIntervalMs, transport)] };
     },
 
     async verify(ctx): Promise<StepReport> {
@@ -334,8 +341,7 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
           ],
         };
       }
-      const root = rootOf(ctx.adapters);
-      const { obs, detail } = await observe(ctx, root, proof.pr);
+      const { obs, detail } = await observe(stackTransportFor(ctx, opts.transport), proof.pr);
       if (obs === null) {
         return {
           ok: false,
@@ -370,7 +376,7 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
   };
 
   /** Round finished: read the dry-run record and SHOW the review. */
-  async function finish(ctx: StepContext, root: string, pr: number, round: ObservedRound): Promise<StepReport> {
+  async function finish(ctx: StepContext, transport: StackTransport, pr: number, round: ObservedRound): Promise<StepReport> {
     const checks: CheckResult[] = [
       {
         name: "round",
@@ -380,7 +386,7 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
           `${round.summary ? `\nThe session's own summary: ${round.summary}` : ""}`,
       },
     ];
-    const { records, problem } = await readContainerDryrun(ctx.adapters.runner, root, dryrunLimit);
+    const { records, problem } = await readContainerDryrun(transport, dryrunLimit);
     const review = problem ? null : sandboxReviewFrom(records, pr);
     if (!review) {
       checks.push({
@@ -390,7 +396,7 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
           `the round finished, but no recorded review for #${pr} was found in the dry-run record` +
           `${problem ? ` (${problem})` : ""}. Fix: check that dry_run is still true (\`grep dry_run config.toml\`) — if it is ` +
           "false the review went to GitHub for real and you can read it there; otherwise " +
-          "`docker compose exec daemon ls /opt/quickreview/state/dryrun` shows what the gate did record",
+          `\`${transport.execCommand(`ls ${CONTAINER_DRYRUN_DIR}`)}\` shows what the gate did record`,
       });
       return { ok: false, checks };
     }
@@ -416,24 +422,32 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
   }
 }
 
-function roundFailedCheck(round: ObservedRound, pr: number): CheckResult {
+function roundFailedCheck(round: ObservedRound, pr: number, transport: StackTransport): CheckResult {
   return {
     name: "round",
     ok: false,
     detail:
       `#${pr} round ${round.round_no} ended as "${round.status}"${round.summary ? `: ${round.summary}` : ""}.\n` +
       "That is a real failure, not a wizard problem, and the daemon knows why. Fix, in order:\n" +
-      "① `docker compose exec daemon node dist/src/cli.js events --tail 40` — the daemon's own event log;\n" +
-      "② `docker compose logs --tail 200 daemon` — the process log, including the review session's own errors;\n" +
+      `① \`${transport.cliCommand("events --tail 40")}\` — the daemon's own event log;\n` +
+      `② \`${transport.logsCommand(200)}\` — the process log, including the review session's own errors;\n` +
       '③ a round that ended "cancelled" right after a restart is the boot-time orphan sweep and is harmless — ' +
       "re-add the trigger label and run this step again;\n" +
       '④ a round that ended "overdue" or "expired" ran out of its deadline: the most common cause on a first ' +
-      "install is that the review session has no working model credential — `docker compose exec -it daemon tmux attach -t pr-" +
-      `${pr}\` shows the session, and a login prompt there is the answer.`,
+      `install is that the review session has no working model credential — \`${transport.attachCommand(`pr-${pr}`)}\` ` +
+      "shows the session, and a login prompt there is the answer.",
   };
 }
 
-function timeoutCheck(pr: number, repo: string, label: string, last: string, attempts: number, intervalMs: number): CheckResult {
+function timeoutCheck(
+  pr: number,
+  repo: string,
+  label: string,
+  last: string,
+  attempts: number,
+  intervalMs: number,
+  transport: StackTransport,
+): CheckResult {
   const minutes = Math.round((attempts * intervalMs) / 60_000);
   return {
     name: "round",
@@ -448,6 +462,6 @@ function timeoutCheck(pr: number, repo: string, label: string, last: string, att
       "③ if you chose the polling-only ingress there is no webhook at all: the reconcile poll picks the label up within one " +
       "poll interval ([daemon] poll_interval_s, 300s by default), so give it that long;\n" +
       "④ otherwise the webhook may not be arriving — re-run the verify_stack step, which checks GitHub's own delivery log;\n" +
-      "⑤ `docker compose exec daemon node dist/src/cli.js events --tail 40` shows what the daemon has been doing meanwhile.",
+      `⑤ \`${transport.cliCommand("events --tail 40")}\` shows what the daemon has been doing meanwhile.`,
   };
 }

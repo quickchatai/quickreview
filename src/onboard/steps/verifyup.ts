@@ -3,10 +3,10 @@
 // Three layers, deliberately in this order, because each one can only mean
 // anything if the one before it holds:
 //
-//   1. CONTAINER STATE — is the daemon (and the tunnel sidecar the operator
-//      chose) actually running? Docker's own answer, not an inference.
-//   2. HEALTH — does the daemon answer `GET /health` on the published port?
-//      That is the process saying "I booted, I loaded my config, I am serving".
+//   1. CONTAINER STATE — is the daemon (and the tunnel the operator chose)
+//      actually running? Docker's own answer, not an inference.
+//   2. HEALTH — does the daemon answer `GET /health`? That is the process
+//      saying "I booted, I loaded my config, I am serving".
 //   3. PING DELIVERY — did GitHub's webhook actually ARRIVE? This is the only
 //      layer that proves the path from GitHub, through the tunnel, into the
 //      daemon. It is read from the App's OWN delivery log (`GET
@@ -25,18 +25,19 @@
 // label, a branch or a comment, and so nowhere near the daemon's mutation gate
 // (this is the wizard, running before and beside the daemon, exactly as
 //'s App creation is).
+//
+// layers 1 and 2 run against WHICHEVER host the system lives on. The
+// step does not know or care which: it asks `stackTransportFor(ctx)` — the one
+// decision point — and gets either the compose transport (docker on this
+// machine, a fetch to the published port) or the ssh one (docker on the
+// server, a curl on the box). Layer 3 needs no transport at all: it reads
+// GitHub's OWN delivery log, which is the same record wherever the daemon
+// runs, and that is exactly why it is the layer that proves the path.
 import { mintAppJwt } from "../../githubAuth.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
-import {
-  composePs,
-  containerStateCheck,
-  healthUrl,
-  ingressOptionOf,
-  rootOf,
-  secretsDirFor,
-} from "./compose.js";
-import { CHOICE_KEYS } from "./configfill.js";
+import { ingressOptionOf, rootOf, secretsDirFor } from "./compose.js";
 import { readCredentials } from "./githubapp.js";
+import { stackTransportFor, type TransportOptions } from "./transport.js";
 
 export const VERIFY_STACK_STEP_ID = "verify_stack";
 
@@ -53,6 +54,10 @@ export interface VerifyStackStepOptions {
   redeliver?: boolean;
   /** Health probe timeout. */
   healthTimeoutMs?: number;
+  /** The stack transport's own options (the long-command stream runner).
+   * WHICH transport is never an option: `stackTransportFor` decides from the
+   * recorded topology, and this step never learns which one it got. */
+  transport?: TransportOptions;
 }
 
 // ---- GitHub's delivery log ---------------------------------------------------
@@ -129,47 +134,6 @@ export function verifyStackStep(opts: VerifyStackStepOptions = {}): OnboardingSt
   const pingPollIntervalMs = opts.pingPollIntervalMs ?? 5_000;
   const redeliver = opts.redeliver ?? true;
   const healthTimeoutMs = opts.healthTimeoutMs ?? 10_000;
-
-  /** Layer 2 — the daemon's own answer on the published port. */
-  async function healthLayer(ctx: StepContext, root: string): Promise<CheckResult> {
-    const url = healthUrl(root);
-    try {
-      const res = await ctx.adapters.fetch(url, { signal: AbortSignal.timeout(healthTimeoutMs) });
-      const text = await res.text();
-      if (res.status !== 200) {
-        return {
-          name: "health",
-          ok: false,
-          detail:
-            `${url} answered HTTP ${res.status} — Fix: \`docker compose logs --tail 200 daemon\`. A daemon that started but ` +
-            "cannot serve is nearly always a config.toml the loader rejected; the log line says which key",
-        };
-      }
-      let ok = false;
-      try {
-        ok = (JSON.parse(text) as { ok?: unknown }).ok === true;
-      } catch {
-        ok = false;
-      }
-      return ok
-        ? { name: "health", ok: true, detail: `${url} answers {"ok":true} — the daemon is up, has loaded its config and is serving` }
-        : {
-            name: "health",
-            ok: false,
-            detail:
-              `${url} answered 200 but not the health payload (${text.slice(0, 120)}) — Fix: something else is listening on that ` +
-              "port. Change QCR_WEBHOOK_PORT in .env and run the bring-up step again",
-          };
-    } catch (err) {
-      return {
-        name: "health",
-        ok: false,
-        detail:
-          `nothing answered ${url} (${String(err)}) — Fix: check the port is published (\`docker compose ps\`) and that ` +
-          "QCR_WEBHOOK_PORT/QCR_WEBHOOK_BIND in .env match what you are probing; then `docker compose logs --tail 200 daemon`",
-      };
-    }
-  }
 
   /** Layer 3 — GitHub's own record that a webhook reached the daemon. */
   async function pingLayer(ctx: StepContext, root: string): Promise<CheckResult[]> {
@@ -296,7 +260,8 @@ export function verifyStackStep(opts: VerifyStackStepOptions = {}): OnboardingSt
    * for what it looked at), so there is nothing for a "run" to do differently. */
   async function layers(ctx: StepContext): Promise<StepReport> {
     const root = rootOf(ctx.adapters);
-    const checks: CheckResult[] = containerStateCheck(await composePs(ctx.adapters.runner, root), ingressOptionOf(ctx.choices));
+    const transport = stackTransportFor(ctx, { ...opts.transport, healthTimeoutMs });
+    const checks: CheckResult[] = await transport.containerChecks(ingressOptionOf(ctx.choices));
     if (!checks.every((c) => c.ok)) {
       checks.push({
         name: "layers",
@@ -305,7 +270,10 @@ export function verifyStackStep(opts: VerifyStackStepOptions = {}): OnboardingSt
       });
       return { ok: false, checks };
     }
-    const health = await healthLayer(ctx, root);
+    // Layer 2 — the daemon's own answer on its health endpoint, however this
+    // topology can reach it (a fetch to the published port on this machine; a
+    // curl on the box, over ssh, on the server route).
+    const health = await transport.health();
     checks.push(health);
     if (!health.ok) {
       checks.push({
@@ -328,7 +296,6 @@ export function verifyStackStep(opts: VerifyStackStepOptions = {}): OnboardingSt
       "arriving. A red layer stops here and says exactly what to do about it — nothing later would mean anything until it is " +
       "fixed. Safe to run as often as you like; it changes nothing except asking GitHub to redeliver a ping that failed.",
     order: 74,
-    enabled: (choices) => choices[CHOICE_KEYS.topology] !== "vm",
 
     run: layers,
     verify: layers,

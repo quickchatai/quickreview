@@ -188,8 +188,13 @@ for you to inspect. Flip `dry_run = false` only when you trust what you see —
 that flip is the owner's manual act (see
 [docs/ownership.md](docs/ownership.md)).
 
-The Ansible route under `deploy/ansible/` remains the advanced path for a
-managed VM; both produce the same runtime.
+The Ansible route under `deploy/ansible/` runs the same runtime on a VM or
+server you reach over ssh — the always-on shape, since a reviewer that is
+asleep reviews nothing. Both are first-class, and both are guided:
+`qcr onboard` asks which one you want before anything else, then drives that
+route end to end (over ssh it checks your alias and agent up front, fills the
+deploy inventory from your answers, and runs the same `scripts/deploy.sh` with
+all of its preflights).
 
 ## Configuring the reviewer for *your* repo
 

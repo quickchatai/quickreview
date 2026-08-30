@@ -103,13 +103,19 @@ describe("the registered sequence (tail)", () => {
     const ids = steps.map((s) => s.id);
     expect(ids).toEqual([
       "preflight",
+      // the topology question, then the VM route's ssh preflight —
+      // first among that route's steps, before anything is minted or written.
+      "topology",
+      "ssh_preflight",
       "llm_auth",
       "config_fill",
       "github_app",
       "ingress",
       "memory",
       "app_slug_reconcile",
+      "vm_inventory",
       "bringup",
+      "vm_deploy",
       "memory_user_keys",
       "verify_stack",
       "proof_round",

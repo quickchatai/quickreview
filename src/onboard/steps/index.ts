@@ -11,12 +11,16 @@ import { configFillStep } from "./configfill.js";
 import { githubAppStep } from "./githubapp.js";
 import { goLiveStep } from "./golive.js";
 import { ingressStep } from "./ingress.js";
+import { vmInventoryStep } from "./inventory.js";
 import { llmAuthStep } from "./llmauth.js";
 import { memoryStep } from "./memory.js";
 import { memoryUserKeysStep } from "./memorykeys.js";
 import { preflightStep } from "./preflight.js";
 import { proofRoundStep } from "./proof.js";
+import { sshPreflightStep } from "./ssh.js";
+import { topologyStep } from "./topology.js";
 import { verifyStackStep } from "./verifyup.js";
+import { vmDeployStep } from "./vmdeploy.js";
 
 export function defaultSteps(): OnboardingStep[] {
   // Order matters and the steps interlock: config_fill records the reviewed
@@ -27,15 +31,35 @@ export function defaultSteps(): OnboardingStep[] {
   // against the now-running server, the running system is verified in layers,
   // a real PR is reviewed in front of the operator, and only then — once, on
   // their explicit word — the dry-run flip is offered.
+  //
+  // adds the VM-over-ssh topology as the second first-class route.
+  // Three of these steps are route-specific and say so with `enabled`:
+  //   topology (20)      asks the question — both answers first-class, the
+  //                      server route advertised as the recommendation;
+  //   ssh_preflight (22) VM only, and FIRST on that route: the alias, the
+  //                      agent and the passphrase trap, before anything is
+  //                      minted, written or deployed;
+  //   vm_inventory (68)  VM only: the deploy inventory, from the answers;
+  //   vm_deploy (71)     VM only: `scripts/deploy.sh`, composed, with every
+  //                      preflight it has — the peer of bringup (70), which is
+  //                      compose-only.
+  // Everything AFTER bring-up is shared by both routes and runs over whichever
+  // transport `stackTransportFor` picks (transport.ts) — memory's second
+  // phase, the layered verification, the proof round and the flip are one
+  // implementation each, never a per-topology copy.
   return [
     preflightStep(),
+    topologyStep(),
+    sshPreflightStep(),
     llmAuthStep(),
     configFillStep(),
     githubAppStep(),
     ingressStep(),
     memoryStep(),
     appSlugStep(),
+    vmInventoryStep(),
     bringUpStep(),
+    vmDeployStep(),
     memoryUserKeysStep(),
     verifyStackStep(),
     proofRoundStep(),

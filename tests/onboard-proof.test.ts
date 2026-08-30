@@ -11,9 +11,10 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { OnboardingEngine, type OnboardAdapters, type ProcessResult } from "../src/onboard/engine.js";
+import { OnboardingEngine, type OnboardAdapters, type ProcessResult, type ProcessRunner, type StepContext } from "../src/onboard/engine.js";
 import { CHOICE_KEYS } from "../src/onboard/steps/configfill.js";
 import { setTomlKey } from "../src/onboard/steps/ingress.js";
+import { stackTransportFor, type StackTransport } from "../src/onboard/steps/transport.js";
 import {
   PROOF_CHOICE_KEY,
   PROOF_STEP_ID,
@@ -36,6 +37,27 @@ beforeEach(() => {
   writeFileSync(join(root, "config.toml"), setTomlKey(exampleConfig, "github", "repo", "acme/web")!);
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+/** A transport built the way the steps build one: through THE decision point,
+ * which reads the recorded topology. `{}` ⇒ the compose transport. */
+function transportFor(runner: ProcessRunner, choices: Record<string, unknown>): StackTransport {
+  const ctx = {
+    adapters: {
+      fetch: (() => {
+        throw new Error("no network in tests");
+      }) as unknown as typeof fetch,
+      runner,
+      clock: () => new Date("2026-08-30T12:00:00Z"),
+      host: { nodeVersion: "v22.5.1", uid: 1000 },
+      paths: { stateDir: join(root, "state") },
+    },
+    input: {},
+    choices,
+    data: {},
+    recordChoice: () => undefined,
+  } satisfies StepContext;
+  return stackTransportFor(ctx);
+}
 
 function seedChoices(choices: Record<string, unknown>): void {
   mkdirSync(join(root, "state", "onboarding"), { recursive: true });
@@ -168,7 +190,7 @@ describe("reading the daemon's own state", () => {
         return { code: 0, stdout: JSON.stringify(path.includes("0000") ? LABEL_RECORD : REVIEW_RECORD), stderr: "" };
       },
     };
-    const read = await readContainerDryrun(runner, root);
+    const read = await readContainerDryrun(transportFor(runner, {}));
     expect(read.problem).toBe("");
     expect(read.records.map((r) => r.kind)).toEqual(["add_label", "create_review"]);
     expect(seen[0]).toEqual(["compose", "--project-directory", root, "exec", "-T", "daemon", "ls", "-1", "/opt/quickreview/state/dryrun"]);
@@ -317,10 +339,25 @@ describe("verify and resumability", () => {
     expect(parseProofRecord({ pr: 17, round_no: 1, verdict: "APPROVE", completed_at: "x" })).toMatchObject({ review_shown: false });
   });
 
-  it("is disabled on the VM topology", async () => {
-    seedChoices({ [CHOICE_KEYS.topology]: "vm" });
-    const h = harness();
-    expect(h.engine.list()[0]!.status).toBe("disabled");
+  // the proof round is NOT a laptop-only step any more. It is one
+  // implementation that runs over whichever transport the topology picked —
+  // the dry-run record is read out of the daemon container either way.
+  it("on the VM topology it reads the same dry-run record over ssh", async () => {
+    const seen: string[][] = [];
+    const runner = {
+      run: async (cmd: string, args: string[]): Promise<ProcessResult> => {
+        seen.push([cmd, ...args]);
+        if (args.join(" ").includes("ls -1")) return { code: 0, stdout: "a-0000-rec.json\n", stderr: "" };
+        return { code: 0, stdout: JSON.stringify(LABEL_RECORD), stderr: "" };
+      },
+    };
+    const read = await readContainerDryrun(transportFor(runner, { [CHOICE_KEYS.topology]: "vm", vm_ssh_alias: "review-box" }));
+    expect(read.problem).toBe("");
+    expect(read.records.map((r) => r.kind)).toEqual(["add_label"]);
+    expect(seen[0]![0]).toBe("ssh");
+    // BatchMode on every hop: a prompt can never hang the wizard.
+    expect(seen[0]!.join(" ")).toMatch(/-o BatchMode=yes/);
+    expect(seen[0]!.join(" ")).toMatch(/review-box sudo docker exec quickreview-sandbox ls -1/);
   });
 });
 

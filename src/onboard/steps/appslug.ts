@@ -34,20 +34,8 @@
 // golive.ts, and only on an explicit confirmation after a completed proof.
 import { mintAppJwt } from "../../githubAuth.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
-import {
-  DAEMON_SERVICE,
-  composePs,
-  configPath,
-  isUp,
-  nodeStreamRunner,
-  readConfigText,
-  restartDaemon,
-  rootOf,
-  secretsDirFor,
-  serviceRow,
-  writeAtomic,
-  type StreamRunner,
-} from "./compose.js";
+import { configPath, readConfigText, rootOf, secretsDirFor, writeAtomic, type StreamRunner } from "./compose.js";
+import { stackTransportFor } from "./transport.js";
 import { assertNoDryRunEdit, changedEdits, patchToml, tomlString, type TomlEdit } from "./configfill.js";
 import { APP_SLUG_CHOICE_KEY, BOT_LOGIN_CHOICE_KEY, readCredentials } from "./githubapp.js";
 
@@ -135,7 +123,6 @@ async function liveIdentity(ctx: StepContext, apiBase: string, secretsDir: strin
 
 export function appSlugStep(opts: AppSlugStepOptions = {}): OnboardingStep {
   const apiBase = opts.apiBase ?? "https://api.github.com";
-  const stream = opts.stream ?? nodeStreamRunner;
 
   async function reconcile(ctx: StepContext, write: boolean): Promise<StepReport> {
     const root = rootOf(ctx.adapters);
@@ -202,9 +189,11 @@ export function appSlugStep(opts: AppSlugStepOptions = {}): OnboardingStep {
     // A correction only reaches a RUNNING daemon through a restart: the config
     // loader runs once, at boot.
     if (write && edits.length > 0) {
-      const ps = await composePs(ctx.adapters.runner, root);
-      const running = ps.ok && isUp(serviceRow(ps.rows, DAEMON_SERVICE));
-      checks.push(await restartDaemon(stream, root, (line) => ctx.adapters.log?.(`${APP_SLUG_STEP_ID}: ${line}`), running));
+      // Whichever host the daemon lives on: `docker compose restart` here, the
+      // deploy that ships the corrected config on the server route.
+      const transport = stackTransportFor(ctx, opts.stream ? { stream: opts.stream } : {});
+      const running = await transport.running();
+      checks.push(await transport.restart((line) => ctx.adapters.log?.(`${APP_SLUG_STEP_ID}: ${line}`), running));
     }
 
     return { ok: checks.every((c) => c.ok), checks, data: { slug: identity.slug, bot_login: botLoginFor(identity.slug), corrected: edits.length > 0 } };

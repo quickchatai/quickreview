@@ -29,6 +29,7 @@
 //     retired" warns about — never comes into existence.
 import type { OnboardingStep, StepContext, StepReport } from "../engine.js";
 import { MEMORY_CHOICE_KEY, memoryStep, type MemoryStepOptions } from "./memory.js";
+import { topologyOf } from "./topology.js";
 
 export const MEMORY_KEYS_STEP_ID = "memory_user_keys";
 
@@ -43,9 +44,20 @@ export function memoryUserKeysStep(opts: MemoryKeysStepOptions = {}): Onboarding
   const target = inner ?? memoryStep(memoryOpts);
 
   function phaseNote(ctx: StepContext): string {
-    return ctx.choices[MEMORY_CHOICE_KEY] === "declined"
-      ? "memory setup was declined earlier — nothing is minted, written or probed here either"
-      : "phase B of the memory step: the server is up now, so the two USER keys can be minted and the confinement proved";
+    if (ctx.choices[MEMORY_CHOICE_KEY] === "declined") {
+      return "memory setup was declined earlier — nothing is minted, written or probed here either";
+    }
+    const base = "phase B of the memory step: the server is up now, so the two USER keys can be minted and the confinement proved";
+    // on the server route the memory engine listens on the VM's
+    // loopback and is never published, so this machine reaches it through the
+    // memory forward — the same loopback address either way, which is exactly
+    // why the forward binds 127.0.0.1. If minting cannot reach a server, that
+    // is the first thing to check on this topology.
+    return topologyOf(ctx.choices) === "vm"
+      ? `${base}. Your reviewer runs on a server, so the engine answers on ITS loopback and never on a published port: this ` +
+          "machine reaches it through the memory forward (docs/companion-memory-access.md). If nothing answers below, start " +
+          "the forward and run this step again — the root key is already shipped with the deploy, which is what the daemon needs at boot"
+      : base;
   }
 
   return {

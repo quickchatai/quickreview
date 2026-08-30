@@ -303,12 +303,33 @@ function chosen(ctx: StepContext): IngressChoice | null {
   return (CHOICE_IDS as string[]).includes(id) ? (id as IngressChoice) : null;
 }
 
-function offerCheck(): CheckResult {
+/**
+ * The recommended default differs by topology, and saying so is the honest
+ * part. On a laptop the quick tunnel wins: no account, and the daemon
+ * re-points its own rotating hostname. On a server the named tunnel wins: the
+ * playbook installs cloudflared there from your token, and a permanent
+ * installation deserves a permanent hostname. Every option stays selectable on
+ * both — on the server route the ones the playbook does not install mean "you
+ * front the daemon's port yourself", which the inventory step spells out.
+ */
+export function recommendedIngressFor(topology: string): IngressChoice {
+  return topology === "vm" ? "named" : "quick";
+}
+
+function offerCheck(topology: string): CheckResult {
+  const recommended = recommendedIngressFor(topology);
   return {
     name: "choice",
     ok: false,
     detail:
-      `pick one of ${CHOICE_IDS.join(" | ")} and call this step again with it (choice: "<id>").\n${renderOptions()}`,
+      `pick one of ${CHOICE_IDS.join(" | ")} and call this step again with it (choice: "<id>").\n` +
+      (topology === "vm"
+        ? `On the server route the recommended answer is "${recommended}" — the deploy installs cloudflared on that machine from ` +
+          "your tunnel token, and an always-on installation deserves a hostname that never rotates. The others stay available: " +
+          "polling needs no ingress at all, and quick/ngrok mean you run that tunnel on the server yourself.\n"
+        : `On this machine the recommended answer is "${recommended}" — no account, nothing to sign up for, and the daemon ` +
+          "re-points its own webhook URL when the hostname rotates.\n") +
+      renderOptions(),
   };
 }
 
@@ -320,8 +341,10 @@ export function ingressStep(): OnboardingStep {
       "GitHub delivers webhooks to an HTTPS URL, so your daemon needs one. Offer the four shapes with their real " +
       "trade-offs — quick tunnel (the default: no account, rotating hostname the daemon re-points itself), ngrok " +
       "(stable hostname, free-tier caps), a named Cloudflare tunnel (your own domain), or polling-only (no tunnel; " +
-      "the reconcile poll triggers reviews, and author-reply routing plus the feedback loop go quiet). Call the tool " +
-      "with no arguments first to read the options out, then again with the operator's pick.",
+      "the reconcile poll triggers reviews, and author-reply routing plus the feedback loop go quiet). The recommended " +
+      "answer depends on where the reviewer lives: the quick tunnel on this computer, the named tunnel on a server (the " +
+      "deploy installs cloudflared there). Call the tool with no arguments first to read the options out, then again with " +
+      "the operator's pick.",
     order: 50,
     parameters: {
       type: "object",
@@ -341,7 +364,7 @@ export function ingressStep(): OnboardingStep {
 
     async run(ctx): Promise<StepReport> {
       const choice = chosen(ctx);
-      if (choice === null) return { ok: false, checks: [offerCheck()] };
+      if (choice === null) return { ok: false, checks: [offerCheck(String(ctx.choices.topology ?? ""))] };
       const option = optionFor(choice)!;
       const root = sandboxRootOf(ctx.adapters);
       const checks: CheckResult[] = [

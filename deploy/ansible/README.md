@@ -1,4 +1,4 @@
-# Review-sandbox provisioning (Ansible) — the advanced VM route
+# Review-sandbox provisioning (Ansible) — the VM/server route
 
 Minimal, idempotent provisioning for the review sandbox: **one VM → one Docker
 container** (plain Ubuntu + pinned pi + node/gh/tmux + secrets; the prompts
@@ -6,8 +6,18 @@ and agents ride the repo rsync — there is no separate seed source since
 ), optionally with **cloudflared on the host** forwarding a public
 hostname → `localhost:8787` → the container.
 
-**Not deploying to a managed VM?** The primary route is the plain Docker path:
-`docker compose up` from the repo root — see `docker/daemon/README.md`. This
+> **`qcr onboard` drives this route for you**. The wizard's
+> **topology** step offers it as one of two first-class answers — advertised as
+> the always-on recommendation, because a reviewer that is asleep reviews
+> nothing — then checks your ssh alias and agent *before* anything is built
+> (the passphrase trap, in the open), fills `inventory.ini` from your answers,
+> and runs the **same `scripts/deploy.sh` documented below**, with every one of
+> its preflights. It composes this path; it does not replace it, and drift
+> between the two is a bug. Everything here stays true for a manual run.
+
+**Prefer one machine?** The other first-class answer is the plain Docker path:
+`docker compose up` from the repo root — see `docker/daemon/README.md`. It
+needs no server at all, and it reviews only while that machine is awake. This
 Ansible route adds VM host setup, the optional tunnel, and the
 `scripts/deploy.sh` sync/rebuild/verify workflow on top of the same image.
 

@@ -33,22 +33,10 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig } from "../../config.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
-import {
-  DAEMON_SERVICE,
-  composePs,
-  configPath,
-  daemonExec,
-  isUp,
-  nodeStreamRunner,
-  readConfigText,
-  restartDaemon,
-  rootOf,
-  serviceRow,
-  writeAtomic,
-  type StreamRunner,
-} from "./compose.js";
-import { CHOICE_KEYS, patchToml } from "./configfill.js";
+import { configPath, readConfigText, rootOf, writeAtomic, type StreamRunner } from "./compose.js";
+import { patchToml } from "./configfill.js";
 import { PROOF_CHOICE_KEY, PROOF_STEP_ID, parseProofRecord, parseWhy, type ProofRecord } from "./proof.js";
+import { stackTransportFor, type StackTransport, type TransportOptions } from "./transport.js";
 
 export const GO_LIVE_STEP_ID = "go_live";
 /** Recorded decision: "live" | "dry_run" (declined). */
@@ -113,6 +101,14 @@ export interface GoLiveStepOptions {
   stream?: StreamRunner;
 }
 
+/** The stream runner is the transport's, not this step's: the "restart" that
+ * makes the daemon re-read the flag is `docker compose restart` here and
+ * `scripts/deploy.sh sync` on the server route, and only the transport knows
+ * which. */
+function transportOptionsOf(opts: GoLiveStepOptions): TransportOptions {
+  return opts.stream ? { stream: opts.stream } : {};
+}
+
 function decisionOf(input: Readonly<Record<string, unknown>>): GoLiveDecision | null {
   const raw = String(input.decision ?? "").trim().toLowerCase();
   if (raw === "go_live" || raw === "live" || raw === "yes") return "go_live";
@@ -129,14 +125,14 @@ function currentDryRun(root: string): boolean | null {
 }
 
 export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
-  const stream = opts.stream ?? nodeStreamRunner;
+  const transportOpts = transportOptionsOf(opts);
 
   /**
    * The proof, re-verified against the daemon's own state store. The checklist
    * entry alone is NOT enough: it is a file, and this is the one decision in
    * the wizard where a file must not be the evidence.
    */
-  async function provenProof(ctx: StepContext, root: string): Promise<{ proof: ProofRecord | null; detail: string }> {
+  async function provenProof(ctx: StepContext, transport: StackTransport): Promise<{ proof: ProofRecord | null; detail: string }> {
     const recorded = parseProofRecord(ctx.choices[PROOF_CHOICE_KEY]);
     if (!recorded) {
       return {
@@ -146,7 +142,7 @@ export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
           `pull request reviewed end to end and read the result — run the ${PROOF_STEP_ID} step first.`,
       };
     }
-    const r = await daemonExec(ctx.adapters.runner, root, ["node", "dist/src/cli.js", "why", String(recorded.pr), "--json"]);
+    const r = await transport.exec(["node", "dist/src/cli.js", "why", String(recorded.pr), "--json"]);
     const obs = r.code === 0 ? parseWhy(r.stdout) : null;
     if (obs === null) {
       return {
@@ -178,7 +174,6 @@ export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
       "arguments to get the explanation to read out; then call it again with decision: \"stay_dry_run\", or with " +
       `decision: "go_live" AND confirm: "${GO_LIVE_CONFIRMATION}" if — and only if — they said so explicitly.`,
     order: 78,
-    enabled: (choices) => choices[CHOICE_KEYS.topology] !== "vm",
     parameters: {
       type: "object",
       properties: {
@@ -196,11 +191,12 @@ export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
 
     async run(ctx): Promise<StepReport> {
       const root = rootOf(ctx.adapters);
+      const transport = stackTransportFor(ctx, transportOpts);
       const decision = decisionOf(ctx.input);
 
       // The proof gate comes FIRST, before the offer is even made: an
       // installation that has not proven itself is not offered a flip at all.
-      const { proof, detail } = await provenProof(ctx, root);
+      const { proof, detail } = await provenProof(ctx, transport);
       if (proof === null) {
         return { ok: false, checks: [{ name: "proof", ok: false, detail }] };
       }
@@ -294,9 +290,8 @@ export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
             "From the daemon's next start, reviews are posted to GitHub for real. To go back, set it to true and restart.",
         },
       ];
-      const ps = await composePs(ctx.adapters.runner, root);
-      const running = ps.ok && isUp(serviceRow(ps.rows, DAEMON_SERVICE));
-      checks.push(await restartDaemon(stream, root, (line) => ctx.adapters.log?.(`${GO_LIVE_STEP_ID}: ${line}`), running));
+      const running = await transport.running();
+      checks.push(await transport.restart((line) => ctx.adapters.log?.(`${GO_LIVE_STEP_ID}: ${line}`), running));
       const now = currentDryRun(root);
       checks.push(
         now === false
