@@ -5,8 +5,9 @@
 // the engine handles persistence, resume re-verification and finish for all
 // of them.
 import type { OnboardingStep } from "../engine.js";
+import { llmAuthStep } from "./llmauth.js";
 import { preflightStep } from "./preflight.js";
 
 export function defaultSteps(): OnboardingStep[] {
-  return [preflightStep()];
+  return [preflightStep(), llmAuthStep()];
 }

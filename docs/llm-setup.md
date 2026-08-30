@@ -9,6 +9,14 @@ pi resolves credentials in this order: CLI flag → `auth.json` (the OAuth
 token store) → environment (`OPENAI_API_KEY`). A completed `/login` therefore
 takes precedence over an API key in the environment.
 
+**The onboarding wizard does all of this for you** (`qcr onboard`):
+it asks the question, stores the key through the same secrets flow, performs
+the six-value prefix rewrite below itself (comment-preserving and reversible —
+switching routes later just re-runs the step), and, on the OAuth route, guides
+each of the three logins and verifies that each one landed on its container's
+persistent pi-home volume. This page is the manual path and stays authoritative
+for what the wizard does.
+
 ## Route 1 — ChatGPT OAuth (subscription, the shipped default)
 
 The model strings in `config.toml [models]` default to the **`openai-codex/`**

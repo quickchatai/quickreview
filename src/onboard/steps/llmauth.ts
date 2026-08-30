@@ -1,0 +1,711 @@
+// LLM auth — the wizard's credential choice (spec "LLM auth").
+// Both routes are first-class and the trade is stated honestly:
+//
+//   OAuth (a ChatGPT subscription) — the shipped default. pi's tokens live in
+//     `auth.json` under the pi home of the process that logged in, and they do
+//     NOT transfer between the host and the containers. So the OAuth route
+//     costs up to THREE separate browser logins: this wizard's own pi session,
+//     the daemon container, and the companion container. Each container login
+//     must land on that container's named pi-home volume or a recreate
+//     silently costs it (the hazard) — this step verifies exactly that,
+//     per surface, at the moment the surface exists.
+//   API key — one paste covers all three immediately (the entrypoints export
+//     the secrets-dir file as OPENAI_API_KEY for every pi process), and every
+//     model string must move from the OAuth provider prefix to the API one.
+//     The wizard does that rewrite itself: six values, comment-preserving,
+//     idempotent, and reversible, so switching routes later re-runs cleanly in
+//     either direction.
+//
+// Either route wants the embeddings key: OpenViking embeds memory entries with
+// an OpenAI embedding model and reads the SAME `openai_api_key` file. OAuth
+// covers the review models only, never embeddings — so the recommendation is
+// surfaced on the OAuth route too, as a note, never as a blocker.
+//
+// House rule, structural here: NO credential value ever reaches an argv. The
+// key is written straight to the secrets file (0600, dir 0700) by this module,
+// or collected by `deploy/collect-secrets.sh` — never passed to a process, and
+// never echoed into a check detail, the checklist, or a tool result. In the
+// pi-driven flow the wizard has no prompter at all, so the LLM never even sees
+// the key: the step points at the shell wizard and then verifies the file.
+//
+// Deterministic by construction: config and secrets are plain files under
+// paths derived from the injected state dir, every docker probe goes through
+// the ProcessRunner seam, and verify() neither prompts nor writes.
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import type { CheckResult, OnboardingStep, ProcessRunner, StepContext, StepReport } from "../engine.js";
+
+export const LLM_AUTH_STEP_ID = "llm_auth";
+/** The choice key later steps read the route from. */
+export const AUTH_ROUTE_CHOICE_KEY = "llm_auth_route";
+/** The choice key carrying the provider prefix the config now uses. */
+export const MODEL_PREFIX_CHOICE_KEY = "llm_model_prefix";
+
+export type AuthRoute = "oauth" | "api";
+
+/** pi's ChatGPT-OAuth provider prefix (config.example.toml's shipped default). */
+export const OAUTH_PREFIX = "openai-codex/";
+/** pi's direct-API provider prefix — needs OPENAI_API_KEY. */
+export const API_PREFIX = "openai/";
+
+export function prefixFor(route: AuthRoute): string {
+  return route === "oauth" ? OAUTH_PREFIX : API_PREFIX;
+}
+
+/** The secrets-dir file name — the same one `deploy/collect-secrets.sh` writes
+ * and the container entrypoints export as OPENAI_API_KEY. */
+export const OPENAI_KEY_FILE = "openai_api_key";
+const DEFAULT_SECRETS_DIR = "~/.config/quickreview-bot";
+
+/**
+ * The SIX model strings the route decides. Every one of them lives in
+ * `config.toml [models]` / `[models.tiers]` (docs/llm-setup.md route 2), and
+ * the provider prefix IS the route — nothing else in the file changes.
+ */
+export const MODEL_LOCATIONS: ReadonlyArray<{ section: string; key: string }> = [
+  { section: "models", key: "default" },
+  { section: "models", key: "conversation" },
+  { section: "models", key: "overseer" },
+  { section: "models.tiers", key: "terra-med" },
+  { section: "models.tiers", key: "sol-med" },
+  { section: "models.tiers", key: "sol-high" },
+];
+
+/** "models.default", "models.tiers.sol-high", … — the stable labels the checks
+ * and the checklist record use. */
+export function modelLabels(): string[] {
+  return MODEL_LOCATIONS.map((l) => `${l.section}.${l.key}`);
+}
+
+// ---- paths ------------------------------------------------------------------
+
+/** `stateDir` is `<sandbox root>/state` (engine contract), so the config sits
+ * beside it. Derived rather than injected: no engine surface changes. */
+export function configPathFor(stateDir: string): string {
+  return join(dirname(stateDir), "config.toml");
+}
+
+export function configExamplePathFor(stateDir: string): string {
+  return join(dirname(stateDir), "config.example.toml");
+}
+
+export function expandHomePath(path: string, home: string): string {
+  if (path === "~") return home;
+  if (path.startsWith("~/")) return join(home, path.slice(2));
+  return path;
+}
+
+/** The host pi's OAuth token store — this wizard's own login (pi keeps it at
+ * `$HOME/.pi/agent/auth.json`). */
+export function hostAuthJsonPath(home: string): string {
+  return join(home, ".pi", "agent", "auth.json");
+}
+
+function hostHome(): string {
+  return process.env.HOME ?? homedir();
+}
+
+// ---- tolerant TOML reads ----------------------------------------------------
+
+const SECTION_RE = /^\s*\[([^\]]+)\]\s*(?:#.*)?$/;
+// key = "value"   — the key may be bare or quoted (TOML allows both for the
+// dashed tier names). Trailing text (a comment) is preserved verbatim.
+const STRING_KV_RE = /^(\s*)("?)([A-Za-z0-9_.-]+)\2(\s*=\s*)"([^"]*)"(.*)$/;
+
+function isComment(line: string): boolean {
+  return /^\s*#/.test(line);
+}
+
+/** Read one string value out of raw config text. Tolerant on purpose: the
+ * wizard reads a half-filled config (FILL values everywhere) that the strict
+ * loader would refuse. Returns null when absent. */
+export function readTomlString(text: string, section: string, key: string): string | null {
+  let current = "";
+  for (const line of text.split("\n")) {
+    const sec = SECTION_RE.exec(line);
+    if (sec) {
+      current = sec[1]!.trim();
+      continue;
+    }
+    if (isComment(line) || current !== section) continue;
+    const kv = STRING_KV_RE.exec(line);
+    if (kv && kv[3] === key) return kv[5]!;
+  }
+  return null;
+}
+
+/** Where the secrets live: `[github] secrets_dir` wins (it is what the daemon
+ * and the compose mount actually use), then $QC_SECRETS_DIR, then the shipped
+ * default — the same order `deploy/collect-secrets.sh` and docker-compose.yml
+ * follow. */
+export function resolveSecretsDir(configText: string, home: string, envDir?: string): string {
+  const configured = readTomlString(configText, "github", "secrets_dir")?.trim();
+  const chosen = configured && configured.length > 0 ? configured : envDir && envDir.trim() ? envDir.trim() : DEFAULT_SECRETS_DIR;
+  return expandHomePath(chosen, home);
+}
+
+// ---- the model-string rewrite ----------------------------------------------
+
+export interface ModelAudit {
+  /** "models.default" … */
+  label: string;
+  value: string;
+  /** "oauth" | "api" | "custom" (some other provider — not ours to touch) |
+   * "missing" (the key is not in the file). */
+  kind: AuthRoute | "custom" | "missing";
+}
+
+/** What the six locations currently say. Read-only; the basis of verify(). */
+export function auditModelStrings(text: string): ModelAudit[] {
+  return MODEL_LOCATIONS.map(({ section, key }) => {
+    const label = `${section}.${key}`;
+    const value = readTomlString(text, section, key);
+    if (value === null) return { label, value: "", kind: "missing" as const };
+    if (value.startsWith(OAUTH_PREFIX)) return { label, value, kind: "oauth" as const };
+    if (value.startsWith(API_PREFIX)) return { label, value, kind: "api" as const };
+    return { label, value, kind: "custom" as const };
+  });
+}
+
+export interface RewriteResult {
+  text: string;
+  /** Labels whose prefix changed in this pass. */
+  rewritten: string[];
+  /** Labels already on the target prefix (idempotent re-run ⇒ all six). */
+  unchanged: string[];
+  /** Labels on some other provider — left exactly as they are. */
+  custom: string[];
+  /** Labels not present in the file at all. */
+  missing: string[];
+}
+
+/**
+ * Move every one of the six model strings onto `route`'s provider prefix.
+ *
+ * Line-oriented on purpose: comments, ordering, spacing and every other key in
+ * the file survive byte-for-byte (a TOML round-trip would eat them). Only the
+ * prefix of the six values changes, so the operation is idempotent (running it
+ * twice is a no-op) and reversible (oauth → api → oauth restores the original
+ * bytes). Values on any other provider are left alone — a deliberate custom
+ * model is not the wizard's business.
+ */
+export function rewriteModelPrefixes(text: string, route: AuthRoute): RewriteResult {
+  const target = prefixFor(route);
+  const wanted = new Map(MODEL_LOCATIONS.map((l) => [`${l.section}.${l.key}`, l]));
+  const seen = new Set<string>();
+  const rewritten: string[] = [];
+  const unchanged: string[] = [];
+  const custom: string[] = [];
+
+  const lines = text.split("\n");
+  let current = "";
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i]!;
+    const sec = SECTION_RE.exec(line);
+    if (sec) {
+      current = sec[1]!.trim();
+      continue;
+    }
+    if (isComment(line)) continue;
+    const kv = STRING_KV_RE.exec(line);
+    if (!kv) continue;
+    const label = `${current}.${kv[3]!}`;
+    if (!wanted.has(label) || seen.has(label)) continue;
+    seen.add(label);
+    const value = kv[5]!;
+    let rest: string;
+    if (value.startsWith(OAUTH_PREFIX)) rest = value.slice(OAUTH_PREFIX.length);
+    else if (value.startsWith(API_PREFIX)) rest = value.slice(API_PREFIX.length);
+    else {
+      custom.push(label);
+      continue;
+    }
+    const next = `${target}${rest}`;
+    if (next === value) {
+      unchanged.push(label);
+      continue;
+    }
+    lines[i] = `${kv[1]!}${kv[2]!}${kv[3]!}${kv[2]!}${kv[4]!}"${next}"${kv[6]!}`;
+    rewritten.push(label);
+  }
+
+  const missing = modelLabels().filter((l) => !seen.has(l));
+  return { text: lines.join("\n"), rewritten, unchanged, custom, missing };
+}
+
+// ---- the API key ------------------------------------------------------------
+
+/**
+ * The same shape `deploy/collect-secrets.sh`'s `v_openai` asserts (`^sk-`),
+ * plus "one unbroken string" — the shell's hidden single-line read cannot
+ * produce whitespace anyway. Pinned against the shell by
+ * tests/onboard-llmauth.test.ts so the two validators cannot drift.
+ */
+export function validateOpenAiKey(value: string): boolean {
+  const v = value.trim();
+  return v.startsWith("sk-") && v.length > 3 && !/\s/.test(v);
+}
+
+export interface KeyFileState {
+  present: boolean;
+  valid: boolean;
+  path: string;
+}
+
+export function readKeyFileState(secretsDir: string): KeyFileState {
+  const path = join(secretsDir, OPENAI_KEY_FILE);
+  if (!existsSync(path)) return { present: false, valid: false, path };
+  let raw = "";
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch {
+    return { present: true, valid: false, path };
+  }
+  return { present: raw.trim().length > 0, valid: validateOpenAiKey(raw), path };
+}
+
+/** Write the key exactly the way the shell wizard does: dir 0700, file 0600,
+ * no trailing newline, and the value never leaves this function. */
+export function writeKeyFile(secretsDir: string, value: string): string {
+  mkdirSync(secretsDir, { recursive: true, mode: 0o700 });
+  chmodSync(secretsDir, 0o700);
+  const path = join(secretsDir, OPENAI_KEY_FILE);
+  writeFileSync(path, value.trim(), { mode: 0o600 });
+  chmodSync(path, 0o600);
+  return path;
+}
+
+// ---- container login verification -------------------------------------------
+
+export type LoginState = "absent" | "no-pi-volume" | "stopped" | "no-auth" | "ok" | "undetectable";
+
+export interface LoginProbe {
+  state: LoginState;
+  /** The pi-home mount destination inside the container, when there is one. */
+  destination?: string;
+  /** Mount type + name, for the durability claim. */
+  mount?: string;
+}
+
+/**
+ * Did a pi OAuth login actually land on this container's PERSISTENT pi home?
+ *
+ * The question is deliberately asked about the MOUNT, not about `$HOME`: the
+ * failure was a container whose HOME had drifted off the mounted
+ * volume, so pi wrote a perfectly good auth.json into the writable layer and
+ * every rebuild silently cost the login. Testing `<mount destination>/agent/
+ * auth.json` proves the token is on the volume, which is the only claim worth
+ * making. Never throws, never prompts: an undetectable docker is a note.
+ */
+export async function probeContainerLogin(runner: ProcessRunner, container: string): Promise<LoginProbe> {
+  const mounts = await runner.run("docker", ["inspect", "--format", "{{json .Mounts}}", container]);
+  if (mounts.code !== 0) {
+    const err = `${mounts.stderr}${mounts.stdout}`;
+    // "No such object" is a container that does not exist yet (the normal case
+    // before bring-up); anything else means we could not look.
+    return { state: /no such object|no such container/i.test(err) ? "absent" : "undetectable" };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(mounts.stdout.trim() || "[]");
+  } catch {
+    return { state: "undetectable" };
+  }
+  const list = Array.isArray(parsed) ? (parsed as Array<Record<string, unknown>>) : [];
+  const piMount = list.find((m) => typeof m.Destination === "string" && /\/\.pi$/.test(m.Destination));
+  if (!piMount) return { state: "no-pi-volume" };
+  const destination = String(piMount.Destination);
+  const mount = `${String(piMount.Type ?? "mount")} ${String(piMount.Name ?? piMount.Source ?? "")}`.trim();
+
+  const running = await runner.run("docker", ["inspect", "--format", "{{.State.Running}}", container]);
+  if (running.code !== 0 || running.stdout.trim() !== "true") return { state: "stopped", destination, mount };
+
+  const auth = await runner.run("docker", ["exec", container, "sh", "-c", `test -s '${destination}/agent/auth.json'`]);
+  return { state: auth.code === 0 ? "ok" : "no-auth", destination, mount };
+}
+
+function loginCheck(name: string, label: string, container: string, probe: LoginProbe): CheckResult {
+  switch (probe.state) {
+    case "ok":
+      return {
+        name,
+        ok: true,
+        detail: `${label}: logged in — auth.json is on the persistent pi home (${probe.mount}) at ${probe.destination}, so a container recreate keeps it`,
+      };
+    case "no-auth":
+      return {
+        name,
+        ok: false,
+        detail:
+          `${label}: no auth.json on the pi home (${probe.mount}). Attach and log in: ` +
+          `docker exec -it ${container} tmux attach -t overseer → /login → detach (Ctrl-b d). ` +
+          "Host tokens do not transfer — this container needs its own login.",
+      };
+    case "no-pi-volume":
+      return {
+        name,
+        ok: false,
+        detail:
+          `${label}: the container has no volume mounted on its pi home, so any /login would live in the writable layer ` +
+          "and vanish on the next recreate (the hazard). Recreate it with its pihome volume before logging in.",
+      };
+    case "stopped":
+      return { name, ok: true, detail: `${label}: container exists but is not running — its login is verified when it starts` };
+    case "undetectable":
+      return { name, ok: true, detail: `${label}: could not inspect docker from here — this login is verified where the container runs` };
+    case "absent":
+    default:
+      return {
+        name,
+        ok: true,
+        detail: `${label}: no container yet — this browser login is guided at the moment the container first needs it (tokens never transfer from this host)`,
+      };
+  }
+}
+
+/** Container names to probe, config first so a renamed deployment still works. */
+export function daemonContainerName(configText: string): string {
+  return readTomlString(configText, "tui", "container")?.trim() || "quickreview-sandbox";
+}
+
+export function companionContainerName(configText: string): string {
+  return readTomlString(configText, "companion", "container_name")?.trim() || "qcr-companion";
+}
+
+// ---- the operator-facing text ----------------------------------------------
+
+export const ROUTE_QUESTION =
+  "How should the review sessions authenticate to OpenAI?\n" +
+  "  1) oauth — a ChatGPT subscription. Cost is your plan, flat. The catch: pi's OAuth tokens live in the\n" +
+  "     pi home of whichever process logged in and DO NOT transfer between this host and the containers, so\n" +
+  "     expect up to three separate browser logins — this wizard's pi session, the daemon container, and the\n" +
+  "     companion container. Each is guided when its surface first needs it.\n" +
+  "  2) api — one OpenAI API key. One paste covers all three immediately (the container entrypoints export the\n" +
+  "     key file as OPENAI_API_KEY), metered per token, and the wizard rewrites all six model strings for you.\n" +
+  "Answer 1/oauth or 2/api:";
+
+export const KEY_QUESTION =
+  `paste the OpenAI API key (it is written straight to the ${OPENAI_KEY_FILE} secrets file, 0600, never to a command line):`;
+
+export const EMBEDDINGS_RECOMMENDATION =
+  "worth providing even on the OAuth route: OpenViking (the memory engine) embeds every entry with an OpenAI " +
+  "embedding model and reads the same openai_api_key file. OAuth covers the review models only, never embeddings — " +
+  "without the key it falls back to a local dense embedder (functional, slower, lower quality). Usage is fractions " +
+  "of a cent a day. Add it any time with: bash deploy/collect-secrets.sh";
+
+export const STEP_EXPLAIN =
+  "Chooses how the review sessions talk to OpenAI, and makes the whole installation consistent with that choice. " +
+  "OAuth (a ChatGPT subscription) is flat-cost but costs up to three separate browser logins — this wizard's pi " +
+  "session, the daemon container and the companion container — because pi's tokens do not transfer between the host " +
+  "and a container; each login is guided where it happens and verified to have landed on that container's persistent " +
+  "pi-home volume, so a recreate never silently costs it. An API key is one paste that covers all three immediately, " +
+  "and the wizard then rewrites all six model strings in config.toml from the openai-codex/ provider prefix to " +
+  "openai/ (comment-preserving and reversible — switching routes later just re-runs this step). Either way, an " +
+  "embeddings key is recommended: OAuth does not cover the memory engine's embeddings.";
+
+// ---- route decision ---------------------------------------------------------
+
+export function parseRouteAnswer(answer: string): AuthRoute | null {
+  const a = answer.trim().toLowerCase();
+  if (["1", "oauth", "chatgpt", "subscription", "login"].includes(a)) return "oauth";
+  if (["2", "api", "key", "api key", "api-key", "apikey"].includes(a)) return "api";
+  return null;
+}
+
+function recordedRoute(ctx: StepContext): AuthRoute | null {
+  const fromChoice = ctx.choices[AUTH_ROUTE_CHOICE_KEY];
+  if (fromChoice === "oauth" || fromChoice === "api") return fromChoice;
+  const fromData = ctx.data.route;
+  if (fromData === "oauth" || fromData === "api") return fromData;
+  return null;
+}
+
+interface RouteDecision {
+  route: AuthRoute | null;
+  source: string;
+}
+
+/**
+ * run() re-decides the route every time, so switching later is just "change the
+ * world and run the step again" — which is what makes the rewrite reversible in
+ * practice. Order:
+ *   1. the prompter (the non-LLM fallback entry actually asks the question);
+ *   2. otherwise the credential reality, using pi's OWN resolution order
+ *      (CLI flag → auth.json → env): a completed host login means the OAuth
+ *      route is what pi will really use, so the config must say so;
+ *   3. otherwise a valid key file;
+ *   4. otherwise the previously recorded route;
+ *   5. otherwise: no answer yet — the step goes red with the choice text.
+ */
+async function decideRoute(ctx: StepContext, keyFile: KeyFileState, hostLogin: boolean): Promise<RouteDecision> {
+  const prompter = ctx.adapters.prompter;
+  if (prompter) {
+    const answer = await prompter(ROUTE_QUESTION);
+    const parsed = parseRouteAnswer(answer);
+    if (parsed) return { route: parsed, source: "you chose it" };
+    const kept = recordedRoute(ctx);
+    if (!answer.trim() && kept) return { route: kept, source: "kept the recorded route (empty answer)" };
+    return { route: null, source: `did not understand the answer — reply 1/oauth or 2/api` };
+  }
+  if (hostLogin) return { route: "oauth", source: "a completed pi login is on this host, and pi prefers auth.json over any env key" };
+  if (keyFile.valid) return { route: "api", source: `a valid ${OPENAI_KEY_FILE} is in the secrets dir` };
+  const kept = recordedRoute(ctx);
+  if (kept) return { route: kept, source: "the recorded route" };
+  return { route: null, source: "nothing on disk says which route this installation uses" };
+}
+
+// ---- config loading ---------------------------------------------------------
+
+interface ConfigState {
+  path: string;
+  text: string | null;
+  /** Set when this call seeded config.toml from config.example.toml. */
+  seeded: boolean;
+  error: string | null;
+}
+
+function loadConfig(stateDir: string, allowSeed: boolean): ConfigState {
+  const path = configPathFor(stateDir);
+  if (existsSync(path)) {
+    try {
+      return { path, text: readFileSync(path, "utf8"), seeded: false, error: null };
+    } catch (err) {
+      return { path, text: null, seeded: false, error: `cannot read ${path}: ${String(err)}` };
+    }
+  }
+  const example = configExamplePathFor(stateDir);
+  if (!allowSeed) return { path, text: null, seeded: false, error: `${path} does not exist yet — run this step to create it from config.example.toml` };
+  if (!existsSync(example)) return { path, text: null, seeded: false, error: `neither ${path} nor ${example} exists — is this a QuickReview checkout?` };
+  try {
+    copyFileSync(example, path);
+    return { path, text: readFileSync(path, "utf8"), seeded: true, error: null };
+  } catch (err) {
+    return { path, text: null, seeded: false, error: `could not create ${path} from config.example.toml: ${String(err)}` };
+  }
+}
+
+// ---- checks -----------------------------------------------------------------
+
+function embeddingsCheck(keyFile: KeyFileState, route: AuthRoute): CheckResult {
+  if (keyFile.valid) {
+    return {
+      name: "embeddings",
+      ok: true,
+      detail: `${OPENAI_KEY_FILE} is present — it also feeds the memory engine's embeddings (OpenViking reads the same file)`,
+    };
+  }
+  if (keyFile.present) {
+    return { name: "embeddings", ok: true, detail: `${keyFile.path} exists but does not look like an OpenAI key — memory falls back to the local embedder. ${EMBEDDINGS_RECOMMENDATION}` };
+  }
+  const lead = route === "oauth" ? "no embeddings key: " : "no embeddings key yet: ";
+  return { name: "embeddings", ok: true, detail: `${lead}${EMBEDDINGS_RECOMMENDATION}` };
+}
+
+function modelsCheck(audit: ModelAudit[], route: AuthRoute, note: string): CheckResult {
+  const wrong = audit.filter((a) => a.kind === "oauth" || a.kind === "api").filter((a) => a.kind !== route);
+  const missing = audit.filter((a) => a.kind === "missing");
+  const custom = audit.filter((a) => a.kind === "custom");
+  const tail = [
+    custom.length ? `left alone on another provider: ${custom.map((c) => c.label).join(", ")}` : "",
+    note,
+  ]
+    .filter(Boolean)
+    .join("; ");
+  if (wrong.length === 0 && missing.length === 0) {
+    return {
+      name: "models",
+      ok: true,
+      detail: `all ${audit.length - custom.length} model strings use the ${prefixFor(route)} prefix (${route} route)${tail ? ` — ${tail}` : ""}`,
+    };
+  }
+  const problems = [
+    wrong.length ? `still on the wrong provider: ${wrong.map((w) => `${w.label}="${w.value}"`).join(", ")}` : "",
+    missing.length ? `not found in config.toml: ${missing.map((m) => m.label).join(", ")}` : "",
+  ].filter(Boolean);
+  return { name: "models", ok: false, detail: `${problems.join("; ")} — expected the ${prefixFor(route)} prefix for the ${route} route${tail ? ` (${tail})` : ""}` };
+}
+
+function companionModelNote(configText: string, route: AuthRoute): string {
+  const model = readTomlString(configText, "companion", "model");
+  if (!model) return "";
+  const wanted = prefixFor(route);
+  if (model.startsWith(wanted)) return "";
+  return `[companion] model is set to "${model}" — the companion is yours to point where you like, but on the ${route} route it usually wants the ${wanted} prefix too`;
+}
+
+async function oauthLoginChecks(ctx: StepContext, configText: string, home: string): Promise<CheckResult[]> {
+  const checks: CheckResult[] = [];
+  const authPath = hostAuthJsonPath(home);
+  const hostOk = existsSync(authPath) && (() => {
+    try {
+      return readFileSync(authPath, "utf8").trim().length > 0;
+    } catch {
+      return false;
+    }
+  })();
+  checks.push(
+    hostOk
+      ? { name: "wizard_login", ok: true, detail: `this host's pi is logged in (${authPath}) — login 1 of 3 done` }
+      : {
+          name: "wizard_login",
+          ok: false,
+          detail:
+            `no pi OAuth token on this host (${authPath}). Log in from this very session — type /login at pi's input line ` +
+            "and follow the browser flow — then run this step again. This is login 1 of 3; the two container logins come later.",
+        },
+  );
+  const runner = ctx.adapters.runner;
+  const daemon = daemonContainerName(configText);
+  const companion = companionContainerName(configText);
+  checks.push(loginCheck("daemon_login", "daemon container", daemon, await probeContainerLogin(runner, daemon)));
+  checks.push(loginCheck("companion_login", "companion container", companion, await probeContainerLogin(runner, companion)));
+  return checks;
+}
+
+// ---- the step ---------------------------------------------------------------
+
+export function llmAuthStep(): OnboardingStep {
+  return {
+    id: LLM_AUTH_STEP_ID,
+    title: "LLM auth: ChatGPT OAuth or an API key",
+    explain: STEP_EXPLAIN,
+    // After preflight (10) and the topology question (20): the spec's second
+    // question, and everything after it assumes a decided route.
+    order: 30,
+
+    async run(ctx): Promise<StepReport> {
+      const home = hostHome();
+      const cfg = loadConfig(ctx.adapters.paths.stateDir, true);
+      if (cfg.text === null) {
+        return { ok: false, checks: [{ name: "config", ok: false, detail: cfg.error ?? "config.toml unavailable" }] };
+      }
+      const checks: CheckResult[] = [];
+      if (cfg.seeded) {
+        checks.push({ name: "config", ok: true, detail: `created ${cfg.path} from config.example.toml (its FILL values are untouched — later steps fill them)` });
+      }
+
+      const secretsDir = resolveSecretsDir(cfg.text, home, process.env.QC_SECRETS_DIR);
+      let keyFile = readKeyFileState(secretsDir);
+      const hostLogin = existsSync(hostAuthJsonPath(home));
+
+      const decision = await decideRoute(ctx, keyFile, hostLogin);
+      if (decision.route === null) {
+        checks.push({ name: "route", ok: false, detail: `${decision.source}.\n${ROUTE_QUESTION}` });
+        return { ok: false, checks };
+      }
+      const route = decision.route;
+      checks.push({ name: "route", ok: true, detail: `${route} route — ${decision.source}` });
+
+      // --- the credential ------------------------------------------------
+      if (route === "api") {
+        if (!keyFile.valid) {
+          const prompter = ctx.adapters.prompter;
+          if (prompter) {
+            const pasted = await prompter(KEY_QUESTION);
+            if (!pasted.trim()) {
+              checks.push({
+                name: "credential",
+                ok: false,
+                detail: `no key entered — nothing was written to ${keyFile.path}. Run this step again, or collect the key with: bash deploy/collect-secrets.sh`,
+              });
+            } else if (!validateOpenAiKey(pasted)) {
+              // The value itself is NEVER echoed back.
+              checks.push({ name: "credential", ok: false, detail: "that does not look like an OpenAI API key (they start with sk- and contain no spaces) — nothing was written" });
+            } else {
+              writeKeyFile(secretsDir, pasted);
+              keyFile = readKeyFileState(secretsDir);
+              checks.push({ name: "credential", ok: true, detail: `saved to ${keyFile.path} (0600, dir 0700) — the entrypoints export it as OPENAI_API_KEY, so wizard, daemon and companion are all covered` });
+            }
+          } else {
+            checks.push({
+              name: "credential",
+              ok: false,
+              detail:
+                `no valid ${OPENAI_KEY_FILE} in ${secretsDir}. Collect it with the secrets wizard, in another terminal: ` +
+                "bash deploy/collect-secrets.sh — it reads the key with hidden input and writes it 0600. " +
+                "(The key never passes through this session or any command line.) Then run this step again.",
+            });
+          }
+        } else {
+          checks.push({ name: "credential", ok: true, detail: `${OPENAI_KEY_FILE} present in ${secretsDir} — covers the wizard, the daemon and the companion at once` });
+        }
+      }
+
+      // --- the model strings ---------------------------------------------
+      const rewrite = rewriteModelPrefixes(cfg.text, route);
+      if (rewrite.text !== cfg.text) {
+        try {
+          writeFileSync(cfg.path, rewrite.text);
+        } catch (err) {
+          checks.push({ name: "models", ok: false, detail: `could not write ${cfg.path}: ${String(err)}` });
+          return { ok: false, checks };
+        }
+      }
+      const configText = rewrite.text;
+      const audit = auditModelStrings(configText);
+      const note = [
+        rewrite.rewritten.length ? `rewrote ${rewrite.rewritten.length}: ${rewrite.rewritten.join(", ")}` : "already on this route",
+        companionModelNote(configText, route),
+      ]
+        .filter(Boolean)
+        .join("; ");
+      checks.push(modelsCheck(audit, route, note));
+
+      // --- the logins ------------------------------------------------------
+      if (route === "oauth") checks.push(...(await oauthLoginChecks(ctx, configText, home)));
+
+      checks.push(embeddingsCheck(keyFile, route));
+
+      const ok = checks.every((c) => c.ok);
+      if (ok) {
+        ctx.recordChoice(AUTH_ROUTE_CHOICE_KEY, route);
+        ctx.recordChoice(MODEL_PREFIX_CHOICE_KEY, prefixFor(route));
+        return { ok, checks, data: { route, prefix: prefixFor(route), config_path: cfg.path, models: modelLabels() } };
+      }
+      return { ok, checks };
+    },
+
+    async verify(ctx): Promise<StepReport> {
+      // Never prompts, never writes, never touches a credential value.
+      const home = hostHome();
+      const route = recordedRoute(ctx);
+      if (route === null) {
+        return { ok: false, checks: [{ name: "route", ok: false, detail: "no LLM auth route recorded — run this step to choose one" }] };
+      }
+      const cfg = loadConfig(ctx.adapters.paths.stateDir, false);
+      if (cfg.text === null) {
+        return {
+          ok: false,
+          checks: [
+            { name: "route", ok: true, detail: `${route} route recorded` },
+            { name: "config", ok: false, detail: cfg.error ?? "config.toml unavailable" },
+          ],
+        };
+      }
+      const checks: CheckResult[] = [{ name: "route", ok: true, detail: `${route} route recorded` }];
+      const secretsDir = resolveSecretsDir(cfg.text, home, process.env.QC_SECRETS_DIR);
+      const keyFile = readKeyFileState(secretsDir);
+
+      if (route === "api") {
+        checks.push(
+          keyFile.valid
+            ? { name: "credential", ok: true, detail: `${OPENAI_KEY_FILE} present in ${secretsDir}` }
+            : {
+                name: "credential",
+                ok: false,
+                detail: keyFile.present
+                  ? `${keyFile.path} does not look like an OpenAI API key (they start with sk-) — re-run the step or bash deploy/collect-secrets.sh`
+                  : `the api route needs ${OPENAI_KEY_FILE} in ${secretsDir} — run bash deploy/collect-secrets.sh, or re-run this step to switch back to the OAuth route`,
+              },
+        );
+      }
+
+      checks.push(modelsCheck(auditModelStrings(cfg.text), route, companionModelNote(cfg.text, route)));
+      if (route === "oauth") checks.push(...(await oauthLoginChecks(ctx, cfg.text, home)));
+      checks.push(embeddingsCheck(keyFile, route));
+
+      return { ok: checks.every((c) => c.ok), checks };
+    },
+  };
+}
