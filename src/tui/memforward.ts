@@ -106,6 +106,13 @@ export interface MemForwardDeps {
   log?: (line: string) => void;
   /** Probe deadline. Short: this runs on the TUI's startup path. */
   probeTimeoutMs?: number;
+  /**: `[tui] target = "local"` — the ONE forward script's `--local`
+   * mode (plain local `docker exec`, no ssh hop). Default false (ssh). */
+  local?: boolean;
+  /** Local mode only: mirrors `[tui] sudo_docker` onto the script's
+   * `--no-sudo` flag. Ignored in ssh mode (the script's own defaults rule,
+   * exactly as before). Default true. */
+  sudoDocker?: boolean;
 }
 
 const DEFAULT_PROBE_TIMEOUT_MS = 1_500;
@@ -146,6 +153,8 @@ export class MemoryForward {
       load: deps.load ?? (() => import(pathToFileURL(join(repoRoot, "scripts", "companion-memory-forward.mjs")).href) as Promise<ForwardModule>),
       log: deps.log ?? (() => {}),
       probeTimeoutMs: deps.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
+      local: deps.local ?? false,
+      sudoDocker: deps.sudoDocker ?? true,
     };
     this.status = {
       state: "off",
@@ -205,7 +214,11 @@ export class MemoryForward {
     }
     let bound = 0;
     try {
-      const { cfg } = mod.parseArgs(["run"], this.deps.env);
+      // local mode rides the script's OWN flags — the same argv the
+      // standalone runner would take — so both entrypoints keep one config
+      // parser and cannot drift. ssh mode passes exactly what it always did.
+      const runArgs = ["run", ...(this.deps.local ? ["--local", ...(this.deps.sudoDocker ? [] : ["--no-sudo"])] : [])];
+      const { cfg } = mod.parseArgs(runArgs, this.deps.env);
       const handle = mod.createForwarder(cfg, { log: (line) => this.deps.log(`memory-forward: ${line}`) });
       bound = await handle.listen();
       if (bound === 0) {

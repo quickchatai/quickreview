@@ -22,8 +22,22 @@ export interface RemoteResult {
   code: number | null;
 }
 
-/** Runs `ssh <host> <argv…>`. Injectable — tests never spawn. */
+/** Runs `ssh <host> <argv…>`. Injectable — tests never spawn.
+ *
+ * this is the TUI's ONE remote-runner interface, and it now has two
+ * implementations — `realSshRunner` (the VM topology) and
+ * `realLocalCommandRunner` (the laptop topology: the same argv runs on THIS
+ * machine, `host` ignored, no ssh anywhere). `runnerFor(cfg)` picks; callers
+ * keep calling `ssh(cfg.ssh_host, someArgv(cfg))` untouched. */
 export type SshRunner = (host: string, argv: string[], opts?: { stdin?: string; timeoutMs?: number }) => Promise<RemoteResult>;
+
+/**: transport of every TUI remote op. Driven by the explicit
+ * `[tui] target` knob ONLY — never inferred from ssh_host's value. */
+export type Transport = "ssh" | "local";
+
+export function transportOf(cfg: TuiConfig): Transport {
+  return cfg.target === "local" ? "local" : "ssh";
+}
 
 function dockerPrefix(cfg: TuiConfig): string[] {
   return [...(cfg.sudo_docker ? ["sudo"] : []), "docker", "exec"];
@@ -141,9 +155,13 @@ export function sendKeysArgv(cfg: TuiConfig, session: string, parts: string[]): 
  * ever resized it.
  */
 export function attachArgv(cfg: TuiConfig, session: string): string[] {
+  return ["-tt", cfg.ssh_host, ...attachDockerArgv(cfg, session)];
+}
+
+/** The docker/tmux half of the attach — shared by both transports so the
+ * window-size discipline above cannot drift between them. */
+function attachDockerArgv(cfg: TuiConfig, session: string): string[] {
   return [
-    "-tt",
-    cfg.ssh_host,
     ...dockerPrefix(cfg),
     "-it",
     cfg.container,
@@ -158,6 +176,19 @@ export function attachArgv(cfg: TuiConfig, session: string): string[] {
     "-t",
     session,
   ];
+}
+
+/**
+ * the FULL attach command, binary first — what the pty spawner
+ * executes. One construction path for both topologies: ssh mode wraps
+ * `attachArgv` (unchanged, argv after the ssh binary); local mode runs the
+ * same docker/tmux tail directly, where the bare `;` reaches tmux as its own
+ * argv element (tmux's multi-command separator) — same window-size handback,
+ * no ssh process anywhere.
+ */
+export function attachCommand(cfg: TuiConfig, session: string): string[] {
+  if (transportOf(cfg) === "local") return attachDockerArgv(cfg, session);
+  return ["ssh", ...attachArgv(cfg, session)];
 }
 
 /**
@@ -214,8 +245,32 @@ export function killInFlightSsh(): number {
 }
 
 export const realSshRunner: SshRunner = (host, argv, opts) =>
-  new Promise((resolvePromise) => {
-    const child = spawn("ssh", ["-o", "BatchMode=yes", host, argv.map(shellQuote).join(" ")], { stdio: ["pipe", "pipe", "pipe"] });
+  runChild("ssh", ["-o", "BatchMode=yes", host, argv.map(shellQuote).join(" ")], opts);
+
+/**
+ * the laptop topology's runner — the SAME argv every builder above
+ * produces, executed directly on this machine (`spawn(argv[0], argv.slice(1))`,
+ * no shell, no quoting, no ssh). `host` is accepted and ignored so every
+ * caller's `ssh(cfg.ssh_host, …)` call site stays untouched; `sudo_docker`
+ * is already honoured by the builders (`dockerPrefix`). Children ride the
+ * same in-flight set, so the re-exec teardown's `killInFlightSsh` covers a
+ * wedged local docker exactly as it covers a wedged ssh.
+ */
+export const realLocalCommandRunner: SshRunner = (_host, argv, opts) => {
+  const [bin, ...rest] = argv;
+  if (bin === undefined) return Promise.resolve({ ok: false, stdout: "", stderr: "empty argv", code: null });
+  return runChild(bin, rest, opts);
+};
+
+/** The transport decision, made ONCE: everything wired off this runner runs
+ * over ssh or locally per `[tui] target`, with no per-call branching. */
+export function runnerFor(cfg: TuiConfig): SshRunner {
+  return transportOf(cfg) === "local" ? realLocalCommandRunner : realSshRunner;
+}
+
+function runChild(bin: string, args: string[], opts?: { stdin?: string; timeoutMs?: number }): Promise<RemoteResult> {
+  return new Promise((resolvePromise) => {
+    const child = spawn(bin, args, { stdio: ["pipe", "pipe", "pipe"] });
     inFlightSsh.add(child);
     let stdout = "";
     let stderr = "";
@@ -246,3 +301,4 @@ export const realSshRunner: SshRunner = (host, argv, opts) =>
     if (opts?.stdin !== undefined) child.stdin.end(opts.stdin);
     else child.stdin.end();
   });
+}

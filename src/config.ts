@@ -45,7 +45,17 @@ export function githubCloneDir(g: GithubConfig): string {
   return tail || "repo";
 }
 
+/**: where the daemon container lives relative to the TUI. `"ssh"` is
+ * the VM topology (every remote op rides `ssh <ssh_host> …`); `"local"` is the
+ * laptop topology (the SAME commands run against local docker directly, and no
+ * ssh process is ever spawned). Always explicit — never inferred from a magic
+ * ssh_host value. */
+export type TuiTarget = "ssh" | "local";
+
 export interface TuiConfig {
+  /** Transport for every TUI remote op (see TuiTarget). Default "ssh". */
+  target: TuiTarget;
+  /** ssh alias of the box running the container. Ignored when target = "local". */
   ssh_host: string;
   container: string;
   remote_state_dir: string;
@@ -762,6 +772,7 @@ export function backfillDefaults(github: GithubConfig): BackfillConfig {
 /** [tui] is optional in config.toml — the TUI is an operator convenience and
  * older configs must keep parsing. */
 export const TUI_DEFAULTS: TuiConfig = {
+  target: "ssh",
   ssh_host: "my-vm",
   container: "quickreview-sandbox",
   remote_state_dir: "/opt/quickreview/state",
@@ -1034,6 +1045,9 @@ export function parseConfig(toml: string): Config {
     "issue_label", "secrets_dir",
   ] as const) req(cfg.github as unknown as Record<string, unknown>, k);
   cfg.github.secrets_dir = expandHome(cfg.github.secrets_dir);
+  if (cfg.tui.target !== "ssh" && cfg.tui.target !== "local") {
+    throw new Error(`config.toml [tui]: target must be "ssh" or "local" (got ${JSON.stringify(cfg.tui.target)})`);
+  }
   const firstPass = cfg.daemon.round_first_pass_max_min ?? DEFAULT_ROUND_FIRST_PASS_MAX_MIN;
   const passes = cfg.daemon.round_passes_max_min ?? DEFAULT_ROUND_PASSES_MAX_MIN;
   const running = cfg.daemon.session_command_running_max_min ?? DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN;

@@ -7,6 +7,7 @@
 // the board (key s) when the connection dies mid-session.
 import { spawnSync } from "node:child_process";
 import type { TuiConfig } from "../config.js";
+import { transportOf } from "./remote.js";
 
 export function masterCheckArgv(cfg: TuiConfig): string[] {
   return ["-O", "check", cfg.ssh_host];
@@ -17,7 +18,9 @@ export function masterConnectArgv(cfg: TuiConfig): string[] {
 }
 
 export interface ConnectResult {
-  kind: "alive" | "connected" | "failed";
+  /** `"local"`: `[tui] target = "local"` — there is no master to
+   * establish and no ssh process is ever spawned; the call is a silent no-op. */
+  kind: "alive" | "connected" | "failed" | "local";
   detail?: string;
 }
 
@@ -33,6 +36,10 @@ export const realSyncSsh: SyncSsh = (argv, interactive) => {
 };
 
 export function ensureSshMaster(cfg: TuiConfig, ssh: SyncSsh = realSyncSsh, say: (line: string) => void = console.log): ConnectResult {
+  // the laptop topology has no ssh anywhere. Guarded HERE (not only
+  // at the call sites) so the board's `s` reconnect hook and any future caller
+  // inherit the guarantee: in local mode this function spawns nothing.
+  if (transportOf(cfg) === "local") return { kind: "local" };
   if (ssh(masterCheckArgv(cfg), false).status === 0) return { kind: "alive" };
   say(`connecting to ${cfg.ssh_host} — enter the GCP key passphrase if asked (once; the connection is shared for 4h)`);
   const r = ssh(masterConnectArgv(cfg), true);

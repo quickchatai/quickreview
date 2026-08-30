@@ -14,7 +14,7 @@ import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR } from "./paint.js";
 import { visiblePrs } from "./filters.js";
 import { reselect } from "./model.js";
 import { HotReloader, parseResumeArg, readResumeState, realReexec } from "./reload.js";
-import { killInFlightSsh, realSshRunner } from "./remote.js";
+import { killInFlightSsh, runnerFor, transportOf } from "./remote.js";
 import { chainOnPoll } from "./poll-hooks.js";
 
 export { chainOnPoll } from "./poll-hooks.js";
@@ -226,13 +226,17 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
   }
   const full = loadConfig();
   const cfg = full.tui;
+  // ONE transport decision for every remote op — ssh to the VM, or
+  // the same commands against local docker on the laptop topology.
+  const runner = runnerFor(cfg);
 
   // The GCP key passphrase, once, natively — before the alt screen, so the
   // OpenSSH prompt is a plain terminal prompt. Failure degrades to the
-  // unreachable banner (retry from the board with s).
+  // unreachable banner (retry from the board with s). In local mode this is
+  // a guarded no-op — no ssh process is ever spawned.
   ensureSshMaster(cfg);
 
-  const app = new App(cfg, realSshRunner);
+  const app = new App(cfg, runner);
 
   // The terminal must come back whatever kills us — raw mode + alt screen
   // surviving a crash is exactly the "only closing the terminal works" trap.
@@ -331,6 +335,10 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
   const memForward = new MemoryForward({
     baseUrl: tuiMemoryBaseUrl(),
     repoRoot: sandboxRoot(),
+    // the forward follows the SAME [tui] target knob — local mode
+    // reaches the daemon container's loopback engine via plain docker exec.
+    local: transportOf(cfg) === "local",
+    sudoDocker: cfg.sudo_docker,
     log: (line) => app.notice(line),
   });
   // Eagerly, not on first visit to the tab: the companion container reaches
@@ -348,13 +356,15 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
     sink: buildIssueSink(full, app.ssh, memStore),
     ...(projection ? { readTickets: () => readEffortTickets(projection.root, projection.effort) } : {}),
   });
-  const { RealDeployFetcher, installDeployHooks, powerCommand, realLocalRunner } = await import("./deploytab.js");
+  const { RealDeployFetcher, installDeployHooks, powerSpawnArgv, realLocalRunner } = await import("./deploytab.js");
   const { FileDeployCeremonyStore } = await import("./deploy-ceremony.js");
   const localRunner = realLocalRunner(sandboxRoot());
   app.hooks.powerRun = (_theApp, action, onData, onExit) => {
-    // docker stop/start on the VM, streamed into the tab like a deploy.
-    const child = spawn("ssh", [cfg.ssh_host, powerCommand(cfg, action)], { stdio: ["ignore", "pipe", "pipe"] });
-    onData(`$ ssh ${cfg.ssh_host} ${powerCommand(cfg, action)}\n`);
+    // docker stop/start on the VM (or local docker in local mode),
+    // streamed into the tab like a deploy.
+    const cmd = powerSpawnArgv(cfg, action);
+    const child = spawn(cmd[0]!, cmd.slice(1), { stdio: ["ignore", "pipe", "pipe"] });
+    onData(`$ ${cmd.join(" ")}\n`);
     child.stdout.on("data", (b: Buffer) => onData(b.toString("utf8")));
     child.stderr.on("data", (b: Buffer) => onData(b.toString("utf8")));
     child.on("close", (code) => onExit(code));
@@ -375,7 +385,7 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
 
   const deployState = installDeployHooks(
     app,
-    new RealDeployFetcher(cfg, realSshRunner, localRunner),
+    new RealDeployFetcher(cfg, runner, localRunner),
     undefined,
     undefined,
     new FileDeployCeremonyStore(join(sandboxRoot(), "state", "tui-deploy-ceremony.json")),
@@ -510,7 +520,7 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
   // nothing else: the poll keeps polling and the board keeps painting. Runs
   // whether or not the companion is up — the record is worth keeping either
   // way, and it is what the companion will read when it next starts.
-  const evidenceCopier = new EvidenceCopier(cfg, evidence, realSshRunner, {
+  const evidenceCopier = new EvidenceCopier(cfg, evidence, runner, {
     sessionDir: full.pi.session_dir,
     timeoutMs: Math.max(5, cfg.evidence_timeout_s) * 1000,
     onNotice: (text) => app.notice(text),
@@ -602,7 +612,7 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
 
     const { AlertConsumer, AlertPolicy, filePolicyStore, notifySendRunner } = await import("./alerts.js");
     const { InjectSender } = await import("./msg.js");
-    const overseer = new InjectSender(cfg, realSshRunner);
+    const overseer = new InjectSender(cfg, runner);
     // Persisted per-cause memory: "already told you" survives a TUI restart
     // inside the same ops day, and resets with the day.
     const policy = new AlertPolicy(full.companion.cooldown_min, () => new Date(), filePolicyStore(policyStatePath), full.ops.timezone);

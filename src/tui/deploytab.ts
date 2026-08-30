@@ -13,7 +13,7 @@ import type { BoardKey } from "./keys.js";
 import { paintCmdBar } from "./cmdbar.js";
 import { ACCENT, ACCENT_BG, BAD, HEADING, MUTED, OK, RESET as DRESET, STRONG, WARN_BG, badge, modeBadge, sectionTitle } from "./design.js";
 import { Frame, displayWidth, rule, stripAnsi, truncate } from "./paint.js";
-import type { RemoteResult, SshRunner } from "./remote.js";
+import { transportOf, type RemoteResult, type SshRunner } from "./remote.js";
 import { CommandDrainSender, type DeployDrainSender } from "./deploy-drain.js";
 import { chainOnPoll } from "./poll-hooks.js";
 import { MemoryDeployCeremonyStore, type DeployCeremonyStore, type DurableDeployPhase } from "./deploy-ceremony.js";
@@ -38,6 +38,15 @@ export function containerStatusArgv(cfg: TuiConfig): string[] {
 /** The remote shell line hooks.powerRun streams: docker stop/start. */
 export function powerCommand(cfg: TuiConfig, action: "stop" | "start"): string {
   return `${cfg.sudo_docker ? "sudo " : ""}docker ${action} ${cfg.container}`;
+}
+
+/**: the FULL power command, binary first — what hooks.powerRun
+ * spawns. ssh mode wraps `powerCommand` as the remote shell line (unchanged);
+ * local mode runs the same words directly (the command is a fixed
+ * space-joined `[sudo] docker <action> <container>`, so the split is exact). */
+export function powerSpawnArgv(cfg: TuiConfig, action: "stop" | "start"): string[] {
+  if (transportOf(cfg) === "local") return powerCommand(cfg, action).split(" ");
+  return ["ssh", cfg.ssh_host, powerCommand(cfg, action)];
 }
 
 // ---- local (laptop-side) commands — all read-only ---------------------------

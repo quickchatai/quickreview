@@ -28,6 +28,14 @@
 // enabled at login, `loginctl enable-linger` for boot), so the companion keeps
 // its memory while the TUI is closed — which is most of the day.
 //
+// LOCAL MODE. On a one-machine (laptop) topology the daemon
+// container runs on THIS host, so `--local` (or QCR_MEMORY_LOCAL=1, or an
+// explicit empty --ssh-host) replaces the ssh hop with a plain local
+// `docker exec` into the same container netns. Everything else — the
+// `qcr-memory` bridge + loopback binds, the listener contract, `verify`,
+// adopt-or-bind from the TUI — is identical: this file stays the ONE relay
+// implementation for both topologies.
+//
 // SUBCOMMANDS
 //   run              the forwarder itself (what the systemd unit executes)
 //   install          create the docker network + write/enable the user unit
@@ -123,9 +131,26 @@ export function relayArgv(cfg) {
 
 // ---- the forwarder ----------------------------------------------------------
 
+/**
+ * Local relay argv (`--local`): the SAME stdio↔TCP bridge, reached by
+ * a plain `docker exec` on THIS machine — the daemon container runs here, so
+ * there is no ssh hop. The bridge program rides as a real argv element (no
+ * shell re-parse, so no quote wrapper); `--no-sudo` drops the sudo prefix.
+ */
+export function localRelayArgv(cfg) {
+  return [...(cfg.sudo ? ["sudo"] : []), "docker", "exec", "-i", cfg.container, "node", "-e", remoteBridgeJs(cfg.remoteHost, cfg.remotePort)];
+}
+
+/** The FULL relay command, binary first — the transport decision in one place.
+ * Pure; tests assert both shapes. */
+export function relaySpawnCommand(cfg) {
+  return cfg.local ? localRelayArgv(cfg) : ["ssh", ...relayArgv(cfg)];
+}
+
 /** Spawn one relay child. Injectable so the test drives streams, not ssh. */
 export function realRelaySpawner(cfg) {
-  return () => spawn("ssh", relayArgv(cfg), { stdio: ["pipe", "pipe", "pipe"] });
+  const cmd = relaySpawnCommand(cfg);
+  return () => spawn(cmd[0], cmd.slice(1), { stdio: ["pipe", "pipe", "pipe"] });
 }
 
 /**
@@ -199,7 +224,7 @@ export function createForwarder(cfg, opts = {}) {
           log(`cannot bind ${address}:${cfg.port}: ${errText(err)}`);
         });
         const addr = server.address();
-        if (addr) log(`listening on ${addr.address}:${addr.port} → ${cfg.sshHost} ${cfg.container} ${cfg.remoteHost}:${cfg.remotePort}`);
+        if (addr) log(`listening on ${addr.address}:${addr.port} → ${cfg.local ? "local docker" : cfg.sshHost} ${cfg.container} ${cfg.remoteHost}:${cfg.remotePort}`);
       }
       return servers.filter((s) => s.address() !== null).length;
     },
@@ -248,8 +273,7 @@ export function unitText(cfg, env = process.env) {
   const auth = unitAuthSock(env);
   const runArgs = [
     "run",
-    "--ssh-host",
-    cfg.sshHost,
+    ...(cfg.local ? ["--local"] : ["--ssh-host", cfg.sshHost]),
     "--container",
     cfg.container,
     "--port",
@@ -259,8 +283,12 @@ export function unitText(cfg, env = process.env) {
     ...(cfg.sudo ? [] : ["--no-sudo"]),
     ...(cfg.identity ? ["--identity", cfg.identity] : []),
   ].join(" ");
+  // name the transport truthfully — a local unit that claimed to
+  // forward "OpenViking on my-vm" is the line an operator reads first in
+  // `systemctl --user status` when the laptop route misbehaves.
+  const where = cfg.local ? "local docker" : cfg.sshHost;
   return `[Unit]
-Description=quickreview companion memory forward (OpenViking on ${cfg.sshHost} -> ${cfg.gateway}:${cfg.port})
+Description=quickreview companion memory forward (OpenViking on ${where} -> ${cfg.gateway}:${cfg.port})
 Documentation=file://${join(ROOT, "docs", "companion-memory-access.md")}
 After=default.target
 
@@ -469,6 +497,11 @@ export function parseArgs(argv, env = process.env) {
   const num = (k, d) => (flags.has(k) ? Number(flags.get(k)) : d);
   const gateway = flags.get("gateway") ?? env.QCR_MEMORY_GATEWAY ?? DEFAULTS.gateway;
   const port = num("port", Number(env.QCR_MEMORY_PORT ?? DEFAULTS.port));
+  const sshHost = flags.get("ssh-host") ?? env.QCR_SSH_HOST ?? DEFAULTS.sshHost;
+  // one-machine topology — the relay is a plain local `docker exec`,
+  // no ssh hop. `--local` (or QCR_MEMORY_LOCAL=1) selects it; an EXPLICIT
+  // empty --ssh-host means the same thing (there is no host to ssh to).
+  const local = flags.has("local") || ["1", "true"].includes((env.QCR_MEMORY_LOCAL ?? "").trim()) || sshHost === "";
   const cfg = {
     network: flags.get("network") ?? DEFAULTS.network,
     subnet: flags.get("subnet") ?? DEFAULTS.subnet,
@@ -477,7 +510,8 @@ export function parseArgs(argv, env = process.env) {
     // Loopback too: `verify`, curl and any host-side tool use it, and it is the
     // half that keeps working when docker is down.
     binds: (flags.get("bind") ?? `${gateway},127.0.0.1`).split(",").map((s) => s.trim()).filter(Boolean),
-    sshHost: flags.get("ssh-host") ?? env.QCR_SSH_HOST ?? DEFAULTS.sshHost,
+    sshHost,
+    local,
     container: flags.get("container") ?? env.QCR_VM_CONTAINER ?? DEFAULTS.container,
     remoteHost: flags.get("remote-host") ?? DEFAULTS.remoteHost,
     remotePort: num("remote-port", DEFAULTS.remotePort),

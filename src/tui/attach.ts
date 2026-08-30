@@ -1,7 +1,9 @@
 // Attach screen — the full-takeover embedded pi session per the
 // attach-pane mockup: one status row on top, the session rendered
 // verbatim below it, Ctrl-q the only intercepted input. The pty runs
-// `ssh -tt … docker exec -it … tmux attach -t <session>`.
+// `ssh -tt … docker exec -it … tmux attach -t <session>` — or, on the laptop
+// topology ([tui] target = "local"), the same `docker exec -it …
+// tmux attach` directly with no ssh in front.
 //
 // node-pty is imported lazily by installAttachHooks so tests (and the plain
 // CLI paths) never load the native module; AttachScreen itself takes an
@@ -11,7 +13,7 @@ import { CHORD_GRACE_MS, ChordScanner, TripleCtrlC } from "./chord.js";
 import { BAD, OK, RESET, STRONG } from "./design.js";
 import { rule, CLEAR } from "./paint.js";
 import { ClipboardSink, osc52Text } from "./clipboard.js";
-import { attachArgv } from "./remote.js";
+import { attachCommand } from "./remote.js";
 import { TermPane } from "./term.js";
 
 /** pi 0.84.1's built-in dark theme paints tool panels green (#283228 success)
@@ -71,7 +73,8 @@ export interface PtyLike {
   onExit(cb: (ev: { exitCode: number }) => void): void;
 }
 
-/** argv is everything after `ssh`; the spawner owns the binary name. */
+/** argv is the FULL command, binary first (`attachCommand` decides
+ * between `ssh …` and plain local `docker …`); the spawner executes argv[0]. */
 export type PtySpawner = (argv: string[], cols: number, rows: number) => PtyLike;
 
 export type ConnState = "live" | "lost";
@@ -107,8 +110,8 @@ export class AttachScreen {
     private readonly out: NodeJS.WriteStream = process.stdout,
     private readonly input: NodeJS.ReadStream = process.stdin,
     /**: the companion tab attaches a LOCAL container (`docker exec -it
-     * … tmux attach`), so it supplies its own argv; the ssh path stays the
-     * default. The spawner owns the binary either way. */
+     * … tmux attach`), so it supplies its own argv (binary first, like
+     * `attachCommand`); the transport-aware default stays. */
     private readonly argvOverride?: string[],
     /** OSC 52 payloads land here as well as on the real terminal: Konsole/VTE
      * ignore the escape, so forwarding alone lost every tmux mouse-drag copy
@@ -139,7 +142,7 @@ export class AttachScreen {
     this.pane = new TermPane(cols, rows);
     let stderrTail = "";
     try {
-      this.pty = this.spawn(this.argvOverride ?? attachArgv(this.app.cfg, this.session), cols, rows);
+      this.pty = this.spawn(this.argvOverride ?? attachCommand(this.app.cfg, this.session), cols, rows);
     } catch (err) {
       this.bailToBoard(`attach ${this.session}: ${String(err)}`);
       return;
@@ -304,7 +307,9 @@ function lastLine(s: string): string {
 export async function installAttachHooks(app: App): Promise<void> {
   const { spawn } = await import("node-pty");
   const spawner: PtySpawner = (argv, cols, rows) => {
-    const p = spawn("ssh", argv, { name: "xterm-256color", cols, rows, env: process.env as Record<string, string> });
+    // argv[0] is the binary (`attachCommand`): ssh on the VM topology, sudo/
+    // docker on the laptop one — the spawner no longer assumes ssh.
+    const p = spawn(argv[0]!, argv.slice(1), { name: "xterm-256color", cols, rows, env: process.env as Record<string, string> });
     return {
       write: (data) => p.write(data),
       resize: (cols2, rows2) => p.resize(cols2, rows2),

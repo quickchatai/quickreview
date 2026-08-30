@@ -478,8 +478,11 @@ async function cmdDrain(rest: string[]): Promise<number> {
   if (!sub) throw new Error("usage: qcr drain <on|off> [--local]");
   const on = sub === "on";
   if (rest.includes("--local")) return runDrainLocal(on);
-  const { realSshRunner } = await import("./tui/remote.js");
-  return runDrain(on, { cfg: loadConfig(), ssh: realSshRunner, log: (l) => console.log(l) });
+  // honour [tui] target — on the laptop topology the same command
+  // file write runs against local docker instead of ssh.
+  const { runnerFor } = await import("./tui/remote.js");
+  const cfg = loadConfig();
+  return runDrain(on, { cfg, ssh: runnerFor(cfg.tui), log: (l) => console.log(l) });
 }
 
 function cmdAttach(target: string): void {

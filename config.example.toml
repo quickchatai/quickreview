@@ -149,7 +149,22 @@ small_diff_lines = 150
 [tui]
 # qcr tui — the operator TUI on the owner's PC, polling the VM over ssh.
 # Read-only against the VM except the user's own keystrokes + inject files.
+#
+# target — where the daemon container lives relative to this TUI:
+#   "ssh"   — the VM/server topology (the always-on recommendation): every
+#             poll, attach, digest read and evidence copy rides
+#             `ssh <ssh_host> …`, sharing one control master.
+#   "local" — the laptop topology (everything on THIS machine, e.g. the
+#             compose stack): the SAME commands run against local docker
+#             directly and no ssh process is ever spawned. `ssh_host` is
+#             ignored; `sudo_docker` still decides the sudo prefix. The
+#             memory forward follows this knob too — it reaches the daemon
+#             container's loopback memory engine with a plain `docker exec`
+#             (the forward script's --local mode) instead of the ssh hop.
+# Always explicit: an empty ssh_host does NOT mean local.
+target = "ssh"
 ssh_host = ""                                # ← FILL (7): ssh alias of the VM running the container
+                                             #   (leave "" when target = "local" — it is unused)
 container = "quickreview-sandbox"
 remote_state_dir = "/opt/quickreview/state"
 remote_sandbox_root = "/opt/quickreview/sandbox"
