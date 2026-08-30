@@ -43,21 +43,66 @@ are how the VM image behaves too. Steady-state restarts are instant.
   `qcr-pihome` (`/home/review/.pi` — pi OAuth tokens + session JSONLs; sticky
   conversations depend on it surviving rebuilds).
 
-## Ingress — your choice
+## Ingress — your choice, and three of the shapes are sidecars
 
 The container publishes exactly one port: the webhook port, `8787`, bound to
 `127.0.0.1` by default (`QCR_WEBHOOK_BIND` / `QCR_WEBHOOK_PORT` to change).
 **Any HTTPS proxy or tunnel that forwards your webhook hostname to that port
-works** — the GitHub App just needs a reachable HTTPS webhook URL:
+works** — the GitHub App just needs a reachable HTTPS webhook URL. Since
+the compose file carries the three tunnel shapes as optional sidecars,
+each behind its own profile, and the onboarding wizard's ingress step picks one
+for you (it writes `COMPOSE_PROFILES` into the project `.env` and the matching
+`[ingress]` block into `config.toml`). **With no profile selected you get the
+daemon alone** — the fourth shape.
 
-- a reverse proxy with TLS on the same host (Caddy, nginx + certbot, …),
-- a Cloudflare tunnel (`cloudflared`) — the option the live VM uses; the
-  Ansible route can install it (`cloudflared_enabled`, default true there),
-- any other tunnel product pointed at `localhost:8787`.
+| `COMPOSE_PROFILES` | service | what you get | what it costs |
+| --- | --- | --- | --- |
+| `quick-tunnel` | `tunnel-quick` | cloudflared quick tunnel — no account, working in seconds | the `*.trycloudflare.com` hostname **rotates** on every restart, and there is no SLA |
+| `ngrok` | `tunnel-ngrok` | a stable hostname with a reserved domain | an ngrok account, and free-tier caps (~20k requests/month, ~1 GB transfer, 1 agent, ~120 req/min) |
+| `named-tunnel` | `tunnel-named` | your own Cloudflare tunnel on your own domain — what the VM route uses | a Cloudflare account, a zone, and a connector token |
+| *(unset)* | — | nothing exposed at all; the reconcile poll triggers reviews | up to one poll interval of latency, and author-reply routing plus the `[feedback]` loop go quiet (both are webhook-driven) |
+
+The rotating hostname is safe because the daemon fixes itself: the sidecar
+writes its assigned **bare hostname** to `/ingress/hostname` on the shared
+`qcr-ingress` volume, which the daemon sees at
+`/opt/quickreview/state/ingress/hostname` — the default `[ingress] hostname_file`
+— and re-points the GitHub App's own webhook URL when it changes (,
+`src/webhookheal.ts`; the one mutation class that executes even in dry-run).
+A sidecar restart is therefore a non-event: a new name is written, the daemon
+follows it, and the reconcile poll covers the seconds in between.
+
+```sh
+COMPOSE_PROFILES=quick-tunnel docker compose up -d --build   # or set it in .env
+docker compose logs -f tunnel-quick                          # the assigned hostname
+```
+
+Credentials never reach a command line. The ngrok authtoken is a file,
+`<secrets dir>/ngrok_authtoken`, and the named tunnel's connector token is the
+`tunnel_token` the secrets wizard already collects; both sidecars mount the
+secrets dir **read-only** and the wrapper passes the value to the client in its
+environment:
+
+```sh
+(umask 077; printf %s '<ngrok authtoken>' > ~/.config/quickreview-bot/ngrok_authtoken)
+```
+
+The wrapper itself is `docker/tunnel/sidecar.mjs`: it runs the vendor's own
+binary (copied verbatim out of the official `cloudflare/cloudflared` and
+`ngrok/ngrok` images, pinned by tag and version-verified at build time),
+captures the hostname from the client's output, writes it atomically, restarts
+the client forever on a capped backoff, and never exits — a tunnel that is down
+must never wedge the stack.
+
+Anything else still works too: a reverse proxy with TLS on the same host
+(Caddy, nginx + certbot, …), the Ansible route's host-level cloudflared
+(`cloudflared_enabled`, default true there), or any other tunnel pointed at
+`localhost:8787`.
 
 OpenViking's port (1933) is loopback inside the container and is deliberately
-never published — per-user confinement is server-side, and every review
-session already runs inside the container. Do not add it to `ports:`.
+never published — not to the host, and not to a tunnel sidecar either (they
+mount one directory: the hostname file's). Per-user confinement is server-side
+and every review session already runs inside the container. Do not add 1933 to
+any `ports:`.
 
 ## Pins — how versions are honored
 

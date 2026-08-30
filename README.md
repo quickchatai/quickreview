@@ -154,7 +154,12 @@ deploy paths.
   2. **OpenAI API key** (usage-billed; switch the model strings' provider
      prefix in config).
 - **HTTPS ingress of your choice** to the webhook port (8787): any reverse
-  proxy or tunnel works; nothing here assumes a particular vendor.
+  proxy or tunnel works; nothing here assumes a particular vendor. The compose
+  file ships three optional tunnel sidecars — a Cloudflare **quick tunnel**
+  (no account at all; the rotating hostname is re-pointed automatically),
+  **ngrok**, and your own **named Cloudflare tunnel** — plus the option of no
+  tunnel at all, with the reconcile poll as the trigger path
+  ([docker/daemon/README.md](docker/daemon/README.md)).
 
 ## Quickstart
 

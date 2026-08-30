@@ -98,9 +98,12 @@ export function toolDefinitions(engine: OnboardingEngine, shutdown: (ctx?: PiToo
       `${step.explain} Deterministic: runs the "${step.id}" onboarding step's real checks and returns one ✓/✗ line per check. ` +
       "Safe to re-run; a failed run leaves the step pending.",
     promptSnippet: `Run the ${step.id} onboarding step`,
-    parameters: NO_PARAMS,
-    execute: async () => {
-      const result = await engine.runStep(step.id);
+    // A step that needs the operator's answer declares its own schema; the
+    // params land on the step as ctx.input (ingress choice is the
+    // first). Everything else takes no input at all.
+    parameters: step.parameters ?? NO_PARAMS,
+    execute: async (_id, params) => {
+      const result = await engine.runStep(step.id, params ?? {});
       const head = result.ok ? `Step "${step.id}" completed and recorded.` : `Step "${step.id}" FAILED — fix the red checks and run it again.`;
       return text(`${head}\n${renderChecks(result.checks)}`);
     },

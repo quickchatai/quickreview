@@ -1,0 +1,40 @@
+# The ngrok tunnel sidecar — the OFFICIAL ngrok image behind the
+# same thin wrapper as the cloudflared variant (sidecar.mjs).
+#
+# Symmetric with Dockerfile.cloudflared in every way that matters: the vendor's
+# own binary copied verbatim out of their published image, the pin verified at
+# build time, the wrapper writing the same hostname-file contract the daemon's
+# watcher reads (src/webhookheal.ts). The difference is only what the operator
+# trades: an ngrok account and its free-tier caps, for a hostname that does not
+# rotate (a reserved domain, passed as QCR_TUNNEL_DOMAIN).
+#
+# The authtoken is NEVER an argv: the wrapper reads
+# <secrets>/ngrok_authtoken from the read-only secrets mount and hands it to
+# the client as NGROK_AUTHTOKEN in its environment.
+#
+#   docker compose --profile ngrok build --no-cache
+ARG NODE_MAJOR=22
+ARG NGROK_VERSION=3.31.0
+
+FROM ngrok/ngrok:${NGROK_VERSION}-alpine AS client
+
+FROM node:${NODE_MAJOR}-bookworm-slim
+ARG NGROK_VERSION
+
+COPY --from=client /bin/ngrok /usr/local/bin/ngrok
+RUN ngrok version \
+    && ngrok version | grep -qF "${NGROK_VERSION}" \
+    || { echo "ngrok failed verification: not the pinned ${NGROK_VERSION}" >&2; exit 1; }
+
+COPY sidecar.mjs /usr/local/lib/qcr/sidecar.mjs
+
+# See Dockerfile.cloudflared for why the dir is pre-created and why this runs
+# as root inside its own container.
+RUN mkdir -p /ingress
+
+ENV QCR_TUNNEL_KIND=ngrok \
+    QCR_TUNNEL_UPSTREAM=http://daemon:8787 \
+    QCR_TUNNEL_HOSTNAME_FILE=/ingress/hostname \
+    QCR_TUNNEL_SECRETS_DIR=/opt/quickreview/secrets
+
+ENTRYPOINT ["node", "/usr/local/lib/qcr/sidecar.mjs"]

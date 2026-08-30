@@ -75,6 +75,11 @@ export interface StepReport {
 
 export interface StepContext {
   adapters: OnboardAdapters;
+  /** The tool call's inputs — the operator's ANSWER to a step that asks one
+   * (`{}` for a step that declares no `parameters`, and always on verify()).
+   * A step that needs an answer and does not get one must return a refusal
+   * naming the options, never a guess: the wizard offers, the operator picks. */
+  input: Readonly<Record<string, unknown>>;
   /** Recorded operator choices (topology, auth route, captured uid, …). */
   choices: Readonly<Record<string, unknown>>;
   /** This step's persisted data from a previous run ({} on first run). */
@@ -101,6 +106,10 @@ export interface OnboardingStep {
   explain: string;
   /** Ascending display/registration order. */
   order: number;
+  /** JSON-schema object the step's pi tool declares, for steps that need the
+   * operator's answer (a choice, a hostname). Absent ⇒ the tool takes no
+   * input, which is the common case. */
+  parameters?: unknown;
   enabled?(choices: Readonly<Record<string, unknown>>): boolean;
   run(ctx: StepContext): Promise<StepReport>;
   verify(ctx: StepContext): Promise<StepReport>;
@@ -239,9 +248,10 @@ export class OnboardingEngine {
     return created;
   }
 
-  private ctxFor(id: string): StepContext {
+  private ctxFor(id: string, input: Record<string, unknown> = {}): StepContext {
     return {
       adapters: this.adapters,
+      input,
       choices: this.checklist.choices,
       data: this.record(id).data,
       recordChoice: (key, value) => {
@@ -307,9 +317,10 @@ export class OnboardingEngine {
     return report;
   }
 
-  /** Run one step. Unknown/disabled ids are refusals-as-answers, never
+  /** Run one step, optionally with the operator's answer (`input`, the pi
+   * tool's params). Unknown/disabled ids are refusals-as-answers, never
    * throws (the caller is an LLM tool belt). Persists after the step. */
-  async runStep(id: string): Promise<StepRunResult> {
+  async runStep(id: string, input: Record<string, unknown> = {}): Promise<StepRunResult> {
     const step = this.registry.find((s) => s.id === id);
     if (!step) {
       return { id, ok: false, checks: [], failures: [`unknown step "${id}" — known: ${this.registry.map((s) => s.id).join(", ")}`] };
@@ -319,7 +330,7 @@ export class OnboardingEngine {
     }
     let report: StepReport;
     try {
-      report = await step.run(this.ctxFor(id));
+      report = await step.run(this.ctxFor(id, input));
     } catch (err) {
       report = { ok: false, checks: [{ name: id, ok: false, detail: `step threw: ${String(err)}` }] };
     }

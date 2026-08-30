@@ -36,3 +36,8 @@ deploy/ansible/inventory.ini
 # values). No effect on the private deployment: this file is already
 # tracked there, and gitignore never affects tracked files.
 /config.toml
+
+# compose's project env file — the onboarding wizard writes the
+# chosen ingress profile (COMPOSE_PROFILES) here, and operators add their own
+# QCR_* overrides beside it. Operator-local, never committed.
+/.env

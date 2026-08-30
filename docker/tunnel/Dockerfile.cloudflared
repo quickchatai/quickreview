@@ -1,0 +1,51 @@
+# The cloudflared tunnel sidecar — the OFFICIAL cloudflared image
+# behind the thin wrapper in sidecar.mjs.
+#
+# The client binary is copied verbatim out of `cloudflare/cloudflared` (the
+# vendor's own published image, pinned by tag): we run THEIR build, not a
+# rebuild of it. The official image is distroless — no shell, no node — so the
+# wrapper cannot live inside it; this two-stage image is the smallest thing
+# that gives the wrapper a runtime while keeping the client byte-identical to
+# upstream's.
+#
+# The COPY path and the pin are both verified AT BUILD TIME (`cloudflared
+# --version` must print the pinned version): if upstream ever moves the binary
+# or the tag resolves to something else, the build fails loudly here instead of
+# the sidecar silently never starting. Same discipline as docker/daemon's
+# "failed verification" check.
+#
+# Bumping the pin is a deliberate act (tests/tunnel-sidecar.test.ts refuses a
+# floating `latest` and holds the compose file to this ARG default):
+#   docker compose --profile quick-tunnel build --no-cache
+ARG NODE_MAJOR=22
+ARG CLOUDFLARED_VERSION=2026.8.1
+
+FROM cloudflare/cloudflared:${CLOUDFLARED_VERSION} AS client
+
+# glibc base on purpose: the vendor binaries are built for it, and a musl base
+# is one silent-startup-failure class we do not need on an operator's laptop.
+FROM node:${NODE_MAJOR}-bookworm-slim
+ARG CLOUDFLARED_VERSION
+
+COPY --from=client /usr/local/bin/cloudflared /usr/local/bin/cloudflared
+RUN cloudflared --version \
+    && cloudflared --version | grep -qF "${CLOUDFLARED_VERSION}" \
+    || { echo "cloudflared failed verification: not the pinned ${CLOUDFLARED_VERSION}" >&2; exit 1; }
+
+COPY sidecar.mjs /usr/local/lib/qcr/sidecar.mjs
+
+# The shared hostname directory is created HERE so a fresh named volume
+# inherits its ownership and mode instead of arriving root-owned and empty.
+RUN mkdir -p /ingress
+
+# Runs as root INSIDE ITS OWN CONTAINER on purpose: it must write the shared
+# hostname volume whichever container created it, and (for the named-tunnel
+# variant) read a 0600 credential owned by the host operator through the
+# read-only secrets mount. The container holds nothing else — no repo, no
+# state, no GitHub credential.
+ENV QCR_TUNNEL_KIND=quick \
+    QCR_TUNNEL_UPSTREAM=http://daemon:8787 \
+    QCR_TUNNEL_HOSTNAME_FILE=/ingress/hostname \
+    QCR_TUNNEL_SECRETS_DIR=/opt/quickreview/secrets
+
+ENTRYPOINT ["node", "/usr/local/lib/qcr/sidecar.mjs"]

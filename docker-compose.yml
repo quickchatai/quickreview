@@ -5,9 +5,26 @@
 # Prerequisites: a secrets dir (default ~/.config/quickreview-bot — override
 # with QCR_SECRETS_DIR) holding at least app_id, app.pem, webhook_secret;
 # optional openai_api_key, openviking_root_key, openviking_reviewer_key.
-# Ingress is the operator's choice: any HTTPS proxy or tunnel that forwards
-# your webhook hostname to the published port works (cloudflared is one
-# option — the Ansible route in deploy/ansible/ wires it for the live VM).
+# Ingress is the operator's choice, and the wizard's ingress step
+# makes it for you. Four shapes, three of them a SIDECAR in this file, each
+# behind its own compose profile — with no profile selected you get the daemon
+# ALONE, which is the polling-only shape:
+#
+#   COMPOSE_PROFILES=quick-tunnel   cloudflared quick tunnel; no account, the
+#                                   hostname ROTATES and the daemon re-points
+#                                   the App's webhook URL itself ([ingress]
+#                                   shape = "tunnel-file")
+#   COMPOSE_PROFILES=ngrok          ngrok; needs an account + authtoken file,
+#                                   free-tier request/bandwidth caps apply,
+#                                   hostname stable with a reserved domain
+#   COMPOSE_PROFILES=named-tunnel   your own Cloudflare tunnel token + your own
+#                                   domain (the VM route's default shape)
+#   (unset)                         no tunnel at all — the reconcile poll is
+#                                   the trigger path ([daemon] poll_interval_s)
+#
+# The wizard writes the profile into the project's .env; set it by hand with
+# `COMPOSE_PROFILES=quick-tunnel docker compose up -d` if you prefer. Any other
+# HTTPS proxy or tunnel pointed at the published webhook port also works.
 # See docker/daemon/README.md.
 #
 # Pins: the image versions (pi, OpenViking, llama-cpp-python,
@@ -48,6 +65,13 @@ services:
       # first boot and symlinks <sandbox>/state onto the state volume).
       - ./:/opt/quickreview/sandbox
       - qcr-state:/opt/quickreview/state
+      # The tunnel sidecar's ONLY shared surface: the one directory holding
+      # the hostname file the self-heal watcher reads (contract,
+      # <root>/state/ingress/hostname — the default `[ingress] hostname_file`
+      # resolves here through the entrypoint's state symlink). A nested mount
+      # so the sidecar never sees the rest of the state volume: no SQLite, no
+      # memory, no dry-run record.
+      - qcr-ingress:/opt/quickreview/state/ingress
       - ${QCR_SECRETS_DIR:-~/.config/quickreview-bot}:/opt/quickreview/secrets:ro
       # pi's home: OAuth tokens (auth.json), session JSONLs, models.json —
       # must survive container rebuilds (sticky sessions + /login tokens).
@@ -59,6 +83,82 @@ services:
       # container's eth0; host exposure stays loopback-only above.
       QC_BIND_HOST: "0.0.0.0"
 
+  # ---- webhook ingress sidecars ---------------------------------
+  # All three run the same wrapper (docker/tunnel/sidecar.mjs) around an
+  # official vendor binary, and all three are OPTIONAL: no profile, no
+  # sidecar. None of them publishes a port — the tunnel dials OUT and reaches
+  # the daemon over the compose network, so nothing new is exposed on the
+  # host. OpenViking's port (1933) stays unpublished and unreachable from any
+  # of them; the sidecars mount one directory and, at most, the secrets dir.
+
+  # The default laptop shape: no account, no signup, rotating hostname.
+  # cloudflared prints the assigned *.trycloudflare.com name; the wrapper
+  # writes it to the shared hostname file and the daemon re-points the App's
+  # own webhook URL. A restart just writes the new name — nothing to fix by
+  # hand, and the reconcile poll covers the gap either way.
+  tunnel-quick:
+    profiles: ["quick-tunnel"]
+    build:
+      context: docker/tunnel
+      dockerfile: Dockerfile.cloudflared
+    image: quickreview-tunnel-cloudflared:v1
+    init: true
+    restart: unless-stopped
+    depends_on:
+      - daemon
+    environment:
+      QCR_TUNNEL_KIND: quick
+      QCR_TUNNEL_UPSTREAM: http://daemon:8787
+      QCR_TUNNEL_HOSTNAME_FILE: /ingress/hostname
+    volumes:
+      - qcr-ingress:/ingress
+
+  # Stable hostname, at the price of an account. The authtoken is a FILE in
+  # the secrets dir (<secrets>/ngrok_authtoken), read by the wrapper and
+  # handed to the client in its environment — never on a command line.
+  # QCR_NGROK_DOMAIN is your reserved domain, if you have one; without it the
+  # name still rotates and the self-heal still handles it.
+  tunnel-ngrok:
+    profiles: ["ngrok"]
+    build:
+      context: docker/tunnel
+      dockerfile: Dockerfile.ngrok
+    image: quickreview-tunnel-ngrok:v1
+    init: true
+    restart: unless-stopped
+    depends_on:
+      - daemon
+    environment:
+      QCR_TUNNEL_KIND: ngrok
+      QCR_TUNNEL_UPSTREAM: http://daemon:8787
+      QCR_TUNNEL_HOSTNAME_FILE: /ingress/hostname
+      QCR_TUNNEL_DOMAIN: ${QCR_NGROK_DOMAIN:-}
+    volumes:
+      - qcr-ingress:/ingress
+      - ${QCR_SECRETS_DIR:-~/.config/quickreview-bot}:/opt/quickreview/secrets:ro
+
+  # Your own named Cloudflare tunnel: a permanent hostname on your domain,
+  # driven by the connector token the secrets wizard collects (tunnel_token).
+  # It writes NO hostname file — the name is yours and does not rotate, so
+  # `[ingress] shape` stays "none" and `[server] hostname` carries it.
+  tunnel-named:
+    profiles: ["named-tunnel"]
+    build:
+      context: docker/tunnel
+      dockerfile: Dockerfile.cloudflared
+    image: quickreview-tunnel-cloudflared:v1
+    init: true
+    restart: unless-stopped
+    depends_on:
+      - daemon
+    environment:
+      QCR_TUNNEL_KIND: named
+    volumes:
+      - ${QCR_SECRETS_DIR:-~/.config/quickreview-bot}:/opt/quickreview/secrets:ro
+
 volumes:
   qcr-state:
   qcr-pihome:
+  # Shared by the daemon (read) and a tunnel sidecar (write): the hostname
+  # file, and nothing else.
+  qcr-ingress:
