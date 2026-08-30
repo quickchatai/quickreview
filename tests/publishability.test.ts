@@ -139,6 +139,7 @@ const ALLOWLIST: AllowlistEntry[] = [
   { path: "skills/companion/land/SKILL.md", tokens: ["quickchat"], reason: "companion doctrine references the reviewed repo's mount/name — frozen alongside the companion seed" },
   { path: "docker/companion/agents/explore.md", tokens: ["quickchat"], reason: "companion agent references the /example-app reviewed-repo mount point (relocation of the first-party agent set; path frozen with the companion seed)" },
   { path: "docker/companion/agents/evidence.md", tokens: ["quickchat"], reason: "companion agent references the /example-app reviewed-repo mount point (relocation; path frozen with the companion seed)" },
+  { path: "prompts/companion-first-run.md", tokens: ["quickchat"], reason: "the first-run interview tells the companion where the reviewed repo is mounted — the same /example-app path the code, entrypoint and companion doctrine carry, frozen until renames it everywhere at once" },
 
   // -- Live-deployment defaults the private installation still boots from
   //    (its config.toml deliberately leaves these unset). Lifting them into
