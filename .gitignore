@@ -31,3 +31,8 @@ state-snapshots/
 # the LIVE inventory is operator-local (real hostnames); the tracked
 # template is inventory.example.ini — copy it to inventory.ini and fill in.
 deploy/ansible/inventory.ini
+
+# An adopter's filled config must never be committed (identity + infra
+# values). No effect on the private deployment: this file is already
+# tracked there, and gitignore never affects tracked files.
+/config.toml
