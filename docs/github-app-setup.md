@@ -33,9 +33,14 @@ webhook secret in one exchange.
 > writes `app_id` / `app.pem` / `webhook_secret` into the secrets dir with the
 > same validation and `0600` permissions as `deploy/collect-secrets.sh` — so no
 > credential passes through your clipboard. It then guides the install click,
-> verifies it through the App's own installation listing, and creates the
-> trigger labels. The steps below are the manual equivalent; they must stay in
-> step with the wizard.
+> verifies it through the App's own installation listing and the repo's
+> presence among the selected repositories, and creates the trigger labels
+> (§7). Re-running the step never creates a second App: with valid credentials
+> already in place it verifies the existing one. A rejected code exchange is
+> not a lost App either — manifest codes are single-use and expire an hour
+> after GitHub issues them, and the step simply serves a fresh page. See
+> [onboarding.md](onboarding.md). The steps below are the manual equivalent;
+> they must stay in step with the wizard, and drift between the two is a bug.
 
 Manually:
 
@@ -118,15 +123,29 @@ your App):
 ## 3. Webhook URL
 
 The daemon serves `POST /webhook` (and `GET /health`) on the port configured
-in `config.toml [server] port` (default `8787`). The App's webhook URL must be
-a public HTTPS endpoint that reaches it, and the path must be `/webhook`:
+in `config.toml [server] port` (default `8787`), bound to loopback. The App's
+webhook URL must be a public HTTPS endpoint that reaches it, and the path must
+be `/webhook`.
 
-- **Tunnel shape** — a Cloudflare Tunnel on the host forwards
-  `https://<your-hostname>/webhook` → `localhost:8787`. The webhook URL is
-  your tunnel hostname plus `/webhook`.
-- **Plain-Docker shape** — you bring your own ingress/TLS (reverse proxy,
-  load balancer) to the container's published webhook port; the webhook URL
-  is whatever that ingress serves.
+Any HTTPS proxy or tunnel works. Four shapes ship ready to use, and the
+wizard's ingress step configures whichever you pick — the trade-offs are laid
+out in [../docker/daemon/README.md](../docker/daemon/README.md):
+
+- a Cloudflare **quick tunnel** (no account; the hostname rotates, and the
+  daemon re-points the App's own webhook URL when it does — see below);
+- **ngrok** (an account, free-tier caps, a stable hostname with a reserved
+  domain);
+- your own **named Cloudflare tunnel** on your own domain, either as a compose
+  sidecar or as the host service the Ansible route installs;
+- **no tunnel at all**, with the reconcile poll as the trigger path.
+
+**The rotating-hostname case is handled for you.** Under `config.toml
+[ingress] shape = "tunnel-file"` the tunnel sidecar writes its assigned
+hostname to a file the daemon watches, and the daemon re-points the App's
+webhook URL through a JWT-authed `PATCH /app/hook/config`. That is the one
+mutation class that executes even in dry-run — it touches only the App's own
+configuration and can never reach the reviewed repo — and it is logged every
+time.
 
 Content type: `application/json`. Deliveries are HMAC-verified
 (`X-Hub-Signature-256`) and deduplicated on `X-GitHub-Delivery`; GitHub never
@@ -146,9 +165,11 @@ conversion response.)
 
 ## 5. Where each value lands
 
-Run the secrets wizard — it prompts for whatever is missing, validates, and
-stores everything `0600` in the secrets dir (`~/.config/quickreview-bot` by
-default; in-container `/opt/quickreview/secrets`):
+On the guided path, the App step above writes the three credential files
+itself, and the interview step writes the three config keys — you do not run
+this by hand at all. Doing it manually, run the secrets wizard: it prompts for
+whatever is missing, validates, and stores everything `0600` in the secrets dir
+(`~/.config/quickreview-bot` by default; in-container `/opt/quickreview/secrets`):
 
 ```sh
 bash deploy/collect-secrets.sh
@@ -163,10 +184,12 @@ bash deploy/collect-secrets.sh
 | Bot login (`<slug>[bot]`) | — | `config.toml [github] bot_login` |
 | Reviewed repo (`owner/name`) | — | `config.toml [github] repo` |
 
-The wizard also asks for the deployment shape (§3): the tunnel shape
-additionally requires `tunnel_token`; the plain-Docker shape does not.
-`openai_api_key` and the OpenViking keys are separate concerns — see
-[`docs/llm-setup.md`](llm-setup.md).
+The secrets wizard also asks for the deployment shape (§3): the tunnel shape
+additionally requires `tunnel_token`; the plain-Docker shape does not. On the
+guided path the ingress step decides that instead, and checks the credential
+file the shape you chose needs. `openai_api_key` and the OpenViking memory keys
+are separate concerns — see [`docs/llm-setup.md`](llm-setup.md) and
+[`docs/onboarding.md`](onboarding.md#60-and-72--memory-in-two-phases).
 
 ## 6. Install the App on the reviewed repo
 
@@ -186,14 +209,34 @@ either is enough:
   `issue_label` if you enable improvement PRs / bot-filed issues).
 - **Team review request** — create the team named by `[github] review_team`
   (`org/slug` form) and request a review from it on a PR. Requires the
-  Members read permission above.
+  Members read permission above — which, on an organization, an owner must
+  approve. That approval is **deferrable and nothing blocks on it**: the label
+  trigger works fully without it, and `[github] review_team` may stay empty.
+
+The App step creates the three shipped-default labels for you, and leaves an
+existing label of the same name exactly as it is — colour and description
+included:
+
+| role | config key | name | colour |
+|---|---|---|---|
+| trigger | `trigger_label` | `AI review requested` | blue |
+| in progress | `in_progress_label` | `AI review in progress` | yellow |
+| reviewed | `reviewed_label` | `Automatic Review` | green |
 
 ## 8. Verify
 
+The wizard's verification step runs these in layers and stops at the first red
+one, because nothing later means anything until it is fixed. By hand:
+
 1. `scripts/mint-token.sh` prints an installation token — the App JWT →
    installation-token exchange works.
-2. The App settings' *Advanced* tab shows a green `ping` delivery to your
-   webhook URL (use *Redeliver* after fixing anything).
+2. The daemon container is running.
 3. `GET /health` on the daemon answers `{"ok":true,...}`.
-4. Label a test PR with the trigger label; the daemon logs the delivery and
+4. The App settings' *Advanced* tab shows a green `ping` delivery to your
+   webhook URL (use *Redeliver* after fixing anything). A 401 or 403 there
+   means the webhook secret on GitHub is not the one in your secrets dir; a
+   timeout means your ingress is not reaching the daemon. On a rotating
+   tunnel, give the daemon a few seconds after start-up to re-point the URL
+   before judging a stale one.
+5. Label a test PR with the trigger label; the daemon logs the delivery and
    queues the PR.

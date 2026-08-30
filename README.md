@@ -82,8 +82,9 @@ on and the non-goals it refuses to unrefuse — is in
   configured.
 
 Optional extras that degrade cleanly when unconfigured: an operator TUI
-(`qcr tui`, board + memory management over ssh), a Slack concierge, a local
-"companion" pi session, and the OpenViking-backed reviewer memory engine.
+(`qcr tui`, board + memory management, over ssh or against local Docker), a
+Slack concierge, a local "companion" pi session, and the OpenViking-backed
+reviewer memory engine.
 
 ## How a review runs
 
@@ -141,25 +142,22 @@ deploy paths.
 
 ## Prerequisites
 
-- **Node ≥ 22** (build + tests run offline with no secrets).
-- **Docker** (the daemon ships as one container; compose file included).
-- **A GitHub App you register** on your repo — a manifest and a step-by-step
-  guide are included ([docs/github-app-setup.md](docs/github-app-setup.md),
-  [deploy/github-app-manifest.json](deploy/github-app-manifest.json)). No
-  personal access token is used, anywhere.
-- **An LLM route** for the pi review sessions — two supported routes,
-  documented in [docs/llm-setup.md](docs/llm-setup.md):
-  1. **ChatGPT OAuth** (subscription; the shipped default — model strings use
-     the `openai-codex/` prefix, one `/login` inside the container), or
-  2. **OpenAI API key** (usage-billed; switch the model strings' provider
-     prefix in config).
-- **HTTPS ingress of your choice** to the webhook port (8787): any reverse
-  proxy or tunnel works; nothing here assumes a particular vendor. The compose
-  file ships three optional tunnel sidecars — a Cloudflare **quick tunnel**
-  (no account at all; the rotating hostname is re-pointed automatically),
-  **ngrok**, and your own **named Cloudflare tunnel** — plus the option of no
-  tunnel at all, with the reconcile poll as the trigger path
-  ([docker/daemon/README.md](docker/daemon/README.md)).
+- **Node ≥ 22**, **Docker**, and the **Compose v2 plugin** (`docker compose`).
+  The build and the test suite run offline with no secrets.
+- **A GitHub account that can create an App** and install it on the repository
+  you want reviewed. No personal access token is used, anywhere — and you do
+  not register the App by hand: setup creates it from a manifest in one click.
+- **On the server route only**: a Linux machine you already reach as
+  `ssh <alias>`, with passwordless sudo there, and `ansible-playbook` installed
+  on *your* machine (the deploy runs from here, over your ssh).
+- **On Windows**: run everything inside **WSL2**. There is no Windows-native
+  path, and the setup wizard says so if it cannot find a POSIX user id.
+
+Everything else — the GitHub App, the webhook ingress, the secrets, the
+`config.toml`, the memory keys — is something setup *produces*, not something
+you bring. You choose your LLM route during setup; both a ChatGPT subscription
+and an OpenAI API key are first-class
+([docs/llm-setup.md](docs/llm-setup.md)).
 
 ## Quickstart
 
@@ -167,34 +165,105 @@ deploy paths.
 git clone <this repo> && cd <repo>
 npm ci && npm test && npm run build   # green offline, no secrets needed
 
-cp config.example.toml config.toml    # ~10 clearly-marked FILL values:
-                                      # repo, app id/slug/bot login, review
-                                      # team/label, owner identity, profile
-bash deploy/collect-secrets.sh        # interactive: App private key, webhook
-                                      # secret, ... (shape-aware — only what
-                                      # your deployment needs)
-
-export QCR_UID=$(id -u)
-docker compose up -d --build          # plain-Docker path (docker/daemon/README.md)
-curl -s http://127.0.0.1:8787/health
-
-# point your HTTPS ingress at :8787, install the App on your repo,
-# then label a PR with your review trigger and watch state/dryrun/ fill up.
+scripts/qcr onboard                   # the whole setup, guided
 ```
 
-`dry_run = true` ships as the default: the daemon does everything except
-execute GitHub mutations, and writes each would-be call to `state/dryrun/`
-for you to inspect. Flip `dry_run = false` only when you trust what you see —
-that flip is the owner's manual act (see
-[docs/ownership.md](docs/ownership.md)).
+`qcr onboard` is an interactive session: a pi agent talks you through what the
+system is while building it, and every act it performs is a named,
+deterministic tool whose result you see. It never improvises a shell command,
+and it never calls a step done — only the tool's own report does that.
 
-The Ansible route under `deploy/ansible/` runs the same runtime on a VM or
-server you reach over ssh — the always-on shape, since a reviewer that is
-asleep reviews nothing. Both are first-class, and both are guided:
-`qcr onboard` asks which one you want before anything else, then drives that
-route end to end (over ssh it checks your alias and agent up front, fills the
-deploy inventory from your answers, and runs the same `scripts/deploy.sh` with
-all of its preflights).
+End to end, it:
+
+1. **checks this machine** — Node, Docker, Compose, and your user id (the
+   containers run as you, so files stay yours);
+2. **asks where the reviewer should live** — a VM or server over ssh, or this
+   computer (below), and on the server route proves your ssh alias, agent and
+   passwordless sudo *before* anything is built;
+3. **asks which LLM route you want**, and makes the whole installation
+   consistent with the answer;
+4. **interviews you for the handful of values only you can answer** and derives
+   the rest, patching `config.toml` in place so every comment survives;
+5. **creates your GitHub App in one click** from this repo's pinned manifest —
+   the App id, private key and webhook secret come straight back to the wizard
+   and land `0600` in your secrets dir, so no credential passes through your
+   clipboard — then verifies the install and creates the trigger labels;
+6. **wires the webhook tunnel** you picked, or none at all;
+7. **mints and places the memory keys**, and proves their confinement;
+8. **brings the stack up** (compose here, the real `scripts/deploy.sh` with all
+   its preflights on a server) and **verifies it in layers**: containers, the
+   health endpoint, then a webhook ping in GitHub's own delivery log;
+9. **watches a real review happen.** You label one of your own pull requests,
+   and the wizard follows the round and shows you the review it produced —
+   read out of the dry-run record, while it is still structurally impossible
+   for it to have posted anywhere;
+10. **offers the go-live flip, once, and only then** — the new owner's own
+    ratification act, taking an explicit confirmation phrase. Declining is a
+    complete installation, not a failure;
+11. **hands off to the TUI**, where the companion introduces itself and runs a
+    first-run interview: a repo tour it confirms with you, your review taste,
+    your team's norms — written into memory and distilled into config proposals
+    you accept or reject.
+
+It is resumable and re-runnable. The checklist persists, a step claimed done is
+always **re-verified against reality** before it is believed, and running the
+command again on a finished installation is a diagnostic rather than a repeat.
+
+The full walkthrough — every step, every choice, and what to do when one goes
+red — is in [**docs/onboarding.md**](docs/onboarding.md).
+
+### Where the reviewer lives
+
+Both answers are first-class; neither is the advanced one.
+
+- **A VM or server over ssh — the recommendation**, because a reviewer that is
+  asleep reviews nothing. You bring any ssh-reachable Linux box; setup rides the
+  same Ansible deploy the maintainers use, with every one of its preflights
+  ([deploy/ansible/README.md](deploy/ansible/README.md)).
+- **This computer** — the whole system in Docker on the machine you are sitting
+  at. No server to own, no third-party signup on the default path, and it
+  reviews only while that machine is awake
+  ([docker/daemon/README.md](docker/daemon/README.md)).
+
+Switching later costs you none of your answers: re-run the topology step, and
+the repo, the App, the labels, the keys and your config are all kept.
+
+### Webhook ingress
+
+GitHub needs an HTTPS URL to deliver to. Four shapes, chosen during setup, with
+their honest trade-offs stated in full in
+[docker/daemon/README.md](docker/daemon/README.md):
+
+| shape | what you get | what it costs |
+|---|---|---|
+| Cloudflare **quick tunnel** (laptop default) | no account, working in seconds | the hostname rotates on every restart — the daemon re-points the App's webhook URL itself — and there is no SLA |
+| **ngrok** | a stable hostname with a reserved domain | an account, and free-tier caps (~20k requests/month, ~1 GB transfer, 1 agent, ~120 req/min) |
+| your own **named Cloudflare tunnel** (server default) | a permanent hostname on your domain | a Cloudflare account, a zone, and a connector token |
+| **polling only** | nothing exposed at all | up to one poll interval of trigger latency, and author-reply routing plus the `[feedback]` loop go quiet — both are webhook-driven |
+
+Any other HTTPS proxy or tunnel pointed at the webhook port works too; nothing
+here assumes a vendor.
+
+### Dry-run, and going live
+
+`dry_run = true` ships as the default: the daemon does everything except
+execute GitHub mutations, and writes each would-be call to `state/dryrun/` for
+you to inspect. The setup wizard raises the question once, at the end, and only
+after you have watched a review land in that record — and accepting takes an
+explicit confirmation phrase, never a default or a "yes". Nothing else in the
+wizard can move that flag in either direction. It is an owner-only surface
+([docs/ownership.md](docs/ownership.md)).
+
+Staying in dry-run is a finished, fully working installation, not a lesser one:
+labelled PRs get reviewed, the reviewer learns, the TUI and the companion work,
+and every review is a file you can read. Flip whenever you like — by running
+that step again, or by editing the one line and restarting the daemon.
+
+### Slack, later
+
+The Slack concierge is deliberately not part of onboarding — skipping it costs
+nothing. Set it up whenever you like with `npm run slack:setup`, which creates
+the app, collects the tokens, picks the channel and patches your config.
 
 ## Configuring the reviewer for *your* repo
 
@@ -249,22 +318,83 @@ exactly why the recheck/no-op/nit-cap machinery exists.
 ## Operating
 
 ```sh
+scripts/qcr onboard                             # guided setup; also a diagnostic
 scripts/qcr status | today | why <pr> | spend   # CLI over daemon state
-scripts/qcr tui                                 # operator board (over ssh)
-docker compose logs -f daemon                   # daemon logs
+scripts/qcr tui                                 # operator board
+docker compose logs -f daemon                   # daemon logs (laptop route)
 ```
+
+The TUI reaches the daemon over ssh or against local Docker, per
+`config.toml [tui] target` — setup writes the one that matches your topology.
 
 ## Documentation map
 
 - [MANIFESTO.md](MANIFESTO.md) — why this exists: the argument, the eight design beliefs, the non-goals, the acknowledgements
-- [docs/github-app-setup.md](docs/github-app-setup.md) — register the App in minutes
+- [docs/onboarding.md](docs/onboarding.md) — the guided setup, step by step: what it asks, what it writes, where it can stop
+- [docs/github-app-setup.md](docs/github-app-setup.md) — what the GitHub App is, and how to register it by hand
 - [docs/llm-setup.md](docs/llm-setup.md) — the two LLM credential routes
-- [docker/daemon/README.md](docker/daemon/README.md) — the plain-Docker deploy path
+- [docker/daemon/README.md](docker/daemon/README.md) — the plain-Docker route: containers, ingress shapes, image pins
+- [deploy/ansible/README.md](deploy/ansible/README.md) — the VM/server route: provisioning, deploy, verification
 - [docs/profiles.md](docs/profiles.md) — repo profiles: addenda packs + heuristics
 - [docs/ownership.md](docs/ownership.md) — the owner-only surfaces (dry-run flag, frozen seeds, ratification)
 - [docs/provenance.md](docs/provenance.md) — what the FT-#### citations in this codebase mean
 - [CONTRIBUTING.md](CONTRIBUTING.md) — build, test, and the frozen-seed rule
 - [SECURITY.md](SECURITY.md) — reporting vulnerabilities
+
+## Appendix — setting up by hand
+
+`qcr onboard` composes the tools below rather than replacing any of them, so
+nothing here is a second implementation, and drift between the guided path and
+this one is a bug. Do it yourself if you prefer; the wizard remains useful
+afterwards as a verifier, since re-running it re-checks every step against
+reality without writing anything that already holds.
+
+```sh
+git clone <this repo> && cd <repo>
+npm ci && npm test && npm run build
+
+cp config.example.toml config.toml    # ~10 clearly-marked FILL values:
+                                      # repo, app slug/bot login, review
+                                      # team/label, owner identity, timezone
+bash deploy/collect-secrets.sh        # interactive: App id + private key,
+                                      # webhook secret, tunnel token, OpenAI
+                                      # key (shape-aware — only what your
+                                      # deployment needs)
+
+export QCR_UID=$(id -u)
+docker compose up -d --build          # laptop route (docker/daemon/README.md)
+curl -s http://127.0.0.1:8787/health
+
+# then: point your HTTPS ingress at the webhook port, install the App on your
+# repo, create the trigger label, and label a PR — state/dryrun/ fills up.
+```
+
+Each piece has its own page:
+
+1. **The GitHub App** — [docs/github-app-setup.md](docs/github-app-setup.md):
+   the manifest, the permission and event tables, where each value lands, the
+   install, the repo-side labels, and the four verification checks.
+2. **LLM credentials** — [docs/llm-setup.md](docs/llm-setup.md): the two routes,
+   the provider-prefix rewrite, the container `/login`, and the embeddings key.
+3. **Ingress** — [docker/daemon/README.md](docker/daemon/README.md): the four
+   shapes, the compose profiles, and the sidecar credentials.
+4. **Memory keys** — the server's root key is any 32 random bytes, written to
+   `<secrets>/openviking_root_key`; the daemon needs it at boot, and without it
+   the memory engine comes up with no per-user confinement. The two *user* keys
+   are issued by the running server, and the setup wizard's memory step is the
+   only implementation that mints, places and proves them — run
+   `scripts/qcr onboard` for that step even if you did everything else by hand.
+   `node scripts/companion-memory-forward.mjs verify` is the confinement check
+   on its own. Declining memory is supported too: the reviewer then runs
+   memory-less, and rounds are unaffected.
+5. **A server instead of a laptop** —
+   [deploy/ansible/README.md](deploy/ansible/README.md): the inventory, the
+   playbook, and `scripts/deploy.sh sync|rebuild|verify`.
+6. **Slack** (optional, any time) — `npm run slack:setup`.
+
+`dry_run = true` ships as the default; flipping it is your own act, by hand in
+`config.toml` or through the wizard's go-live step, and the daemon re-reads it
+on restart.
 
 ## Acknowledgements
 

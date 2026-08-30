@@ -19,7 +19,7 @@ Practical guidance:
 - **You never need a ticket to work on the code.** Everything load-bearing
   from a cited decision is restated where it matters: in the comment carrying
   the citation, in the test that pins the behaviour, or in
-  [docs/ownership.md](docs/ownership.md).
+  [ownership.md](ownership.md).
 - **Treat a citation as a "here be a decision" marker.** If your change
   contradicts a comment carrying an FT id, the disagreement is worth raising
   in your PR rather than silently "fixing" — the odds are good the current

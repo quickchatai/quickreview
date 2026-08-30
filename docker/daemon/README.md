@@ -7,6 +7,15 @@ non-templated equivalents of the Ansible route's
 and runs them. The Ansible route (`deploy/ansible/`) remains the advanced
 path for a managed VM; both produce the same runtime.
 
+> **`qcr onboard` drives this route for you.** The wizard's **topology** step
+> offers it as one of two first-class answers — "this computer", the zero-server
+> way to run QuickReview — and then does everything below: it captures your uid,
+> writes `QCR_UID` and `COMPOSE_PROFILES` into the project `.env`, warns you
+> about the first build before starting it, streams the build, and checks the
+> container states afterwards. It composes this path; it does not replace it,
+> and drift between the two is a bug. Everything here stays true for a manual
+> run. See [../../docs/onboarding.md](../../docs/onboarding.md).
+
 ## Quick start
 
 ```sh
@@ -19,9 +28,15 @@ curl -s http://127.0.0.1:8787/health
 docker compose logs -f daemon
 ```
 
-The first boot runs `npm ci` + `npm run build` inside the mounted repo and
-replaces the repo's `state/` dir with a symlink onto the state volume — both
-are how the VM image behaves too. Steady-state restarts are instant.
+The first boot runs `npm ci` + `npm run build` inside the mounted repo;
+steady-state restarts are instant (a lockfile-hash marker on the state volume
+decides). The state volume is mounted at **both** `/opt/quickreview/state` (the
+absolute path the docs, the TUI's `remote_state_dir` and the ingress checks
+use) and `<sandbox>/state` (where the code itself looks), so the two spellings
+are one directory and the entrypoint leaves your checkout's `state/` alone —
+host-side files the TUI and the onboarding wizard read live there. The
+templated VM image reaches the same place through the entrypoint's legacy
+symlink migration, which the double mount deliberately skips.
 
 ## What the container expects
 

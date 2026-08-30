@@ -3,6 +3,13 @@
 # Values are read with hidden input and NEVER printed back. Re-run any time —
 # existing files are kept unless you choose to replace them.
 #
+# `scripts/qcr onboard` writes app_id / app.pem / webhook_secret itself, from
+# the GitHub App manifest exchange, and mints the OpenViking keys — so on the
+# guided path you only reach for this script for the values it points you at
+# (the OpenAI key, a tunnel token, an ngrok authtoken). It writes the same file
+# names with the same validation and the same 0600 mode; the two paths must
+# stay in step. See docs/onboarding.md.
+#
 # The wizard is deployment-shape-aware: the first choice is HOW the
 # GitHub webhook reaches the daemon, and the required set follows from it.
 #   tunnel — a Cloudflare Tunnel on the host fronts the webhook port

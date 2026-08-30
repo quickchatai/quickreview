@@ -5,6 +5,12 @@
 # executed) and every identity is empty. The ~10 values a new operator must
 # supply are marked "← FILL (n)" — grep for FILL. Flip dry_run to false only
 # as a deliberate, ratified cutover act, never as part of setup.
+#
+# YOU DO NOT HAVE TO FILL THIS BY HAND: `scripts/qcr onboard` interviews you
+# for the few values only you can answer, derives the rest, and patches this
+# file in place — every comment survives, and a re-run edits only what changed.
+# It never writes dry_run in either direction; going live is its own explicit
+# step. See docs/onboarding.md.
 # ONE mutation class is exempt and executes for real even here: the App
 # re-pointing its OWN webhook URL (see [ingress] below) — it can never touch
 # the reviewed repo, and every execution is logged loudly.
@@ -54,8 +60,13 @@ slack_id = ""                     # ← FILL (if enabling Slack): U…; required
 github_login = ""                 # ← FILL: operator GitHub login; escalation-mention fallback
 
 [server]
-hostname = ""                                # ← FILL (6): the public webhook hostname
-port = 8787                                  # loopback only; cloudflared on the host fronts it
+hostname = ""                                # ← FILL (6): the public webhook hostname.
+                                             #   Leave empty when your ingress assigns
+                                             #   its own (the quick tunnel does) — then
+                                             #   [ingress] below carries the shape.
+port = 8787                                  # loopback only; your HTTPS ingress fronts it
+                                             #   (a tunnel sidecar, cloudflared on the
+                                             #   host, or any reverse proxy)
 
 # [ingress] — webhook-URL self-heal, for tunnels whose hostname
 # ROTATES (the laptop quick-tunnel route). The tunnel sidecar writes

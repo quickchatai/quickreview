@@ -24,6 +24,21 @@ ratified at the cutover).
   an accidental flip reddens the suite.
 - `config.example.toml` ships `dry_run = true`: a fresh install never mutates
   GitHub until its owner says so.
+- The setup wizard **offers** the flip and never makes it. The offer comes only
+  after a proof round the wizard re-verifies against the daemon's own state
+  store, it takes the explicit phrase `GO LIVE` rather than a default or a
+  "yes", and the written file is loaded with the strict loader and read back
+  before the daemon is restarted. Every *other* config-writing step in the
+  wizard — the interview, the App-slug reconcile, the ingress and inventory
+  fills — refuses an edit naming that key however it is spelled, so the flag
+  cannot move as a side effect of anything else. Declining is a first-class
+  outcome: a dry-run installation is a complete one.
+- One narrow exception to "dry-run executes nothing" is ratified and closed:
+  the App-self-config class, a single mutation kind that re-points **the App's
+  own webhook URL** when a rotating tunnel hostname changes. It touches only
+  the App's configuration, can never reach the reviewed repo, is logged every
+  time, and the closed set is pinned by deep equality in `tests/gate.test.ts`
+  so a second kind fails a test.
 
 ## 2. RATIFIED fences
 

@@ -14,6 +14,8 @@ hostname → `localhost:8787` → the container.
 > and runs the **same `scripts/deploy.sh` documented below**, with every one of
 > its preflights. It composes this path; it does not replace it, and drift
 > between the two is a bug. Everything here stays true for a manual run.
+> The step-by-step walkthrough is
+> [../../docs/onboarding.md](../../docs/onboarding.md).
 
 **Prefer one machine?** The other first-class answer is the plain Docker path:
 `docker compose up` from the repo root — see `docker/daemon/README.md`. It
@@ -27,25 +29,36 @@ tasks are gated on `cloudflared_enabled` (group_vars, default `true` — the
 live deployment keeps its tunnel); set `-e cloudflared_enabled=false` to
 bring your own ingress.
 
-Asset of; written at
-the owner's direction 2026-08-13. Architecture note: running the whole sandbox
-inside one container is the isolation answer to pi having no built-in
-permission system.
+Written at the owner's direction, 2026-08-13. Architecture note:
+running the whole sandbox inside one container is the isolation answer to pi
+having no built-in permission system.
 
 ## Prerequisites (once, manual)
 
-1. **VM exists** in the dev GCP project (checklist §B: e2-standard-4,
-   100 GB, no external IP, OS Login + IAP).
+Items 2–4 are what `qcr onboard` fills in for you on this route; item 1 is
+yours either way — the wizard never creates a machine.
+
+1. **A VM you can reach over ssh by an alias**, with passwordless sudo for your
+   login. Any Linux host will do; the playbook installs everything else. The
+   live deployment runs a 4-vCPU / 100 GB box with no external IP, reached
+   through a bastion — that shape is a comfortable default, not a requirement.
+   The container is capped at 2 CPU / 8 GiB.
 2. **Ingress**: either a Cloudflare tunnel (remote-managed tunnel, public
    hostname → `http://localhost:8787`; its **token** saved as
    `~/.config/quickreview-bot/tunnel_token` locally — required only with
    `cloudflared_enabled: true`), or your own HTTPS proxy/tunnel pointed at
-   the VM's `localhost:8787` (then set `cloudflared_enabled: false`).
+   the VM's `localhost:8787` (then set `cloudflared_enabled: false`). The
+   wizard's ingress step writes that flag into `inventory.ini` for you: `true`
+   for the named-tunnel shape, `false` for every other one.
 3. **Local secrets dir** `~/.config/quickreview-bot/` contains:
    `app_id`, `app.pem`, `webhook_secret` (plus `openai_api_key` optional —
-   OAuth route — and `tunnel_token` when the tunnel is enabled).
+   OAuth route — and `tunnel_token` when the tunnel is enabled), and
+   `openviking_root_key` / `openviking_reviewer_key` for the memory engine.
+   `bash deploy/collect-secrets.sh` assembles the first set interactively; the
+   wizard's GitHub App and memory steps write the same files.
    (Never any personal token.)
-4. Controller tooling:
+4. Controller tooling **on the machine you deploy from** — the deploy is an
+   Ansible run from here, not on the server:
    ```
    ansible-galaxy collection install community.docker ansible.posix
    cp inventory.example.ini inventory.ini   # then edit — inventory.ini is
@@ -80,26 +93,34 @@ seed content rides the repo) → image build → container up
 ssh <vm> systemctl is-active cloudflared docker
 ssh <vm> docker ps --filter name=quickreview-sandbox
 ssh <vm> docker exec quickreview-sandbox tmux ls
+ssh <vm> curl -sS http://127.0.0.1:8787/health     # loopback-only by design
 ```
 
-A GitHub test delivery (step 4) will 502 until the daemon exists —
-expected pre-B2; the tunnel path itself is proven by the 502 arriving from
-cloudflared rather than a timeout.
+That is the same layering `qcr onboard`'s verification step runs — containers,
+then the health endpoint, then GitHub's own webhook delivery log — and the
+order matters: a container that is not up cannot answer a health probe, and a
+daemon that is not answering cannot accept a delivery. While the tunnel is up
+but the daemon is not, a GitHub test delivery returns a 502 *from cloudflared*
+rather than timing out; that distinction is itself the proof the tunnel path
+works.
 
 ## OpenAI auth for pi
 
-Native in pi — nothing to install (verified,
-findings):
+Native in pi — nothing to install (verified). Both routes and their
+cost shapes are in [../../docs/llm-setup.md](../../docs/llm-setup.md); here is
+what this route does with each:
 
 - **API key (wired automatically)**: the entrypoint exports `OPENAI_API_KEY`
   from the mounted `secrets/openai_api_key`, so the tmux server and every pi
   session inherit it. Works headless from the first boot.
-- **ChatGPT-subscription OAuth (optional, "Codex for OSS" billing)**: run
-  `/login` once inside any pi session in the container
-  (`docker exec -it quickreview-sandbox pi` → `/login`); tokens land in
-  `/home/review/.pi/agent/auth.json`, which lives on the persistent `pihome`
-  volume, auto-refresh, and **take precedence** over the env-var key (pi's
-  resolution order: CLI flag → auth.json → env var). Both routes can coexist.
+- **ChatGPT-subscription OAuth (optional)**: run `/login` once inside any pi
+  session in the container (`docker exec -it quickreview-sandbox pi` →
+  `/login`); tokens land in `/home/review/.pi/agent/auth.json`, which lives on
+  the persistent `pihome` volume, auto-refresh, and **take precedence** over
+  the env-var key (pi's resolution order: CLI flag → auth.json → env var).
+  Both routes can coexist. A login here does **not** cover a companion
+  container on your own machine, or a pi you run on the host: pi's tokens do
+  not transfer, so each pi home needs its own.
 
 The `pihome` volume also persists pi's session JSONLs across container
 rebuilds — required for the sticky per-PR conversations, not just for auth.
@@ -114,6 +135,7 @@ rebuilds — required for the sticky per-PR conversations, not just for auth.
   own). No inbound firewall rule is ever needed.
 - Image pins: pi and node are pinned in `group_vars/all.yml`; bumping them is
   a deliberate edit + `rebuild_image=true`, never automatic (spec §9).
-- Jump-in from the laptop: `ssh -t <vm> docker exec -it quickreview-sandbox
-  tmux attach -t <pr-N|overseer|main>` (the `qcr attach` helper wraps this in
-  build slice B1).
+- Jump-in from your own machine: `ssh -t <vm> docker exec -it quickreview-sandbox
+  tmux attach -t <pr-N|overseer>` — `scripts/qcr attach <n>` wraps it, and the
+  operator TUI (`scripts/qcr tui`, with `[tui] target = "ssh"`) embeds the same
+  session in a pane.

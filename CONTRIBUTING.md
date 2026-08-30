@@ -7,7 +7,7 @@ test-driven; the rules below are the ones that will actually affect your PR.
 
 ```sh
 npm ci
-npm test          # vitest, ~1600 tests, seconds — all I/O mocked, no secrets
+npm test          # vitest, ~4000 tests, seconds — all I/O mocked, no secrets
 npm run build     # tsc, must be clean
 ```
 

@@ -10,12 +10,15 @@ token store) → environment (`OPENAI_API_KEY`). A completed `/login` therefore
 takes precedence over an API key in the environment.
 
 **The onboarding wizard does all of this for you** (`qcr onboard`):
-it asks the question, stores the key through the same secrets flow, performs
-the six-value prefix rewrite below itself (comment-preserving and reversible —
-switching routes later just re-runs the step), and, on the OAuth route, guides
-each of the three logins and verifies that each one landed on its container's
-persistent pi-home volume. This page is the manual path and stays authoritative
-for what the wizard does.
+it asks the question, points you at the same secrets flow for the key (a key
+pasted into an agent session would land in a transcript, so it never accepts
+one as an argument), performs the six-value prefix rewrite below itself
+(comment-preserving, idempotent and reversible — switching routes later just
+re-runs the step), and, on the OAuth route, guides each of the three logins in
+turn and checks that each container's token landed on that container's
+*persistent* pi-home volume rather than in a writable layer a recreate would
+throw away. This page is the manual path and stays authoritative for what the
+wizard does; drift between the two is a bug.
 
 ## Route 1 — ChatGPT OAuth (subscription, the shipped default)
 
@@ -23,7 +26,7 @@ The model strings in `config.toml [models]` default to the **`openai-codex/`**
 provider prefix — pi's ChatGPT-OAuth route. No API key is needed for the
 review models.
 
-**One manual step, once:** after the container is up, open any pi session and
+**The logins, once each:** after a container is up, open a pi session in it and
 log in:
 
 ```sh
@@ -35,6 +38,16 @@ The OAuth tokens land in `auth.json` under pi's home, which is a **named
 Docker volume** (`pihome`) — so the login survives container restarts and
 image rebuilds. You repeat `/login` only if that volume is deleted or the
 tokens are revoked.
+
+**Expect up to three of them, and know why.** pi's tokens live in the pi home
+of whichever process logged in, and **they do not transfer between your host
+and a container** — there is no shared credential store. So the daemon
+container needs its own, the local companion container needs its own, and any
+pi you run on the host (including the setup wizard's own session) needs a third.
+Each one is a separate browser flow, each is once-per-volume, and the wizard
+guides them where they happen. If a login "disappears" after a rebuild, the
+cause is almost always a container whose pi home was *not* on a persistent
+volume: the token was written into the writable layer and went with it.
 
 **Cost shape:** flat — whatever the ChatGPT plan costs, bounded by the plan's
 usage limits rather than a per-token meter. An actively reviewed repo runs
