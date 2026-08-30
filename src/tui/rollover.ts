@@ -45,13 +45,22 @@ export interface RolloverState {
   updated_at: string;
   /** Date-stamped archive of the run that was rotated out most recently. */
   last_archive?: string;
+  /** Ops-timezone date the first-run interview was delivered. Present
+   * ⇒ the interview fired once and never fires again; resuming an abandoned
+   * interview is a conversation with the companion, not a re-delivery. */
+  first_run_interviewed?: string;
 }
 
 export function readRolloverState(path: string): RolloverState | undefined {
   try {
     const raw = JSON.parse(readFileSync(path, "utf8")) as Partial<RolloverState>;
     if (typeof raw.last_open_date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(raw.last_open_date)) return undefined;
-    return { last_open_date: raw.last_open_date, updated_at: String(raw.updated_at ?? ""), last_archive: raw.last_archive };
+    return {
+      last_open_date: raw.last_open_date,
+      updated_at: String(raw.updated_at ?? ""),
+      last_archive: raw.last_archive,
+      ...(typeof raw.first_run_interviewed === "string" ? { first_run_interviewed: raw.first_run_interviewed } : {}),
+    };
   } catch {
     return undefined;
   }
@@ -317,6 +326,67 @@ export function dayOpenFileName(date: string): string {
   return `${date}-day-open.md`;
 }
 
+// ---- first-run interview ------------------------------------------
+
+/** The onboarding wizard's marker contract: `state/companion/
+ * first-run.json` with a `completed_at` ISO stamp, written when onboarding
+ * finished. Malformed/absent → undefined, never a throw. */
+export interface FirstRunMarker {
+  completed_at: string;
+}
+
+export function readFirstRunMarker(path: string): FirstRunMarker | undefined {
+  try {
+    const raw = JSON.parse(readFileSync(path, "utf8")) as Partial<FirstRunMarker>;
+    if (typeof raw.completed_at !== "string" || raw.completed_at.trim() === "") return undefined;
+    return { completed_at: raw.completed_at };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Should the first-run interview fire on this start? Pure decision:
+ *
+ *   * a delivered interview never fires again (the state records it);
+ *   * no rollover state has EVER existed ⇒ first run, interview due — the
+ *     fallback that makes the feature work before/without the wizard;
+ *   * otherwise the wizard's marker decides — its presence on an installation
+ *     whose state carries no interview means onboarding finished and the
+ *     greeting is owed.
+ *
+ * An existing installation (state present, no marker) never gets one.
+ */
+export function interviewDue(marker: FirstRunMarker | undefined, state: RolloverState | undefined): boolean {
+  if (state?.first_run_interviewed) return false;
+  if (state === undefined) return true;
+  return marker !== undefined;
+}
+
+export interface FirstRunSources {
+  date: string;
+  /** Owner label, already defaulted — never empty. */
+  owner: string;
+  snapshot_summary: string;
+}
+
+const FIRST_RUN_PLACEHOLDERS: Array<keyof FirstRunSources> = ["date", "owner", "snapshot_summary"];
+
+/** Fill prompts/companion-first-run.md — same `—`-for-empty discipline as the
+ * day-open (the owner label is pre-defaulted, so only the snapshot can be empty). */
+export function renderFirstRun(template: string, sources: FirstRunSources): string {
+  let out = template;
+  for (const key of FIRST_RUN_PLACEHOLDERS) {
+    const value = (sources[key] ?? "").trim();
+    out = out.replaceAll(`{{${key}}}`, value === "" ? "—" : value);
+  }
+  return out;
+}
+
+export function firstRunFileName(date: string): string {
+  return `${date}-first-run.md`;
+}
+
 // ---- the sequence -----------------------------------------------------------
 
 export interface RolloverOptions {
@@ -333,6 +403,14 @@ export interface RolloverOptions {
   /** `[owner] name` — the user-turn label in the day-open summary.
    * Absent/empty ⇒ "the operator". */
   ownerName?: string;
+  /** Host path of prompts/companion-first-run.md. Absent ⇒ the
+   * first-run interview machinery is off entirely — back-compat for callers
+   * that only want the daily rollover. */
+  firstRunTemplatePath?: string;
+  /** Host path of the wizard's marker (`state/companion/
+   * first-run.json`). Absent/missing file is fine — the no-state-ever
+   * fallback still detects a fresh installation. */
+  firstRunMarkerPath?: string;
   now?: () => Date;
   env?: NodeJS.ProcessEnv;
   timeZone?: string;
@@ -348,6 +426,11 @@ export interface RolloverReport {
   dayOpenFile?: string;
   /** The rendered day-open text (tests assert on it; the TUI logs its size). */
   dayOpen?: string;
+  /** Host path of the first-run interview inject file, when this
+   * start delivered one (at most once per installation). */
+  interviewFile?: string;
+  /** The rendered interview text. */
+  interview?: string;
 }
 
 /**
@@ -424,14 +507,19 @@ export class CompanionRollover {
     await this.docker(["exec", this.cfg.container_name, "tmux", "kill-session", "-t", this.cfg.session]);
   }
 
-  /** Write the day-open message where inject-bridge will drain it. */
-  writeDayOpen(text: string, date: string): string {
+  /** tmp+rename into the inject dir — the bridge must never drain a torn file. */
+  private writeInject(name: string, text: string): string {
     mkdirSync(this.opts.injectDir, { recursive: true });
-    const target = join(this.opts.injectDir, dayOpenFileName(date));
-    const tmp = join(this.opts.injectDir, `.${dayOpenFileName(date)}.tmp`);
+    const target = join(this.opts.injectDir, name);
+    const tmp = join(this.opts.injectDir, `.${name}.tmp`);
     writeFileSync(tmp, text);
     renameSync(tmp, target);
     return target;
+  }
+
+  /** Write the day-open message where inject-bridge will drain it. */
+  writeDayOpen(text: string, date: string): string {
+    return this.writeInject(dayOpenFileName(date), text);
   }
 
   /** Assemble the opening context from the five carry items + the knobs. */
@@ -450,43 +538,91 @@ export class CompanionRollover {
   }
 
   private record(date: string, archive?: string): void {
+    // Preserve the interview mark across rewrites: dropping it on a later
+    // rollover would re-arm a marker-keyed interview forever.
+    const prior = readRolloverState(this.opts.statePath);
     writeRolloverState(this.opts.statePath, {
       last_open_date: date,
       updated_at: this.now().toISOString(),
       ...(archive ? { last_archive: archive } : {}),
+      ...(prior?.first_run_interviewed ? { first_run_interviewed: prior.first_run_interviewed } : {}),
     });
+  }
+
+  /** Assemble the first-run interview from its template. */
+  buildInterview(date: string): string {
+    const template = readFileSync(this.opts.firstRunTemplatePath!, "utf8");
+    return renderFirstRun(template, {
+      date,
+      owner: this.opts.ownerName?.trim() || "the operator",
+      snapshot_summary: snapshotSummary(readSnapshot(this.cfg.feed_dir)),
+    });
+  }
+
+  /**
+   * Deliver the first-run interview if it is due — at most once per
+   * installation, recorded in the rollover state. `prior` is the state as it
+   * stood BEFORE this run touched it (the no-state-ever fallback must see the
+   * original absence, not the row `record()` just created). Nothing here ever
+   * blocks a start: a missing/broken template degrades to a step note.
+   */
+  private maybeInterview(today: string, prior: RolloverState | undefined, steps: string[]): { interviewFile?: string; interview?: string } {
+    if (!this.opts.firstRunTemplatePath) return {};
+    const marker = this.opts.firstRunMarkerPath ? readFirstRunMarker(this.opts.firstRunMarkerPath) : undefined;
+    if (!interviewDue(marker, prior)) return {};
+    let interview: string;
+    try {
+      interview = this.buildInterview(today);
+    } catch {
+      steps.push("first-run interview template unreadable — skipped (system unaffected)");
+      return {};
+    }
+    const interviewFile = this.writeInject(firstRunFileName(today), interview);
+    steps.push(`queued first-run interview → ${interviewFile}`);
+    // Mark it delivered so it fires exactly once; later starts run the normal
+    // day-open. An abandoned interview resumes in conversation, never here.
+    const state = readRolloverState(this.opts.statePath) ?? { last_open_date: today, updated_at: this.now().toISOString() };
+    writeRolloverState(this.opts.statePath, { ...state, first_run_interviewed: today });
+    return { interviewFile, interview };
   }
 
   /**
    * first-run → record the date, touch nothing;
    * same-day  → nothing at all;
-   * rollover  → archive → compact → assemble → kill → (caller respawns).
+   * rollover  → archive → compact → assemble → kill → (caller respawns);
+   * …and on any of the three, deliver the first-run interview when it
+   * is due (fresh installation, or the wizard's marker with no interview on
+   * record) — exactly once, ever.
    */
   async run(): Promise<RolloverReport> {
     const today = this.today();
-    const verdict = decideRollover(today, readRolloverState(this.opts.statePath));
+    const prior = readRolloverState(this.opts.statePath);
+    const verdict = decideRollover(today, prior);
     const steps: string[] = [];
-    if (verdict.kind !== "rollover") {
-      if (verdict.kind === "first-run") {
-        this.record(today);
-        steps.push(`first run — companion day set to ${today}`);
-      }
-      return { verdict, steps };
+    let archivedTo: string | undefined;
+    let dayOpenFile: string | undefined;
+    let dayOpen: string | undefined;
+
+    if (verdict.kind === "first-run") {
+      this.record(today);
+      steps.push(`first run — companion day set to ${today}`);
+    } else if (verdict.kind === "rollover") {
+      const file = await this.newestSessionFile();
+      steps.push(file === "" ? "no previous conversation found" : `found conversation ${file}`);
+      archivedTo = await this.archive(file, verdict.previous);
+      if (archivedTo) steps.push(`archived → ${archivedTo}`);
+      const turns = parseConversation(await this.readConversation(file));
+      steps.push(`compacted ${turns.length} turn${turns.length === 1 ? "" : "s"}`);
+      dayOpen = this.buildDayOpen(today, turns);
+      steps.push(`assembled opening context (${dayOpen.length} chars)`);
+      await this.killSession();
+      steps.push(`killed tmux session ${this.cfg.session}`);
+      dayOpenFile = this.writeDayOpen(dayOpen, today);
+      steps.push(`queued day-open message → ${dayOpenFile}`);
+      this.record(today, archivedTo);
     }
 
-    const file = await this.newestSessionFile();
-    steps.push(file === "" ? "no previous conversation found" : `found conversation ${file}`);
-    const archivedTo = await this.archive(file, verdict.previous);
-    if (archivedTo) steps.push(`archived → ${archivedTo}`);
-    const turns = parseConversation(await this.readConversation(file));
-    steps.push(`compacted ${turns.length} turn${turns.length === 1 ? "" : "s"}`);
-    const dayOpen = this.buildDayOpen(today, turns);
-    steps.push(`assembled opening context (${dayOpen.length} chars)`);
-    await this.killSession();
-    steps.push(`killed tmux session ${this.cfg.session}`);
-    const dayOpenFile = this.writeDayOpen(dayOpen, today);
-    steps.push(`queued day-open message → ${dayOpenFile}`);
-    this.record(today, archivedTo);
-    return { verdict, steps, archivedTo, dayOpenFile, dayOpen };
+    const interview = this.maybeInterview(today, prior, steps);
+    return { verdict, steps, archivedTo, dayOpenFile, dayOpen, ...interview };
   }
 }

@@ -85,6 +85,8 @@ const NON_SEEDED = [
   "prompts/round-recheck.md",
   "prompts/companion.md",
   "prompts/companion-day-open.md",
+  // the first-run greeting + calibration interview — post-seed, ours.
+  "prompts/companion-first-run.md",
   "prompts/slack-overseer-appendix.md",
 ] as const;
 

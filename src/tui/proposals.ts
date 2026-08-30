@@ -20,9 +20,16 @@
 // proposal dir is then removed. REJECT removes the dir and records a
 // #rejected-proposal memory entry so the same change is never re-proposed.
 //
+// adds a second accepted kind alongside rubric proposals: CONFIG
+// proposals — same dirs, same surface, but changes.patch targets config.toml
+// (exactly that one file). Accept = apply + local commit (no ratification
+// bookkeeping: config is not a seed); the structural guard is that a config
+// patch may NEVER touch `dry_run` (`configPatchViolation` — rule 1).
+//
 // Containment (the patch is LLM output; these are the walls):
-//   * targets — agents// prompts/ only, both diff sides plus rename/copy
-//     headers (`patchTargets` + `targetsAllowed`);
+//   * targets — agents// prompts/ only (rubric) or config.toml alone
+//     (config), both diff sides plus rename/copy headers (`patchTargets` +
+//     `proposalKind`); anything else is refused;
 //   * RATIFIED fences — a patch may neither edit lines inside a
 //     `<!-- RATIFIED … -->` fence nor add a fence marker of its own
 //     (`patchFenceViolation`). Rule 6's ratified passages are the owner's; the
@@ -147,6 +154,54 @@ export function targetsAllowed(files: string[]): boolean {
     files.length > 0 &&
     files.every((f) => (f.startsWith("agents/") || f.startsWith("prompts/")) && !f.split("/").includes("..") && !f.includes("\\"))
   );
+}
+
+// ---- proposal kinds: rubric (agents//prompts/) vs config (config.toml) ----
+//
+// the first-run interview distills calibration answers into CONFIG
+// proposals — same state/rubric/<slug>/ dirs, same accept/reject surface,
+// but the patch targets config.toml. The two kinds never mix in one patch:
+// a config proposal is exactly one file, config.toml, so the rubric
+// containment above stays byte-identical for rubric patches.
+
+export type ProposalKind = "rubric" | "config";
+
+/** Classify a patch's target set. null = neither kind — refused at accept. */
+export function proposalKind(files: string[]): ProposalKind | null {
+  if (targetsAllowed(files)) return "rubric";
+  if (files.length === 1 && files[0] === "config.toml") return "config";
+  return null;
+}
+
+/** Matches `dry_run` as a whole word — assignments, inline tables, whatever
+ * shape a patch smuggles it in. A comment merely MENTIONING dry_run also
+ * trips this; that false positive is safe (the operator edits config by
+ * hand), the false negative is not. */
+const DRY_RUN_TOKEN = /(^|[^0-9A-Za-z_])dry_run([^0-9A-Za-z_]|$)/;
+
+/**
+ * Rule 1's structural half of the config-proposal path: a changes.patch may
+ * NEVER touch `dry_run` — the flag is the owner's alone, and a proposal that
+ * adds, removes or rewrites any line carrying it is refused before git ever
+ * sees it. Returns the refusal message, or null when clean.
+ */
+export function configPatchViolation(patch: string): string | null {
+  let inHunk = false;
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("--- ") || line.startsWith("+++ ")) {
+      inHunk = false;
+      continue;
+    }
+    if (/^@@ -\d+(?:,\d+)? /.test(line)) {
+      inHunk = true;
+      continue;
+    }
+    if (!inHunk) continue;
+    if ((line.startsWith("+") || line.startsWith("-")) && DRY_RUN_TOKEN.test(line.slice(1))) {
+      return "refused: config proposal touches dry_run — rule 1: the flag is the owner's alone, never a proposal";
+    }
+  }
+  return null;
 }
 
 // ---- RATIFIED fences: a proposal patch may never reach inside one ---------
@@ -274,7 +329,12 @@ export async function acceptProposal(deps: AcceptDeps, slug: string): Promise<{ 
   const patch = readRubricFile(deps.repoRoot, slug, "changes.patch");
   if (patch === null || patch.trim().length === 0) return { ok: false, message: `no changes.patch for '${slug}'` };
   const files = patchTargets(patch);
-  if (!targetsAllowed(files)) return { ok: false, message: `refused: patch touches non-rubric paths (${files.join(", ") || "none"})` };
+  const kind = proposalKind(files);
+  if (kind === null) return { ok: false, message: `refused: patch touches non-proposal paths (${files.join(", ") || "none"})` };
+  if (kind === "config") {
+    const cfgViolation = configPatchViolation(patch);
+    if (cfgViolation !== null) return { ok: false, message: cfgViolation };
+  }
   const fence = patchFenceViolation(patch, (rel) => {
     try {
       return readFileSync(join(deps.repoRoot, rel), "utf8");
@@ -290,14 +350,21 @@ export async function acceptProposal(deps: AcceptDeps, slug: string): Promise<{ 
   }
   try {
     await deps.git.run("git", ["apply", "-"], patch);
-    const ratified = recordRatification(deps.repoRoot, files, slug, deps.today());
+    // config.toml is never a seeded file, so ratification bookkeeping is a
+    // rubric-only concern (recordRatification would no-op anyway; skipping it
+    // keeps the config path from ever reading the seed fixtures).
+    const ratified = kind === "rubric" ? recordRatification(deps.repoRoot, files, slug, deps.today()) : [];
     const toAdd = [
       ...files,
       ...ratified.map((rel) => `seeds/${rel}`),
       ...(ratified.length > 0 ? ["tests/fixtures/seed-manifest.json", "tests/fixtures/ratified-divergence.json"] : []),
     ];
     await deps.git.run("git", ["add", "--", ...toAdd]);
-    await deps.git.run("git", ["commit", "-m", `rubric: accept '${slug}' — ratified by the owner via TUI`]);
+    const subject =
+      kind === "config"
+        ? `config: accept '${slug}' — applied by the owner via TUI`
+        : `rubric: accept '${slug}' — ratified by the owner via TUI`;
+    await deps.git.run("git", ["commit", "-m", subject]);
   } catch (err) {
     return { ok: false, message: `apply/commit failed — repo may need manual attention: ${String(err instanceof Error ? err.message : err).slice(0, 200)}` };
   }

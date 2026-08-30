@@ -10,12 +10,14 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { TuiConfig } from "../src/config.js";
 import {
   acceptProposal,
+  configPatchViolation,
   fenceRanges,
   improvementsArgv,
   listRubricProposals,
   parseImprovements,
   patchFenceViolation,
   patchTargets,
+  proposalKind,
   readRubricFile,
   recordRatification,
   removeRubricDir,
@@ -137,6 +139,48 @@ describe("patch vetting — targets", () => {
     const rename = "rename from src/gate.ts\nrename to agents/pass-x.md\n" + PATCH;
     expect(patchTargets(rename)).toContain("src/gate.ts");
     expect(targetsAllowed(patchTargets(rename))).toBe(false);
+  });
+});
+
+// A comment-preserving config.toml hunk — the config-proposal shape.
+const CONFIG_PATCH = `--- a/config.toml
++++ b/config.toml
+@@ -409,2 +409,2 @@
+ # most recent human author of the touched directive files, else this:
+-escalation_mention_default = "oldhandle"
++escalation_mention_default = "casey"
+`;
+
+describe("proposal kinds (config beside rubric)", () => {
+  it("classifies rubric, config, mixed and out-of-bounds target sets", () => {
+    expect(proposalKind(["agents/pass-baseline.md", "prompts/round-first.md"])).toBe("rubric");
+    expect(proposalKind(["config.toml"])).toBe("config");
+    expect(proposalKind(["config.toml", "agents/pass-baseline.md"])).toBeNull(); // kinds never mix
+    expect(proposalKind(["src/gate.ts"])).toBeNull();
+    expect(proposalKind(["config.toml", "src/gate.ts"])).toBeNull();
+    expect(proposalKind([])).toBeNull();
+  });
+
+  it("configPatchViolation refuses any changed line touching dry_run — added, removed, or renamed in", () => {
+    const flip = `--- a/config.toml\n+++ b/config.toml\n@@ -4,1 +4,1 @@\n-dry_run = false\n+dry_run = true\n`;
+    expect(configPatchViolation(flip)).toMatch(/dry_run/);
+    const addOnly = `--- a/config.toml\n+++ b/config.toml\n@@ -10,1 +10,2 @@\n [ops]\n+dry_run = true\n`;
+    expect(configPatchViolation(addOnly)).toMatch(/dry_run/);
+    const inlineTable = `--- a/config.toml\n+++ b/config.toml\n@@ -10,1 +10,2 @@\n [ops]\n+review = { dry_run = false }\n`;
+    expect(configPatchViolation(inlineTable)).toMatch(/dry_run/);
+    // A comment merely mentioning it also trips — the false positive is safe.
+    const comment = `--- a/config.toml\n+++ b/config.toml\n@@ -10,1 +10,2 @@\n [ops]\n+# see dry_run above\n`;
+    expect(configPatchViolation(comment)).toMatch(/dry_run/);
+  });
+
+  it("configPatchViolation passes a clean knob change, dry_run in context lines included", () => {
+    expect(configPatchViolation(CONFIG_PATCH)).toBeNull();
+    // dry_run as an untouched CONTEXT line is not a violation — nothing changes it.
+    const context = `--- a/config.toml\n+++ b/config.toml\n@@ -4,2 +4,3 @@\n dry_run = false\n [ops]\n+timezone = "Europe/Warsaw"\n`;
+    expect(configPatchViolation(context)).toBeNull();
+    // And a word that merely CONTAINS the token is not the token.
+    const lookalike = `--- a/config.toml\n+++ b/config.toml\n@@ -1,1 +1,2 @@\n x\n+not_dry_running = 1\n`;
+    expect(configPatchViolation(lookalike)).toBeNull();
   });
 });
 
@@ -285,7 +329,7 @@ describe("acceptProposal (local dirs, fake git)", () => {
       "evil",
     );
     expect(res.ok).toBe(false);
-    expect(res.message).toContain("non-rubric paths");
+    expect(res.message).toContain("non-proposal paths");
     expect(gitCalls).toHaveLength(0);
     expect(existsSync(join(root, "state/rubric/evil"))).toBe(true); // a refusal never deletes the evidence
   });
@@ -313,6 +357,63 @@ describe("acceptProposal (local dirs, fake git)", () => {
     expect(res.ok).toBe(false);
     expect(res.message).toMatch(/RATIFIED fence/);
     expect(gitCalls).toHaveLength(0);
+  });
+
+  it("accepts a config proposal: applies + commits, no ratification bookkeeping, dir removed", async () => {
+    writeFileSync(join(root, "config.toml"), "# comment\nescalation_mention_default = \"oldhandle\"\n");
+    propose("calibrate-mention", CONFIG_PATCH);
+    const gitCalls: string[][] = [];
+    const res = await acceptProposal(
+      {
+        git: {
+          run: (cmd, args) => {
+            gitCalls.push([cmd, ...args]);
+            return Promise.resolve("");
+          },
+        },
+        repoRoot: root,
+        today: () => "2026-08-30",
+      },
+      "calibrate-mention",
+    );
+    expect(res.ok).toBe(true);
+    expect(gitCalls.map((c) => c.slice(0, 2).join(" "))).toEqual(["git apply", "git apply", "git add", "git commit"]);
+    expect(gitCalls[2]).toContain("config.toml");
+    expect(gitCalls[2]).not.toContain("tests/fixtures/seed-manifest.json");
+    expect(gitCalls[3]!.join(" ")).toContain("config: accept 'calibrate-mention'");
+    // config.toml is not a seed: the divergence registry is untouched.
+    const div = JSON.parse(readFileSync(join(root, "tests/fixtures/ratified-divergence.json"), "utf8"));
+    expect(Object.keys(div.files)).toEqual([]);
+    expect(existsSync(join(root, "state/rubric/calibrate-mention"))).toBe(false);
+  });
+
+  it("refuses a config proposal touching dry_run, before touching git — rule 1, structural", async () => {
+    propose("flip-dry-run", `--- a/config.toml\n+++ b/config.toml\n@@ -4,1 +4,1 @@\n-dry_run = false\n+dry_run = true\n`);
+    const gitCalls: string[][] = [];
+    const res = await acceptProposal(
+      {
+        git: {
+          run: (cmd, args) => {
+            gitCalls.push([cmd, ...args]);
+            return Promise.resolve("");
+          },
+        },
+        repoRoot: root,
+        today: () => "2026-08-30",
+      },
+      "flip-dry-run",
+    );
+    expect(res.ok).toBe(false);
+    expect(res.message).toMatch(/dry_run.*owner's alone/);
+    expect(gitCalls).toHaveLength(0);
+    expect(existsSync(join(root, "state/rubric/flip-dry-run"))).toBe(true); // a refusal never deletes the evidence
+  });
+
+  it("refuses a patch mixing config.toml with rubric targets — kinds never mix", async () => {
+    propose("mixed", CONFIG_PATCH + PATCH);
+    const res = await acceptProposal({ git: { run: () => Promise.resolve("") }, repoRoot: root, today: () => "2026-08-30" }, "mixed");
+    expect(res.ok).toBe(false);
+    expect(res.message).toContain("non-proposal paths");
   });
 
   it("refuses a patch that does not apply cleanly", async () => {

@@ -16,10 +16,14 @@ import {
   conversationTail,
   decideRollover,
   digestLine,
+  firstRunFileName,
+  interviewDue,
   openAlerts,
   parseConversation,
+  readFirstRunMarker,
   readRolloverState,
   renderDayOpen,
+  renderFirstRun,
   snapshotSummary,
   todayDate,
   writeRolloverState,
@@ -69,13 +73,28 @@ function fakeDocker(answers: Record<string, string> = {}): { runner: DockerRunne
 
 function rollover(
   runner: DockerRunner,
-  opts: { now?: () => Date; env?: NodeJS.ProcessEnv; config?: CompanionConfig } = {},
+  opts: {
+    now?: () => Date;
+    env?: NodeJS.ProcessEnv;
+    config?: CompanionConfig;
+    /** Wire the first-run interview (template + marker path). */
+    firstRun?: boolean;
+    firstRunTemplatePath?: string;
+    ownerName?: string;
+  } = {},
 ): CompanionRollover {
   return new CompanionRollover(opts.config ?? cfg(), runner, {
     statePath: join(dir, "state", "rollover.json"),
     policyStatePath: join(dir, "state", "alert-policy.json"),
     templatePath: join(repoRoot, "prompts", "companion-day-open.md"),
     injectDir: join(dir, "repo", "inject", "companion"),
+    ...(opts.firstRun || opts.firstRunTemplatePath
+      ? {
+          firstRunTemplatePath: opts.firstRunTemplatePath ?? join(repoRoot, "prompts", "companion-first-run.md"),
+          firstRunMarkerPath: join(dir, "state", "companion", "first-run.json"),
+        }
+      : {}),
+    ...(opts.ownerName !== undefined ? { ownerName: opts.ownerName } : {}),
     now: opts.now ?? (() => new Date("2026-08-14T09:00:00Z")),
     env: opts.env ?? {},
   });
@@ -372,6 +391,121 @@ describe("the rollover sequence", () => {
     const { runner } = fakeDocker({ "ls -1t": "" });
     const report = await rollover(runner, { env: { QCR_FAKE_TODAY: "2026-08-15" } }).run();
     expect(report.verdict).toEqual({ kind: "rollover", today: "2026-08-15", previous: "2026-08-14" });
+  });
+});
+
+describe("first-run interview", () => {
+  const markerPath = (): string => join(dir, "state", "companion", "first-run.json");
+  const writeMarker = (): void => {
+    mkdirSync(dirname(markerPath()), { recursive: true });
+    writeFileSync(markerPath(), JSON.stringify({ completed_at: "2026-08-14T08:00:00Z" }));
+  };
+
+  it("interviewDue: fallback (no state ever), marker, delivered-once, existing install", () => {
+    const marker = { completed_at: "2026-08-14T08:00:00Z" };
+    // No rollover state has ever existed ⇒ due, wizard or not.
+    expect(interviewDue(undefined, undefined)).toBe(true);
+    expect(interviewDue(marker, undefined)).toBe(true);
+    // The wizard's marker on an installation with no interview on record ⇒ due.
+    expect(interviewDue(marker, { last_open_date: "2026-08-14", updated_at: "" })).toBe(true);
+    // Delivered once ⇒ never again, marker or not.
+    expect(interviewDue(marker, { last_open_date: "2026-08-14", updated_at: "", first_run_interviewed: "2026-08-14" })).toBe(false);
+    expect(interviewDue(undefined, { last_open_date: "2026-08-14", updated_at: "", first_run_interviewed: "2026-08-14" })).toBe(false);
+    // An existing installation (state, no marker) never gets one.
+    expect(interviewDue(undefined, { last_open_date: "2026-08-13", updated_at: "" })).toBe(false);
+  });
+
+  it("reads the wizard's marker contract and rejects junk", () => {
+    writeMarker();
+    expect(readFirstRunMarker(markerPath())).toEqual({ completed_at: "2026-08-14T08:00:00Z" });
+    writeFileSync(markerPath(), "{oops");
+    expect(readFirstRunMarker(markerPath())).toBeUndefined();
+    writeFileSync(markerPath(), JSON.stringify({ completed_at: "" }));
+    expect(readFirstRunMarker(markerPath())).toBeUndefined();
+    expect(readFirstRunMarker(join(dir, "nope.json"))).toBeUndefined();
+  });
+
+  it("renderFirstRun fills every placeholder; an empty snapshot renders as an em dash", () => {
+    const template = readFileSync(join(repoRoot, "prompts", "companion-first-run.md"), "utf8");
+    const out = renderFirstRun(template, { date: "2026-08-14", owner: "Casey", snapshot_summary: "" });
+    expect(out).not.toMatch(/\{\{\w+\}\}/);
+    expect(out).toContain("**2026-08-14**");
+    expect(out).toContain("**Casey**");
+    expect(out).toContain("—");
+  });
+
+  it("fresh installation (no rollover state ever): greeting + interview fire exactly once", async () => {
+    const { runner, calls } = fakeDocker();
+    const report = await rollover(runner, { firstRun: true }).run();
+    expect(report.verdict.kind).toBe("first-run");
+    expect(calls).toEqual([]); // still no docker call — nothing to archive or kill
+    expect(report.interviewFile).toBe(join(dir, "repo", "inject", "companion", firstRunFileName("2026-08-14")));
+    const queued = readFileSync(report.interviewFile!, "utf8");
+    expect(queued).toContain("first-run"); // no leftover placeholders either
+    expect(queued).not.toMatch(/\{\{\w+\}\}/);
+    // Delivered is recorded in the rollover state, beside the day.
+    const state = readRolloverState(join(dir, "state", "rollover.json"));
+    expect(state?.last_open_date).toBe("2026-08-14");
+    expect(state?.first_run_interviewed).toBe("2026-08-14");
+    // A second start the same day: nothing at all.
+    const again = await rollover(runner, { firstRun: true }).run();
+    expect(again.verdict.kind).toBe("same-day");
+    expect(again.interviewFile).toBeUndefined();
+    expect(again.dayOpenFile).toBeUndefined();
+  });
+
+  it("later days run the normal day-open — and the delivered mark survives the rollover rewrite", async () => {
+    const { runner } = fakeDocker({ "ls -1t": "" });
+    await rollover(runner, { firstRun: true }).run(); // day 1: interview
+    const day2 = await rollover(runner, { firstRun: true, env: { QCR_FAKE_TODAY: "2026-08-15" } }).run();
+    expect(day2.verdict.kind).toBe("rollover");
+    expect(day2.dayOpenFile).toBeDefined();
+    expect(readFileSync(day2.dayOpenFile!, "utf8")).toContain("Good morning");
+    expect(day2.interviewFile).toBeUndefined();
+    // record() preserved the mark, so a marker landing later still never re-fires.
+    expect(readRolloverState(join(dir, "state", "rollover.json"))?.first_run_interviewed).toBe("2026-08-14");
+    writeMarker();
+    const day3 = await rollover(runner, { firstRun: true, env: { QCR_FAKE_TODAY: "2026-08-16" } }).run();
+    expect(day3.interviewFile).toBeUndefined();
+  });
+
+  it("wizard marker on an installation with prior state: interview fires once, same-day", async () => {
+    // The wizard finished AFTER a first TUI start already recorded the day.
+    writeRolloverState(join(dir, "state", "rollover.json"), { last_open_date: "2026-08-14", updated_at: "" });
+    writeMarker();
+    const { runner, calls } = fakeDocker();
+    const report = await rollover(runner, { firstRun: true }).run();
+    expect(report.verdict.kind).toBe("same-day");
+    expect(report.interviewFile).toBeDefined();
+    expect(calls).toEqual([]);
+    // Exactly once: the next start sees the mark.
+    const again = await rollover(runner, { firstRun: true }).run();
+    expect(again.interviewFile).toBeUndefined();
+  });
+
+  it("an existing installation without the marker never gets the interview", async () => {
+    writeRolloverState(join(dir, "state", "rollover.json"), { last_open_date: "2026-08-13", updated_at: "" });
+    const { runner } = fakeDocker({ "ls -1t": "" });
+    const report = await rollover(runner, { firstRun: true }).run();
+    expect(report.verdict.kind).toBe("rollover"); // normal day-open, nothing else
+    expect(report.interviewFile).toBeUndefined();
+  });
+
+  it("a missing template degrades to a step note — the start is never blocked", async () => {
+    const { runner } = fakeDocker();
+    const report = await rollover(runner, { firstRunTemplatePath: join(dir, "no-such-template.md") }).run();
+    expect(report.verdict.kind).toBe("first-run");
+    expect(report.interviewFile).toBeUndefined();
+    expect(report.steps.some((s) => s.includes("template unreadable"))).toBe(true);
+    // Not marked delivered: fixing the template lets the next start deliver it.
+    expect(readRolloverState(join(dir, "state", "rollover.json"))?.first_run_interviewed).toBeUndefined();
+  });
+
+  it("without the first-run wiring the rollover behaves exactly as before", async () => {
+    const { runner } = fakeDocker();
+    const report = await rollover(runner).run();
+    expect(report.verdict.kind).toBe("first-run");
+    expect(report.interviewFile).toBeUndefined();
   });
 });
 

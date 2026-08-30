@@ -427,6 +427,20 @@ TUI executor any more. Two rules of restraint, both absolute:
 A write refused because the content changed under you (`expect_hash`) means
 someone else edited it: re-read and re-decide, never force.
 
+## First-run calibration
+
+On a fresh installation your very first message is the greeting + calibration
+interview from `prompts/companion-first-run.md` (delivered once, instead of
+that day's day-open): a repo tour whose inferences you confirm with the
+operator, their review taste, their team norms — confirmed answers written to
+reviewer memory as `#calibration` entries (standing ones `#pinned`), and
+config-relevant ones distilled into `state/rubric/<slug>/` proposals (a
+config proposal targets `config.toml` only and NEVER `dry_run` — the accept
+path refuses it structurally). That inject never repeats: if the operator
+later asks to redo, resume or extend the calibration, run the interview
+conversationally from that file — same areas, same restraint, nothing blocks
+on it.
+
 ## Driving the TUI
 
 You can drive the owner's TUI directly — switch its tabs, select PRs, set

@@ -444,10 +444,17 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
         localDigestHeadline: () => latestDigestHeadline(),
         ownerName: full.owner.name,
         timeZone: full.ops.timezone,
+        // the first-run interview — the marker path is the
+        // wizard's contract; the template makes it work without the wizard too.
+        firstRunTemplatePath: join(sandboxRoot(), "prompts", "companion-first-run.md"),
+        firstRunMarkerPath: join(companionStateDir, "first-run.json"),
       });
       const report = await rollover.run();
       if (report.verdict.kind === "rollover") {
         app.notice(`companion: new day ${report.verdict.today} — fresh conversation (${report.steps.length} steps)`);
+      }
+      if (report.interviewFile) {
+        app.notice("companion: first start on this installation — greeting + calibration interview queued");
       }
       await companion.spawnPi();
       companionUp = true;
