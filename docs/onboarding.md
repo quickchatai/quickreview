@@ -43,8 +43,11 @@ anything.** If you have neither a ChatGPT login on this machine nor
 ## Running it
 
 ```sh
-scripts/qcr onboard
+scripts/qcr onboard      # or: npm run onboard — the same command, either way
 ```
+
+Both entry points run the same thing: `npm run onboard` is a thin alias for the
+wrapper, which builds `dist/` once if it is missing so a fresh clone works.
 
 Run it again any time. The checklist lives in
 `state/onboarding/checklist.json`, and **a step claimed done is always
@@ -227,9 +230,9 @@ The wizard serves a page on `127.0.0.1` that form-posts **this repository's
 pinned App manifest** — `deploy/github-app-manifest.json`, the same artifact the
 tests hold to the webhook handler's event set and the gate's write grants. It is
 consumed, never copied, and exactly three fields are overridden: the App name
-(suffixed for global uniqueness, editable on GitHub's own page), the redirect
-URL, and the webhook URL. The permissions and events are whatever the pinned
-artifact says. The page does not auto-submit: you see what is about to be
+(yours if you give one, otherwise suffixed for global uniqueness — and editable
+on GitHub's own page either way), the redirect URL, and the webhook URL. The
+permissions and events are whatever the pinned artifact says. The page does not auto-submit: you see what is about to be
 created, and the click is yours.
 
 GitHub redirects back to the wizard with a one-time code, which it exchanges for
@@ -249,8 +252,11 @@ and creates the three labels:
 | in progress | `AI review in progress` | yellow |
 | reviewed | `Automatic Review` | green |
 
-A label that already exists is left exactly as it is — colour and description
-included.
+Those are the shipped defaults. The names come from **your** `config.toml`
+(`[github] trigger_label` and its two siblings, recorded by the interview at
+step 35), so if you renamed any of them the wizard creates the labels your
+installation actually triggers on. A label that already exists is left exactly
+as it is — colour and description included.
 
 Two things that trip people up:
 

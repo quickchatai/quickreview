@@ -25,13 +25,14 @@
 // knows, the controller must have ansible-playbook (the deploy dies without
 // it), and remote sudo must be passwordless (the playbook runs `become: true`,
 // and a sudo password prompt is the same hang wearing a different hat).
+import { CHOICE_KEYS } from "../choices.js";
 import type { CheckResult, OnboardingStep, ProcessRunner, StepContext, StepReport } from "../engine.js";
 import { shellQuote } from "../../tui/remote.js";
 import { SSH_ALIAS_RE, TOPOLOGY_STEP_ID, sshAliasOf, topologyOf } from "./topology.js";
 
 export const SSH_PREFLIGHT_STEP_ID = "ssh_preflight";
 /** Resolved login user, recorded for the inventory's `ansible_user`. */
-export const SSH_USER_CHOICE_KEY = "vm_ssh_user";
+export const SSH_USER_CHOICE_KEY = CHOICE_KEYS.sshUser;
 
 /**
  * The options EVERY ssh in this slice carries.
@@ -201,7 +202,7 @@ export function sshPreflightStep(opts: SshPreflightOptions = {}): OnboardingStep
       return { ok: false, checks };
     }
     const facts = parseSshConfig(resolved.stdout);
-    if (facts.user !== "") ctx.recordChoice(SSH_USER_CHOICE_KEY, facts.user);
+    if (facts.user !== "") ctx.recordChoice(CHOICE_KEYS.sshUser, facts.user);
     checks.push({
       name: "alias",
       ok: true,

@@ -18,6 +18,7 @@
     "build": "tsc -p tsconfig.json",
     "watch": "tsc -p tsconfig.json --watch --preserveWatchOutput",
     "dev": "bash scripts/dev-tui.sh",
+    "onboard": "bash scripts/qcr onboard",
     "test": "vitest run",
     "daemon": "npm run build && node dist/src/wire.js",
     "smoke:session": "npm run build && node dist/src/smoke-session.js",

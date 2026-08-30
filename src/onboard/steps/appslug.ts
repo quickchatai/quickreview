@@ -37,7 +37,8 @@ import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../en
 import { configPath, readConfigText, rootOf, secretsDirFor, writeAtomic, type StreamRunner } from "./compose.js";
 import { stackTransportFor } from "./transport.js";
 import { assertNoDryRunEdit, changedEdits, patchToml, tomlString, type TomlEdit } from "./configfill.js";
-import { APP_SLUG_CHOICE_KEY, BOT_LOGIN_CHOICE_KEY, readCredentials } from "./githubapp.js";
+import { CHOICE_KEYS } from "../choices.js";
+import { readCredentials } from "./githubapp.js";
 
 export const APP_SLUG_STEP_ID = "app_slug_reconcile";
 
@@ -134,7 +135,7 @@ export function appSlugStep(opts: AppSlugStepOptions = {}): OnboardingStep {
       checks.push({ name: "app-identity", ok: false, detail: identity.detail });
       return { ok: false, checks };
     }
-    const recorded = typeof ctx.choices[APP_SLUG_CHOICE_KEY] === "string" ? (ctx.choices[APP_SLUG_CHOICE_KEY] as string) : "";
+    const recorded = typeof ctx.choices[CHOICE_KEYS.appSlug] === "string" ? (ctx.choices[CHOICE_KEYS.appSlug] as string) : "";
     checks.push({
       name: "app-identity",
       ok: true,
@@ -183,8 +184,8 @@ export function appSlugStep(opts: AppSlugStepOptions = {}): OnboardingStep {
       });
     }
 
-    ctx.recordChoice(APP_SLUG_CHOICE_KEY, identity.slug);
-    ctx.recordChoice(BOT_LOGIN_CHOICE_KEY, botLoginFor(identity.slug));
+    ctx.recordChoice(CHOICE_KEYS.appSlug, identity.slug);
+    ctx.recordChoice(CHOICE_KEYS.botLogin, botLoginFor(identity.slug));
 
     // A correction only reaches a RUNNING daemon through a restart: the config
     // loader runs once, at boot.

@@ -22,10 +22,10 @@
 // Nothing here writes anything anywhere. It reads the state store, reads the
 // dry-run directory, and records what it saw on the checklist — the record the
 // go-live step later demands before it will even offer the flip.
+import { CHOICE_KEYS } from "../choices.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 import { sandboxReviewFrom, type DryrunRecord, type ReviewSnapshot } from "../../compare.js";
 import { CONTAINER_DRYRUN_DIR, readConfigText, rootOf } from "./compose.js";
-import { CHOICE_KEYS } from "./configfill.js";
 import { readTomlKey } from "./ingress.js";
 import { DEFAULT_LABELS } from "./githubapp.js";
 import { stackTransportFor, type StackTransport, type TransportOptions } from "./transport.js";
@@ -33,7 +33,7 @@ import { stackTransportFor, type StackTransport, type TransportOptions } from ".
 export const PROOF_STEP_ID = "proof_round";
 /** The completed-proof record. The go-live step will not offer the flip
  * without it AND a state-store re-verification of it. */
-export const PROOF_CHOICE_KEY = "proof_round_completed";
+export const PROOF_CHOICE_KEY = CHOICE_KEYS.proof;
 
 export interface ProofRecord {
   pr: number;
@@ -417,7 +417,7 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
       completed_at: ctx.adapters.clock().toISOString(),
       review_shown: true,
     };
-    ctx.recordChoice(PROOF_CHOICE_KEY, record);
+    ctx.recordChoice(CHOICE_KEYS.proof, record);
     return { ok: true, checks, data: { proof: record } };
   }
 }

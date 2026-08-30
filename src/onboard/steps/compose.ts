@@ -25,6 +25,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { expandHome } from "../../config.js";
+import { CHOICE_KEYS } from "../choices.js";
 import type { CheckResult, OnboardAdapters, ProcessResult, ProcessRunner, StepContext } from "../engine.js";
 import { INGRESS_CHOICE_KEY, optionFor, parseComposePs, readEnvKey, readTomlKey, secretsDirOf, type IngressOption, type RunningService } from "./ingress.js";
 
@@ -79,7 +80,8 @@ export function secretsDirFor(root: string, choices: Readonly<Record<string, unk
   const configText = readConfigText(root);
   const fromConfig = configText ? readTomlKey(configText, "github", "secrets_dir") : null;
   if (fromConfig && fromConfig.trim()) return absolutize(root, expandHome(fromConfig.trim()));
-  const choice = typeof choices.secrets_dir === "string" ? choices.secrets_dir.trim() : "";
+  const raw = choices[CHOICE_KEYS.secretsDir];
+  const choice = typeof raw === "string" ? raw.trim() : "";
   if (choice) return absolutize(root, expandHome(choice));
   const fromEnv = (env.QC_SECRETS_DIR ?? "").trim();
   if (fromEnv) return absolutize(root, expandHome(fromEnv));

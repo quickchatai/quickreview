@@ -41,31 +41,15 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { assertIanaTimeZone, expandHome, githubCloneDir, loadConfig, type Config } from "../../config.js";
+import { CHOICE_KEYS, ingressChoiceOf, type IngressChoice } from "../choices.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 
 export const CONFIG_FILL_STEP_ID = "config_fill";
 
-/** Choice keys this step READS (recorded by sibling steps) and WRITES (so later
- * steps read every operator decision from one place — the checklist). */
-export const CHOICE_KEYS = {
-  /** Read: "local" | "vm" (topology step). Absent ⇒ treated as local. */
-  topology: "topology",
-  /** Read: "quick-tunnel" | "ngrok" | "named-tunnel" | "polling". */
-  ingress: "ingress",
-  /** Read: "oauth" | "api_key" — recorded forward, never asked here. */
-  authRoute: "auth_route",
-  /** Read+write: the App slug's manifest exchange learns. */
-  appSlug: "github_app_slug",
-  repo: "reviewed_repo",
-  repoDir: "reviewed_repo_dir",
-  baseBranch: "base_branch",
-  timezone: "ops_timezone",
-  ownerLogin: "owner_github_login",
-  secretsDir: "secrets_dir",
-  configPath: "config_path",
-  /** Informational for's flip step: what the written config carries. */
-  dryRun: "config_dry_run",
-} as const;
+/** The choice keys this step reads and writes live in ONE place for the whole
+ * wizard (src/onboard/choices.ts) — re-exported here because this
+ * step was their first home and half the wizard imports them from it. */
+export { CHOICE_KEYS };
 
 // ---- comment-preserving TOML patch ------------------------------------------
 
@@ -240,8 +224,11 @@ function oneLine(v: string): string | null {
 }
 
 /** The ingress shapes where the operator supplies a stable public hostname.
- * The quick tunnel / ngrok / polling shapes assign or need none. */
-const OPERATOR_HOSTNAME_INGRESS = new Set(["named-tunnel", "tunnel", "byo", "manual"]);
+ * The quick tunnel assigns its own, polling exposes nothing, and ngrok's
+ * reserved domain is optional — so `named` is the one shape that MUST be
+ * asked. Typed as `IngressChoice`, so a value the ingress step
+ * cannot record is a compile error rather than a question that never fires. */
+const OPERATOR_HOSTNAME_INGRESS = new Set<IngressChoice>(["named"]);
 
 function str(choices: Readonly<Record<string, unknown>>, key: string): string {
   const v = choices[key];
@@ -260,7 +247,7 @@ export const QUESTIONS: readonly Question[] = [
       "clone directory, backfill identity — is derived from this one answer.",
     prompt: 'Which repository should the reviewer watch? ("owner/name")',
     optional: false,
-    from: ["reviewed_repo", "repo"],
+    from: [CHOICE_KEYS.repo],
     read: (cfg) => cfg.github.repo,
     validate: (v) =>
       /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(v) ? null : 'a repository is "owner/name" — e.g. "acme/web-app" (no URL, no trailing .git)',
@@ -276,7 +263,7 @@ export const QUESTIONS: readonly Question[] = [
       "makes the companion less informed; it never breaks the reviewer.",
     prompt: "Where is your local checkout of that repository?",
     optional: false,
-    from: ["reviewed_repo_dir"],
+    from: [CHOICE_KEYS.repoDir],
     read: (cfg) => cfg.companion.reviewed_repo_dir,
     validate: (v) => {
       const line = oneLine(v);
@@ -298,7 +285,7 @@ export const QUESTIONS: readonly Question[] = [
       "the App for you, this is filled in from that step.",
     prompt: "What is your GitHub App's slug?",
     optional: false,
-    from: [CHOICE_KEYS.appSlug, "app_slug"],
+    from: [CHOICE_KEYS.appSlug],
     read: (cfg) => cfg.github.app_slug,
     validate: (v) => (SLUG_RE.test(v) ? null : 'the slug is the name in the App URL — letters, digits and dashes, e.g. "acme-reviewer"'),
   },
@@ -333,7 +320,7 @@ export const QUESTIONS: readonly Question[] = [
       "replays. A review round never uses it — a round always reads the pull request's OWN base branch from GitHub.",
     prompt: 'What is the repository\'s default branch? ("main" / "master")',
     optional: false,
-    from: ["base_branch"],
+    from: [CHOICE_KEYS.baseBranch],
     read: (cfg) => cfg.github.base_branch,
     validate: (v) => (/^[^\s~^:?*[\\]+$/.test(v) ? null : "a branch name, e.g. main or master (no spaces)"),
   },
@@ -401,7 +388,7 @@ export const QUESTIONS: readonly Question[] = [
       "same one you would type after `ssh`. On the local route nothing needs it and it stays empty.",
     prompt: "Which ssh alias reaches the machine running the reviewer?",
     optional: false,
-    from: ["ssh_host", "vm_ssh_alias"],
+    from: [CHOICE_KEYS.sshAlias],
     asked: (choices) => str(choices, CHOICE_KEYS.topology) === "vm",
     read: (cfg) => cfg.tui.ssh_host,
     validate: (v) => (/^[A-Za-z0-9._-]+$/.test(v) ? null : "an ssh alias as it appears in ~/.ssh/config — a Host name, not a URL"),
@@ -416,8 +403,11 @@ export const QUESTIONS: readonly Question[] = [
       "that assign their own hostname fill this themselves; a named tunnel or your own ingress means you own the name.",
     prompt: "Which public hostname will GitHub deliver webhooks to?",
     optional: false,
-    from: ["webhook_hostname", "server_hostname"],
-    asked: (choices) => OPERATOR_HOSTNAME_INGRESS.has(str(choices, CHOICE_KEYS.ingress)),
+    from: [CHOICE_KEYS.ingressHostname],
+    asked: (choices) => {
+      const ingress = ingressChoiceOf(choices);
+      return ingress !== null && OPERATOR_HOSTNAME_INGRESS.has(ingress);
+    },
     read: (cfg) => cfg.server.hostname,
     validate: (v) =>
       /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$/.test(v)
@@ -783,7 +773,7 @@ function secretsReport(secretsDir: string): CheckResult {
   };
 }
 
-function recordChoices(ctx: StepContext, facts: FillFacts, configPath: string, dryRun: boolean): void {
+function recordChoices(ctx: StepContext, facts: FillFacts, configPath: string, parsed: Config): void {
   ctx.recordChoice(CHOICE_KEYS.repo, facts.repo);
   ctx.recordChoice(CHOICE_KEYS.repoDir, expandHome(facts.reviewed_repo_dir));
   ctx.recordChoice(CHOICE_KEYS.appSlug, facts.app_slug);
@@ -792,7 +782,16 @@ function recordChoices(ctx: StepContext, facts: FillFacts, configPath: string, d
   ctx.recordChoice(CHOICE_KEYS.ownerLogin, facts.owner_github_login);
   ctx.recordChoice(CHOICE_KEYS.secretsDir, facts.secrets_dir);
   ctx.recordChoice(CHOICE_KEYS.configPath, configPath);
-  ctx.recordChoice(CHOICE_KEYS.dryRun, dryRun);
+  ctx.recordChoice(CHOICE_KEYS.dryRun, parsed.dry_run);
+  // The label NAMES this installation triggers on, straight off the file the
+  // daemon itself reads — so the App step creates the labels this config
+  // means rather than the shipped defaults (the App step read this
+  // key and nothing wrote it, so a customised label name was silently lost).
+  ctx.recordChoice(CHOICE_KEYS.labels, {
+    trigger: parsed.github.trigger_label,
+    in_progress: parsed.github.in_progress_label,
+    reviewed: parsed.github.reviewed_label,
+  });
 }
 
 function previousAnswers(ctx: StepContext): Partial<Record<AnswerKey, string>> {
@@ -924,7 +923,7 @@ export function configFillStep(): OnboardingStep {
       checks.push(secretsReport(facts.secrets_dir));
 
       const ok = checks.every((c) => c.ok);
-      if (ok) recordChoices(ctx, facts, configPath, parsed.dry_run);
+      if (ok) recordChoices(ctx, facts, configPath, parsed);
       return {
         ok,
         checks,

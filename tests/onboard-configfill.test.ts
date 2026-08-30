@@ -157,7 +157,7 @@ function failed(report: { checks: Array<{ ok: boolean; name: string; detail: str
 
 describe("the full interview", () => {
   it("produces a config the STRICT LOADER parses on the first try", async () => {
-    const { report } = await runStep({ choices: { [CHOICE_KEYS.topology]: "vm", [CHOICE_KEYS.ingress]: "named-tunnel" } });
+    const { report } = await runStep({ choices: { [CHOICE_KEYS.topology]: "vm", [CHOICE_KEYS.ingress]: "named" } });
     expect(failed(report)).toBe("");
     expect(report.ok).toBe(true);
 
@@ -409,7 +409,7 @@ describe("comment-preserving patch", () => {
   });
 
   it("leaves no ← FILL marker on any line it filled", async () => {
-    await runStep({ choices: { [CHOICE_KEYS.topology]: "vm", [CHOICE_KEYS.ingress]: "named-tunnel" } });
+    await runStep({ choices: { [CHOICE_KEYS.topology]: "vm", [CHOICE_KEYS.ingress]: "named" } });
     const out = readFileSync(join(root, "config.toml"), "utf8");
     const valueOf = (text: string, key: string) => text.split("\n").find((l) => new RegExp(`^\\s*${key}\\s*=`).test(l));
     let checked = 0;

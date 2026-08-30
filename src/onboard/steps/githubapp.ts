@@ -49,6 +49,8 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import type { Socket } from "node:net";
 import { mintAppJwt } from "../../githubAuth.js";
+import { CHOICE_KEYS } from "../choices.js";
+import { CONFIG_FILL_STEP_ID } from "./configfill.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 
 export const GITHUB_APP_STEP_ID = "github_app";
@@ -58,24 +60,29 @@ export const GITHUB_APP_STEP_ID = "github_app";
 // Written: everything the config-fill step needs to write config.toml, so the
 // App identity is derived once and never re-typed.
 
-/** "owner/name" of the reviewed repo — recorded by the config/topology step. */
-export const REPO_CHOICE_KEY = "github_repo";
-/** "personal" | "org:<login>". Absent ⇒ asked (prompter) or derived. */
-export const APP_TARGET_CHOICE_KEY = "github_app_target";
-/** Operator-chosen App name; absent ⇒ suggested with a uniqueness suffix. */
-export const APP_NAME_CHOICE_KEY = "github_app_name";
-/** Public webhook URL, when the tunnel step has already settled one. */
-export const WEBHOOK_URL_CHOICE_KEY = "webhook_url";
-/** Secrets dir override (config.toml [github] secrets_dir). */
-export const SECRETS_DIR_CHOICE_KEY = "secrets_dir";
-/** Trigger/status label names, when the config step recorded non-defaults. */
-export const LABELS_CHOICE_KEY = "github_labels";
+// Every one of these is an ALIAS of the shared declaration in
+// src/onboard/choices.ts — this step used to spell the reviewed repo
+// "github_repo", a key no step ever wrote, and a real run stopped here.
 
-export const APP_ID_CHOICE_KEY = "github_app_id";
-export const APP_SLUG_CHOICE_KEY = "github_app_slug";
-export const BOT_LOGIN_CHOICE_KEY = "github_bot_login";
-export const INSTALLATION_ID_CHOICE_KEY = "github_installation_id";
-export const APP_HTML_URL_CHOICE_KEY = "github_app_html_url";
+/** "owner/name" of the reviewed repo — recorded by the interview (config_fill). */
+export const REPO_CHOICE_KEY = CHOICE_KEYS.repo;
+/** "personal" | "org:<login>". Absent ⇒ asked (prompter) or derived. */
+export const APP_TARGET_CHOICE_KEY = CHOICE_KEYS.appTarget;
+/** The App name: this step's own `app_name` input, recorded so a re-run keeps
+ * it. Absent ⇒ suggested with a uniqueness suffix. */
+export const APP_NAME_CHOICE_KEY = CHOICE_KEYS.appName;
+/** Public webhook URL, when the ingress step has already settled a stable one. */
+export const WEBHOOK_URL_CHOICE_KEY = CHOICE_KEYS.webhookUrl;
+/** Secrets dir override (config.toml [github] secrets_dir, via config_fill). */
+export const SECRETS_DIR_CHOICE_KEY = CHOICE_KEYS.secretsDir;
+/** Trigger/status label names as the operator's config carries them. */
+export const LABELS_CHOICE_KEY = CHOICE_KEYS.labels;
+
+export const APP_ID_CHOICE_KEY = CHOICE_KEYS.appId;
+export const APP_SLUG_CHOICE_KEY = CHOICE_KEYS.appSlug;
+export const BOT_LOGIN_CHOICE_KEY = CHOICE_KEYS.botLogin;
+export const INSTALLATION_ID_CHOICE_KEY = CHOICE_KEYS.installationId;
+export const APP_HTML_URL_CHOICE_KEY = CHOICE_KEYS.appHtmlUrl;
 
 /** Secrets-dir file names — the SAME three deploy/collect-secrets.sh writes. */
 export const SECRET_FILES = { appId: "app_id", pem: "app.pem", webhookSecret: "webhook_secret" } as const;
@@ -632,7 +639,7 @@ interface Resolved {
 }
 
 function resolveLabels(choices: Readonly<Record<string, unknown>>): Resolved["labels"] {
-  const recorded = (choices[LABELS_CHOICE_KEY] ?? {}) as Partial<Record<keyof typeof DEFAULT_LABELS, unknown>>;
+  const recorded = (choices[CHOICE_KEYS.labels] ?? {}) as Partial<Record<keyof typeof DEFAULT_LABELS, unknown>>;
   return LABEL_META.map((meta) => {
     const override = recorded[meta.key];
     return {
@@ -656,11 +663,20 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
   const pollIntervalMs = opts.installPollIntervalMs ?? 15_000;
 
   function resolveInputs(ctx: StepContext): Resolved | string {
-    const repo = parseRepoSlug(ctx.choices[REPO_CHOICE_KEY]);
+    const repo = parseRepoSlug(ctx.choices[CHOICE_KEYS.repo]);
     if (!repo) {
-      return `no reviewed repo recorded — the "${REPO_CHOICE_KEY}" choice must hold "owner/name" before the App can be created or verified`;
+      // Reachable only when the interview genuinely has not run (or its answer
+      // is unusable): CONFIG_FILL_STEP_ID is the step that records this key,
+      // and it is order 35 against this step's 40. Say which step, not just
+      // which key — a refusal that names a choice nobody can set by hand is
+      // exactly the dead end was filed for.
+      return (
+        `no reviewed repo recorded — the "${CHOICE_KEYS.repo}" choice must hold "owner/name" before the App can be ` +
+        `created or verified. Fix: run the ${CONFIG_FILL_STEP_ID} step (the interview) first; it asks for the repository ` +
+        "and records it for this step."
+      );
     }
-    const choiceDir = typeof ctx.choices[SECRETS_DIR_CHOICE_KEY] === "string" ? (ctx.choices[SECRETS_DIR_CHOICE_KEY] as string).trim() : "";
+    const choiceDir = typeof ctx.choices[CHOICE_KEYS.secretsDir] === "string" ? (ctx.choices[CHOICE_KEYS.secretsDir] as string).trim() : "";
     const secretsDir = opts.secretsDir
       ? opts.secretsDir
       : choiceDir
@@ -668,6 +684,15 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
         : expandHome(process.env.QC_SECRETS_DIR ?? "~/.config/quickreview-bot");
     const root = opts.repoRoot ?? dirname(ctx.adapters.paths.stateDir);
     return { root, secretsDir: isAbsolute(secretsDir) ? secretsDir : join(root, secretsDir), apiBase, githubBase, repo, labels: resolveLabels(ctx.choices) };
+  }
+
+  /** The App name the operator supplied — this call's input first, then what an
+   * earlier call recorded. "" means nothing was supplied. */
+  function chosenAppName(ctx: StepContext): string {
+    for (const raw of [ctx.input.app_name, ctx.choices[CHOICE_KEYS.appName]]) {
+      if (typeof raw === "string" && raw.trim()) return raw.trim();
+    }
+    return "";
   }
 
   function log(ctx: StepContext, line: string): void {
@@ -725,10 +750,10 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
     }
     checks.push({ name: "app reachable", ok: true, detail: `App "${meta.slug ?? creds.appId}" (id ${meta.id}) answers to its own JWT` });
     if (typeof meta.slug === "string" && meta.slug) {
-      ctx.recordChoice(APP_SLUG_CHOICE_KEY, meta.slug);
-      ctx.recordChoice(BOT_LOGIN_CHOICE_KEY, `${meta.slug}[bot]`);
+      ctx.recordChoice(CHOICE_KEYS.appSlug, meta.slug);
+      ctx.recordChoice(CHOICE_KEYS.botLogin, `${meta.slug}[bot]`);
     }
-    ctx.recordChoice(APP_ID_CHOICE_KEY, creds.appId);
+    ctx.recordChoice(CHOICE_KEYS.appId, creds.appId);
 
     const found = await findInstallation(ctx.adapters.fetch, r.apiBase, jwt, r.repo.owner);
     if (found.status === "error") {
@@ -746,7 +771,7 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
       return checks;
     }
     checks.push({ name: "installation", ok: true, detail: `installation ${found.id} on ${r.repo.owner}` });
-    ctx.recordChoice(INSTALLATION_ID_CHOICE_KEY, found.id);
+    ctx.recordChoice(CHOICE_KEYS.installationId, found.id);
 
     const minted = await installationToken(ctx.adapters.fetch, r.apiBase, jwt, found.id);
     if ("error" in minted) {
@@ -768,7 +793,7 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
   /** Choice > prompter > owner-type probe. The result is recorded, so the
    * question is asked at most once. */
   async function resolveTarget(ctx: StepContext, r: Resolved): Promise<AppTarget> {
-    const recorded = parseTargetChoice(ctx.choices[APP_TARGET_CHOICE_KEY]);
+    const recorded = parseTargetChoice(ctx.choices[CHOICE_KEYS.appTarget]);
     if (recorded) return recorded;
 
     const prompter = ctx.adapters.prompter;
@@ -780,7 +805,7 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
       const trimmed = answer.trim();
       const parsed = parseTargetChoice(trimmed) ?? (trimmed && trimmed !== "personal" ? ({ kind: "org", login: trimmed } as AppTarget) : null);
       if (parsed) {
-        ctx.recordChoice(APP_TARGET_CHOICE_KEY, formatTarget(parsed));
+        ctx.recordChoice(CHOICE_KEYS.appTarget, formatTarget(parsed));
         return parsed;
       }
     }
@@ -792,10 +817,10 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
       log(
         ctx,
         `could not read the owner type of "${r.repo.owner}" (${apiError(probe)}) — assuming a personal account. ` +
-          `Record the "${APP_TARGET_CHOICE_KEY}" choice as "org:<login>" to override.`,
+          `Record the "${CHOICE_KEYS.appTarget}" choice as "org:<login>" to override.`,
       );
     }
-    ctx.recordChoice(APP_TARGET_CHOICE_KEY, formatTarget(derived));
+    ctx.recordChoice(CHOICE_KEYS.appTarget, formatTarget(derived));
     return derived;
   }
 
@@ -808,11 +833,13 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
       return [{ name: "manifest", ok: false, detail: `could not read the pinned manifest: ${String(err)}` }];
     }
 
-    const name =
-      typeof ctx.choices[APP_NAME_CHOICE_KEY] === "string" && (ctx.choices[APP_NAME_CHOICE_KEY] as string).trim()
-        ? (ctx.choices[APP_NAME_CHOICE_KEY] as string).trim()
-        : suggestAppName(manifest.name, token(3));
-    const webhookUrl = typeof ctx.choices[WEBHOOK_URL_CHOICE_KEY] === "string" ? (ctx.choices[WEBHOOK_URL_CHOICE_KEY] as string).trim() : "";
+    // The operator's own App name: this step's `app_name` INPUT (its tool
+    // parameter), or what an earlier call recorded. Absent means the suggested
+    // uniqueness-suffixed name, which stays editable on GitHub's own page.
+    const chosenName = chosenAppName(ctx);
+    if (chosenName) ctx.recordChoice(CHOICE_KEYS.appName, chosenName);
+    const name = chosenName || suggestAppName(manifest.name, token(3));
+    const webhookUrl = typeof ctx.choices[CHOICE_KEYS.webhookUrl] === "string" ? (ctx.choices[CHOICE_KEYS.webhookUrl] as string).trim() : "";
     const state = token(16);
 
     // The page can only be rendered once the port is known (the manifest's
@@ -871,12 +898,12 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
       if (problems.length > 0) {
         return [{ name: "credentials", ok: false, detail: `GitHub's conversion response did not validate: ${problems.join("; ")}` }];
       }
-      ctx.recordChoice(APP_ID_CHOICE_KEY, String(converted.app.id));
+      ctx.recordChoice(CHOICE_KEYS.appId, String(converted.app.id));
       if (converted.app.slug) {
-        ctx.recordChoice(APP_SLUG_CHOICE_KEY, converted.app.slug);
-        ctx.recordChoice(BOT_LOGIN_CHOICE_KEY, `${converted.app.slug}[bot]`);
+        ctx.recordChoice(CHOICE_KEYS.appSlug, converted.app.slug);
+        ctx.recordChoice(CHOICE_KEYS.botLogin, `${converted.app.slug}[bot]`);
       }
-      if (converted.app.html_url) ctx.recordChoice(APP_HTML_URL_CHOICE_KEY, converted.app.html_url);
+      if (converted.app.html_url) ctx.recordChoice(CHOICE_KEYS.appHtmlUrl, converted.app.html_url);
       log(ctx, `App ${converted.app.id} created; id, private key and webhook secret written to ${r.secretsDir} (0600). Nothing was pasted by hand.`);
       return [
         {
@@ -899,7 +926,7 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
    * way through, idempotently, by verifyCore's create pass.
    */
   async function pollInstallAndLabels(ctx: StepContext, r: Resolved, initial?: CheckResult[]): Promise<CheckResult[]> {
-    const appHtmlUrl = typeof ctx.choices[APP_HTML_URL_CHOICE_KEY] === "string" ? (ctx.choices[APP_HTML_URL_CHOICE_KEY] as string) : null;
+    const appHtmlUrl = typeof ctx.choices[CHOICE_KEYS.appHtmlUrl] === "string" ? (ctx.choices[CHOICE_KEYS.appHtmlUrl] as string) : null;
     let announced = false;
     let checks: CheckResult[] = [];
     for (let attempt = 1; attempt <= pollAttempts; attempt += 1) {
@@ -946,6 +973,20 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
     // 40: after preflight (10) and the topology/auth questions (20/30) that
     // later slices register; before the tunnel and bring-up steps.
     order: 40,
+    // The reviewed repo is NOT a parameter: it is the interview's answer, read
+    // from the checklist (CHOICE_KEYS.repo). The only thing the operator may
+    // supply here is what nothing else can derive — the App's display name.
+    parameters: {
+      type: "object",
+      properties: {
+        app_name: {
+          type: "string",
+          description:
+            "The GitHub App's display name. Omit to have the wizard suggest a globally-unique one (still editable on " +
+            "GitHub's page). Ignored when the App already exists.",
+        },
+      },
+    },
 
     async run(ctx): Promise<StepReport> {
       const resolved = resolveInputs(ctx);
@@ -958,10 +999,10 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
         log(ctx, `credentials already present in ${r.secretsDir} — verifying the existing App instead of creating another one.`);
         const checks = await verifyCore(ctx, r, true);
         if (checks.every((c) => c.ok)) {
-          checks.push(orgCaveat(parseTargetChoice(ctx.choices[APP_TARGET_CHOICE_KEY])));
+          checks.push(orgCaveat(parseTargetChoice(ctx.choices[CHOICE_KEYS.appTarget])));
           return { ok: true, checks, data: { created: false, verified: true } };
         }
-        const target = parseTargetChoice(ctx.choices[APP_TARGET_CHOICE_KEY]);
+        const target = parseTargetChoice(ctx.choices[CHOICE_KEYS.appTarget]);
         // Only a missing INSTALLATION is worth waiting on; anything else
         // (network, wrong key, unselected repo) is reported as itself.
         if (checks.find((c) => !c.ok)!.name !== "installation") {
@@ -984,7 +1025,7 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
 
       const polled = await pollInstallAndLabels(ctx, r);
       const checks = [...created, ...polled, orgCaveat(target)];
-      return { ok: checks.every((c) => c.ok), checks, data: { created: true, app_id: ctx.choices[APP_ID_CHOICE_KEY] ?? null } };
+      return { ok: checks.every((c) => c.ok), checks, data: { created: true, app_id: ctx.choices[CHOICE_KEYS.appId] ?? null } };
     },
 
     async verify(ctx): Promise<StepReport> {
@@ -992,7 +1033,7 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
       if (typeof resolved === "string") return { ok: false, checks: [{ name: "inputs", ok: false, detail: resolved }] };
       // verify NEVER creates: a missing label is red here and fixed by a run.
       const checks = await verifyCore(ctx, resolved, false);
-      checks.push(orgCaveat(parseTargetChoice(ctx.choices[APP_TARGET_CHOICE_KEY])));
+      checks.push(orgCaveat(parseTargetChoice(ctx.choices[CHOICE_KEYS.appTarget])));
       return { ok: checks.every((c) => c.ok), checks };
     },
   };

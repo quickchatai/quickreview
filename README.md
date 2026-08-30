@@ -166,6 +166,7 @@ git clone <this repo> && cd <repo>
 npm ci && npm test && npm run build   # green offline, no secrets needed
 
 scripts/qcr onboard                   # the whole setup, guided
+# or, the same thing:  npm run onboard
 ```
 
 `qcr onboard` is an interactive session: a pi agent talks you through what the

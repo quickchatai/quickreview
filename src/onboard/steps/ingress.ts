@@ -30,14 +30,19 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { expandHome } from "../../config.js";
+import { CHOICE_KEYS, type IngressChoice } from "../choices.js";
+import { topologyOf } from "./topology.js";
 import type { CheckResult, OnboardAdapters, OnboardingStep, StepContext, StepReport } from "../engine.js";
 
 export const INGRESS_STEP_ID = "ingress";
 /** Recorded choice keys later steps (and verify) read. */
-export const INGRESS_CHOICE_KEY = "ingress_choice";
-export const INGRESS_HOSTNAME_KEY = "ingress_hostname";
+/** The daemon's webhook route — the same default `src/webhook.ts` serves and
+ * `src/webhookheal.ts` re-points the App to. */
+export const WEBHOOK_PATH = "/webhook";
+export const INGRESS_CHOICE_KEY = CHOICE_KEYS.ingress;
+export const INGRESS_HOSTNAME_KEY = CHOICE_KEYS.ingressHostname;
 
-export type IngressChoice = "quick" | "ngrok" | "named" | "polling";
+export type { IngressChoice };
 
 export interface IngressOption {
   id: IngressChoice;
@@ -364,7 +369,7 @@ export function ingressStep(): OnboardingStep {
 
     async run(ctx): Promise<StepReport> {
       const choice = chosen(ctx);
-      if (choice === null) return { ok: false, checks: [offerCheck(String(ctx.choices.topology ?? ""))] };
+      if (choice === null) return { ok: false, checks: [offerCheck(String(ctx.choices[CHOICE_KEYS.topology] ?? ""))] };
       const option = optionFor(choice)!;
       const root = sandboxRootOf(ctx.adapters);
       const checks: CheckResult[] = [
@@ -443,8 +448,15 @@ export function ingressStep(): OnboardingStep {
             : `${envPath}: COMPOSE_PROFILES=${option.profile} — \`docker compose up\` also starts the ${option.service} sidecar`,
       });
 
-      ctx.recordChoice(INGRESS_CHOICE_KEY, choice);
-      if (hostname !== null) ctx.recordChoice(INGRESS_HOSTNAME_KEY, hostname);
+      ctx.recordChoice(CHOICE_KEYS.ingress, choice);
+      if (hostname !== null) {
+        ctx.recordChoice(CHOICE_KEYS.ingressHostname, hostname);
+        // The public endpoint, for the ONE reader of it: the App step puts it
+        // in the manifest instead of the artifact's placeholder. Only a
+        // hostname the operator owns is stable enough to record — a rotating
+        // tunnel's URL is the daemon's own self-heal to keep current.
+        ctx.recordChoice(CHOICE_KEYS.webhookUrl, `https://${hostname}${WEBHOOK_PATH}`);
+      }
       return {
         ok: checks.every((c) => c.ok),
         checks,
@@ -501,7 +513,7 @@ export function ingressStep(): OnboardingStep {
       }
 
       // The compose profile only means anything on the compose topology.
-      if (ctx.choices.topology === "vm") {
+      if (topologyOf(ctx.choices) === "vm") {
         checks.push({ name: "compose-profile", ok: true, detail: "VM topology — ingress runs on the server, not as a compose sidecar" });
       } else {
         const envText = readFileOrNull(join(root, ".env")) ?? "";

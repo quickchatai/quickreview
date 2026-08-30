@@ -654,7 +654,7 @@ describe("inputs and credential validation", () => {
     const st = step(s, refusingServer);
     const report = await st.run({ adapters: adapters(s), choices: {}, data: {}, recordChoice: () => undefined });
     expect(report.ok).toBe(false);
-    expect(report.checks[0]!.detail).toMatch(/github_repo/);
+    expect(report.checks[0]!.detail).toMatch(/reviewed_repo/);
   });
 
   it("parseRepoSlug accepts owner/name and nothing else", () => {

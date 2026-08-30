@@ -117,6 +117,30 @@ describe("the GitHub App doc matches the labels the wizard creates", () => {
   });
 });
 
+describe("the entry point is the one the docs promise", () => {
+  // the spec called for an `onboard` npm script beside the wrapper and
+  // it never shipped, so a reader following `npm run …` found nothing.
+  const pkg = JSON.parse(read("package.json")) as { scripts?: Record<string, string> };
+
+  it("package.json carries an onboard script that runs the wrapper", () => {
+    const script = pkg.scripts?.onboard;
+    expect(script, "package.json has no `onboard` script").toBeDefined();
+    expect(script, "the onboard script must invoke the same wrapper the docs name").toContain("scripts/qcr");
+    expect(script).toContain("onboard");
+  });
+
+  it("the wrapper the docs name exists and the CLI knows the verb", () => {
+    expect(read("scripts/qcr")).toContain("dist/src/cli.js");
+    expect(read("src/cli.ts")).toContain('case "onboard"');
+    expect(onboardingDoc).toContain("scripts/qcr onboard");
+  });
+
+  it("both entry points are documented", () => {
+    expect(onboardingDoc).toContain("npm run onboard");
+    expect(readme).toContain("npm run onboard");
+  });
+});
+
 describe("the quickstart leads with the onboarding command", () => {
   it("README names the entry command and links the walkthrough", () => {
     const quickstart = readme.slice(readme.indexOf("## Quickstart"), readme.indexOf("### Where the reviewer lives"));

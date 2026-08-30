@@ -34,15 +34,16 @@
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { CHOICE_KEYS, type AuthRoute } from "../choices.js";
 import type { CheckResult, OnboardingStep, ProcessRunner, StepContext, StepReport } from "../engine.js";
 
 export const LLM_AUTH_STEP_ID = "llm_auth";
 /** The choice key later steps read the route from. */
-export const AUTH_ROUTE_CHOICE_KEY = "llm_auth_route";
+export const AUTH_ROUTE_CHOICE_KEY = CHOICE_KEYS.authRoute;
 /** The choice key carrying the provider prefix the config now uses. */
 export const MODEL_PREFIX_CHOICE_KEY = "llm_model_prefix";
 
-export type AuthRoute = "oauth" | "api";
+export type { AuthRoute };
 
 /** pi's ChatGPT-OAuth provider prefix (config.example.toml's shipped default). */
 export const OAUTH_PREFIX = "openai-codex/";
@@ -659,7 +660,7 @@ export function llmAuthStep(): OnboardingStep {
 
       const ok = checks.every((c) => c.ok);
       if (ok) {
-        ctx.recordChoice(AUTH_ROUTE_CHOICE_KEY, route);
+        ctx.recordChoice(CHOICE_KEYS.authRoute, route);
         ctx.recordChoice(MODEL_PREFIX_CHOICE_KEY, prefixFor(route));
         return { ok, checks, data: { route, prefix: prefixFor(route), config_path: cfg.path, models: modelLabels() } };
       }

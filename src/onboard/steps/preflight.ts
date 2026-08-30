@@ -8,12 +8,13 @@
 // Deterministic by construction: every fact comes through the adapters
 // (host facts injected, binaries probed via the ProcessRunner seam), so tests
 // drive both paths with fakes and no test touches a real Docker.
+import { CHOICE_KEYS } from "../choices.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 
 export const PREFLIGHT_STEP_ID = "preflight";
 export const MIN_NODE_MAJOR = 22;
 /** The choice key later steps read the captured uid from (QCR_UID input). */
-export const UID_CHOICE_KEY = "qcr_uid";
+export const UID_CHOICE_KEY = CHOICE_KEYS.uid;
 
 /** "v22.1.0" | "22.1.0" → 22; null when unparseable. */
 export function parseNodeMajor(version: string): number | null {
@@ -79,7 +80,7 @@ export function preflightStep(): OnboardingStep {
       }
       const ok = checks.every((c) => c.ok);
       if (ok && uid !== null) {
-        ctx.recordChoice(UID_CHOICE_KEY, uid);
+        ctx.recordChoice(CHOICE_KEYS.uid, uid);
         return { ok, checks, data: { uid } };
       }
       return { ok, checks };

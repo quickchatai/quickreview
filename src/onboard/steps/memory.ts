@@ -62,11 +62,12 @@ import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { OPENVIKING_DEFAULTS } from "../../config.js";
+import { CHOICE_KEYS, type MemoryChoice } from "../choices.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 
 export const MEMORY_STEP_ID = "memory";
 /** Recorded choice: "configure" (default) | "declined". */
-export const MEMORY_CHOICE_KEY = "memory_setup";
+export const MEMORY_CHOICE_KEY = CHOICE_KEYS.memory;
 /** Recorded so later steps / the TUI launch know where the key file went. */
 export const KEYS_FILE_CHOICE_KEY = "openviking_keys_file";
 
@@ -299,7 +300,7 @@ function modeOk(path: string): boolean {
 
 // ---- choices ----------------------------------------------------------------
 
-export type MemoryChoice = "configure" | "declined";
+export type { MemoryChoice };
 
 export function normalizeMemoryChoice(answer: string | undefined): MemoryChoice {
   return /^\s*(n|no|skip|declin|later|without)/i.test(answer ?? "") ? "declined" : "configure";
@@ -487,7 +488,7 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
 
     async run(ctx): Promise<StepReport> {
       const choice = await askChoice(ctx);
-      ctx.recordChoice(MEMORY_CHOICE_KEY, choice);
+      ctx.recordChoice(CHOICE_KEYS.memory, choice);
       if (choice === "declined") return { ok: true, checks: [...DECLINED_CHECKS], data: { declined: true } };
 
       const { secretsDir, keys, base, account } = resolvePaths(opts);

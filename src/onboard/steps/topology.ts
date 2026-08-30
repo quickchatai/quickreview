@@ -34,21 +34,21 @@
 // demoted if it no longer holds. Nothing is torn down behind the operator's
 // back: a stack on the machine they are switching away from keeps running
 // until they stop it, and this step says so.
+import { CHOICE_KEYS, type Topology } from "../choices.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
-import { CHOICE_KEYS } from "./configfill.js";
 
 export const TOPOLOGY_STEP_ID = "topology";
 
-/** The one place the topology is recorded. `configfill.CHOICE_KEYS.topology`
- * is the same string — every later step already reads it from there. */
+/** The one place the topology is recorded — an alias of the shared key, so
+ * this step and every reader name the same declaration (src/onboard/choices.ts). */
 export const TOPOLOGY_CHOICE_KEY = CHOICE_KEYS.topology;
 
 /** The ssh alias of the review host, recorded on the VM route. config_fill's
  * `[tui] ssh_host` question reads this key (its `from` list), so the operator
  * is never asked for the same alias twice. */
-export const SSH_ALIAS_CHOICE_KEY = "vm_ssh_alias";
+export const SSH_ALIAS_CHOICE_KEY = CHOICE_KEYS.sshAlias;
 
-export type Topology = "local" | "vm";
+export type { Topology };
 
 /** The recorded topology. Absent ⇒ "local": the compose path is what every
  * step did before this step existed, so an old checklist keeps its meaning. */
@@ -249,7 +249,7 @@ export function topologyStep(): OnboardingStep {
             ],
           };
         }
-        ctx.recordChoice(SSH_ALIAS_CHOICE_KEY, alias);
+        ctx.recordChoice(CHOICE_KEYS.sshAlias, alias);
         checks.push({
           name: "ssh-alias",
           ok: true,
@@ -259,7 +259,7 @@ export function topologyStep(): OnboardingStep {
         });
       }
 
-      ctx.recordChoice(TOPOLOGY_CHOICE_KEY, choice);
+      ctx.recordChoice(CHOICE_KEYS.topology, choice);
       const option = TOPOLOGY_OPTIONS.find((o) => o.id === choice)!;
       checks.unshift({ name: "topology", ok: true, detail: `${option.id} — ${option.headline}` });
       if (switching) {
