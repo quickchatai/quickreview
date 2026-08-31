@@ -170,12 +170,40 @@ describe("checkBashCommand — gh is read-only", () => {
     block('GH_TOKEN="$(bash scripts/mint-token.sh)" gh api repos/o/n/pulls/5/reviews --input /tmp/rev.json', "sends POST");
   });
 
+  /**
+   * G2: `GH_API_BODY_FLAGS` was complete by flag NAME and still bypassed,
+   * because a name is not a FORM. `-fevent=APPROVE` attaches the value and
+   * `-if` clusters the boolean `-i` in front of `-f`; neither matched, `body`
+   * stayed false, and the effective method resolved to GET — restoring the F1
+   * chain verbatim one character away from the spelling F1's own test blocks.
+   *
+   * Verified sending POST on gh 2.93.0 against a loopback server.
+   */
+  it("blocks the ATTACHED and CLUSTERED short body flags — same failure mode as F1", () => {
+    block("gh api repos/o/n/pulls/5/reviews -fevent=APPROVE", "sends POST");
+    block("gh api repos/o/n/pulls/5/reviews -Fevent=APPROVE", "sends POST");
+    block("gh api repos/o/n/pulls/5/reviews -if event=APPROVE", "sends POST");
+    // The full chain, exactly as verified.
+    block(
+      'GH_TOKEN="$(bash scripts/mint-token.sh)" gh api repos/o/n/pulls/5/reviews -fevent=APPROVE',
+      "sends POST",
+    );
+    // The detached spellings the name-based set already covered stay blocked.
+    block("gh api repos/o/n/pulls/5/reviews -f event=APPROVE", "sends POST");
+  });
+
   it("still allows the read forms, including the -i that is --include, not --input", () => {
     // `-i` is `--include` (print response status line and headers) — a pure
     // READ flag, and `--input` has no short form. Blocking it would break
     // legitimate reads and buy nothing.
     allow("gh api -i repos/o/n/pulls/5");
     allow("gh api --include repos/o/n/pulls/5");
+    // `-i` contains no f/F, so the cluster rule cannot catch it; `-X`/`-XGET`
+    // contain neither either and go through the explicit-method branch.
+    allow("gh api -i -XGET repos/o/n/pulls/5");
+    // Explicit GET wins even with a body flag — verified: the fields become
+    // query parameters and the request is a GET.
+    allow("gh api repos/o/n/search -XGET -fevent=APPROVE");
     // An explicit GET wins over the body flag's promotion (verified).
     allow("gh api repos/o/n/search --method GET --input /tmp/q.json");
     allow("gh api repos/o/n/pulls/5/files --paginate --jq '.[].filename'");
@@ -261,6 +289,66 @@ describe("checkBashCommand — git is read-only", () => {
     // …and after the verb, where it is equally effective.
     block("git log -1 --exec=/tmp/x", "command to run");
     block("git fetch origin --upload-pack=/tmp/x", "command to run");
+    // `--exec-path=` used to slip past the very `--exec` option above: the
+    // regex anchors on `=` or end, and `--exec` is followed by `-path=`.
+    block("git --exec-path=/tmp/evil diff HEAD", "command to run");
+  });
+
+  /**
+   * G1 — the THIRD member of the family, and the one that reframed it. `-c`
+   * INJECTS config and `GIT_EXTERNAL_DIFF` NAMES a program; `--git-dir`
+   * RELOCATES the config file git reads, which reaches the same place.
+   *
+   * VERIFIED by execution on this host:
+   *   git config -f <dir>/config diff.external 'sh -c "<cmd>" --'
+   *   git --git-dir=<dir> diff --no-index <dir>/A <dir>/B    → ran <cmd>
+   *
+   * Three things make it as serious as `git -c`: the evil "repo" is ONE
+   * PLAIN-TEXT FILE (`--no-index` means git never validates it as a
+   * repository — no objects/, no refs/, no `git init`, no exec bit, and a
+   * session writes `config` with its ordinary write tool); `--ext-diff` is NOT
+   * required, because `git diff` honours `diff.external` by default; and both
+   * the flag and the env form work.
+   */
+  it("blocks --git-dir / --work-tree and their env twins — relocating config is injecting it", () => {
+    // The exact verified chain.
+    block("git --git-dir=/tmp/gt3 diff --no-index /tmp/gt3/A /tmp/gt3/B", "command to run");
+    block("git --git-dir /tmp/gt3 diff --no-index /tmp/gt3/A /tmp/gt3/B");
+    block("git --work-tree=/tmp/evil status", "command to run");
+    block("GIT_DIR=/tmp/gt3 git diff --no-index /tmp/gt3/A /tmp/gt3/B", "names a program");
+    block("GIT_WORK_TREE=/tmp/evil git status", "names a program");
+    block("GIT_EXEC_PATH=/tmp/evil git diff", "names a program");
+    block("GIT_COMMON_DIR=/tmp/gt3 git log", "names a program");
+    block("LD_AUDIT=/tmp/x.so git log", "names a program");
+  });
+
+  /**
+   * The regression the third round caught: `-c` after the verb is git's
+   * COMBINED MERGE DIFF option, not config injection — and CLAUDE.md's
+   * ratified recheck decision requires auditing a hand-resolved conflict
+   * against BOTH merge parents, which is exactly what it is for.
+   */
+  it("still allows git show -c / log -c — the combined merge diff the recheck depends on", () => {
+    allow("git show -c HEAD");
+    allow("git log -c -1 --patch");
+    allow("git diff-tree -c HEAD");
+    allow("git show --cc HEAD");
+    // …while the top-level position, which is the only place git accepts the
+    // config form, stays refused.
+    block("git -c alias.x='!npm test' show", "command to run");
+  });
+
+  it("allows the reads added after the allowlist inversion", () => {
+    allow("git range-diff origin/main...HEAD@{1} origin/main...HEAD");
+    allow("git for-each-ref --format='%(refname)' refs/heads");
+  });
+
+  it("matches the read-only sub-form POSITIONALLY, not anywhere in the args", () => {
+    // A scan over every argument would accept the marker as the VALUE of a
+    // write form. The first token after the verb is what decides.
+    block("git branch -m list", "read-only form");
+    block("git worktree add /tmp/wt list", "read-only form");
+    allow("git branch --list 'feature/*'");
   });
 
   it("blocks the ENV twin of git -c — VAR=val prefixes are skipped by the splitter", () => {

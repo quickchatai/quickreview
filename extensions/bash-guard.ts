@@ -112,13 +112,33 @@ const GH_READONLY_NAMESPACES: ReadonlySet<string> = new Set(["search", "status",
  * open left the historical approval channel open while closing the documented
  * one.
  *
- * NOTE — `-i` is deliberately NOT here. In gh it is `--include` (print response
- * status line and headers), a pure READ flag; `--input` has no short form.
- * Blocking `-i` would break legitimate reads and buy nothing. Verified in
- * `gh api --help`.
+ * NOTE — `-i` is deliberately NOT a body flag. In gh it is `--include` (print
+ * response status line and headers), a pure READ flag; `--input` has no short
+ * form, and no other short flag carries a body. Verified in `gh api --help`
+ * and by probe: `gh api <path> -i` → GET.
  */
 const GH_API_BODY_FLAGS: ReadonlySet<string> = new Set(["--input", "-f", "-F", "--field", "--raw-field"]);
 const GH_API_BODY_FLAG_ATTACHED = /^(--input|--field|--raw-field)=/;
+
+/**
+ * The SHORT body flags, structurally rather than by spelling.
+ *
+ * The set above is complete by flag NAME and was still bypassed, because a
+ * name is not a form: `-fevent=APPROVE` attaches the value, and `-if` clusters
+ * the boolean `-i` in front of `-f`. Both send POST, verified on gh 2.93.0:
+ *
+ *     gh api <path> -fevent=APPROVE   → POST
+ *     gh api <path> -Fevent=APPROVE   → POST
+ *     gh api <path> -if event=APPROVE → POST
+ *     gh api <path> -i                → GET
+ *
+ * That is the SAME failure mode as `--input` itself — an unenumerated form
+ * rather than an unenumerated name — so the answer is a shape, not three more
+ * literals. Any single-dash cluster containing `f` or `F` carries a body;
+ * `-i` alone contains neither, so `--include` keeps working. `-X`/`-XPOST`
+ * contain neither either, and are handled by the explicit-method branch.
+ */
+const GH_API_SHORT_BODY_CLUSTER = /^-[A-Za-z]*[fF]/;
 
 /**
  * What method will this `gh api` invocation actually send?
@@ -142,14 +162,22 @@ function ghApiEffectiveMethod(args: string[]): string {
       explicit = attached[1]!.toUpperCase();
       continue;
     }
-    if (GH_API_BODY_FLAGS.has(a) || GH_API_BODY_FLAG_ATTACHED.test(a)) body = true;
+    if (GH_API_BODY_FLAGS.has(a) || GH_API_BODY_FLAG_ATTACHED.test(a) || GH_API_SHORT_BODY_CLUSTER.test(a)) {
+      body = true;
+    }
   }
   if (explicit !== null) return explicit || "GET";
   return body ? "POST" : "GET";
 }
 
 function checkGh(args: string[]): BashCheck {
-  // Skip leading global flags so `gh --repo o/n pr view` is judged on `pr`.
+  // Step over leading `-`-prefixed tokens to find the namespace. NOTE: only the
+  // token, never a value — gh's own global flags (`--version`, `--help`) take
+  // none, and every `--repo`-style flag belongs to a subcommand and follows it.
+  // So `gh --repo o/n pr view` lands on `o/n`, which is not a namespace and is
+  // REFUSED. That fails closed, which is correct, and the reason names `o/n`
+  // rather than `pr` — the comment here used to claim the opposite, which is
+  // a false claim about behaviour in a security-relevant file.
   let i = 0;
   while (i < args.length && args[i]!.startsWith("-")) i++;
   const ns = args[i];
@@ -211,6 +239,10 @@ const GIT_READONLY_VERBS: ReadonlySet<string> = new Set([
   "ls-tree", "ls-remote", "grep", "describe", "shortlog", "merge-base",
   "name-rev", "whatchanged", "show-ref", "show-branch", "check-ignore",
   "check-attr", "count-objects", "verify-commit", "verify-tag", "version",
+  // `range-diff` is the natural tool for a force-push re-review (what changed
+  // between the old and new versions of a series); `for-each-ref` is the
+  // scriptable ref read.
+  "range-diff", "for-each-ref",
   // A read of the remote. It cannot mutate GitHub, and the daemon fetches the
   // base into every worktree already — but a session occasionally needs a ref
   // the round did not anticipate, and refusing it would wedge that review.
@@ -231,22 +263,55 @@ const GIT_READONLY_SUBVERBS: Readonly<Record<string, ReadonlySet<string>>> = {
 };
 
 /**
- * Options that let git run a command of the caller's choosing. `-c` and
- * `--config-env` set config for one invocation, and git executes config-
- * supplied shell from `alias.*` (`!cmd`), `core.pager`, `credential.helper`
- * (`!cmd`), `core.sshCommand`, `diff.*.textconv` and `filter.*.clean`.
+ * Options that let git run a command of the caller's choosing.
  *
- * VERIFIED on this host, not inferred:
- *   git -c "alias.probe=!<cmd>" probe        → ran <cmd>
- * (`core.pager` did not fire because a tool call's stdout is not a TTY; it
- * fires whenever one is, so it is refused all the same.)
+ * The family has THREE members, not two, and the shape only became clear after
+ * the third was found. What they have in common is not "sets config" — it is
+ * **anything that changes WHICH CONFIG GIT READS, or names a program
+ * directly.**
  *
- * `--upload-pack` / `--receive-pack` / `--exec` name a program too. `-C <dir>`
- * is deliberately NOT here: it only changes directory and can neither inject
- * config nor name a command — and the alias-from-another-repo trick it used to
- * enable is dead under the verb allowlist above.
+ *   1. INJECT config inline — `-c key=value`, `--config-env=key=ENVVAR`.
+ *   2. NAME a program — `--upload-pack`, `--receive-pack`, `--exec`,
+ *      `--exec-path` (where git looks for its own subcommand binaries).
+ *   3. RELOCATE the config file git reads — `--git-dir`, `--work-tree`.
+ *
+ * All three end in the same place, because git executes config-supplied shell
+ * from `alias.*` (`!cmd`), `core.pager`, `credential.helper` (`!cmd`),
+ * `core.sshCommand`, `diff.external`, `diff.*.textconv` and `filter.*.clean`.
+ *
+ * VERIFIED by execution on this host, not inferred:
+ *
+ *   git -c "alias.probe=!<cmd>" probe                     → ran <cmd>
+ *   git --git-dir=<dir> diff --no-index <A> <B>           → ran <cmd>
+ *
+ * The third is the worst of them and was the last found. The minimum viable
+ * evil "repo" is ONE PLAIN-TEXT FILE: `--no-index` means git never validates
+ * the directory as a repository, so there is no `objects/`, no `refs/`, no
+ * `git init` and no exec bit — a session writes `config` with its ordinary
+ * write tool. `--ext-diff` is NOT required, because `git diff` honours
+ * `diff.external` by default. Both the flag and `GIT_DIR=` work; the
+ * space-separated `--git-dir <dir>` blocked only incidentally, because the
+ * path landed where the verb was expected.
+ *
+ * `-C <dir>` is deliberately NOT here: it only changes directory and can
+ * neither relocate config nor name a command — and the alias-from-another-repo
+ * trick it used to enable is dead under the verb allowlist above.
  */
-const GIT_COMMAND_INJECTING_OPTS = /^(?:-c|--config-env|--upload-pack|--receive-pack|--exec)(?:=|$)/;
+const GIT_COMMAND_INJECTING_OPTS =
+  /^(?:-c|--config-env|--upload-pack|--receive-pack|--exec|--exec-path|--git-dir|--work-tree)(?:=|$)/;
+
+/**
+ * The same set MINUS bare `-c`, for the position after the verb.
+ *
+ * `git show -c` / `git log -c` / `git diff-tree -c` is git's COMBINED
+ * MERGE DIFF option, not config injection — and it is exactly the tool the
+ * ratified recheck decision needs: a hand-resolved conflict must be audited
+ * against BOTH merge parents. Blocking it was a real functional regression in
+ * a capability the system depends on. Git's top-level `-c` must precede the
+ * subcommand anyway, so the before-verb check above loses nothing.
+ */
+const GIT_COMMAND_INJECTING_OPTS_AFTER_VERB =
+  /^(?:--config-env|--upload-pack|--receive-pack|--exec|--exec-path|--git-dir|--work-tree)(?:=|$)/;
 
 function checkGit(args: string[]): BashCheck {
   // Leading global options, before the verb.
@@ -254,7 +319,7 @@ function checkGit(args: string[]): BashCheck {
   while (i < args.length && args[i]!.startsWith("-")) {
     if (GIT_COMMAND_INJECTING_OPTS.test(args[i]!)) {
       return block(
-        `exec policy: 'git ${args[i]}' can hand git a command to run (alias/pager/sshCommand/textconv) — the reviewer never executes anything`,
+        `exec policy: 'git ${args[i]}' can hand git a command to run (alias/pager/sshCommand/diff.external) — the reviewer never executes anything`,
       );
     }
     if (args[i] === "-C") i++; // a directory, not a verb — skip its value
@@ -262,15 +327,21 @@ function checkGit(args: string[]): BashCheck {
   }
   const verb = args[i];
   if (verb === undefined) return { allowed: true }; // bare `git` prints usage
-  // …and after it, where they are equally effective.
+  // …and after it, where the program-naming and config-relocating forms are
+  // equally effective. `-c` is excluded here: see the constant above.
   for (const a of args.slice(i + 1)) {
-    if (GIT_COMMAND_INJECTING_OPTS.test(a)) {
+    if (GIT_COMMAND_INJECTING_OPTS_AFTER_VERB.test(a)) {
       return block(`exec policy: 'git ${verb} ${a}' can hand git a command to run — the reviewer never executes anything`);
     }
   }
   const sub = GIT_READONLY_SUBVERBS[verb];
   if (sub !== undefined) {
-    return args.slice(i + 1).some((a) => sub.has(a))
+    // POSITIONAL, not `some()` over every argument (F8). A scan of all args
+    // would accept the read-only marker wherever it appeared — including as
+    // the VALUE of a write form, e.g. `git branch -m list`. Proven inert
+    // today, but only by accident of which spellings collide; the first token
+    // after the verb is the one that decides what the command does.
+    return sub.has(args[i + 1] ?? "")
       ? { allowed: true }
       : block(`exec policy: 'git ${verb}' is only allowed in its read-only form (${[...sub].join(", ")})`);
   }
@@ -303,9 +374,15 @@ const COMMAND_INJECTING_ENV = new Set([
   "GIT_SSH_COMMAND", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "GIT_ASKPASS",
   "GIT_PROXY_COMMAND", "GIT_CONFIG", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM",
   "GIT_CONFIG_COUNT", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_TEMPLATE_DIR",
+  // The env twins of `--git-dir` / `--work-tree` / `--exec-path`: the
+  // config-RELOCATING third member of the family. `GIT_DIR=<dir> git diff
+  // --no-index A B` runs `diff.external` out of `<dir>/config` — VERIFIED
+  // executing on this host, with `<dir>` holding nothing but that one file.
+  "GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_EXEC_PATH",
   "EDITOR", "VISUAL", "SSH_ASKPASS",
-  "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES", "BASH_ENV", "ENV",
-  "PATH", "SHELL", "IFS", "PYTHONSTARTUP", "NODE_OPTIONS", "PERL5OPT",
+  "LD_PRELOAD", "LD_AUDIT", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES",
+  "BASH_ENV", "ENV", "PATH", "SHELL", "IFS", "PYTHONSTARTUP", "NODE_OPTIONS",
+  "PERL5OPT",
 ]);
 /** `GIT_CONFIG_KEY_0=alias.x GIT_CONFIG_VALUE_0=!cmd` is `-c` by another name. */
 const COMMAND_INJECTING_ENV_RE = /^GIT_CONFIG_(KEY|VALUE)_\d+$/;
