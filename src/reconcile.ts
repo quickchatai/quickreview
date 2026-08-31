@@ -12,6 +12,7 @@ import {
   type CapturedComment,
 } from "./capture.js";
 import { retryWithheldApproval, type CheckSummary } from "./cigate.js";
+import { auditUngatedReviews, hasUngatedApproval, ungatedReviewMessage } from "./execboundary.js";
 import { recheckFingerprint } from "./recheck.js";
 import { normalizeVerdict, recheckPromptMarker } from "./types.js";
 import { DEFAULT_ROUND_STALL_GRACE_MIN, type Config } from "./config.js";
@@ -540,12 +541,14 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
       for (const local of candidates) {
         const n = local.number;
         let rows: CapturedComment[];
+        let reviewsFetched: ReviewFull[] = [];
         try {
           const [inline, top, reviews] = await Promise.all([
             adapter.listReviewCommentsFull!(n),
             adapter.listIssueComments!(n),
             adapter.listReviewsFull!(n),
           ]);
+          reviewsFetched = reviews;
           rows = [
             ...inline.map((c) => capturedFromReviewComment(n, c)),
             ...top.map((c) => capturedFromIssueComment(n, c)),
@@ -566,6 +569,38 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
             tagged: c.tagged,
             via: "reconcile",
           });
+        }
+        // ---- the exec boundary's OUTCOME layer -------------------
+        // The bot's OWN reviews, which `isHumanCapture` discards two lines up,
+        // are the one piece of evidence that does not care HOW a write was
+        // made. Four adversarial rounds each found a live way around the
+        // command-string guard; a review here that the daemon has no record of
+        // posting is a violation whichever way it got there — and this costs no
+        // API call, because `listReviewsFull` was already fetched above.
+        // Detection only: nothing below mutates GitHub, and nothing here can
+        // withdraw, retract or edit a review (rule 2 — structural, not
+        // prompted; there is no such call in this module or its imports).
+        try {
+          const ungated = auditUngatedReviews(reviewsFetched, local.head_sha, {
+            reviewIds: store.postedReviewIds(n),
+            reviewedHead: store.reviewedHead(n) ?? undefined,
+            migrationPrecheck: store.lastEventAt("migration_collision_comment", n) !== undefined,
+          }, { botLogin, appSlug: cfg.github.app_slug });
+          if (ungated.length > 0) {
+            store.logEvent("ungated_review_detected", n, { head_sha: local.head_sha, reviews: ungated });
+            const message = ungatedReviewMessage(n, ungated);
+            // An unaccounted APPROVE wakes; anything else stays a durable row.
+            // The asymmetry is the blocker bar's: an approval posted outside
+            // the gate defeats rule 1, the CI hard-gate and every posting
+            // guard at once, and it is the outcome all four bypasses
+            // were reaching for.
+            if (hasUngatedApproval(ungated)) store.logAnomaly("ungated_approval", n, null, message, message);
+            else store.logAnomaly("ungated_review", n, null, message);
+            report.errors.push(`ungated-review #${n}: ${ungated.length} unaccounted bot review(s) at the head`);
+          }
+        } catch (err) {
+          // Never let the audit break the sweep it rides on.
+          report.errors.push(`ungated-review-audit #${n}: ${String(err)}`);
         }
         // Watermark only a CLEAN sweep of this PR — a failed read `continue`s
         // above without one, so it is retried on the next pass.

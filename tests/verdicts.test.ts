@@ -347,7 +347,13 @@ describe("measured round usage", () => {
     await w.handleFile(write(100, 1, verdictFile()));
 
     const ev = store.db.prepare("SELECT payload FROM events WHERE kind = 'exec_policy_violation'").get() as { payload: string };
-    expect(JSON.parse(ev.payload)).toEqual({ commands: ["python manage.py test"] });
+    // the payload now carries the CLASS as well as the command, and
+    // `git diff | head` is still a plain read — the widened audit must not turn
+    // every round's ordinary git reads into a violation line.
+    expect(JSON.parse(ev.payload)).toEqual({
+      commands: ["python manage.py test"],
+      violations: [{ command: "python manage.py test", kind: "interpreter" }],
+    });
     expect(rec.overseer).toHaveLength(0); // violations alone never inject
 
     // A later anomaly on the same PR carries the pending violations line.

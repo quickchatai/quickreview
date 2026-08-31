@@ -65,6 +65,14 @@ const WAKE_KINDS: ReadonlySet<string> = new Set([
   // kind (`eod_pinned_watchdog_degraded`) is deliberately left unlisted: "could
   // not check" is heartbeat-tier, "may have been rewritten" is not.
   "eod_pinned_area_modified",
+  // a bot-authored APPROVE on GitHub at the current head that the
+  // daemon has no record of posting. Human-attention grade by construction —
+  // either something wrote to GitHub outside the ONE mutation gate (rule 1,
+  // the CI hard-gate and every posting guard bypassed at once), or the local
+  // reviewed-head stamp failed silently and guard 2 is now blind for that PR.
+  // The quieter sibling `ungated_review` (non-APPROVE) stays unlisted: it is a
+  // durable row and a report line, not a wake.
+  "ungated_approval",
   // a round that blew its deadline and is being buried rather than
   // rescued — nothing will ever come back for it, and the PR it belonged to
   // may never have been reviewed at all. Fires at most once per round, by

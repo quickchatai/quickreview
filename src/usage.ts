@@ -285,9 +285,107 @@ export function estimateUsd(models: Record<string, ModelUsage>, pricing: Record<
 
 // ---- exec-policy audit -----------------------------------------------------
 
-/** Programs whose appearance in a session bash command means the no-exec
- * policy was violated (post-hoc audit; the live guard is extensions/bash-guard). */
+/**
+ * The post-hoc audit's vocabulary (widened).
+ *
+ * It used to be ONE pattern — interpreters — which meant that **not one of the
+ * chains proven to execute or POST across's four adversarial rounds
+ * would have produced a single audit line.** `gh pr review --approve`,
+ * `gh api … --input`, `gh api -fevent=APPROVE`, `git -c alias.x=!cmd x`,
+ * `git --git-dir=<dir> diff`, `HOME=<dir> git diff` — every one of them was
+ * invisible here while it was live. The guard blocked them, eventually; the
+ * audit would not have known if it hadn't.
+ *
+ * What this is and is not. It is TELEMETRY: a durable event and an overseer
+ * line, not a control. It is deliberately an INDEPENDENT implementation rather
+ * than a call into `extensions/bash-guard.ts` — a shared implementation shares
+ * its blind spots, and the point of a second reader is that it fails
+ * differently. It is coarse and high-recall by design: a false line costs an
+ * operator ten seconds, a missing line costs the incident.
+ *
+ * It cannot see what leaves no recognisable spelling. That bound is real and
+ * is why this is the third layer and not the second: the config-scope pin
+ * (`sessionGitConfigPins`) and the write-boundary veto (`checkWritePath`) are
+ * what make the innocent-command form impossible rather than merely visible.
+ */
+export type ExecViolationKind =
+  | "interpreter"
+  | "github_write"
+  | "git_write"
+  | "git_config_injection"
+  | "git_config_surface_write";
+
+/** Interpreters — the original rule, unchanged. */
 const EXEC_VIOLATION_RE = /\b(?:python3?|pytest|uv|npm|npx|node|make|pip3?|poetry|cargo|go (?:run|test))\b/;
+
+/** A `gh api` call that will not be a GET: an explicit mutating method, or any
+ * body-carrying flag (gh promotes GET→POST when a body is present — the
+ * `--input` form is the one the predecessor used for every review it posted). */
+const GH_API_WRITE_RE =
+  /\bgh\s+(?:-\S+\s+)*api\b[^\n]*?(?:-X\s*(?:POST|PATCH|PUT|DELETE)|--method[=\s]+(?:POST|PATCH|PUT|DELETE)|--input\b|--input=|--field\b|--field=|--raw-field\b|--raw-field=|(?:^|\s)-[A-Za-z]*[fF](?:\s|=|[A-Za-z_]+=))/i;
+
+/** A `gh` subcommand that is not one of the read verbs. Expressed as the
+ * complement of the read set rather than as a list of write verbs, so a verb
+ * `gh` grows tomorrow is audited by default instead of being invisible until
+ * someone remembers it. */
+const GH_SUBCOMMAND_RE = /\bgh\s+(?:-\S+\s+)*([a-z-]+)(?:\s+(?:-\S+\s+)*([a-z-]+))?/;
+const GH_AUDIT_READ_NAMESPACES = new Set(["api", "search", "status", "version", "help", "auth"]);
+const GH_AUDIT_READ_VERBS = new Set(["view", "list", "diff", "checks", "status", "get-url", "download"]);
+
+/** A write reaching GitHub by some route other than `gh` — the shape a fifth
+ * channel would take. `curl`/`wget` are not on the guard's allowlist, so this
+ * fires only for something that already got past it. A method or a request
+ * body is required: `gh api repos/o/n/pulls/5/reviews` is a legitimate GET and
+ * must not be audited as a write. */
+const GITHUB_DIRECT_WRITE_RE =
+  /(?:api\.github\.com[^\n]*?(?:-X\s*(?:POST|PATCH|PUT|DELETE)|--request[=\s]+(?:POST|PATCH|PUT|DELETE)|(?:^|\s)(?:-d|--data|--data-raw|--data-binary|--json)\b)|(?:-X\s*(?:POST|PATCH|PUT|DELETE)|--request[=\s]+(?:POST|PATCH|PUT|DELETE))[^\n]*api\.github\.com)/i;
+
+/** `git` verbs that write. Plain reads (`git diff`, `git log`, `git show`)
+ * must NOT match — the audit runs on every round and a read-shaped false line
+ * every time would train the operator to ignore the whole event. */
+const GIT_WRITE_RE =
+  /\bgit\s+(?:-\S+\s+|-[cC]\s+\S+\s+)*(?:push|send-pack|commit|merge|rebase|reset|revert|cherry-pick|am|apply|checkout|switch|restore|clean|stash|init|clone|update-ref|update-index|symbolic-ref|filter-branch|fast-import|gc|prune|notes|mv|rm|add)\b/;
+
+/** Anything that changes WHICH CONFIG GIT READS, or names a program for it to
+ * run — the family that produced rounds 2, 3 and 4. Both the option forms and
+ * the environment-prefix twins, because the twins were round 2's and round 4's
+ * whole point. */
+const GIT_CONFIG_INJECTION_RE =
+  /(?:\bgit\s+(?:-\S+\s+)*-c\s|--config-env[=\s]|--git-dir[=\s]|--work-tree[=\s]|--exec-path[=\s]|--upload-pack[=\s]|--receive-pack[=\s]|(?:^|[\s;&|(])(?:GIT_CONFIG[A-Z0-9_]*|GIT_DIR|GIT_COMMON_DIR|GIT_WORK_TREE|GIT_EXEC_PATH|GIT_EXTERNAL_DIFF|GIT_PAGER|PAGER|GIT_SSH|GIT_SSH_COMMAND|GIT_ASKPASS|GIT_EDITOR|GIT_SEQUENCE_EDITOR|GIT_PROXY_COMMAND|GIT_TEMPLATE_DIR|HOME|XDG_CONFIG_HOME|LD_PRELOAD|LD_AUDIT|BASH_ENV|ENV|PATH|SHELL|IFS|NODE_OPTIONS|PYTHONSTARTUP|PERL5OPT)=)/;
+
+/**
+ * A write landing on git's configuration surface — the class no command guard
+ * can see from the command that EXPLOITS it, because that command is a plain
+ * `git diff`. The write itself, however, is right there in the transcript, and
+ * it is visible whether it came from bash or from the write TOOL (see
+ * `writeTargetsIn`). This is the audit's only genuinely enumeration-free rule:
+ * it keys on git's own documented config locations, not on an attack.
+ */
+const GIT_CONFIG_SURFACE_PATH_RE = /(?:^|\/)(?:\.git\/|\.gitconfig$|git\/config$|\.gitattributes$)/;
+
+/** The same surface as a bash WRITE: a redirection target, or `sed -i`'s. A
+ * bare mention is not enough — `git show HEAD:.gitattributes` is a legitimate
+ * read of a file the PR touched, and auditing it as a config write would be
+ * the kind of routine false line that teaches an operator to skip the event. */
+const GIT_CONFIG_SURFACE_WRITE_RE =
+  /(?:>>?\s*\S*(?:\.git\/\S*|\.gitconfig|git\/config|\.gitattributes)|\bsed\s+(?:-\S+\s+)*-[a-zA-Z]*i\S*(?:\s+\S+)*?\s+\S*(?:\.git\/\S*|\.gitconfig|git\/config|\.gitattributes))/;
+
+/** Which rule, if any, this command trips. First match wins; the order is
+ * severity, not confidence. */
+export function execViolationKind(cmd: string): ExecViolationKind | null {
+  if (GH_API_WRITE_RE.test(cmd) || GITHUB_DIRECT_WRITE_RE.test(cmd)) return "github_write";
+  const gh = GH_SUBCOMMAND_RE.exec(cmd);
+  if (gh) {
+    const ns = gh[1]!;
+    const verb = gh[2];
+    if (!GH_AUDIT_READ_NAMESPACES.has(ns) && verb !== undefined && !GH_AUDIT_READ_VERBS.has(verb)) return "github_write";
+  }
+  if (GIT_WRITE_RE.test(cmd)) return "git_write";
+  if (GIT_CONFIG_INJECTION_RE.test(cmd)) return "git_config_injection";
+  if (GIT_CONFIG_SURFACE_WRITE_RE.test(cmd)) return "git_config_surface_write";
+  if (EXEC_VIOLATION_RE.test(cmd)) return "interpreter";
+  return null;
+}
 
 /** Pull every bash toolCall command out of a record, wherever it nests. */
 function bashCommandsIn(value: unknown, out: string[], depth = 8): void {
@@ -311,10 +409,52 @@ function bashCommandsIn(value: unknown, out: string[], depth = 8): void {
   for (const v of Object.values(obj)) bashCommandsIn(v, out, depth - 1);
 }
 
-/** Bash commands in the given JSONL lines that ran a forbidden executor.
- * Deduplicated, order-preserving; malformed lines skipped. */
-export function auditExecViolations(lines: string[]): string[] {
-  const violations = new Set<string>();
+/** Tool names that write a file, as recorded in the transcript. Mirrors
+ * WRITE_TOOLS in extensions/bash-guard.ts — deliberately broad. */
+const WRITE_TOOL_NAMES = new Set(["write", "edit", "multi_edit", "multiedit", "str_replace", "create", "write_file", "apply_patch"]);
+
+/**
+ * Every write-TOOL target in a record. The bash-only collector above is why
+ * the audit was blind to the decisive half of all four bypasses: the command
+ * they ran was innocent, and the payload was a file written with the ordinary
+ * write tool, which never appears in a bash command at all.
+ */
+function writeTargetsIn(value: unknown, out: string[], depth = 8): void {
+  if (depth < 0 || typeof value !== "object" || value === null) return;
+  if (Array.isArray(value)) {
+    for (const item of value) writeTargetsIn(item, out, depth - 1);
+    return;
+  }
+  const obj = value as Record<string, unknown>;
+  const toolName = obj.toolName ?? obj.name ?? obj.tool;
+  if (typeof toolName === "string" && WRITE_TOOL_NAMES.has(toolName)) {
+    for (const argsKey of ["arguments", "input", "args", "params"]) {
+      const args = obj[argsKey];
+      if (typeof args === "object" && args !== null) {
+        const a = args as Record<string, unknown>;
+        for (const pathKey of ["path", "file_path", "filePath"]) {
+          const p = a[pathKey];
+          if (typeof p === "string") out.push(p);
+        }
+      }
+    }
+    for (const pathKey of ["path", "file_path", "filePath"]) {
+      const p = obj[pathKey];
+      if (typeof p === "string") out.push(p);
+    }
+  }
+  for (const v of Object.values(obj)) writeTargetsIn(v, out, depth - 1);
+}
+
+export interface ExecViolation {
+  command: string;
+  kind: ExecViolationKind;
+}
+
+/** Every policy-forbidden action visible in the given JSONL lines, classified.
+ * Deduplicated by command, order-preserving; malformed lines skipped. */
+export function auditExecViolationDetails(lines: string[]): ExecViolation[] {
+  const seen = new Map<string, ExecViolationKind>();
   for (const line of lines) {
     let rec: unknown;
     try {
@@ -325,8 +465,22 @@ export function auditExecViolations(lines: string[]): string[] {
     const commands: string[] = [];
     bashCommandsIn(rec, commands);
     for (const cmd of commands) {
-      if (EXEC_VIOLATION_RE.test(cmd)) violations.add(cmd);
+      const kind = execViolationKind(cmd);
+      if (kind && !seen.has(cmd)) seen.set(cmd, kind);
+    }
+    const targets: string[] = [];
+    writeTargetsIn(rec, targets);
+    for (const target of targets) {
+      if (!GIT_CONFIG_SURFACE_PATH_RE.test(target)) continue;
+      const key = `write ${target}`;
+      if (!seen.has(key)) seen.set(key, "git_config_surface_write");
     }
   }
-  return [...violations];
+  return [...seen].map(([command, kind]) => ({ command, kind }));
+}
+
+/** Bash commands in the given JSONL lines that ran a forbidden executor.
+ * Deduplicated, order-preserving; malformed lines skipped. */
+export function auditExecViolations(lines: string[]): string[] {
+  return auditExecViolationDetails(lines).map((v) => v.command);
 }

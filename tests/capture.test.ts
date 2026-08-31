@@ -492,6 +492,47 @@ describe("the reconcile capture sweep (§6)", () => {
     store.close();
   });
 
+  // ----: the exec boundary's outcome layer, WIRED ------------------
+  // The pure audit is proven in tests/exec-boundary.test.ts. What matters here
+  // is that the sweep actually runs it: a layer nobody calls is the failure
+  // mode this whole ticket is about (a pin that silently does nothing).
+  it("flags a bot review at the head that the daemon has no record of posting", async () => {
+    const store = trackedStore();
+    const gh = new SweepGitHub();
+    gh.open = [ref(PR)];
+    gh.reviews.set(PR, [
+      // Posted by SOMETHING — the audit never asks what. No marker, no ledger
+      // row, no reviewed_heads mark, at the PR's current head.
+      { id: 801, user: BOT, user_type: "Bot", state: "APPROVED", body: "LGTM", commit_id: "sha4242", submitted_at: null },
+    ]);
+
+    const report = await reconcileOnce({ cfg, store, adapter: gh, hooks: hooks() });
+    expect(report.errors.some((e) => e.includes("ungated-review #4242"))).toBe(true);
+    const ev = store.db.prepare("SELECT payload FROM events WHERE kind = 'ungated_review_detected'").get() as { payload: string } | undefined;
+    expect(ev, "the durable record").toBeTruthy();
+    expect(JSON.parse(ev!.payload)).toMatchObject({ head_sha: "sha4242", reviews: [{ review_id: 801, state: "APPROVED" }] });
+    // An unaccounted APPROVE is human-attention grade: rule 1, the CI
+    // hard-gate and every posting guard are bypassed at once.
+    const anomaly = store.db.prepare("SELECT kind FROM events WHERE kind = 'anomaly'").all();
+    expect(anomaly.length).toBeGreaterThan(0);
+    store.close();
+  });
+
+  it("does not flag the review the daemon DID record — the sweep must not cry wolf", async () => {
+    const store = trackedStore();
+    const gh = new SweepGitHub();
+    gh.open = [ref(PR)];
+    gh.reviews.set(PR, [
+      { id: 802, user: BOT, user_type: "Bot", state: "APPROVED", body: "LGTM", commit_id: "sha4242", submitted_at: null },
+    ]);
+    store.recordReviewedHead(PR, { head_sha: "sha4242", posted_event: "APPROVE" });
+
+    const report = await reconcileOnce({ cfg, store, adapter: gh, hooks: hooks() });
+    expect(report.errors.filter((e) => e.includes("ungated-review"))).toEqual([]);
+    expect(store.db.prepare("SELECT COUNT(*) c FROM events WHERE kind = 'ungated_review_detected'").get()).toMatchObject({ c: 0 });
+    store.close();
+  });
+
   it("is skippable and survives an adapter that cannot read comments", async () => {
     const store = trackedStore();
     const gh = new SweepGitHub();

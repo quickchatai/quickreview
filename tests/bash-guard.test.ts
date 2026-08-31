@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import activate, { checkBashCommand } from "../extensions/bash-guard.js";
+import activate, { checkBashCommand, checkWritePath } from "../extensions/bash-guard.js";
 
 const allow = (cmd: string): void => {
   const res = checkBashCommand(cmd);
@@ -513,5 +513,72 @@ describe("live-day regressions (2026-08-17): quoted patterns and substitutions",
     allow("cat state/agents/pass-intent.md");
     allow("rg -n 'openviking' src/memory");
     allow("cat ~/.openviking/ovcli.conf"); // the session's OWN reviewer credential
+  });
+});
+
+// ----: the write boundary -------------------------------------------
+// The half a command guard cannot reach. Every bypass needed a
+// suspicious token in a command; push the same idea one step and the command
+// becomes a plain `git diff` and the payload is a FILE. VERIFIED executing on
+// this host, with the config-scope pin already in force:
+//
+//   printf '[diff]\n\texternal = <cmd>\n' >> <clone>/.git/config
+//   git diff <base> <head>          → ran <cmd>
+//
+// The rule is not a list of attacks. It is git's own list of the places it
+// reads configuration from — closed, documented, and something a review
+// session never writes to for any reason (scoping rule 2: it reads code).
+describe("checkWritePath / git's configuration surface", () => {
+  const writeBlocked = (p: string): void => {
+    const res = checkWritePath(p);
+    expect(res.allowed, `${p} should be refused`).toBe(false);
+    expect(res.reason).toContain("configuration surface");
+  };
+  const writeOk = (p: string): void => {
+    const res = checkWritePath(p);
+    expect(res.allowed, `${p} → ${res.reason ?? ""}`).toBe(true);
+  };
+
+  it("refuses every location git reads configuration or hooks from", () => {
+    writeBlocked("/opt/quickreview/reviewed-repo/.git/config");        // the fifth bypass, verbatim
+    writeBlocked("wt/pr-5249/.git/config");
+    writeBlocked(".git/config.worktree");
+    writeBlocked("/opt/quickreview/reviewed-repo/.git/worktrees/pr-1/config.worktree");
+    writeBlocked(".git/hooks/pre-commit");
+    writeBlocked(".git/info/attributes");
+    writeBlocked("/home/review/.gitconfig");                          // the global scope's file
+    writeBlocked("/home/review/.config/git/config");                  // the XDG scope's file
+    writeBlocked("reviewed-repo/.gitattributes");                     // the other half of diff.*.textconv
+  });
+
+  it("leaves every write a session legitimately makes alone — this is not a write allowlist", () => {
+    writeOk("verdict/pr-5249-round-2.json");
+    writeOk("/opt/quickreview/state/ledger/pr-5249.md");
+    writeOk("/tmp/review-body.md");
+    writeOk("/tmp/comments.json");
+    writeOk("state/agents/pass-intent.md");
+    writeOk("src/gitconfig-parser.ts");        // a NAME is not a location
+    writeOk("docs/git/configuration.md");
+    writeOk("notes/gitattributes.md");
+  });
+
+  it("closes the same surface when the write rides a shell redirection", () => {
+    // The segment splitter skips redirection remnants when hunting the PROGRAM
+    // token, which is right for finding the program and wrong for finding the
+    // target: `printf … > .git/config` vets as `printf` and would pass.
+    block("printf '[diff]\\n' >> .git/config", "configuration surface");
+    block("echo '[core]' > wt/pr-5249/.git/config", "configuration surface");
+    block("cat evil > /home/review/.gitconfig", "configuration surface");
+    block("printf x >/opt/quickreview/reviewed-repo/.git/config", "configuration surface");
+    block("sed -i 's/a/b/' .git/config", "configuration surface");
+  });
+
+  it("still allows reading those files — the rule is the WRITE, not the path", () => {
+    // A blocked read is a loud refusal on work a session legitimately does;
+    // `git show HEAD:.gitattributes` is reviewing a file the PR touched.
+    allow("cat .git/config");
+    allow("git show HEAD:.gitattributes");
+    allow("rg -n gitconfig docs/");
+    allow("git config --get remote.origin.url");
   });
 });

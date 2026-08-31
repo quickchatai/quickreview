@@ -2255,6 +2255,17 @@ export class StateStore {
     return new Set(rows.map((r) => r.id));
   }
 
+  /** The review ids this daemon recorded posting for ONE pr — the
+   * per-review ledger, read as a trace by the ungated-review audit.
+   * Scoped per PR (unlike `importedReviewIds`) because the audit asks a
+   * per-PR question and a global set would let one PR's row vouch for another. */
+  postedReviewIds(pr: number): Set<number> {
+    const rows = this.db
+      .prepare("SELECT gh_review_id AS id FROM rounds WHERE pr = ? AND gh_review_id IS NOT NULL")
+      .all(pr) as Array<{ id: number }>;
+    return new Set(rows.map((r) => r.id));
+  }
+
   /** Lowest round_no on a PR (null when it has no rounds) — the importer
    * numbers historical rounds *below* it so live numbering is never disturbed. */
   minRoundNo(pr: number): number | null {

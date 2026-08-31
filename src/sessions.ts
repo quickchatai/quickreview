@@ -55,9 +55,75 @@ export const OVERSEER_SESSION = "overseer";
 /** Environment-variable prefixes that ride the `env K=V … pi …` argv (see
  * spawnSession). `QCR_` is the daemon's routing surface; `OPENVIKING_` is the
  * session's memory identity, which must be per-session and therefore cannot
- * come from the tmux server environment. SECRETS ARE NEVER PREFIXED — argv is
- * world-readable — so no third prefix carries a credential. */
-const ARGV_ENV_PREFIXES = ["QCR_", "OPENVIKING_"] as const;
+ * come from the tmux server environment; `GIT_CONFIG_` is the config-scope pin
+ * (see sessionGitConfigPins). SECRETS ARE NEVER PREFIXED — argv is
+ * world-readable — so no prefix carries a credential. */
+const ARGV_ENV_PREFIXES = ["QCR_", "OPENVIKING_", "GIT_CONFIG_"] as const;
+
+/**
+ * The config-scope pin: which files git may read configuration from, decided by
+ * the DAEMON at spawn time rather than discovered by git at run time.
+ *
+ * Why this exists. `extensions/bash-guard.ts` vets COMMAND STRINGS, and four
+ * adversarial rounds each found a way through it. The fourth is the
+ * one that generalises: `HOME=/tmp/evil git diff --no-index A B` executes
+ * arbitrary shell out of `$HOME/.gitconfig`, because git's *implicit search
+ * path* was open while the *explicit* pointers (`GIT_CONFIG_GLOBAL`,
+ * `GIT_CONFIG_SYSTEM`) were blocked. Push it one step and the command becomes
+ * innocent: a session writes the real `$HOME/.gitconfig` with its ordinary
+ * write tool and then runs a plain `git diff` — no suspicious token anywhere
+ * for a command-string guard to see. The guard is structurally blind to that
+ * half, and no length of blocklist reaches it.
+ *
+ * So the search path is not searched. Setting `GIT_CONFIG_GLOBAL` makes both
+ * `$HOME/.gitconfig` and `$XDG_CONFIG_HOME/git/config` inert — git consults the
+ * named file INSTEAD, so `HOME` and `XDG_CONFIG_HOME` stop being config
+ * vectors whether or not the guard knows their names. VERIFIED by execution,
+ * not read off the docs:
+ *
+ *   HOME=<evil> git diff --no-index A B                        → ran <cmd>
+ *   HOME=<evil> GIT_CONFIG_GLOBAL=<pin> git diff --no-index A B → did NOT run
+ *   XDG_CONFIG_HOME=<evil> …                                    → same pair
+ *
+ * …and end-to-end through the real spawn shape (`tmux new-session -d -s <n> -c
+ * <cwd> env K=V … <cmd>`), because CLAUDE.md's recorded gotcha is that tmux
+ * panes inherit the tmux SERVER environment: a pin that rode the client env
+ * would silently do nothing, which is the exact failure mode this defence is
+ * about. Hence `GIT_CONFIG_` in ARGV_ENV_PREFIXES above.
+ *
+ * The target is the pi HOME's own `.gitconfig` — the SAME file git would have
+ * found by searching — and NOT `/dev/null`, which the ticket's note suggested.
+ * `/dev/null` would have been a live regression: the container's entrypoint
+ * writes a `credential.helper` shell snippet into the global config
+ * (deploy/ansible/templates/entrypoint.sh.j2), and `fetch` is deliberately on
+ * the session's read-verb allowlist because refusing it would wedge a review.
+ * Verified that the pinned file's own `credential.helper` is still read AND
+ * still invoked (`git credential fill`), so nothing legitimate changes.
+ *
+ * What this does NOT do, stated plainly because two docstrings in this codebase
+ * have already asserted a closedness they did not have:
+ *
+ *   - It does not cover the REPO scope. `<clone>/.git/config` is still read,
+ *     and a session that writes `diff.external` there gets execution from a
+ *     plain `git diff <base> <head>` — VERIFIED executing. That half is closed
+ *     at the WRITE boundary instead (`checkWritePath` in bash-guard), because
+ *     git has no "ignore the local config" switch to pin.
+ *   - It does not stop a caller RE-POINTING these three variables on the
+ *     command line: a later `GIT_CONFIG_GLOBAL=…` prefix wins over the spawn
+ *     environment. The bash guard's COMMAND_INJECTING_ENV blocks that, and
+ *     that block stays load-bearing. Env pins the floor; the guard stops it
+ *     being lifted.
+ */
+export function sessionGitConfigPins(piHome: string): Record<string, string> {
+  return {
+    // The global scope, named rather than searched for.
+    GIT_CONFIG_GLOBAL: join(piHome, ".gitconfig"),
+    // The system scope, twice: the pointer AND the switch. Either alone is
+    // enough today; both because they are independent in git and cost nothing.
+    GIT_CONFIG_SYSTEM: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+  };
+}
 
 export function prSessionName(pr: number): string {
   return `pr-${pr}`;
@@ -353,6 +419,10 @@ export class PiSessionManager implements SessionHooks {
       // old pi-subagents config.json number — the glue's own default is the
       // companion's 4).
       QCR_SUBAGENT_MAX_CONCURRENCY: String(this.cfg.pi.subagent_max_concurrency),
+      // The config-scope pin. Here as well as on the argv because
+      // buildEnv is also the tmux CLIENT's environment; the argv copy is the
+      // one that reaches the pane (ARGV_ENV_PREFIXES carries `GIT_CONFIG_`).
+      ...sessionGitConfigPins(this.piHome),
       ...(this.commandStore && this.commandStore.path !== ":memory:"
         ? {
             QCR_STATE_DB: this.commandStore.path,

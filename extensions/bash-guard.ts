@@ -11,6 +11,22 @@
 // (`pi.on("tool_call", …)` returning {block, reason}) is a VERIFIED capability
 // per assets/findings.md §5 lines 132-141; the exact payload field
 // names remain VERIFY-ON-PIN.
+//
+// this guard is ONE LAYER, and it is the layer that cannot be the
+// layer. It vets command STRINGS; four adversarial rounds each found a way
+// through, and the decisive ingredient in every one was a FILE the
+// session writes, which a command guard never sees. Two things changed here as
+// a result, and both are about the boundary rather than about any one attack:
+//
+//   · it now also vets the WRITE tools, on exactly one question — is this path
+//     part of git's configuration surface (`isGitConfigSurface`)? That closes
+//     the repo config scope, where a plain `git diff` executes a program named
+//     by `<clone>/.git/config` with no suspicious token in the command at all;
+//   · the global/XDG/system scopes are closed OUTSIDE this file entirely, by
+//     `sessionGitConfigPins` in src/sessions.ts, which pins where git looks for
+//     configuration at spawn. That is not a rule this guard enforces; it is a
+//     search that no longer happens. The guard's job there is only to stop a
+//     caller RE-POINTING the pin (COMMAND_INJECTING_ENV), and that job stays.
 import type { Pi, ToolCallEvent } from "@earendil-works/pi-coding-agent";
 
 /** Read-only programs a review session may run directly. */
@@ -596,6 +612,121 @@ export function checkSecretPaths(cmd: string): BashCheck {
   return { allowed: true };
 }
 
+/**
+ * Git's configuration and hook surface — the files that turn an ORDINARY git
+ * command into arbitrary shell execution.
+ *
+ * This is the half of the exec boundary a command-string guard cannot reach.
+ * Every bypass across's four rounds needed a suspicious token in the
+ * command, but the decisive ingredient in each was A FILE THE SESSION WRITES —
+ * and the guard never sees a write. Push it one step and the command becomes
+ * innocent. VERIFIED executing on this host, with the config-scope pin
+ * already in force:
+ *
+ *   printf '[diff]\n\texternal = <cmd>\n' >> <clone>/.git/config
+ *   git diff <base> <head>            → ran <cmd>
+ *
+ * `git diff <base> <head>` is the single most ordinary command a review session
+ * runs. There is no token in it for any blocklist to catch, and no env pin to
+ * apply: git has no "ignore the local config" switch, unlike the global and
+ * system scopes (`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`/`GIT_CONFIG_NOSYSTEM`,
+ * which `sessionGitConfigPins` in src/sessions.ts nails down at spawn).
+ *
+ * So the repo scope is closed at the WRITE boundary instead. The rule is not a
+ * list of attacks — it is git's own list of the places it reads configuration
+ * and executables from, which is closed and documented:
+ *
+ *   · anything inside a `.git` directory  — `config`, `config.worktree`,
+ *     `hooks/*`, `info/attributes`, `worktrees/<n>/config.worktree`
+ *   · `.gitconfig`                         — the global scope's file
+ *   · `<any>/git/config`                   — the XDG scope's file
+ *   · `.gitattributes`                     — the other half of `diff.*.textconv`
+ *     and `filter.*.clean`; useless to an attacker without a config, but it is
+ *     the same surface and a review session never writes one.
+ *
+ * A review session READS code (scoping rule 2); it has no legitimate reason to
+ * write any of these, in the worktree or anywhere else. Its own writes — the
+ * verdict file, the ledger, the review body and comment JSON — live under
+ * `state/`, `verdict/` and `inject/`, none of which this touches.
+ *
+ * REACH, stated plainly, because two docstrings in this file have already
+ * asserted a closedness they did not have. This binds the `write`/`edit` TOOL
+ * path and shell REDIRECTION targets. It does NOT bind a write smuggled inside
+ * a quoted program body (`awk 'BEGIN{print > "..."}'`) or through a sanctioned
+ * script. Those remain the bash program allowlist's job, and the allowlist is
+ * what keeps the set of programs that can write a file at all small.
+ */
+const GIT_CONFIG_SURFACE_RE = [
+  /(^|\/)\.git(\/|$)/, // inside a .git dir (or the file/symlink itself)
+  /(^|\/)\.gitconfig$/,
+  /(^|\/)git\/config$/,
+  /(^|\/)\.gitattributes$/,
+];
+
+/**
+ * Is this path part of git's config/hook surface? Exported so both boundaries
+ * — the bash redirection scan below and the write/edit tool veto in `activate`
+ * — ask ONE question, and a future third caller cannot ask a narrower one.
+ */
+export function isGitConfigSurface(path: string): boolean {
+  // Trailing shell noise a redirection token can carry; quotes are stripped by
+  // the caller, and a bare `~` expansion never changes which rule matches.
+  const p = path.replace(/^['"]+|['"]+$/g, "").replace(/\/+$/, "");
+  if (p.length === 0) return false;
+  return GIT_CONFIG_SURFACE_RE.some((re) => re.test(p));
+}
+
+function gitConfigWriteBlock(path: string): BashCheck {
+  return block(
+    `exec policy: '${path}' is part of git's configuration surface — writing it makes an ORDINARY git command (a plain 'git diff') execute a program of the writer's choosing. The reviewer reads code; it never configures git.`,
+  );
+}
+
+/**
+ * Shell redirections whose target is git's config surface.
+ *
+ * The segment splitter deliberately skips redirection remnants when hunting for
+ * the program token, so `printf '…' > .git/config` vets as `printf` and passes.
+ * That is right for finding the PROGRAM and wrong for finding the TARGET, so
+ * the target is asked about separately, over the raw command — the same shape
+ * `checkSecretPaths` already uses for the root-credential paths, and for the
+ * same reason: the path, not the program, is what distinguishes it.
+ *
+ * `sed -i` is the other writer on the allowlist that takes its target as a
+ * plain argument rather than after a `>`; it is covered by the same scan
+ * because the argument is a token like any other.
+ */
+export function checkGitConfigWrites(cmd: string): BashCheck {
+  const tokens = cmd.split(/\s+/).filter((t) => t.length > 0);
+  // `sed -i` / `sed -i.bak` / `sed -ne … -i` — the one allowlisted program that
+  // rewrites a file named as a plain argument. When it is in play EVERY token
+  // is a candidate target; being over-broad here costs a refusal on a command
+  // that also mentions a git config path, which no legitimate read does.
+  const sedInPlace =
+    tokens.some((t) => /(^|\/)sed$/.test(t))
+    && tokens.some((t) => /^-[a-zA-Z]*i([a-zA-Z]*)?([.'"].*)?$/.test(t) || t === "--in-place" || t.startsWith("--in-place="));
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i]!;
+    // `> path`, `>> path` — target is the next token. Tested BEFORE the
+    // attached form, which would otherwise swallow a bare `>>` by reading its
+    // second `>` as the target (a real bug this ordering fixes, caught by the
+    // `printf … >> .git/config` case and not by `> .git/config`).
+    if (/^\d*>>?$/.test(t)) {
+      const target = tokens[i + 1];
+      if (target !== undefined && isGitConfigSurface(target)) return gitConfigWriteBlock(target);
+      continue;
+    }
+    // `>path`, `>>path`, `2>path` — target attached to the operator.
+    const attached = /^\d*>>?(.+)$/.exec(t);
+    if (attached) {
+      if (isGitConfigSurface(attached[1]!)) return gitConfigWriteBlock(attached[1]!);
+      continue;
+    }
+    if (sedInPlace && isGitConfigSurface(t)) return gitConfigWriteBlock(t);
+  }
+  return { allowed: true };
+}
+
 /** Pure policy check over a full bash command string: split into segments
  * (quote-aware) and vet each segment's first program token. */
 export function checkBashCommand(cmd: string): BashCheck {
@@ -605,6 +736,10 @@ export function checkBashCommand(cmd: string): BashCheck {
   // legitimately allowed, so the path is the only thing that distinguishes it.
   const secret = checkSecretPaths(normalized);
   if (!secret.allowed) return secret;
+  // Same shape, same reason: the git config surface. A redirection
+  // target is not a program token, so the per-segment walk below never sees it.
+  const gitCfg = checkGitConfigWrites(normalized);
+  if (!gitCfg.allowed) return gitCfg;
   for (const segment of splitShellSegments(normalized)) {
     const tokens = segment.trim().split(/\s+/).filter((t) => t.length > 0);
     if (tokens.length === 0) continue;
@@ -615,20 +750,47 @@ export function checkBashCommand(cmd: string): BashCheck {
 }
 
 /**
+ * The write/edit tools' policy check. One rule, one question — see
+ * `isGitConfigSurface`. Everything else a session writes is allowed here; this
+ * is not a write allowlist.
+ */
+export function checkWritePath(path: string): BashCheck {
+  return isGitConfigSurface(path) ? gitConfigWriteBlock(path) : { allowed: true };
+}
+
+/** Tool names that take a file path and write it. Kept broad on purpose: a
+ * name this list misses is a hole, and a name it carries that does not exist
+ * costs nothing. // VERIFY-ON-PIN: pi's write-tool naming. */
+const WRITE_TOOLS = new Set(["write", "edit", "multi_edit", "multiedit", "str_replace", "create", "write_file", "apply_patch"]);
+
+/**
  * pi activation. VERIFIED (findings §5 lines 132-141): a tool_call
  * handler can return { block: true, reason } to veto the call, and event.input
  * is mutable. // VERIFY-ON-PIN: field names `toolName` and `input`/`arguments`
- * on the event payload.
+ * on the event payload, and (following extensions/companion-guard.ts, which
+ * already vetoes writes this way) `path`/`file_path` on a write tool's input.
  */
 export default function activate(pi: Pi): void {
   pi.on("tool_call", (event) => {
     const ev = event as ToolCallEvent;
-    if (ev.toolName !== "bash") return;
-    const input = (ev.input ?? ev.arguments) as { command?: unknown } | undefined;
-    const cmd = input?.command;
-    if (typeof cmd !== "string") return;
-    const res = checkBashCommand(cmd);
-    if (!res.allowed) return { block: true, reason: res.reason ?? "exec policy: command blocked" };
+    const input = (ev.input ?? ev.arguments) as
+      | { command?: unknown; path?: unknown; file_path?: unknown; filePath?: unknown }
+      | undefined;
+
+    if (ev.toolName === "bash") {
+      const cmd = input?.command;
+      if (typeof cmd !== "string") return;
+      const res = checkBashCommand(cmd);
+      if (!res.allowed) return { block: true, reason: res.reason ?? "exec policy: command blocked" };
+      return;
+    }
+
+    if (typeof ev.toolName === "string" && WRITE_TOOLS.has(ev.toolName)) {
+      const target = input?.path ?? input?.file_path ?? input?.filePath;
+      if (typeof target !== "string") return;
+      const res = checkWritePath(target);
+      if (!res.allowed) return { block: true, reason: res.reason ?? "exec policy: write blocked" };
+    }
     return;
   });
 }

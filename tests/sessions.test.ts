@@ -245,6 +245,40 @@ describe("birth", () => {
     expect(existsSync(join(m.injectDir("pr-42"), ".done"))).toBe(true);
   });
 
+  /**
+   * the config-scope pin has to be ON THE ARGV, and this test is the
+   * whole reason the ticket said "this is NOT a one-line change".
+   *
+   * tmux panes inherit the tmux SERVER's environment, not the client's
+   * (CLAUDE.md's recorded gotcha, and why `ARGV_ENV_PREFIXES` exists at all).
+   * A pin that rode only `buildEnv` would be present in every unit assertion
+   * and absent from every real pane — silently doing nothing, which is exactly
+   * the failure mode this defence exists to prevent. Proven end-to-end against
+   * a real tmux server as well: `tmux new-session -d -s <n> -c <cwd> env
+   * GIT_CONFIG_GLOBAL=… <cmd>` puts the value in a GRANDCHILD's environment and
+   * `HOME=<evil> git diff --no-index` does not execute there.
+   */
+  it("pins git's config scopes on the argv, where the pane can actually see them", async () => {
+    const m = manager();
+    await m.ensurePrSession(42, "Add rate limiting", "wt/pr-42");
+    const newSession = tmuxArgs().find((a) => a[0] === "new-session")!;
+
+    // On the argv, and BEFORE the program token — this is an `env K=V … pi …`
+    // prefix, not a flag pi would have to understand.
+    const envIdx = newSession.indexOf("env");
+    const piIdx = newSession.indexOf("pi");
+    expect(envIdx).toBeGreaterThan(-1);
+    for (const pin of [`GIT_CONFIG_GLOBAL=${join(root, "pihome", ".gitconfig")}`, "GIT_CONFIG_SYSTEM=/dev/null", "GIT_CONFIG_NOSYSTEM=1"]) {
+      const at = newSession.indexOf(pin);
+      expect(at, `${pin} must ride the argv`).toBeGreaterThan(envIdx);
+      expect(at, `${pin} must precede the pi binary`).toBeLessThan(piIdx);
+    }
+    // NOT /dev/null for the global scope: the container's entrypoint writes a
+    // `credential.helper` there and `fetch` is an allowed read verb, so
+    // /dev/null would have broken every session-side fetch on a private repo.
+    expect(newSession.join(" ")).not.toContain("GIT_CONFIG_GLOBAL=/dev/null");
+  });
+
   it("single-flights concurrent births for the same PR", async () => {
     const m = manager();
     const [a, b] = await Promise.all([
@@ -276,6 +310,8 @@ describe("birth", () => {
       expect(env.GITHUB_TOKEN).toBeUndefined();
       expect(env.QCR_TEST_PERSONAL_TOKEN).toBeUndefined();
       expect(Object.keys(env).sort()).toEqual([
+        // config-scope pin — paths and a flag, no credential.
+        "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_SYSTEM",
         "HOME", "LANG", "OPENAI_API_KEY",
         // identity — non-secret every one of them (the reviewer key
         // rides ovcli.conf at 0600, never argv and never the environment).

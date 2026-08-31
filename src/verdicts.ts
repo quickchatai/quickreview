@@ -21,7 +21,7 @@ import {
   sandboxRoot,
   type Config,
 } from "./config.js";
-import { auditExecViolations, collectWindowLines, estimateUsd, measureRoundUsage, type ModelPricing, type UsageFs } from "./usage.js";
+import { auditExecViolationDetails, collectWindowLines, estimateUsd, measureRoundUsage, type ModelPricing, type UsageFs } from "./usage.js";
 import type { GateResult } from "./gate.js";
 import { applyEvent } from "./statemachine.js";
 import type { VerdictAnnouncer } from "./slack/announce.js";
@@ -898,10 +898,14 @@ export class VerdictWatcher {
           ` est=${est === null ? "unpriced" : `$${est.toFixed(2)}`}${usage.passes_included ? " (+passes)" : ""}`,
       );
 
-      const violations = auditExecViolations(collectWindowLines(opts));
+      // classified, so the durable event says WHICH policy was
+      // crossed. Until then the audit matched interpreters only, and none of
+      // the four chains proved would have produced a single line here.
+      const violations = auditExecViolationDetails(collectWindowLines(opts));
       if (violations.length > 0) {
-        store.logEvent("exec_policy_violation", pr, { commands: violations });
-        this.execViolations.set(pr, violations);
+        const commands = violations.map((v) => v.command);
+        store.logEvent("exec_policy_violation", pr, { commands, violations });
+        this.execViolations.set(pr, violations.map((v) => `${v.kind}: ${v.command}`));
         this.log(`verdicts: #${pr} exec-policy violations`, violations);
       }
     } catch (err) {
