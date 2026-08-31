@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { StateStore } from "../src/state.js";
+import { hasNewEvidence } from "../src/guards.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -474,6 +475,73 @@ describe("scripts/post-review.sh — guard 2 (no new evidence)", () => {
     expect(store.reviewedHead(5180)).toBeUndefined();
     store.close();
   });
+});
+
+/**
+ * / MC-02 — guard 2 on BOTH routes, pinned by the same table.
+ *
+ * The two implementations had silently diverged: `src/guards.ts hasNewEvidence`
+ * carries the undecided carve-out (a NEEDS_HUMAN/ESCALATE mark is an
+ * UNDECIDED review and must never suppress a re-run or a posting), while
+ * `scripts/guards.sh` — the route the sessions ACTUALLY post through — never
+ * even selected the `verdict` column, so it suppressed exactly the postings the
+ * carve-out exists to let through. Neither guards suite covered it.
+ *
+ * Drift between the twins IS the bug class, so this asserts them TOGETHER: one
+ * case list, each case run through the TypeScript predicate and through the
+ * real `post-review.sh`, with the two answers required to agree. Asserting each
+ * side separately is what let them drift in the first place.
+ */
+describe("guard 2 parity — src/guards.ts and scripts/guards.sh answer identically", () => {
+  interface Case {
+    what: string;
+    /** The stored mark, or null for "no mark at all". */
+    mark: { head_sha: string; verdict: string | null; reply_at?: string } | null;
+    /** Is there new evidence at HEAD — i.e. may the review post? */
+    newEvidence: boolean;
+  }
+
+  const cases: Case[] = [
+    { what: "same head, decided, no author reply", mark: { head_sha: HEAD, verdict: "REQUEST_CHANGES" }, newEvidence: false },
+    { what: "same head, APPROVE, no author reply", mark: { head_sha: HEAD, verdict: "APPROVE" }, newEvidence: false },
+    // The carve-out. Undecided is not reviewed-and-decided.
+    { what: "same head, NEEDS_HUMAN — undecided is not reviewed", mark: { head_sha: HEAD, verdict: "NEEDS_HUMAN" }, newEvidence: true },
+    // The retired spelling still on disk in older rows; normalizeVerdict folds
+    // it, so the shell must fold it too.
+    { what: "same head, legacy ESCALATE spelling", mark: { head_sha: HEAD, verdict: "ESCALATE" }, newEvidence: true },
+    { what: "same head, undecided in lower case", mark: { head_sha: HEAD, verdict: "needs_human" }, newEvidence: true },
+    { what: "a different head", mark: { head_sha: "an0therhead", verdict: "REQUEST_CHANGES" }, newEvidence: true },
+    { what: "same head with an author reply since", mark: { head_sha: HEAD, verdict: "REQUEST_CHANGES", reply_at: "2099-01-01T00:00:00.000Z" }, newEvidence: true },
+    { what: "same head, verdict column null (a legacy row)", mark: { head_sha: HEAD, verdict: null }, newEvidence: false },
+    { what: "no mark at all", mark: null, newEvidence: true },
+  ];
+
+  for (const c of cases) {
+    it(`${c.what} → ${c.newEvidence ? "posts" : "refused"} on both routes`, async () => {
+      const store = new StateStore(dbPath);
+      if (c.mark) {
+        store.recordReviewedHead(5180, { head_sha: c.mark.head_sha, verdict: c.mark.verdict });
+        if (c.mark.reply_at) store.noteAuthorReply(5180, c.mark.reply_at);
+      }
+      // --- the TypeScript route ---
+      const ts = hasNewEvidence(store.reviewedHead(5180), HEAD);
+      store.close();
+      expect(ts, "src/guards.ts hasNewEvidence").toBe(c.newEvidence);
+
+      // --- the shell route the sessions actually post through ---
+      const res = await run("post-review.sh", ["5180", "COMMENT", bodyFile()]);
+      expect(res.ok, `scripts/guards.sh guard 2 (${res.out})`).toBe(c.newEvidence);
+      if (!c.newEvidence) {
+        expect(res.out).toContain("guard 2");
+        expect(dryrunRecords()).toEqual([]);
+      } else {
+        expect(dryrunRecords()).toHaveLength(1);
+      }
+
+      // --- and the two agree, which is the property that was missing ---
+      expect(res.ok, "the shell twin must answer exactly what hasNewEvidence answers").toBe(ts);
+    });
+  }
 });
 
 describe("scripts/guards.sh — the reviewed-head stamp", () => {

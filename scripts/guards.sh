@@ -144,12 +144,19 @@ if not os.path.exists(db):
 try:
     con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     row = con.execute(
-        "SELECT head_sha, reviewed_at, last_author_reply_at FROM reviewed_heads WHERE pr = ?",
+        "SELECT head_sha, reviewed_at, last_author_reply_at, verdict FROM reviewed_heads WHERE pr = ?",
         (pr,),
     ).fetchone()
 except Exception:
     print("new"); raise SystemExit(0)
-if row is None or row[0] != head:
+# The undecided carve-out, mirroring src/guards.ts hasNewEvidence: a
+# NEEDS_HUMAN (legacy spelling ESCALATE, folded by normalizeVerdict) mark is an
+# UNDECIDED review, and undecided is not reviewed-and-decided — it must never
+# suppress a re-run or a posting. Missing from this route until, so the
+# live posting route enforced a rule its TypeScript twin did not.
+if row is not None and (row[3] or "").strip().upper() in ("NEEDS_HUMAN", "ESCALATE"):
+    print("new")
+elif row is None or row[0] != head:
     print("new")
 elif row[2] and row[2] >= row[1]:
     # `>=`, not `>`: an ambiguous reply reads as new evidence (as in guards.ts).
