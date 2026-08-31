@@ -398,8 +398,11 @@ export const REVIEW_DEFAULTS: ReviewConfig = {
  *      scope, not written free-hand.
  *
  * With `enabled = false` (the default, and what every shipped config carries)
- * nothing in this table is read and behaviour is byte-identical to a build
- * without the feature.
+ * nothing in this table is read and BEHAVIOUR is identical to a build without
+ * the feature. (Not byte-identical prompt text: the `{{escalation_note}}`
+ * placeholder renders empty and leaves a blank line, exactly as the sibling
+ * `{{directive_note}}` already does. `tests/escalation.test.ts` pins that
+ * whitespace is the ONLY difference.)
  */
 export type EscalationShape = "comment" | "review_request";
 
@@ -492,8 +495,10 @@ const ESCALATION_LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$
  * declares no condition, fails to LOAD. A hand-edited config gets the same
  * refusal the interview does.
  *
- * With `enabled = false` every other field is inert, so a half-filled table
- * that is switched off is not an error — it is a draft.
+ * With `enabled = false` NOTHING below the early return is checked, so a
+ * half-filled table that is switched off really is a draft — it cannot wedge
+ * daemon startup, which it could before the review caught it. The
+ * whole validation set fires the moment the operator flips the switch.
  */
 export function parseEscalation(raw: Record<string, any>): EscalationConfig {
   const rawRules = Array.isArray(raw.rules) ? (raw.rules as Record<string, any>[]) : [];
@@ -513,6 +518,14 @@ export function parseEscalation(raw: Record<string, any>): EscalationConfig {
       min_severity: String(r.min_severity ?? "").trim().toUpperCase() as EscalationRule["min_severity"],
     })),
   };
+  // SWITCHED OFF IS A DRAFT — and that is checked FIRST, before any shape
+  // rule, because "draft" has to mean it (review, F8). Nothing below
+  // this line is read while the feature is off, so a half-written rule an
+  // operator is still thinking about must not wedge daemon startup. Every one
+  // of these checks fires the moment they flip `enabled = true`, and the
+  // onboarding step runs the real parser over the text it is about to write,
+  // so a draft is never a way to smuggle a broken live config past validation.
+  if (!cfg.enabled) return cfg;
   if (cfg.shape !== "comment" && cfg.shape !== "review_request") {
     throw new Error(`config.toml [escalation]: shape must be "comment" or "review_request" (got ${JSON.stringify(cfg.shape)})`);
   }
@@ -537,7 +550,6 @@ export function parseEscalation(raw: Record<string, any>): EscalationConfig {
     }
     if (!r.why) throw new Error(`config.toml [[escalation.rules]] ${r.name}: needs a \`why\` saying why this person`);
   }
-  if (!cfg.enabled) return cfg; // switched off: the rest of the table is a draft
   if (cfg.targets.length === 0) {
     throw new Error("config.toml [escalation]: enabled = true with no `targets` — escalation on with nobody to escalate to is not a configuration");
   }

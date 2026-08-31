@@ -496,8 +496,11 @@ extra_vendored_segments = []   # extra third-party markers (case-insensitive)
 #     that person. Think of it as a `[check this]` item with a name on it.
 #
 # Leave `enabled = false` and nothing below is read: no rule is evaluated, no
-# extra API call is made, and the round prompts are byte-identical to a build
-# without the feature. `qcr onboard`'s escalation step writes this section.
+# extra API call is made, and the round prompts carry no escalation text
+# whatever — the system BEHAVES exactly as a build without the feature.
+# (The prompt is not byte-for-byte what it was: the placeholder that renders
+# empty leaves a blank line, like the sibling notes beside it.)
+# `qcr onboard`'s escalation step writes this section.
 #
 # The configuration cannot be half-done: `enabled = true` with no `targets`,
 # or a rule pointing at a login that is not a target, or a rule that declares

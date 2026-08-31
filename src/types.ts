@@ -153,8 +153,9 @@ export interface RoundOrder {
    * the logins this round's session may escalate to on its own
    * judgement. Present ONLY when `[escalation] enabled = true` AND
    * `session_judgement = true` — so on a default install (escalation off) the
-   * field is absent and `{{escalation_note}}` renders empty, leaving the round
-   * prompt byte-identical to a build without the feature.
+   * field is absent and `{{escalation_note}}` renders empty, so the round
+   * prompt carries no escalation text at all — differing from a build without
+   * the feature by whitespace only, which tests/escalation.test.ts pins.
    *
    * The list is advisory to the session and BINDING on the daemon: an
    * escalation naming anything else is dropped in `escalation.ts`, not argued

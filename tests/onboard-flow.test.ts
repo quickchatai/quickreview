@@ -274,9 +274,28 @@ describe("the registered steps hand their choices to each other", () => {
     expect(cfg.escalation.enabled).toBe(true);
     expect(cfg.escalation.targets).toEqual(["example-teammate"]);
     expect(cfg.escalation.shape).toBe("comment");
-    expect(cfg.escalation.rules.map((r) => r.name)).toEqual(["onboarding"]);
+    expect(cfg.escalation.rules.map((r) => r.name)).toEqual(["onboarding:example-teammate"]);
     expect(cfg.escalation.rules[0]!.paths).toEqual(["**/migrations/*.py"]);
     expect(cfg.escalation.rules[0]!.to).toBe("example-teammate");
+  });
+
+  it("HANDOFF 6d — two targets means TWO rules, not a rule reaching the first one", async () => {
+    // review, spec gap: an operator answering "alice, bob" used to get
+    // a rule pointing at alice alone, silently. `EscalationRule.to` is one
+    // person by design, so the interview writes one rule per target.
+    const engine = new OnboardingEngine(defaultSteps(), adapters());
+    const inputs: Inputs = {
+      ...LAPTOP_INPUTS,
+      escalation: { enable: "yes", targets: "example-teammate, second-teammate", why: "you both own this area", paths: "db/**" },
+    };
+    const d = await drive(engine, inputs, ESCALATION_STEP_ID, SKIP);
+    expect(d.results.get(ESCALATION_STEP_ID)!.ok).toBe(true);
+    const cfg = producedConfig();
+    expect(cfg.escalation.targets).toEqual(["example-teammate", "second-teammate"]);
+    expect(cfg.escalation.rules.map((r) => r.to)).toEqual(["example-teammate", "second-teammate"]);
+    expect(cfg.escalation.rules.map((r) => r.name)).toEqual(["onboarding:example-teammate", "onboarding:second-teammate"]);
+    // …and the operator is TOLD that both people get told.
+    expect(detail(d, ESCALATION_STEP_ID, "escalation")).toContain("more than one person is told");
   });
 
   it("HANDOFF 6b — declining leaves the feature off, and the config still loads", async () => {

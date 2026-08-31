@@ -772,7 +772,7 @@ export class VerdictWatcher {
     const facts: EscalationFacts = {
       changed_paths: await this.escalationPaths(v.pr),
       labels: await this.escalationLabels(v.pr),
-      findings: this.escalationFindings(v.pr, v.round_no),
+      findings: this.escalationFindings(v.pr, v.round_no, cfg.rules.some((r) => r.min_severity !== "")),
       failing_checks: await this.escalationFailingChecks(v.pr, v.head_sha),
     };
 
@@ -793,8 +793,39 @@ export class VerdictWatcher {
         },
         log: this.log.bind(this),
       },
-      { pr: v.pr, verdict: v.verdict, head_sha: v.head_sha, round_no: v.round_no, candidates },
+      {
+        pr: v.pr,
+        verdict: v.verdict,
+        head_sha: v.head_sha,
+        round_no: v.round_no,
+        // The path-in-diff check's input (review). An unreadable
+        // listing is `[]`, which refuses every path-bearing scope rather than
+        // waving it through — the safe direction, same as every other fact.
+        changed_paths: facts.changed_paths,
+        // Whether the ROUND'S OWN review actually reached GitHub, from the
+        // receipt. The note must not claim a posting that a guard
+        // refused — and the escalation note is precisely the one that still
+        // goes out in that case.
+        review_posted: this.roundReviewConfirmed(v.pr, v.round_no, v.head_sha),
+        candidates,
+      },
     );
+  }
+
+  /**
+   * Did the round's own review CONFIRM as posted (receipt)? Read-only,
+   * total: an unreadable or absent receipt is `false`, and the note then says
+   * "decided" without claiming "posted".
+   */
+  private roundReviewConfirmed(pr: number, roundNo: number, headSha: string): boolean {
+    try {
+      const receipt = readPostingReceipt(this.postingReceiptDir(), pr, roundNo);
+      if (!receipt || receipt.pr !== pr || receipt.round_no !== roundNo) return false;
+      if (receipt.head_sha.toLowerCase() !== headSha.toLowerCase()) return false;
+      return receipt.status === "confirmed";
+    } catch {
+      return false;
+    }
   }
 
   private async escalationPaths(pr: number): Promise<string[]> {
@@ -817,13 +848,37 @@ export class VerdictWatcher {
     }
   }
 
-  /** The findings the round POSTED, from the reasoning record. Absent
-   * or unreadable ⇒ severity-keyed rules simply do not fire. */
-  private escalationFindings(pr: number, roundNo: number): Array<{ severity: string; path?: string | null; title?: string | null }> {
+  /**
+   * The findings the round POSTED, from the reasoning record. Absent
+   * or unreadable ⇒ severity-keyed rules simply do not fire.
+   *
+   * That silence is LOGGED when it matters (review, F4): a `needed`
+   * caller — one whose config actually has a `min_severity` rule — gets an
+   * `escalation_findings_unavailable` event, so a severity rule that never
+   * fires is visible in the event log instead of being invisible. Without a
+   * severity rule the record is not consulted for anything and the absence is
+   * not worth a line.
+   */
+  private escalationFindings(
+    pr: number,
+    roundNo: number,
+    needed: boolean,
+  ): Array<{ severity: string; path?: string | null; title?: string | null }> {
     const dir = this.deps.findingsDir;
-    if (!dir) return [];
+    if (!dir) {
+      if (needed) {
+        this.deps.store.logEvent("escalation_findings_unavailable", pr, { round_no: roundNo, reason: "no findings dir configured" });
+      }
+      return [];
+    }
     const parsed = readFindingsRecord(findingsRecordPath(dir, pr, roundNo), pr, roundNo);
-    if (!parsed.record) return [];
+    if (!parsed.record) {
+      if (needed) {
+        this.log(`escalation: no reasoning record for #${pr} round ${roundNo} — severity rules cannot fire`);
+        this.deps.store.logEvent("escalation_findings_unavailable", pr, { round_no: roundNo, reason: parsed.status });
+      }
+      return [];
+    }
     return parsed.record.findings
       .filter((f) => f.disposition === "posted" && f.severity)
       .map((f) => ({ severity: String(f.severity), path: f.path, title: f.reason }));

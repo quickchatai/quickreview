@@ -99,6 +99,13 @@ export type AppSelfConfigKind = (typeof APP_SELF_CONFIG_KINDS)[number];
  * nothing: the migration-number collision remedy, and the
  * escalation note pointing one named person at one named thing. Neither
  * carries a verdict, so neither may claim the head (guards.ts `after`).
+ *
+ * THAT IS ENFORCED, NOT DESCRIBED (review). A `reviewPurpose` buys two
+ * exemptions — it never claims the head, and the escalation purpose is exempt
+ * from guard 2 — so a purpose riding an APPROVE would be an approval that
+ * skips the no-new-evidence guard AND never marks the head it approved.
+ * `execute()` therefore refuses any purposed intent that is not a
+ * `create_review` with `event: "COMMENT"`, before and after the guards.
  */
 export type ReviewPurpose = "migration_precheck" | "escalation";
 
@@ -175,6 +182,19 @@ export interface MutationGuard {
   after?(intent: MutationIntent, result: GateResult): void | Promise<void>;
 }
 
+/** See ReviewPurpose: a purposed intent is a `create_review` COMMENT or it is
+ * refused. Free function so `execute` can run it twice — once on the caller's
+ * intent, once on whatever the guards handed back. */
+function reviewPurposeCheck(intent: MutationIntent): void {
+  if (!intent.reviewPurpose) return;
+  const event = String((intent.body as { event?: unknown } | undefined)?.event ?? "").toUpperCase();
+  if (intent.kind !== "create_review" || event !== "COMMENT") {
+    throw new Error(
+      `gate: reviewPurpose "${intent.reviewPurpose}" is only allowed on a create_review with event COMMENT, not ${intent.kind}/${event || "(no event)"}`,
+    );
+  }
+}
+
 let seq = 0;
 
 export class MutationGate {
@@ -231,6 +251,10 @@ export class MutationGate {
     if (intent.forceLive && intent.kind !== "supersede_own_review") {
       throw new Error(`forceLive is not allowed for kind ${intent.kind}`);
     }
+    // A reviewPurpose marks a MECHANICALLY-authored COMMENT (see ReviewPurpose):
+    // it buys two exemptions, so it is confined to the one shape those
+    // exemptions are safe for.
+    reviewPurposeCheck(intent);
     // Posting-time guards run BEFORE the dry-run branch: a mutation a guard
     // refuses is neither executed nor recorded, so the dry-run evidence shows
     // the same behaviour the live path would have had.
@@ -242,6 +266,11 @@ export class MutationGate {
         return blocked;
       }
       if (decision.intent) intent = decision.intent;
+      // Re-checked against the POST-GUARD intent for the same reason the git
+      // performer is: a guard may hand back a rewritten intent, and guard 1
+      // really does rewrite the event. A rewrite must not turn a purposed
+      // COMMENT into a purposed anything-else.
+      reviewPurposeCheck(intent);
     }
     // The app-self-config class (see APP_SELF_CONFIG_KINDS): executes for real
     // even in dry-run — the ratified rule-1 amendment — and every execution is

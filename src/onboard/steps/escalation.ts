@@ -16,11 +16,13 @@
 // language before it asks anything, because an operator who thinks they are
 // configuring "send hard PRs to a human" has configured the wrong feature.
 //
-// SCOPE OF THE INTERVIEW. It captures ONE rule — the common case, and the one
-// worth an interview. Teams that want several write more `[[escalation.rules]]`
+// SCOPE OF THE INTERVIEW. It captures ONE set of triggers — the common case,
+// and the one worth an interview — written as one rule PER TARGET, because
+// `EscalationRule.to` names a single person by design. Teams that want
+// different triggers for different people write more `[[escalation.rules]]`
 // blocks by hand; the section this step writes documents that in place, and
 // re-running the step never destroys rules it did not author (it rewrites only
-// the rule it owns, by name).
+// the `onboarding:<login>` family).
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CHOICE_KEYS } from "../choices.js";
@@ -30,9 +32,28 @@ import { sandboxRootOf } from "./ingress.js";
 
 export const ESCALATION_STEP_ID = "escalation";
 
-/** The name of the rule this step owns. A re-run rewrites this rule and leaves
- * hand-written siblings alone. */
-export const INTERVIEW_RULE_NAME = "onboarding";
+/**
+ * The name PREFIX of the rules this step owns: one rule per target, named
+ * `onboarding:<login>`. A re-run rewrites every rule whose name starts with
+ * this prefix and leaves hand-written siblings completely alone.
+ *
+ * ONE RULE PER TARGET, not one rule pointing at the first login (
+ * review). `EscalationRule.to` is a single person by design — an escalation
+ * names ONE person to ask — so an operator answering `targets: "alice, bob"`
+ * used to get a rule reaching alice alone, silently. Now they get two rules
+ * and the confirmation says so.
+ */
+export const INTERVIEW_RULE_PREFIX = "onboarding";
+
+/** The rule name this step writes for one target. */
+export function interviewRuleName(login: string): string {
+  return `${INTERVIEW_RULE_PREFIX}:${login}`;
+}
+
+/** Is this a rule THIS STEP owns (and may therefore rewrite)? */
+export function isInterviewRule(name: string): boolean {
+  return name === INTERVIEW_RULE_PREFIX || name.startsWith(`${INTERVIEW_RULE_PREFIX}:`);
+}
 
 const LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
 const SEVERITIES = ["P0", "P1", "P2", "P3"] as const;
@@ -72,7 +93,8 @@ export function offerCheck(): CheckResult {
       "enable = \"no\"  → nothing changes; the system behaves exactly as it does today. This is the",
       "                 right answer unless the team already knows a class of change one specific",
       "                 person always wants to see.",
-      "enable = \"yes\" → then you must also give `targets` (the logins escalation may reach), `why`",
+      "enable = \"yes\" → then you must also give `targets` (the logins escalation may reach — one rule is",
+      "                 written per login, so naming two people means BOTH are told), `why`",
       "                 (why that person, in your words) and at least one trigger: `paths`, `labels`,",
       "                 `min_severity` or `failing_checks`. All of them together is fine; none of",
       "                 them is refused, because a rule with no trigger can never fire.",
@@ -117,15 +139,15 @@ export function patchEscalationSection(toml: string, body: string): string {
   return `${toml.slice(0, header.index)}${body}${toml.slice(end)}`;
 }
 
-/** Every `[[escalation.rules]]` block in `toml` whose `name` is not `keep`,
+/** Every `[[escalation.rules]]` block in `toml` that this step does NOT own,
  * rendered back verbatim — so a re-run never eats a hand-written rule. */
-export function foreignRuleBlocks(toml: string, keep: string): string[] {
+export function foreignRuleBlocks(toml: string): string[] {
   const out: string[] = [];
   const re = /^\[\[escalation\.rules\]\][^\n]*\n((?:(?!^\[)[^\n]*\n?)*)/gm;
   for (let m = re.exec(toml); m; m = re.exec(toml)) {
     const body = m[1] ?? "";
     const name = /^\s*name\s*=\s*"([^"]*)"/m.exec(body)?.[1];
-    if (name === keep) continue;
+    if (name !== undefined && isInterviewRule(name)) continue;
     out.push(`[[escalation.rules]]\n${body.replace(/\n*$/, "\n")}`);
   }
   return out;
@@ -167,19 +189,24 @@ export function renderEscalationSection(a: EscalationAnswers, foreign: readonly 
   ];
   if (a.enabled) {
     head.push(
-      "# The rule this interview captured. Add more [[escalation.rules]] blocks by",
-      "# hand for other classes of change — re-running the onboarding step rewrites",
-      "# only the rule named below and leaves the others alone.",
-      "[[escalation.rules]]",
-      `name = ${JSON.stringify(INTERVIEW_RULE_NAME)}`,
-      `to = ${JSON.stringify(a.targets[0] ?? "")}`,
-      `why = ${JSON.stringify(a.why)}`,
-      `paths = ${tomlList(a.paths)}`,
-      `labels = ${tomlList(a.labels)}`,
-      `failing_checks = ${tomlList(a.failing_checks)}`,
-      `min_severity = ${JSON.stringify(a.min_severity)}`,
-      "",
+      "# The rules this interview captured — ONE PER TARGET, because an escalation",
+      "# names one person to ask. Add more [[escalation.rules]] blocks by hand for",
+      "# other classes of change: re-running the onboarding step rewrites only the",
+      `# rules named ${INTERVIEW_RULE_PREFIX}:<login> and leaves yours alone.`,
     );
+    for (const target of a.targets) {
+      head.push(
+        "[[escalation.rules]]",
+        `name = ${JSON.stringify(interviewRuleName(target))}`,
+        `to = ${JSON.stringify(target)}`,
+        `why = ${JSON.stringify(a.why)}`,
+        `paths = ${tomlList(a.paths)}`,
+        `labels = ${tomlList(a.labels)}`,
+        `failing_checks = ${tomlList(a.failing_checks)}`,
+        `min_severity = ${JSON.stringify(a.min_severity)}`,
+        "",
+      );
+    }
   }
   for (const block of foreign) head.push(block, "");
   return head.join("\n");
@@ -281,7 +308,7 @@ export function escalationStep(): OnboardingStep {
       } catch (err) {
         return { ok: false, checks: [{ name: "config.toml", ok: false, detail: `cannot read ${path}: ${String(err)} — run the interview step first` }] };
       }
-      const patched = patchEscalationSection(toml, renderEscalationSection(answers, foreignRuleBlocks(toml, INTERVIEW_RULE_NAME)));
+      const patched = patchEscalationSection(toml, renderEscalationSection(answers, foreignRuleBlocks(toml)));
       // Parse BEFORE writing: `parseEscalation` is the same lock the loader
       // uses, so a config this step writes can always be booted.
       try {
@@ -296,7 +323,10 @@ export function escalationStep(): OnboardingStep {
           name: "escalation",
           ok: true,
           detail: enable
-            ? `on, shape "${answers.shape}", targets ${answers.targets.map((t) => `@${t}`).join(", ")}`
+            ? `on, shape "${answers.shape}" — ${answers.targets.length} rule(s), one per target: `
+              + answers.targets.map((t) => `@${t} (rule ${interviewRuleName(t)})`).join(", ")
+              + ". Each of them is told about the same triggers below; escalation names one person per note, so"
+              + " listing more than one login means more than one person is told."
             : "off — the reviewer decides every PR and posts its verdict, and nobody is @-mentioned. You can turn this on later by re-running this step.",
         },
         { name: "config.toml", ok: true, detail: `[escalation] written to ${path} and it parses` },

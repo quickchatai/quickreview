@@ -765,12 +765,20 @@ CREATE TABLE IF NOT EXISTS filed_items (
   ref TEXT,
   filed_at TEXT NOT NULL
 );
--- Escalation deliveries (the optional off-by-default feature). One
--- row per escalation that actually went out, and the UNIQUE index is the
--- never-twice guarantee: the same person is never pointed at the same thing
--- on the same PR again, however many rounds run. Rows exist only when
--- [escalation] enabled = true; on a default install the table stays empty
--- forever, which is what makes "off is byte-identical" true of the ledger too.
+-- Escalation deliveries (the optional off-by-default feature).
+--
+-- One row per escalation that ACTUALLY REACHED GITHUB. A suppressed one --
+-- dry-run, or a posting guard refusing -- writes no row, so a dry-run
+-- bring-up can never consume the dedup key or the cap that a later live run
+-- needs (review, blocker 1).
+--
+-- The unique index below buys exactly this and no more: the same person is not
+-- pointed at the same file (or the same named decision) on the same PR twice.
+-- It is scoped per (pr, target), so it is not a defence against a session
+-- naming several different files on one PR -- that is what
+-- [escalation] max_per_pr bounds, and the two together are the whole budget.
+-- Rows exist only when [escalation] enabled = true; on a default install the
+-- table stays empty forever.
 CREATE TABLE IF NOT EXISTS escalations (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   pr           INTEGER NOT NULL,

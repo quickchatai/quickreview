@@ -240,7 +240,8 @@ without both:
 
 - **to whom** — `targets`, the closed list of GitHub logins escalation may
   ever reach, and `why`, in your own words, which is rendered verbatim in the
-  note;
+  note. One rule is written per login, so naming two people means **both** are
+  told when a trigger fires;
 - **what** — at least one trigger: paths touched (globs), a PR label, a
   severity floor on what the round posted, or a named check failing. All four
   together is fine; none of them is refused, because a rule that cannot fire is
@@ -259,9 +260,16 @@ Two optional answers:
   session that names anyone else is dropped by the daemon, not argued with.
 
 You can re-run this step any time to change your mind, and you can write extra
-`[[escalation.rules]]` blocks by hand — a re-run rewrites only the rule the
-interview owns and leaves your own alone. The `[escalation]` block in
-`config.example.toml` documents the whole grammar in place.
+`[[escalation.rules]]` blocks by hand — a re-run rewrites only the
+`onboarding:<login>` rules the interview owns and leaves your own alone. The
+`[escalation]` block in `config.example.toml` documents the whole grammar in
+place.
+
+Two things worth knowing while it is switched on. An escalation is recorded
+only when it actually reaches GitHub, so running in dry-run first costs you
+nothing — the same escalation still goes out for real when you go live. And
+the same person is never pointed at the same file twice on one pull request,
+however many rounds it takes.
 
 ### 40 — GitHub App: create, install, label
 

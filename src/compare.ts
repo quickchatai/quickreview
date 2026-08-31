@@ -7,7 +7,8 @@
 //   (a) blocker parity      old-flow blockers vs sandbox blockers, matched by
 //                           path + theme; every unmatched row flagged
 //   (b) invariant scan      zero dry-run records of any kind outside the known
-//                           allowlist; no retired mutation kinds
+//                           allowlist (the retired-kind rule was deleted with
+//                           its last member)
 //   (c) anchor validity     every sandbox inline anchor lands on a changed line
 //   (d) settled threads     no finding re-raises a thread the archived ledger
 //                           lists as SETTLED

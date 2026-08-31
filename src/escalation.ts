@@ -31,14 +31,20 @@
 //    stop; an escalation that does it has failed even when it fired on exactly
 //    the right PR.
 //
-//    Enforced three ways. (a) `EscalationScope` is a discriminated union with
-//    no "the whole PR" member, so there is no way to SPELL a whole-PR
-//    escalation. (b) `validateEscalationRequest` refuses a scope whose path or
-//    decision is blank — an escalation with nothing to look at is not an
-//    escalation. (c) the comment body is RENDERED from the scope by
-//    `renderEscalationComment`; the only free-text slot is the one-sentence
-//    question, which is length-capped and refused if it asks for a review of
-//    the PR as a whole.
+//    Enforced five ways — four braces and one belt. (a) `EscalationScope` is a
+//    discriminated union with no "the whole PR" member. (b)
+//    `validateEscalationRequest` refuses a scope whose path or decision is
+//    blank — an escalation with nothing to look at is not an escalation.
+//    (c) a `code`/`migration` path must be a file THIS PR ACTUALLY TOUCHES,
+//    compared exactly against the diff: without that, `path: "the entire diff"`
+//    and `path: "**"` both passed, which is how a whole-PR escalation was
+//    still spellable until the review found it. (d) the comment body is
+//    RENDERED from the scope by `renderEscalationComment`, and `decision` — the
+//    other free-text slot — is capped to a NAME, not a paragraph. (e) the belt:
+//    both free-text slots, `question` and `decision`, go through
+//    `asksForWholeReview`. That last one is a heuristic over natural language
+//    and will never be complete; it is the belt precisely because (a)–(d) are
+//    the braces.
 //
 // This is the discipline the codebase already has twice — `[check this]`
 // inline comments and the `### For a human to double-check` review section
@@ -100,14 +106,25 @@ export type EscalationScope =
   | { kind: "migration"; path: string; migration?: string }
   | { kind: "decision"; decision: string; path?: string };
 
-/** Stable identity of a scope, for the dedup ledger. */
+/**
+ * Stable identity of a scope, for the dedup ledger.
+ *
+ * LINE NUMBERS ARE DELIBERATELY NOT IN THE KEY (review). The unit a
+ * human experiences is "you were pointed at this file" — keying on the line
+ * range would make an escalation at lines 12–30 and one at 14–32 two distinct
+ * asks producing near-identical notes, which is the nag the ledger exists to
+ * prevent. Two genuinely different places in one file cost one escalation
+ * between them; `max_per_pr` was going to bound that anyway.
+ */
 export function scopeKey(scope: EscalationScope): string {
   switch (scope.kind) {
     case "code":
-      return `code:${scope.path}:${scope.start_line ?? ""}-${scope.end_line ?? ""}`;
+      return `code:${scope.path}`;
     case "migration":
-      return `migration:${scope.path}:${scope.migration ?? ""}`;
+      return `migration:${scope.path}`;
     case "decision":
+      // The decision text IS the identity here, and it is capped and
+      // whitespace-collapsed by normalizeScope, so it cannot drift by spacing.
       return `decision:${scope.decision}:${scope.path ?? ""}`;
   }
 }
@@ -148,23 +165,30 @@ export function normalizeScope(raw: unknown): EscalationScope | null {
   const path = str(r.path);
   if (kind === "migration") {
     if (!path) return null;
-    const migration = str(r.migration);
+    const migration = str(r.migration).slice(0, 80);
     return migration ? { kind: "migration", path, migration } : { kind: "migration", path };
   }
   if (kind === "decision") {
-    const decision = str(r.decision);
+    // Capped and whitespace-collapsed HERE, so `decision` cannot become a
+    // paragraph-length free-text field carrying a whole-review ask — the
+    // review's exploit. `validateEscalationRequest` additionally puts
+    // it through `asksForWholeReview`, exactly like `question`.
+    const decision = str(r.decision).replace(/\s+/g, " ").slice(0, MAX_ESCALATION_DECISION);
     if (!decision) return null;
     return path ? { kind: "decision", decision, path } : { kind: "decision", decision };
   }
   // Default and by far the common case: a place in the code.
   if (!path) return null;
   const start = num(r.start_line);
-  const end = num(r.end_line);
+  // An end without a start is meaningless — the old `end ?? start` was dead
+  // code inside a branch that already required `end` (review) and let
+  // a lone `end_line` through to sit in the scope rendering nothing.
+  const end = start === undefined ? undefined : num(r.end_line);
   return {
     kind: "code",
     path,
     ...(start !== undefined ? { start_line: start } : {}),
-    ...(end !== undefined ? { end_line: end ?? start } : {}),
+    ...(end !== undefined ? { end_line: Math.max(end, start!) } : {}),
   };
 }
 
@@ -197,6 +221,8 @@ export type EscalationRefusal =
   | "no-target"
   | "target-not-configured"
   | "no-scope"
+  /** A `code`/`migration` scope naming a file the PR does not touch. */
+  | "path-not-in-diff"
   | "no-question"
   | "asks-for-whole-review"
   | "session-judgement-off"
@@ -210,17 +236,52 @@ export type EscalationValidation =
 /** Longest question we will carry. A paragraph is not a narrow ask. */
 export const MAX_ESCALATION_QUESTION = 400;
 
-/**
- * Phrasings that ask a person to assess the PR as a whole. Invariant 2's
- * belt: the body is rendered from the scope (the braces), but the one
- * free-text slot must not smuggle the whole-review ask back in.
- */
-const WHOLE_REVIEW_RE =
-  /\b(?:review|look\s+over|go\s+through|sign\s+off\s+on|approve)\b[^.?!]{0,40}\b(?:this|the|whole|entire|full)?\s*(?:pr\b|pull\s+request|mr\b|merge\s+request|change\s?set|diff\b|branch\b)|\bfull\s+review\b|\breview\s+it\b/i;
+/** Longest `decision` name. A decision is a NAME, not an essay — and an
+ * uncapped one was the review's route to a whole-review ask. */
+export const MAX_ESCALATION_DECISION = 120;
 
-/** Does this text ask for a review of the PR rather than a look at one thing? */
+/**
+ * Invariant 2's belt, and it is only a belt.
+ *
+ * The braces are structural: the union has no whole-PR member, a `code`/
+ * `migration` path must be a file the PR actually touches, the body is
+ * rendered from the scope, and `decision` is capped. What is left is two short
+ * free-text slots — `question` and `decision` — and this is what keeps a
+ * whole-review ask out of them.
+ *
+ * The first version of this regex missed 7 of 7 natural phrasings the
+ * reviewer tried ("Could you cast an eye over all of it?", "Please read
+ * through the changes.", "Are you happy with everything here?"). The rewrite
+ * is two rules rather than one pattern:
+ *
+ *   BREADTH   — a word that means "the lot": whole, entire, everything,
+ *               all of it, a second pair of eyes, top to bottom, at all…
+ *               These are damning on their own; nothing narrow needs them.
+ *   ARTIFACT + ASK — naming the change as a whole (PR, diff, branch, the
+ *               changes) TOGETHER with a review-ish verb. Either alone is
+ *               fine: "does this change the semantics?" names no artifact in
+ *               the whole sense, and "we reviewed the retry path" asks for
+ *               nothing.
+ *
+ * It will never be complete — natural language is not a closed set — which is
+ * exactly why it is the belt and not the braces.
+ */
+const BREADTH_RE =
+  /\b(?:whole|entire|everything|overall|in general|as a whole|top to bottom|end[- ]to[- ]end|full review|at all|all of (?:it|this|them|these)|it all|(?:second|another|extra|fresh) (?:pair|set) of eyes|review it|look at it)\b/i;
+
+const WHOLE_ARTIFACT_RE =
+  /\b(?:pull\s*requests?|prs?|mrs?|merge\s*requests?|diffs?|branch|change\s?sets?|changes|patch|submission|the code here)\b/i;
+
+const REVIEW_ASK_RE =
+  /\b(?:review(?:ed|ing|s)?|look(?:ed|ing)?\s+(?:at|over|through)|read(?:ing)?\s+(?:through|over)|check(?:ing|s)?\s+(?:over|through)|cast\s+(?:an?\s+)?eye|eyes?|glance|skim|scan|go(?:ing)?\s+through|sign(?:ing|s)?\s+off|approv(?:e|al|ing)|happy\s+with|comfortable\s+with|opinion\s+on|thoughts\s+on|merged?|ship(?:s|ped|ping)?|bless)\b/i;
+
+/**
+ * Does this text ask for a review of the change rather than a look at one
+ * thing? Applied to BOTH free-text slots — `question` and a `decision` name.
+ */
 export function asksForWholeReview(text: string): boolean {
-  return WHOLE_REVIEW_RE.test(text);
+  if (BREADTH_RE.test(text)) return true;
+  return WHOLE_ARTIFACT_RE.test(text) && REVIEW_ASK_RE.test(text);
 }
 
 /**
@@ -230,7 +291,23 @@ export function asksForWholeReview(text: string): boolean {
  * Every gate invariant 2 and the target bound need lives here, in one
  * function, so there is exactly one place to read and exactly one to test.
  */
-export function validateEscalationRequest(raw: unknown, cfg: EscalationConfig): EscalationValidation {
+export function validateEscalationRequest(
+  raw: unknown,
+  cfg: EscalationConfig,
+  /**
+   * The PR's changed files. A `code`/`migration` scope must name one of them:
+   * without this check `path: "the entire diff"` and `path: "**"` both passed,
+   * which is how a whole-PR escalation was still spellable (review).
+   *
+   * REQUIRED IN PRACTICE. `deliverEscalations` always passes it, and when the
+   * file listing is unavailable it passes `[]` — so every path-bearing scope
+   * is refused rather than waved through. Silence beats a whole-PR ask, and
+   * that is the same direction every other unreadable fact takes here. The
+   * parameter is optional only so `decision`-scoped unit cases and callers
+   * with no diff in reach can still validate the rest.
+   */
+  changedPaths?: readonly string[],
+): EscalationValidation {
   if (!cfg.enabled) return { ok: false, refusal: "disabled" };
   if (typeof raw !== "object" || raw === null) return { ok: false, refusal: "no-scope" };
   const r = raw as Record<string, unknown>;
@@ -244,6 +321,18 @@ export function validateEscalationRequest(raw: unknown, cfg: EscalationConfig): 
 
   const scope = normalizeScope(r.scope);
   if (!scope) return { ok: false, refusal: "no-scope" };
+  // A path must be a REAL file in this PR's diff. Compared exactly against
+  // what GitHub returned — no globbing, no prefix match, nothing an invented
+  // string could satisfy.
+  if (scope.kind !== "decision" && changedPaths !== undefined && !changedPaths.includes(scope.path)) {
+    return { ok: false, refusal: "path-not-in-diff" };
+  }
+  // A decision NAME goes through the same whole-review check as the question:
+  // it is the other free-text slot, and it is the one that reads as the
+  // headline of the note.
+  if (scope.kind === "decision" && asksForWholeReview(scope.decision)) {
+    return { ok: false, refusal: "asks-for-whole-review" };
+  }
 
   const question = str(r.question).replace(/\s+/g, " ").slice(0, MAX_ESCALATION_QUESTION);
   if (!question) return { ok: false, refusal: "no-question" };
@@ -360,15 +449,17 @@ export function scopeForRule(rule: EscalationRule, facts: EscalationFacts): Esca
   }
   if (rule.labels.length > 0) {
     const hit = facts.labels.find((l) => rule.labels.some((n) => n.toLowerCase() === l.toLowerCase()));
-    if (hit) return { kind: "decision", decision: `what the "${hit}" label is asking for on this pull request` };
+    if (hit) return { kind: "decision", decision: `what the "${hit}" label is asking for here` };
   }
   return null;
 }
 
 /** The question a fired rule asks. Narrow by construction — it names the
- * scope and the rule, and asks for a judgement on that one thing. */
+ * scope and the rule, and asks for a judgement on that one thing. The wording
+ * deliberately avoids every whole-artifact noun, so a rule-built question can
+ * never trip its own `asksForWholeReview` check. */
 export function questionForRule(rule: EscalationRule, scope: EscalationScope): string {
-  return `Your rule "${rule.name}" fires on this change. Is ${renderScope(scope)} right, in your judgement?`;
+  return `Your rule "${rule.name}" fires here. Is ${renderScope(scope)} right, in your judgement?`;
 }
 
 /**
@@ -391,7 +482,10 @@ export function evaluateEscalationRules(cfg: EscalationConfig, facts: Escalation
       origin: "rule" as const,
       rule: rule.name,
     };
-    const v = validateEscalationRequest(candidate, cfg);
+    // Validated against the SAME facts the scope came from — so a rule firing
+    // on a finding anchored outside the diff is refused here rather than
+    // pointing a person at a file this PR does not touch.
+    const v = validateEscalationRequest(candidate, cfg, facts.changed_paths);
     if (v.ok) out.push(v.request);
   }
   return out;
@@ -412,6 +506,19 @@ export interface EscalationRenderContext {
   /** True when the review-request shape is also being used, so the note can
    * say what GitHub's queue entry does and does not mean. */
   review_requested?: boolean;
+  /**
+   * Did the ROUND'S OWN review actually reach GitHub? From the
+   * posting receipt, not inferred.
+   *
+   * This matters more here than anywhere else (review): the escalation
+   * note is the one posting exempt from guard 2, so the case where the round's
+   * own review was refused is exactly the case where this note still goes out.
+   * Telling a named human "the review is posted" when it is not would send
+   * them looking for something that is not there. Unknown (`undefined`) is
+   * treated as not-confirmed: the note says DECIDED, which the daemon knows,
+   * and claims nothing about GitHub.
+   */
+  review_posted?: boolean;
 }
 
 /**
@@ -428,8 +535,12 @@ export function renderEscalationComment(req: EscalationRequest, ctx: EscalationR
     `**Why you:** ${req.why}`,
     `**The question:** ${req.question}`,
     "",
-    `This review is already decided and posted${round} — the verdict is **${ctx.verdict}** and it does not `
-      + "wait on you. This note asks only for your eyes on the item above.",
+    ctx.review_posted
+      ? `This review is already decided and posted${round} — the verdict is **${ctx.verdict}** and it does not `
+        + "wait on you. This note asks only for your eyes on the item above."
+      : `This review is already decided${round} — the verdict is **${ctx.verdict}** and it does not wait on you. `
+        + "This note asks only for your eyes on the item above. (The review itself is not confirmed on this pull "
+        + "request yet; if you cannot find it, that is why, and it is not something you need to chase.)",
   ];
   if (ctx.review_requested) {
     lines.push(
@@ -453,7 +564,8 @@ export function renderEscalationComment(req: EscalationRequest, ctx: EscalationR
  * A round order gets this list ONLY when the feature is enabled AND the
  * operator turned session judgement on — so with escalation off (the default)
  * the field is absent, the note below renders `""`, and the round prompt is
- * byte-identical to a build without the feature.
+ * identical in behaviour to a build without the feature (whitespace aside —
+ * see the pin in tests/escalation.test.ts).
  */
 export function promptTargetsFor(cfg: EscalationConfig): string[] | undefined {
   if (!cfg.enabled || !cfg.session_judgement || cfg.targets.length === 0) return undefined;
@@ -577,6 +689,13 @@ export async function deliverEscalations(
      * — and, because nothing is recorded on a refusal, a later round retries. */
     head_sha: string;
     round_no?: number;
+    /** The PR's changed files, for the path-in-diff check. Pass `[]` when the
+     * listing could not be read: every path-bearing scope is then refused,
+     * which is the safe direction. */
+    changed_paths?: readonly string[];
+    /** Did the round's own review reach GitHub (receipt)? Rendered
+     * into the note; see `EscalationRenderContext.review_posted`. */
+    review_posted?: boolean;
     /** Candidates: fired rules and/or session-declared entries, unvalidated. */
     candidates: readonly unknown[];
   },
@@ -587,7 +706,7 @@ export async function deliverEscalations(
   if (!cfg.enabled || !args.head_sha) return outcomes;
 
   for (const raw of args.candidates) {
-    const v = validateEscalationRequest(raw, cfg);
+    const v = validateEscalationRequest(raw, cfg, args.changed_paths ?? []);
     if (!v.ok) {
       store.logEvent("escalation_refused", args.pr, { reason: v.refusal, round_no: args.round_no ?? null, candidate: raw });
       log(`escalation: #${args.pr} refused — ${v.refusal}`);
@@ -611,6 +730,7 @@ export async function deliverEscalations(
       verdict: args.verdict,
       ...(args.round_no !== undefined ? { round_no: args.round_no } : {}),
       review_requested: wantsRequest,
+      ...(args.review_posted !== undefined ? { review_posted: args.review_posted } : {}),
     });
     const result = await adapter.createReview(
       args.pr,
@@ -633,6 +753,43 @@ export async function deliverEscalations(
       const rr = await adapter.requestEscalationReview(args.pr, [req.target]);
       requested = rr.executed;
     }
+
+    // ---- THE LEDGER RECORDS DELIVERIES, NOT ATTEMPTS (review) ------
+    //
+    // In dry-run the gate returns `{executed: false, dryRunFile}` with NO
+    // `blocked`, so this point is reached having written a file and touched
+    // nothing on GitHub. Recording that would have been a disaster of exactly
+    // the shape the docs walk a new operator into: enable escalation, run the
+    // documented dry-run bring-up, and `escalations_once` permanently owns
+    // those (pr, target, scope_key) pairs — so when they go live the real
+    // escalation comes back `already-delivered`, or `capped`, forever, fixable
+    // only by hand-editing SQLite.
+    //
+    // So the ledger is keyed on what REACHED GITHUB, the same `result.executed`
+    // test `guards.ts after()` uses before it stamps a reviewed head. A dry-run
+    // escalation writes its intent to state/dryrun/ every round — which is what
+    // dry-run is for — and consumes neither the dedup key nor the cap.
+    if (!result.executed) {
+      store.logEvent("escalation_not_executed", args.pr, {
+        target: req.target,
+        scope_key: key,
+        shape: cfg.shape,
+        origin: req.origin,
+        round_no: args.round_no ?? null,
+        dry_run_file: result.dryRunFile ?? null,
+      });
+      log(`escalation: #${args.pr} → @${req.target} recorded as an INTENT only (not executed) — nothing consumed`);
+      outcomes.push({
+        target: req.target,
+        scope_key: key,
+        origin: req.origin,
+        refused: null,
+        comment_executed: false,
+        ...(wantsRequest ? { review_requested: requested } : {}),
+      });
+      continue;
+    }
+
     store.recordEscalation(args.pr, {
       target: req.target,
       scope_key: key,
@@ -648,7 +805,7 @@ export async function deliverEscalations(
       origin: req.origin,
       rule: req.rule ?? null,
       round_no: args.round_no ?? null,
-      comment_executed: result.executed,
+      comment_executed: true,
       review_requested: requested,
     });
     log(`escalation: #${args.pr} → @${req.target} (${key}, ${cfg.shape}, ${req.origin})`);
@@ -657,7 +814,7 @@ export async function deliverEscalations(
       scope_key: key,
       origin: req.origin,
       refused: null,
-      comment_executed: result.executed,
+      comment_executed: true,
       ...(wantsRequest ? { review_requested: requested } : {}),
     });
   }
