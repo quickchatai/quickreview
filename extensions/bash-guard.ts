@@ -527,9 +527,6 @@ function checkProgram(prog: string, args: string[], rawArgs?: string[]): BashChe
   // Checked before the allowlist so the reason is the directive one, and
   // before `sh`/`bash`, which have their own narrower rules below.
   if (AGENT_SPAWNERS.has(base)) return block(`${AGENT_SPAWN_REASON} — '${base}' is blocked`);
-  // Off ALLOWED already; this only makes the refusal say what to use instead.
-  const interpreter = INTERPRETER_REASONS[base];
-  if (interpreter !== undefined) return block(interpreter);
   if (base === "sh") {
     // Only the `sh -n <file>` syntax check is sanctioned.
     return args[0] === "-n" ? { allowed: true } : block("exec policy: 'sh' is only allowed as 'sh -n' (syntax check)");
@@ -554,10 +551,18 @@ function checkProgram(prog: string, args: string[], rawArgs?: string[]): BashChe
     return checkProgram(target, args.slice(from), rawArgs?.slice(from));
   }
   if (ALLOWED.has(base)) {
-    // Allowlisted for READING is not allowlisted outright: awk/sed/sort/find
-    // each carry a write or exec mode (round 2, all VERIFIED).
+    // Allowlisted for READING is not allowlisted outright: sed/sort/find each
+    // carry a write or exec mode (round 2, all VERIFIED).
     return checkReaderModes(base, args, rawArgs);
   }
+  // ALLOWLIST MEMBERSHIP is what decides — this table only makes the refusal
+  // name a replacement. Deliberately AFTER the check above, not before it: the
+  // first cut had it first, which meant `awk`'s removal from ALLOWED was
+  // unobservable (putting awk back left the suite green, because this branch
+  // blocked it anyway). A defence whose removal changes nothing is not a
+  // defence, and that inversion is the exact fault this ticket keeps finding.
+  const interpreter = INTERPRETER_REASONS[base];
+  if (interpreter !== undefined) return block(interpreter);
   return block(`exec policy: '${base}' is not an allowed read-only command`);
 }
 
