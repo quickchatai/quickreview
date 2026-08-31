@@ -665,7 +665,11 @@ export class GitHubAdapter {
   // surfaced through the TUI and Slack. The `request_reviewer` gate kind is
   // consequently unreachable — see gate.ts.
 
-  async createReview(n: number, payload: { commit_id: string; event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT"; body: string; comments?: unknown[] }): Promise<GateResult> {
+  async createReview(
+    n: number,
+    payload: { commit_id: string; event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT"; body: string; comments?: unknown[] },
+    options?: { purpose?: "migration_precheck" },
+  ): Promise<GateResult> {
     return this.gate.execute({
       kind: "create_review",
       method: "POST",
@@ -673,6 +677,7 @@ export class GitHubAdapter {
       body: payload,
       note: `post ${payload.event} review on #${n}`,
       pr: n,
+      reviewPurpose: options?.purpose,
     });
   }
 

@@ -310,9 +310,16 @@ export function makePostingGuard(deps: GuardDeps): MutationGuard {
     },
 
     after(intent: MutationIntent, result: GateResult) {
-      // The mark is stamped only for a review that really reached GitHub. A
-      // dry-run record posted nothing, so nothing has been reviewed.
-      if (intent.kind !== "create_review" || !result.executed || !intent.pr) return;
+      // The mark is stamped only for a substantive review that really reached
+      // GitHub. A migration pre-check COMMENT is deterministic mechanics, not
+      // the round's verdict; letting it claim the head makes guard 2 suppress
+      // the substantive review that follows.
+      if (
+        intent.kind !== "create_review"
+        || intent.reviewPurpose === "migration_precheck"
+        || !result.executed
+        || !intent.pr
+      ) return;
       const body = (intent.body ?? {}) as ReviewBody;
       if (!body.commit_id) return;
       deps.store.recordReviewedHead(intent.pr, {

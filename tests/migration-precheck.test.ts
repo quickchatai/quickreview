@@ -63,6 +63,7 @@ class GatedAdapter implements DispatchAdapter {
   createReview(
     n: number,
     payload: { commit_id: string; event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT"; body: string },
+    options?: { purpose?: "migration_precheck" },
   ): Promise<GateResult> {
     return this.gate.execute({
       kind: "create_review",
@@ -71,6 +72,7 @@ class GatedAdapter implements DispatchAdapter {
       body: payload,
       note: `post ${payload.event} review on #${n}`,
       pr: n,
+      reviewPurpose: options?.purpose,
     });
   }
 }
@@ -165,7 +167,9 @@ describe("migration collision pre-check", () => {
     const kinds = adapter.intents.map((i) => i.kind);
     expect(kinds).toContain("create_review");
     // The gate is the only path: nothing was written that it did not describe.
-    expect(adapter.intents.find((i) => i.kind === "create_review")?.pr).toBe(42);
+    const intent = adapter.intents.find((i) => i.kind === "create_review");
+    expect(intent?.pr).toBe(42);
+    expect(intent?.reviewPurpose).toBe("migration_precheck");
   });
 
   it("carries the collisions on the round order, as mechanics not findings", async () => {

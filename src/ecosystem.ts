@@ -72,6 +72,7 @@ export interface EcosystemPreCheckIo {
   createReview(
     pr: number,
     payload: { commit_id: string; event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT"; body: string },
+    options?: { purpose?: "migration_precheck" },
   ): Promise<GateResult>;
   /** Every migration path on the base branch at a sha (read-only git).
    * Absent ⇒ the Django check degrades (never a throw, never silence). */
@@ -279,7 +280,7 @@ async function djangoPreCheck(io: EcosystemPreCheckIo, round: EcosystemRound): P
       commit_id: round.head_sha,
       event: "COMMENT",
       body,
-    });
+    }, { purpose: "migration_precheck" });
     io.logEvent("migration_collision_comment", round.pr, {
       head_sha: round.head_sha,
       fingerprint,

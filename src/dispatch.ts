@@ -56,6 +56,7 @@ export interface DispatchAdapter {
   createReview(
     n: number,
     payload: { commit_id: string; event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT"; body: string; comments?: unknown[] },
+    options?: { purpose?: "migration_precheck" },
   ): Promise<GateResult>;
   /** `GET /compare/<base>...<head>` — read-only, the short-circuit's
    * delta source. Optional: an adapter without it (stub-wired core, legacy
@@ -216,7 +217,7 @@ async function ecosystemPreCheck(
     {
       logEvent: (kind, pr, payload) => deps.store.logEvent(kind, pr, payload),
       migrationCollisionCommented: (pr, fingerprint) => deps.store.migrationCollisionCommented(pr, fingerprint),
-      createReview: (pr, payload) => deps.adapter.createReview(pr, payload),
+      createReview: (pr, payload, options) => deps.adapter.createReview(pr, payload, options),
       ...(deps.listBaseMigrations ? { listBaseMigrations: deps.listBaseMigrations } : {}),
       ...(deps.log ? { log: deps.log } : {}),
     },

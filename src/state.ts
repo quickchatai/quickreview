@@ -2201,6 +2201,46 @@ export class StateStore {
     return this.db.prepare("SELECT * FROM reviewed_heads WHERE pr = ?").get(pr) as ReviewedHeadRow | undefined;
   }
 
+  /**
+   * Repair the legacy false mark left by a deterministic migration
+   * COMMENT. This is deliberately evidence-gated: a null-verdict COMMENT is
+   * removed only when the event ledger proves that this daemon executed its
+   * migration pre-check at the same head. A substantive verdict/round mark, a
+   * dry-run record, or an unrelated COMMENT is never touched.
+   */
+  repairMigrationPrecheckReviewedHead(pr: number): boolean {
+    const mark = this.reviewedHead(pr);
+    if (
+      !mark
+      || mark.verdict !== null
+      || mark.round_no !== null
+      || (mark.posted_event ?? "").toUpperCase() !== "COMMENT"
+    ) return false;
+    const rows = this.db
+      .prepare("SELECT payload FROM events WHERE kind='migration_collision_comment' AND pr=?")
+      .all(pr) as Array<{ payload: string | null }>;
+    const proven = rows.some((row) => {
+      if (!row.payload) return false;
+      try {
+        const payload = JSON.parse(row.payload) as { head_sha?: unknown; executed?: unknown };
+        return payload.executed === true
+          && typeof payload.head_sha === "string"
+          && payload.head_sha.toLowerCase() === mark.head_sha.toLowerCase();
+      } catch {
+        return false;
+      }
+    });
+    if (!proven) return false;
+    const removed = this.db.prepare(
+      `DELETE FROM reviewed_heads
+        WHERE pr=? AND lower(head_sha)=lower(?)
+          AND verdict IS NULL AND round_no IS NULL
+          AND upper(COALESCE(posted_event, ''))='COMMENT'`,
+    ).run(pr, mark.head_sha).changes === 1;
+    if (removed) this.logEvent("migration_precheck_reviewed_head_repaired", pr, { head_sha: mark.head_sha });
+    return removed;
+  }
+
   /** Record an author reply against the PR's mark — the second half of "no new
    * evidence". Only ever moves the stamp forward; a PR with no mark has nothing
    * to skip, so the reply is simply not recorded. */

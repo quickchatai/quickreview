@@ -627,6 +627,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         async rerunRound(pr) {
           const row = d.store.getPr(pr);
           if (!row) return { ok: false, reason: `unknown PR #${pr}` };
+          const failure = d.store.openReviewFailure(pr);
+          const migrationMarkRepaired = failure?.stage === "posting_receipt"
+            ? d.store.repairMigrationPrecheckReviewedHead(pr)
+            : false;
           const cancelled = d.store.cancelRunningRounds(pr, "rerun-round");
           const recoveredFailure = d.store.recoverReviewFailure(pr, "rerun-round");
           const successorPromoted = d.store.promoteSuccessor(pr);
@@ -636,6 +640,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
             ok: true,
             requeued: pr,
             ...(recoveredFailure ? { recovery_hold_cleared: recoveredFailure.incident_id } : {}),
+            ...(migrationMarkRepaired ? { migration_precheck_mark_repaired: true } : {}),
             ...(cancelled.length > 0 ? { cancelled_rounds: cancelled } : {}),
           };
         },

@@ -75,6 +75,8 @@ export const APP_SELF_CONFIG_KINDS = ["update_own_webhook_url"] as const satisfi
  * need no installation permission at all) instead of forgetting it. */
 export type AppSelfConfigKind = (typeof APP_SELF_CONFIG_KINDS)[number];
 
+export type ReviewPurpose = "migration_precheck";
+
 export interface MutationIntent {
   kind: MutationKind;
   /** REST method+path for API intents; "git" for pushes. */
@@ -84,6 +86,10 @@ export interface MutationIntent {
   /** Human-readable one-liner for the dry-run record / event log. */
   note: string;
   pr?: number;
+  /** Internal provenance for a mechanically-authored review. Absent means a
+   * substantive review. It never enters the GitHub body; posting guards use
+   * it only to keep mechanical pre-check output from claiming the head. */
+  reviewPurpose?: ReviewPurpose;
   /** Execute even in dry-run. Only `supersede_own_review` may set this: the
    * session-side posting leakage is accepted (the owner, 2026-08-13), so the
    * cleanup of that leakage must be real too. Noise-reducing only. */

@@ -242,6 +242,23 @@ describe("guard 2 — the same head is never reviewed twice", () => {
     expect(store.reviewedHead(5180)).toBeUndefined();
   });
 
+  it("does not let a mechanical migration pre-check COMMENT mark the head reviewed", async () => {
+    const { gate, executor } = harness();
+    const intent = reviewIntent("COMMENT");
+    intent.reviewPurpose = "migration_precheck";
+
+    expect((await gate.execute(intent)).executed).toBe(true);
+    expect(executor).toHaveBeenCalledTimes(1); // still gated and posted
+    expect(store.reviewedHead(5180)).toBeUndefined();
+  });
+
+  it("still marks an ordinary substantive COMMENT review", async () => {
+    const { gate } = harness();
+
+    expect((await gate.execute(reviewIntent("COMMENT"))).executed).toBe(true);
+    expect(store.reviewedHead(5180)).toMatchObject({ head_sha: HEAD, posted_event: "COMMENT" });
+  });
+
   it("is off when [guards] skip_unchanged_head = false", async () => {
     const { gate } = harness({ skip_unchanged_head: false });
     await gate.execute(reviewIntent("REQUEST_CHANGES"));
@@ -268,6 +285,28 @@ describe("the reviewed-head mark (state)", () => {
     store.noteAuthorReply(7, "2026-08-18T12:00:00.000Z");
     store.noteAuthorReply(7, "2026-08-18T11:00:00.000Z");
     expect(store.reviewedHead(7)?.last_author_reply_at).toBe("2026-08-18T12:00:00.000Z");
+  });
+
+  it("repairs an existing migration-only mark but never a substantive mark", () => {
+    store.recordReviewedHead(7, { head_sha: HEAD, posted_event: "COMMENT" });
+    store.logEvent("migration_collision_comment", 7, { head_sha: HEAD, fingerprint: "fp", executed: true });
+
+    expect(store.repairMigrationPrecheckReviewedHead(7)).toBe(true);
+    expect(store.reviewedHead(7)).toBeUndefined();
+    expect(store.repairMigrationPrecheckReviewedHead(7)).toBe(false); // idempotent
+
+    store.recordReviewedHead(8, { head_sha: HEAD, posted_event: "COMMENT", verdict: "REQUEST_CHANGES", round_no: 2 });
+    store.logEvent("migration_collision_comment", 8, { head_sha: HEAD, fingerprint: "fp", executed: true });
+    expect(store.repairMigrationPrecheckReviewedHead(8)).toBe(false);
+    expect(store.reviewedHead(8)).toMatchObject({ verdict: "REQUEST_CHANGES", round_no: 2 });
+  });
+
+  it("does not repair an unproven COMMENT mark", () => {
+    store.recordReviewedHead(7, { head_sha: HEAD, posted_event: "COMMENT" });
+    store.logEvent("migration_collision_comment", 7, { head_sha: HEAD, fingerprint: "fp", executed: false });
+
+    expect(store.repairMigrationPrecheckReviewedHead(7)).toBe(false);
+    expect(store.reviewedHead(7)).toBeDefined();
   });
 
   it("an author reply on a webhook is recorded against the mark", async () => {
