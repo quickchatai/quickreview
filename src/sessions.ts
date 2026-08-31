@@ -781,11 +781,20 @@ export class PiSessionManager implements SessionHooks {
     // delivered round as lost.
     const floor = startedAtMs - 60_000;
     let sawCandidate = false;
+    // An I/O failure anywhere in the scan makes the whole answer UNKNOWN
+    // (#5362 rule ①: present = delivered, absent = never arrived, unreadable =
+    // unknown — and unknown is NEVER read as loss). Before the catch
+    // below returned `false`, i.e. "provably never arrived", which is the one
+    // reading the rule forbids: after redelivery is spent that answer kills a
+    // live conversation. A failed read also no longer aborts the scan — the
+    // marker may still be in the next file.
+    let unreadable = false;
     const walk = (dir: string): boolean => {
       let entries;
       try {
         entries = readdirSync(dir, { withFileTypes: true });
       } catch {
+        unreadable = true;
         return false;
       }
       for (const e of entries) {
@@ -797,19 +806,31 @@ export class PiSessionManager implements SessionHooks {
         if (!e.name.endsWith(".jsonl")) continue;
         try {
           if (statSync(full).mtimeMs < floor) continue;
-          sawCandidate = true;
-          // The marker is deliberately plain ASCII, so it survives JSON string
-          // encoding byte-for-byte and a substring search over the raw file is
-          // exact — no per-line parsing, no partial-write hazard.
-          if (readFileSync(full, "utf8").includes(marker)) return true;
+        } catch {
+          // Cannot even tell whether this file is in scope.
+          unreadable = true;
+          continue;
+        }
+        let text: string;
+        try {
+          text = readFileSync(full, "utf8");
         } catch {
           // An unreadable file is not evidence of absence.
-          return false;
+          unreadable = true;
+          continue;
         }
+        // The marker is deliberately plain ASCII, so it survives JSON string
+        // encoding byte-for-byte and a substring search over the raw file is
+        // exact — no per-line parsing, no partial-write hazard.
+        if (text.includes(marker)) return true;
+        sawCandidate = true;
       }
       return false;
     };
     if (walk(root)) return true;
+    // A file we could not read might have held the marker, so absence is not
+    // established: report UNKNOWN rather than loss.
+    if (unreadable) return null;
     // Nothing to read at all (a session that has not written since the round
     // started) is genuinely ambiguous on a slow first tool call — but the
     // caller only asks after the stall grace, by which point a session that

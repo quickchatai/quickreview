@@ -2,7 +2,7 @@
 // that records commands — no tmux, no pi, no git is ever spawned. Filesystem
 // work happens inside a temp sandbox root.
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -454,6 +454,67 @@ describe("injection", () => {
     expect(await m.roundPromptAccepted(42, 1, started)).toBe(true);
     // A different round's token is not this round's receipt.
     expect(await m.roundPromptAccepted(42, 2, started)).toBe(false);
+  });
+
+  // / MC-01. The ratified receipt rule (#5362 ①) is: present =
+  // delivered, absent = never arrived, **unreadable = unknown, and unknown is
+  // NEVER read as loss**. The catch inside the scan returned `false`, which is
+  // the "provably never arrived" answer — the exact reading the rule forbids,
+  // and the one that (once redelivery is spent) kills a live conversation.
+  // The comment on the line above the catch already said so.
+  describe("an unreadable session JSONL is UNKNOWN, never loss", () => {
+    const asRoot = typeof process.getuid === "function" && process.getuid() === 0;
+
+    it.skipIf(asRoot)("returns null, not false, when an in-scope file cannot be read", async () => {
+      const m = manager();
+      await m.dispatchRound(order, "ROUND PROMPT BODY");
+      const started = Date.parse("2026-08-13T10:00:00Z");
+      const jsonlDir = m.sessionDir("pr-42");
+      mkdirSync(jsonlDir, { recursive: true });
+      const jsonl = join(jsonlDir, "2026-08-13T10-00-00-000Z_abc.jsonl");
+      // The file exists and stats in scope — the session demonstrably wrote —
+      // but its bytes are not readable, so nothing can be concluded about the
+      // marker.
+      writeFileSync(jsonl, `${JSON.stringify({ text: "something" })}\n`);
+      chmodSync(jsonl, 0o000);
+      try {
+        expect(await m.roundPromptAccepted(42, 1, started)).toBeNull();
+      } finally {
+        chmodSync(jsonl, 0o600);
+      }
+    });
+
+    it.skipIf(asRoot)("keeps scanning past an unreadable file — the marker may be in the next one", async () => {
+      const m = manager();
+      await m.dispatchRound(order, "ROUND PROMPT BODY");
+      const started = Date.parse("2026-08-13T10:00:00Z");
+      const jsonlDir = m.sessionDir("pr-42");
+      mkdirSync(jsonlDir, { recursive: true });
+      // Named so the unreadable one is walked first: the old code returned out
+      // of `walk` entirely on a failed read, so `b.jsonl` was never opened.
+      const blocked = join(jsonlDir, "a-blocked.jsonl");
+      writeFileSync(blocked, "{}\n");
+      writeFileSync(
+        join(jsonlDir, "b-delivered.jsonl"),
+        `${JSON.stringify({ text: `BODY\n\n${roundPromptMarker(42, 1)}\n` })}\n`,
+      );
+      chmodSync(blocked, 0o000);
+      try {
+        expect(await m.roundPromptAccepted(42, 1, started)).toBe(true);
+      } finally {
+        chmodSync(blocked, 0o600);
+      }
+    });
+
+    it("still reports a genuine absence as false — the fix does not blunt the receipt", async () => {
+      const m = manager();
+      await m.dispatchRound(order, "ROUND PROMPT BODY");
+      const started = Date.parse("2026-08-13T10:00:00Z");
+      const jsonlDir = m.sessionDir("pr-42");
+      mkdirSync(jsonlDir, { recursive: true });
+      writeFileSync(join(jsonlDir, "readable.jsonl"), `${JSON.stringify({ text: "no marker here" })}\n`);
+      expect(await m.roundPromptAccepted(42, 1, started)).toBe(false);
+    });
   });
 
   it("ignores JSONL files that predate the round — the prompt cannot be in one", async () => {
