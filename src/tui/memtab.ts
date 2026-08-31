@@ -68,6 +68,9 @@ export interface MemTabState {
   ticketsLoaded?: boolean;
   /** Run that scan. Called by the TUI's bring-up, never on the paint path. */
   reloadTickets?: () => void;
+  /** Whether the last proposals load ran with `view.repo` known. `false` means
+   * the gh half was SKIPPED and is worth exactly one retry once it arrives. */
+  improvementsTriedWithRepo?: boolean;
   ticketSel?: number;
   ticketScroll?: number;
   ticketShowClosed?: boolean;
@@ -419,7 +422,7 @@ export function renderMemoryView(
   const selectedTicket = tickets[ticketSel];
 
   if (st.focus === "tickets") {
-    const read = st.ticketsLoaded !== false;
+    const read = st.ticketsLoaded === true;
     const actionable = allTickets.filter(isActionableTicket).length;
     row([
       { text: sectionTitle(read ? `FEEDBACK TICKETS (${actionable} actionable / ${allTickets.length} total)` : "FEEDBACK TICKETS (?)") },
@@ -430,7 +433,7 @@ export function renderMemoryView(
       // "not read yet" and "none" are different facts. The tracker
       // scan is a filesystem walk and therefore runs AFTER the first frame, so
       // the empty list must say which of the two it is.
-      row([{ text: st.ticketsLoaded === false ? "reading the tracker…" : "none — adjudication files a ticket only when something changes", dim: true }]);
+      row([{ text: st.ticketsLoaded === true ? "none — adjudication files a ticket only when something changes" : "reading the tracker…", dim: true }]);
     }
     const ticketStart = Math.max(0, Math.min(ticketSel - 5, Math.max(0, tickets.length - 6)));
     for (const [offset, ticket] of tickets.slice(ticketStart, ticketStart + 6).entries()) {
@@ -494,7 +497,7 @@ export function renderMemoryView(
     // Same rule as the focused pane below: the tracker scan runs
     // BEHIND the first frame, so an empty list before it has run is UNKNOWN.
     // `(0)` inside that window is a count of something nobody has read.
-    const ticketsRead = st.ticketsLoaded !== false;
+    const ticketsRead = st.ticketsLoaded === true;
     const actionable = allTickets.filter(isActionableTicket).length;
     row([
       { text: sectionTitle(`FEEDBACK TICKETS (${ticketsRead ? actionable : "?"})`) },
@@ -619,12 +622,19 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
   const orderedNow = (): MemoryEntry[] => feedbackInbox(st.entries, st.memFilter, st.feedbackShowArchived);
 
   const loadTickets = (): void => {
+    // A FAILED read is not an empty tracker. Latching `loaded` here
+    // turned an unreadable tracker into a confident
+    // "FEEDBACK TICKETS (0 actionable / 0 total) · none" that never retried —
+    // the honest-unknown rule applied one layer up and missed inside the loader
+    // it was written for.
     try {
       st.tickets = deps.readTickets?.() ?? [];
+      st.ticketsLoaded = true;
     } catch {
       st.tickets = [];
+      st.ticketsLoaded = false;
+      app.notice("✖ the tracker could not be read — the ticket panes stay unknown (r retries)");
     }
-    st.ticketsLoaded = true;
     const visible = st.ticketShowClosed ? st.tickets : st.tickets.filter(isActionableTicket);
     st.ticketSel = Math.min(st.ticketSel ?? 0, Math.max(0, visible.length - 1));
     st.ticketScroll = 0;
@@ -704,10 +714,16 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
   };
 
   const loadProposals = async (): Promise<void> => {
+    // Remember whether the gh read was even POSSIBLE at the time: it needs
+    // `view.repo`, which arrives with the first snapshot — and
+    // instant first frame makes opening [2] before that snapshot far more
+    // likely, which used to park the pane on "not read" for the whole session.
+    const hadRepo = (app.view.repo ?? "") !== "";
     const { proposals, improvements } = await (deps.fetchProposals ?? defaultFetchProposals)(app);
     st.proposals = proposals;
     st.improvements = improvements;
     st.propLoaded = true;
+    st.improvementsTriedWithRepo = hadRepo;
     st.propSel = Math.min(st.propSel, Math.max(0, proposals.length - 1));
     app.repaint();
   };
@@ -788,7 +804,13 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
   app.hooks.digestScreen = (theApp, cols, rows) => {
     if (!st.digest.loaded) guard("digest", loadDigest);
     if (!st.memLoaded) guard("memory", loadMemoryPart);
-    if (!st.propLoaded) guard("proposals", loadProposals);
+    // Re-attempt ONCE when the repo turns up after a load that could not use
+    // it. Bounded on purpose: `improvementsTriedWithRepo` latches on the
+    // attempt, not on its result, so a failing gh read costs one retry and
+    // then waits for `r` rather than spinning on every repaint.
+    if (!st.propLoaded || (st.improvementsTriedWithRepo === false && (theApp.view.repo ?? "") !== "")) {
+      guard("proposals", loadProposals);
+    }
     const today = now().toISOString().slice(0, 10);
     if (st.view === "digest") {
       const prs = theApp.view.snapshot ? sortPrs(theApp.view.snapshot.prs) : undefined;

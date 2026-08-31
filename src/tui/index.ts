@@ -199,11 +199,17 @@ export function buildTuiDriver(app: App, memState: MemTabState, metricsView: Met
         app.pressKey("D"); // arm+confirm inside the window = instant (ratified)
         return;
       }
-      // stop/start: the tab's S button computes its own kind from the observed
-      // container state (powerKind()); refuse a mismatched request rather than
-      // silently doing the opposite.
-      const kind = deployState.containerStatus !== undefined && !/^Up /.test(deployState.containerStatus) ? "start" : "stop";
-      if (kind !== action) throw new Error(`deploy_tab ${action} refused — container is ${deployState.containerStatus ?? "unknown"}`);
+      // stop/start: the tab's S button computes its own kind from the OBSERVED
+      // container state; refuse a mismatched request rather than silently doing
+      // the opposite — and refuse outright when that state has not been read.
+      // Unknown folded into "stop" here exactly as it did in the tab, so a
+      // companion asking for a stop could stop a live reviewer on data nobody
+      // fetched.
+      if (deployState.containerStatus === undefined) {
+        throw new Error(`deploy_tab ${action} refused — the container's state has not been read yet`);
+      }
+      const kind = !/^Up /.test(deployState.containerStatus) ? "start" : "stop";
+      if (kind !== action) throw new Error(`deploy_tab ${action} refused — container is ${deployState.containerStatus}`);
       app.pressKey("S");
       app.pressKey("S");
     },

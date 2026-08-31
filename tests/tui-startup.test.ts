@@ -331,6 +331,13 @@ describe("the first frame (ruling 6 — structural, not timed)", () => {
       await new Promise((r) => setTimeout(r, 20));
     }
     expect(h.frame()).toContain("ssh-add");
+    // The ssh step must have ENTERED `running` on the startup path, not sat at
+    // `waiting` until it failed: it is the slowest step in the bring-up and
+    // therefore the one most likely to need the overdue warning, which is
+    // unreachable from `pending`. Only a `begin` produces a ✓/✗/⚠ here.
+    // A duration is printed only when the step actually STARTED, so this
+    // distinguishes "ran, then failed" from "was failed from `pending`".
+    expect(stripAnsi(h.frame()), "the ssh step never entered running on the startup path").toMatch(/[✗✓⚠] VM ssh · \d+m?s/);
 
     // `s` re-runs it and reports the new outcome — no restart, and nothing
     // self-healing: the TUI ran the CHECK again, never the remedy.
@@ -459,15 +466,41 @@ describe("connection triage", () => {
     expect(agentHoldsIdentity({ ...probes, identityFingerprint: "SHA256:zzz" })).toBe("yes");
   });
 
-  it("keeps the diagnostic probe read-only — it must never write known_hosts", async () => {
-    const { batchProbeArgv } = await import("../src/tui/sshtriage.js");
-    const argv = batchProbeArgv("example-vm").join(" ");
-    // `accept-new` PERSISTS a host key as a side effect of asking a question.
-    // Ruling 4 declined self-healing: the TUI reports, the operator acts.
-    expect(argv).not.toContain("accept-new");
-    expect(argv).toContain("StrictHostKeyChecking=no");
-    expect(argv).toContain("UserKnownHostsFile=/dev/null");
-    expect(argv).toContain("BatchMode=yes");
+  it("keeps the diagnostic probe read-only AND verifying — behaviourally", async () => {
+    const { TUI_DEFAULTS } = await import("../src/config.js");
+    const { classifyConnection, triageConnection } = await import("../src/tui/sshtriage.js");
+    // Asserted through the CALLER, over the ssh option semantics that actually
+    // decide the behaviour — not by reading back the builder's own literals,
+    // which is what let `StrictHostKeyChecking=no` (accept an unverified key,
+    // and historically append it) sit here looking pinned and correct.
+    const seen: string[][] = [];
+    await triageConnection(TUI_DEFAULTS, {
+      home: "/home/x",
+      exists: () => false,
+      run: async (cmd, argv) => {
+        seen.push([cmd, ...argv]);
+        return { status: 255, stdout: "", stderr: "", timedOut: false };
+      },
+    });
+    const probe = seen.find((a) => a.includes("true"))!;
+    const opt = (name: string): string | undefined =>
+      probe.map((t, i) => (t.startsWith(`${name}=`) ? t.slice(name.length + 1) : undefined)).find((v) => v !== undefined);
+    // WRITE: only these two values ever persist a host key. Neither may appear.
+    expect(["accept-new", "no"]).not.toContain(opt("StrictHostKeyChecking"));
+    // VERIFY: and it must not be pointed at a throwaway file either, which
+    // would make the probe succeed against a host whose key changed.
+    expect(probe.join(" ")).not.toContain("UserKnownHostsFile");
+    expect(probe).toContain("BatchMode=yes"); // never prompts behind the alt screen
+    // …and the failure that strictness produces is DIAGNOSED, not misread as a
+    // missing agent key (which would hand over an `ssh-add` that cannot help).
+    const d = classifyConnection({
+      ...base,
+      agent: { reachable: true, identities: [] },
+      connect: { ok: false, stderr: "Host key verification failed.", timedOut: false },
+    });
+    expect(d.kind).not.toBe("no-agent-key");
+    expect(d.remedy).not.toContain("ssh-add");
+    expect(d.cause).toContain("host key");
   });
 
   it("still classifies a wedged master when ControlPath carries a %C it cannot expand", async () => {
@@ -640,6 +673,18 @@ describe("startup progress", () => {
     const before = stripAnsi(renderMemoryView(st, undefined, undefined, 160, 30).lines.join("\n"));
     expect(before).toContain("FEEDBACK TICKETS (?)");
     expect(before).not.toContain("FEEDBACK TICKETS (0)");
+    // A THROWING read is not an empty tracker: it must not latch, so the pane
+    // keeps saying unknown and a later `r` can still succeed.
+    const broken = installMemoryLearningHooks(app, {
+      memory: { read: async () => [], apply: async () => ({ ok: true }) } as never,
+      readTickets: () => {
+        throw new Error("ENOENT");
+      },
+    });
+    broken.reloadTickets?.();
+    expect(broken.ticketsLoaded, "a failed tracker read latched as 'read'").toBe(false);
+    expect(stripAnsi(renderMemoryView(broken, undefined, undefined, 160, 30).lines.join("\n"))).toContain("FEEDBACK TICKETS (?)");
+
     st.reloadTickets?.();
     expect(st.ticketsLoaded).toBe(true);
     const after = stripAnsi(renderMemoryView(st, undefined, undefined, 160, 30).lines.join("\n"));
@@ -647,6 +692,40 @@ describe("startup progress", () => {
     // A gh read that was skipped for want of a repo is not "no bot PRs".
     expect(st.improvements).toBeUndefined();
     expect(after).toContain("not read");
+  });
+
+  it("re-attempts the bot-PR read once the repo arrives with the first snapshot", async () => {
+    const { installMemoryLearningHooks } = await import("../src/tui/memtab.js");
+    const { TUI_DEFAULTS } = await import("../src/config.js");
+    let calls = 0;
+    const app = { cfg: TUI_DEFAULTS, hooks: {} as Record<string, unknown>, view: {} as { repo?: string }, notice: () => {}, repaint: () => {} } as never;
+    const st = installMemoryLearningHooks(app, {
+      memory: { read: async () => [], apply: async () => ({ ok: true }) } as never,
+      digestFetcher: { list: async () => [], read: async () => "" },
+      fetchProposals: async () => {
+        calls += 1;
+        const repo = (app as unknown as { view: { repo?: string } }).view.repo;
+        return { proposals: [], improvements: repo ? [{ kind: "pr" as const, number: 1, title: "t", state: "open" }] : undefined };
+      },
+    });
+    const screen = (app as unknown as { hooks: { digestScreen: (a: unknown, c: number, r: number) => unknown } }).hooks.digestScreen;
+    // First visit with no snapshot yet — the instant first frame makes this the
+    // NORMAL case now, and it used to park the pane for the whole session.
+    screen(app, 160, 40);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(calls).toBe(1);
+    expect(st.improvements).toBeUndefined();
+    // The snapshot lands, `view.repo` with it: exactly one more attempt.
+    (app as unknown as { view: { repo?: string } }).view.repo = "o/r";
+    screen(app, 160, 40);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(calls).toBe(2);
+    expect(st.improvements).toHaveLength(1);
+    // …and it does not keep re-fetching on every repaint after that.
+    screen(app, 160, 40);
+    screen(app, 160, 40);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(calls).toBe(2);
   });
 
   it("shows pending, running, done, failed and skipped as different things", async () => {
@@ -899,5 +978,116 @@ describe("honest unknowns on the other surfaces", () => {
     } as never;
     expect(stripAnsi(statStrip(win, 200))).toContain("stopped ?");
     expect(stripAnsi(cancellationLines(win, 60).join("\n"))).toContain("not reported by the daemon build");
+  });
+});
+
+// ---- what the system DOES with an unfetched value ---------------------------
+//
+// The rendering sweep has a twin: an ACTION or a PUBLISHED FACT derived from a
+// value nobody read is the same defect with worse consequences. These pin the
+// action and the published number, never the label.
+
+describe("actions are never taken on unfetched values", () => {
+  it("the power button cannot stop a container whose state was never read", async () => {
+    const { installDeployHooks, renderDeployTab } = await import("../src/tui/deploytab.js");
+    const { TUI_DEFAULTS } = await import("../src/config.js");
+    const runs: string[] = [];
+    const app = {
+      cfg: TUI_DEFAULTS,
+      hooks: {} as Record<string, unknown>,
+      view: {},
+      notice: () => {},
+      repaint: () => {},
+      ssh: async () => ({ ok: false, stdout: "", stderr: "", code: 1 }),
+    } as never;
+    const st = installDeployHooks(
+      app,
+      { load: async () => ({ dirty: undefined, plan: [] }) } as never,
+      () => Date.now(),
+      undefined,
+      { read: () => undefined, write: () => {}, clear: () => {} } as never,
+    );
+    (app as unknown as { hooks: Record<string, unknown> }).hooks.powerRun = (
+      _a: unknown,
+      action: string,
+      _d: unknown,
+      onExit: (c: number) => void,
+    ) => {
+      runs.push(action);
+      onExit(0);
+      return { kill: () => {} };
+    };
+    st.loaded = true;
+    st.containerStatus = undefined; // docker ps never answered
+
+    // Paint first: the button must claim NO click zone while the state is
+    // unknown, so a click cannot even reach the arming path.
+    renderDeployTab(st, false, 120, 20);
+    expect(st.powerZone, "an unknown state must not offer a clickable power button").toBeUndefined();
+
+    // …and the key does not arm it either. Two presses is the full ceremony:
+    // if it armed, the second would fire.
+    const key = { kind: "char", ch: "S" } as never;
+    (app as unknown as { hooks: { deployKey: (a: unknown, k: unknown) => boolean } }).hooks.deployKey(app, key);
+    (app as unknown as { hooks: { deployKey: (a: unknown, k: unknown) => boolean } }).hooks.deployKey(app, key);
+    expect(st.armedKind, "S armed a power action from a state nobody read").toBeUndefined();
+    expect(runs, "the TUI stopped/started the container on unfetched data").toEqual([]);
+
+    // With the state actually READ, the same two presses do act — so the guard
+    // is about the unknown, not about breaking the button.
+    st.containerStatus = "Up 3 hours";
+    renderDeployTab(st, false, 120, 20);
+    expect(st.powerZone).not.toBeUndefined();
+    (app as unknown as { hooks: { deployKey: (a: unknown, k: unknown) => boolean } }).hooks.deployKey(app, key);
+    (app as unknown as { hooks: { deployKey: (a: unknown, k: unknown) => boolean } }).hooks.deployKey(app, key);
+    expect(runs).toEqual(["stop"]);
+  });
+
+  it("the companion's deploy_tab action is refused on an unread container state", async () => {
+    const { buildTuiDriver } = await import("../src/tui/index.js");
+    const { TUI_DEFAULTS } = await import("../src/config.js");
+    const { App } = await import("../src/tui/app.js");
+    const app = new App(TUI_DEFAULTS, async () => ({ ok: false, stdout: "", stderr: "", code: 1 }));
+    const deployState = { loaded: true, loading: false, dirty: undefined, plan: [], scroll: 0 } as never;
+    const driver = buildTuiDriver(app, { view: "digest" } as never, {} as never, deployState);
+    // The same fold — unknown ⇒ "stop" — lived here too, so a companion asking
+    // for a stop could stop a live reviewer on data nobody fetched.
+    expect(() => driver.deployTab("stop")).toThrow(/has not been read/);
+    expect(() => driver.deployTab("start")).toThrow(/has not been read/);
+  });
+});
+
+describe("published facts are never invented either", () => {
+  it("the companion-facing view never claims a mode, a PR count or a clean tree it has not read", async () => {
+    const { buildTuiView } = await import("../src/tui/feed.js");
+    const v = buildTuiView({ now: new Date("2026-08-31T10:00:00Z"), tab: "board" } as never);
+    // THE TITULAR BUG, in the file the companion reads and repeats in words.
+    expect(v.board.dry_run, "the feed published a dry-run claim with no heartbeat").toBeNull();
+    expect(v.board.total).toBeNull();
+    expect(v.board.by_state).toBeNull();
+    expect(v.deploy.dirty_files).toBeNull();
+    expect(v.deploy.pending_commit_count).toBeNull();
+  });
+
+  it("the companion's own reader says UNKNOWN for those nulls instead of dropping the line", async () => {
+    const { boardAnswer, deployAnswer } = await import("../extensions/tui-view.js");
+    const { buildTuiView } = await import("../src/tui/feed.js");
+    const dir = mkdtempSync(join(tmpdir(), "qcr-view-"));
+    const v = buildTuiView({
+      now: new Date("2026-08-31T10:00:00Z"),
+      tab: "deploy",
+      deploy: { loaded: true, dirty: undefined, plan: [], scroll: 0 } as never,
+    } as never);
+    writeFileSync(join(dir, "view.json"), JSON.stringify(v));
+    const now = new Date("2026-08-31T10:00:01Z");
+    // A dropped line reads as "nothing worth mentioning": a companion asked
+    // "anything to deploy?" got a quiet all-clear built from unread data.
+    const deploy = deployAnswer(dir, now);
+    expect(deploy).toContain("dirty files in the local checkout: UNKNOWN");
+    expect(deploy).toContain("commits waiting to ship: UNKNOWN");
+    const board = boardAnswer(dir, now);
+    expect(board).toContain("dry run: UNKNOWN");
+    expect(board).toContain("open PRs: UNKNOWN");
+    rmSync(dir, { recursive: true, force: true });
   });
 });

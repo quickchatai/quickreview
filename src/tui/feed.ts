@@ -78,9 +78,12 @@ export interface ViewDeploy {
   head?: string;
   /** `null` when the working tree could not be read — never 0. */
   dirty_files: number | null;
-  /** `git log --oneline deployed..HEAD`, bounded. */
+  /** `git log --oneline deployed..HEAD`, bounded. Empty when the diff could
+   * not be computed — read `pending_commit_count` for which it is. */
   pending_commits: string[];
-  pending_commit_count: number;
+  /** `null` when the deployed sha is unknown or local git could not diff it,
+   * so "nothing to ship" is never published from an unread repo. */
+  pending_commit_count: number | null;
   /** Last line of `git diff --stat` — the "N files changed" summary. */
   diffstat_summary?: string;
   /** `docker ps` Status line ("Up 2 hours" / "Exited (0) …"). */
@@ -97,11 +100,16 @@ export interface TuiView {
   screen: { tab: string; rows: number; chars: number; truncated: boolean };
   board: {
     snapshot_written_at?: string;
-    dry_run: boolean;
+    /** `null` until a heartbeat proves a mode. NEVER a default — this is the
+     * companion-facing twin of the badge whose `true` default told a live
+     * installation it was in dry-run (the incident this ticket is
+     * named for). The companion states this in WORDS to the owner. */
+    dry_run: boolean | null;
     health: string;
     health_stale_s?: number;
-    total: number;
-    by_state: Record<string, number>;
+    /** `null` when no snapshot has arrived — the feed's `PRS (?)`. */
+    total: number | null;
+    by_state: Record<string, number> | null;
     running_rounds?: number;
     max_concurrent_rounds?: number;
     today_spend_usd?: number;
@@ -180,12 +188,16 @@ export function clampScreen(text: string): { body: string; truncated: boolean } 
 
 export function buildTuiView(src: ViewSource): TuiView {
   const d = src.deploy;
-  const commits = d?.commits ?? [];
+  const commits = d?.commits;
   const diffstat = d?.diffstat ?? [];
-  const prs = src.snapshot?.prs ?? [];
-  const by_state: Record<string, number> = {};
-  for (const pr of prs) by_state[pr.state] = (by_state[pr.state] ?? 0) + 1;
-  const sel = src.selectedPr === undefined ? undefined : prs.find((p) => p.number === src.selectedPr);
+  // A view PUBLISHED from no data is the same lie as a value RENDERED from no
+  // data, and it is worse here: the companion reads this file and repeats it to
+  // the owner in prose. Every field below that a snapshot would have filled is
+  // `null` when there is no snapshot — never a confident zero.
+  const prs = src.snapshot?.prs;
+  const by_state: Record<string, number> | null = prs === undefined ? null : {};
+  for (const pr of prs ?? []) by_state![pr.state] = (by_state![pr.state] ?? 0) + 1;
+  const sel = src.selectedPr === undefined ? undefined : (prs ?? []).find((p) => p.number === src.selectedPr);
   const screen = clampScreen(src.screen ?? "");
   return {
     written_at: src.now.toISOString(),
@@ -195,8 +207,8 @@ export function buildTuiView(src: ViewSource): TuiView {
       ...(d?.deployed ? { deployed_sha: d.deployed.sha, deployed_at: d.deployed.at, deployed_mode: d.deployed.mode } : {}),
       ...(d?.head ? { head: d.head } : {}),
       dirty_files: d?.dirty?.length ?? null,
-      pending_commits: commits.slice(0, PENDING_COMMITS_MAX),
-      pending_commit_count: commits.length,
+      pending_commits: (commits ?? []).slice(0, PENDING_COMMITS_MAX),
+      pending_commit_count: commits?.length ?? null,
       ...(diffstat.length > 0 ? { diffstat_summary: diffstat[diffstat.length - 1] } : {}),
       ...(d?.containerStatus !== undefined ? { container_status: d.containerStatus } : {}),
       ...(d?.run ? { run: { kind: d.run.kind, running: d.run.running, code: d.run.code ?? null } } : {}),
@@ -209,10 +221,10 @@ export function buildTuiView(src: ViewSource): TuiView {
     },
     board: {
       snapshot_written_at: src.snapshot?.written_at,
-      dry_run: src.snapshot?.dry_run ?? true,
+      dry_run: src.snapshot?.dry_run ?? null,
       health: src.health?.kind ?? "unknown",
       ...(healthAgeS(src.health) !== undefined ? { health_stale_s: healthAgeS(src.health) } : {}),
-      total: prs.filter((p) => p.state !== "closed").length,
+      total: prs === undefined ? null : prs.filter((p) => p.state !== "closed").length,
       by_state,
       running_rounds: src.snapshot?.running_rounds,
       max_concurrent_rounds: src.snapshot?.max_concurrent_rounds,

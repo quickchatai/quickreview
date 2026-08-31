@@ -99,6 +99,11 @@ const INTERACTIVE_AUTH_PATTERNS = [/keyboard-interactive/i, /two-factor|2fa|veri
 
 const MUX_PATTERNS = [/control socket connect/i, /mux_client/i, /multiplexing/i, /controlpath/i];
 
+/** The host's key is unknown or has changed. Nothing about the AGENT can fix
+ * it, and the fallback below would otherwise report "no usable key is loaded"
+ * — a confidently wrong remedy for a host-identity problem. */
+const HOST_KEY_PATTERNS = [/host key verification failed/i, /no matching host key/i, /remote host identification has changed/i, /host key for .* has changed/i];
+
 const NETWORK_PATTERNS = [
   /could not resolve hostname/i,
   /name or service not known/i,
@@ -195,6 +200,14 @@ export function classifyConnection(p: ConnectionProbes): ConnectionDiagnosis {
       kind: "wedged-master",
       cause: `the shared ssh ControlMaster for ${p.host} is wedged — ${p.controlPath ? `${p.controlPath} is there` : "the control socket is there"} and does not answer`,
       remedy: `ssh -O exit ${p.host}`,
+      ...(evidence ? { detail: evidence } : {}),
+    };
+  }
+  if (HOST_KEY_PATTERNS.some((re) => re.test(stderr))) {
+    return {
+      kind: "unknown",
+      cause: `${p.host}'s host key is not the one in known_hosts (or is not there at all) — ${evidence || "host key verification failed"}`,
+      remedy: `ssh -o StrictHostKeyChecking=ask ${p.host} true`,
       ...(evidence ? { detail: evidence } : {}),
     };
   }
@@ -345,28 +358,22 @@ const CONNECT_TIMEOUT_MS = 12_000;
 /**
  * The ONE probe that touches the network. Non-interactive (`BatchMode`) so it
  * can never stop on a prompt behind the alt screen, and — this is the part
- * that matters — it must not CHANGE anything.
+ * that matters — it must neither CHANGE anything nor weaken anything.
  *
- * It used to carry `StrictHostKeyChecking=accept-new`, which writes a new host
- * key into the operator's `~/.ssh/known_hosts` as a side effect of asking a
- * diagnostic question. Ruling 4 declined self-healing outright: the TUI
- * reports, the operator acts. `no` + `UserKnownHostsFile=/dev/null` keeps the
- * probe read-only; an unknown host still fails with a message the classifier
- * reads, which is the honest outcome.
+ * `StrictHostKeyChecking=yes` is doing both jobs. It is read-only: `yes` never
+ * writes `known_hosts`, where `accept-new` (the first spelling here) PERSISTS
+ * a new host key as a side effect of asking a diagnostic question, and `no`
+ * (the second) both accepts an unverified key and, historically, appends it —
+ * `no` was only harmless while paired with `UserKnownHostsFile=/dev/null`, a
+ * pairing one edit away from silently writing again. And it keeps VERIFYING
+ * against the operator's real file, so the probe cannot quietly succeed
+ * against a host whose key changed. A key that is unknown or does not match
+ * fails with "Host key verification failed", which the classifier reads and
+ * reports with its own remedy — the honest outcome, and never a lie about
+ * reachability.
  */
 export function batchProbeArgv(host: string): string[] {
-  return [
-    "-o",
-    "BatchMode=yes",
-    "-o",
-    "ConnectTimeout=8",
-    "-o",
-    "StrictHostKeyChecking=no",
-    "-o",
-    "UserKnownHostsFile=/dev/null",
-    host,
-    "true",
-  ];
+  return ["-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "StrictHostKeyChecking=yes", host, "true"];
 }
 
 /**

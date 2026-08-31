@@ -119,6 +119,7 @@ describe("body-row width contract (review P2: rows were cols+1 wide)", () => {
         proposals: [{ slug: "tighten-nits", head: ["# tighten"] }],
         improvements: [],
         propLoaded: true,
+      ticketsLoaded: true,
         filedTotal: 0,
       };
       const memory = renderMemoryView(st, false, undefined, cols, rows);
@@ -155,6 +156,7 @@ describe("body-row width contract (review P2: rows were cols+1 wide)", () => {
       proposals: [],
       improvements: [],
       propLoaded: true,
+      ticketsLoaded: true,
       filedTotal: 0,
     };
     const memory = renderMemoryView(st, false, undefined, 120, rows);
@@ -245,6 +247,7 @@ describe("feedback adjudication inbox", () => {
       proposals: [],
       improvements: [],
       propLoaded: true,
+      ticketsLoaded: true,
       filedTotal: 0,
       memFilter: "feedback",
     };
@@ -270,6 +273,7 @@ describe("feedback adjudication inbox", () => {
       proposals: [],
       improvements: [],
       propLoaded: true,
+      ticketsLoaded: true,
       filedTotal: 0,
       memFilter: "feedback",
     };
@@ -292,6 +296,7 @@ describe("feedback adjudication inbox", () => {
       proposals: [],
       improvements: [],
       propLoaded: true,
+      ticketsLoaded: true,
       filedTotal: 0,
       memFilter: "feedback",
       tickets: [{
@@ -345,6 +350,7 @@ describe("renderMemoryView", () => {
       proposals: [],
       improvements: [],
       propLoaded: true,
+      ticketsLoaded: true,
       filedTotal: 0,
     };
     const screen = stripAnsi(renderMemoryView(st, false, undefined, 100, 24).render());
@@ -732,6 +738,7 @@ describe("memory unreachable (FT-0164)", () => {
       proposals: [],
       improvements: [],
       propLoaded: true,
+      ticketsLoaded: true,
       filedTotal: 0,
     };
     for (const cols of [100, 111]) {
@@ -778,6 +785,7 @@ describe("memory forward on the tab", () => {
     proposals: [],
     improvements: [],
     propLoaded: true,
+  ticketsLoaded: true,
     filedTotal: 0,
     ...(forward ? { forward } : {}),
   });

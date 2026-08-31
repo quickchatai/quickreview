@@ -121,8 +121,18 @@ function loadView(dir: string): { view?: ViewJson; mtimeMs?: number; error?: str
   }
 }
 
+/**
+ * One `label: value` line, or nothing when the field is genuinely ABSENT.
+ *
+ * `null` is not absent — it is the producer saying "I could not read this"
+ *. Dropping the line made an unread working tree and an unproven
+ * dry-run flag look like nothing worth mentioning, so a companion asked
+ * "anything to deploy?" answered with a quiet all-clear built from data the
+ * TUI never had. An explicit unknown is the whole point of the null.
+ */
 function fmt(label: string, value: unknown): string | undefined {
-  if (value === undefined || value === null || value === "") return undefined;
+  if (value === null) return `${label}: UNKNOWN (the TUI has not been able to read this)`;
+  if (value === undefined || value === "") return undefined;
   return `${label}: ${typeof value === "object" ? JSON.stringify(value) : String(value)}`;
 }
 

@@ -316,7 +316,9 @@ export function renderDeployTab(st: DeployState, dryRun: boolean | undefined, co
           ? " ■ STOP VM APP "
           : " ▶ START VM APP ";
     const dBtn = deployArmed ? `${WARN_BG}${STRONG}${dLabel}${DRESET}` : `${ACCENT_BG}${STRONG}${dLabel}${DRESET}`;
-    const pBtn = powerArmed ? `${WARN_BG}${STRONG}${pLabel}${DRESET}` : `${ACCENT_BG}${STRONG}${pLabel}${DRESET}`;
+    // Unknown is not a button: painted in muted ink, and — below — it claims no
+    // click zone at all, so it cannot be pressed into arming a stop.
+    const pBtn = running === undefined ? `${MUTED}${pLabel}${DRESET}` : powerArmed ? `${WARN_BG}${STRONG}${pLabel}${DRESET}` : `${ACCENT_BG}${STRONG}${pLabel}${DRESET}`;
     const vm =
       st.containerStatus === undefined
         ? `${WARN}VM: state unknown — r refreshes${DRESET}`
@@ -331,7 +333,8 @@ export function renderDeployTab(st: DeployState, dryRun: boolean | undefined, co
     const dW = displayWidth(stripAnsi(dLabel));
     st.buttonZone = { x1: 2, y1: 2, x2: 1 + dW, y2: 2 };
     const pX = 2 + dW + 2;
-    st.powerZone = { x1: pX, y1: 2, x2: pX + displayWidth(stripAnsi(pLabel)) - 1, y2: 2 };
+    // No zone while the state is unread: a click there must not arm anything.
+    st.powerZone = running === undefined ? undefined : { x1: pX, y1: 2, x2: pX + displayWidth(stripAnsi(pLabel)) - 1, y2: 2 };
   }
 
   const bodyRows = rows - 5; // top bar + button row + command bar (2 rows) + bottom border
@@ -765,10 +768,35 @@ export function installDeployHooks(
     theApp.repaint();
   };
 
-  /** The power button's action follows the container's observed state:
-   * running (or unknown — a stop of a stopped container is a no-op) → stop,
-   * definitely stopped → start. */
-  const powerKind = (): RunKind => (st.containerStatus !== undefined && !/^Up /.test(st.containerStatus) ? "start" : "stop");
+  /**
+   * The power button's action follows the container's OBSERVED state:
+   * definitely up → stop, definitely stopped → start, and NOT YET READ →
+   * nothing at all.
+   *
+   * That last case used to fold into "stop", rationalised as "a stop of a
+   * stopped container is a no-op" — which is true of a stopped container and
+   * false of the only case that matters. Unknown is not stopped: if the
+   * reviewer is up and `docker ps` merely has not been read, that press stops
+   * a live container on data nobody fetched. lengthened the unfetched
+   * window by design (the tab's load now runs behind the first frame), so this
+   * is reachable from the moment the TUI opens.
+   */
+  const powerKind = (): RunKind | undefined =>
+    st.containerStatus === undefined ? undefined : /^Up /.test(st.containerStatus) ? "stop" : "start";
+
+  /** The power button/key: refuse on an unread state, and go and read it. */
+  const pressPower = (theApp: App): void => {
+    const kind = powerKind();
+    if (kind === undefined) {
+      st.armedAt = undefined;
+      st.armedKind = undefined;
+      theApp.notice("VM app state has not been read — refreshing instead of guessing");
+      void load();
+      theApp.repaint();
+      return;
+    }
+    press(theApp, kind);
+  };
 
   const disarm = (theApp: App): void => {
     if (st.armedAt === undefined) return;
@@ -781,7 +809,7 @@ export function installDeployHooks(
     const inside = (z?: { x1: number; y1: number; x2: number; y2: number }): boolean =>
       z !== undefined && x >= z.x1 && x <= z.x2 && y >= z.y1 && y <= z.y2;
     if (inside(st.buttonZone)) press(theApp, "deploy");
-    else if (inside(st.powerZone)) press(theApp, powerKind());
+    else if (inside(st.powerZone)) pressPower(theApp);
     else disarm(theApp); // a click anywhere else cancels
   };
 
@@ -791,7 +819,7 @@ export function installDeployHooks(
       return true;
     }
     if (key.kind === "char" && key.ch === "S") {
-      press(theApp, powerKind());
+      pressPower(theApp);
       return true;
     }
     const disarmed = st.armedAt !== undefined;

@@ -167,6 +167,11 @@ export class StartupProgress<K extends string = StartupStepKey> {
   }
 }
 
+/** ` · 400ms` for a step that actually ran; "" for one that never began. */
+function took(s: StartupStep): string {
+  return s.startedAt !== undefined && s.endedAt !== undefined ? ` · ${secs(s.endedAt - s.startedAt)}` : "";
+}
+
 function secs(ms: number): string {
   return ms < 1_000 ? `${Math.max(0, Math.round(ms))}ms` : `${Math.round(ms / 1000)}s`;
 }
@@ -186,11 +191,13 @@ export function startupLines(steps: readonly StartupStep[], nowMs: number): stri
         return `${ACCENT}⟳ ${s.label} · ${secs(elapsed)}${RESET}${MUTED}${detail}${RESET}`;
       }
       case "done": {
-        const took = s.startedAt !== undefined && s.endedAt !== undefined ? ` · ${secs(s.endedAt - s.startedAt)}` : "";
-        return `${OK}✓ ${s.label}${RESET}${MUTED}${took}${detail}${RESET}`;
+        return `${OK}✓ ${s.label}${RESET}${MUTED}${took(s)}${detail}${RESET}`;
       }
       case "failed":
-        return `${BAD}✗ ${s.label}${detail}${RESET}`;
+        // The duration matters on a failure too: 12s says the probe timed out,
+        // 40ms says it was refused outright. Its ABSENCE is also information —
+        // a step that failed without ever starting never ran at all.
+        return `${BAD}✗ ${s.label}${RESET}${MUTED}${took(s)}${RESET}${BAD}${detail}${RESET}`;
       case "skipped":
         return `${MUTED}– ${s.label}${detail}${RESET}`;
     }

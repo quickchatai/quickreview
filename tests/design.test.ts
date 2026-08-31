@@ -188,6 +188,7 @@ const memState: MemTabState = {
   proposals: [{ slug: "tighten-anchor-rule", head: ["Tighten the anchor rule"] }],
   improvements: [{ kind: "pr", number: 12, state: "open", title: "bot improvement" }] as never,
   propLoaded: true,
+  ticketsLoaded: true,
   filedTotal: 1,
   status: "✓ pinned",
 };

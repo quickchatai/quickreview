@@ -89,7 +89,9 @@ describe("buildTuiView — the derived state behind the frame", () => {
   it("an unopened deploy tab is reported as not loaded, never as 'nothing to ship'", () => {
     const v = buildTuiView({ now: NOW, tab: "board", snapshot: snap() });
     expect(v.deploy.loaded).toBe(false);
-    expect(v.deploy.pending_commit_count).toBe(0);
+    // this used to assert `0`, which IS "nothing to ship" — the very
+    // claim the test's name forbids, published to the companion as a number.
+    expect(v.deploy.pending_commit_count).toBeNull();
     expect(deployAnswer(publish(v), NOW)).toContain("has not loaded");
   });
 
