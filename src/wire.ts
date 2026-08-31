@@ -34,6 +34,7 @@ import { fileImprovementPr, fileIssue, type Run } from "./improvements.js";
 import { OpenVikingClient, OpenVikingSupervisor, keyFromFile, openVikingContextAssembler, openVikingStore } from "./openviking/index.js";
 import { OV_REVIEWER_KEY_SECRET, openVikingSessionLifecycle } from "./memory/ovsession.js";
 import type { ContextAssembler, RoundMemory } from "./memory/context.js";
+import { recoverPrForOperator } from "./operator-recovery.js";
 import type { MemoryStore } from "./memory/store.js";
 import { startEodPinWatch } from "./eodpinwatch.js";
 import { reconcileOrphanedRounds } from "./reconcile.js";
@@ -625,42 +626,24 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       // Overseer command files → validated execution (whitelist + caps).
       const commandDeps: CommandDeps = {
         async rerunRound(pr) {
-          const row = d.store.getPr(pr);
-          if (!row) return { ok: false, reason: `unknown PR #${pr}` };
-          const failure = d.store.openReviewFailure(pr);
-          const migrationMarkRepaired = failure?.stage === "posting_receipt"
-            ? d.store.repairMigrationPrecheckReviewedHead(pr)
-            : false;
-          const cancelled = d.store.cancelRunningRounds(pr, "rerun-round");
-          const recoveredFailure = d.store.recoverReviewFailure(pr, "rerun-round");
-          const successorPromoted = d.store.promoteSuccessor(pr);
-          if (!successorPromoted) d.store.upsertPr({ ...row, state: "queued", trigger_ts: new Date().toISOString() });
-          await d.pump();
-          return {
-            ok: true,
-            requeued: pr,
-            ...(recoveredFailure ? { recovery_hold_cleared: recoveredFailure.incident_id } : {}),
-            ...(migrationMarkRepaired ? { migration_precheck_mark_repaired: true } : {}),
-            ...(cancelled.length > 0 ? { cancelled_rounds: cancelled } : {}),
-          };
+          return recoverPrForOperator({ store: d.store, pump: () => d.pump() }, pr, "rerun-round");
         },
         async restartSession(target) {
           if (target === "overseer") {
             const name = await sessions.rotateOverseer();
             return { ok: true, respawned: name };
           }
-          // Kill the tmux session; the next dispatched round rebirths it fresh.
-          await sessions.tmux.killSession(`pr-${target}`).catch(() => {});
-          const row = d.store.getPr(target);
-          let cancelled: number[] = [];
-          if (row && row.state !== "closed") {
-            cancelled = d.store.cancelRunningRounds(target, "restart-session");
-            d.store.recoverReviewFailure(target, "restart-session");
-            const successorPromoted = d.store.promoteSuccessor(target);
-            if (!successorPromoted) d.store.upsertPr({ ...row, state: "queued", trigger_ts: new Date().toISOString() });
-            await d.pump();
-          }
-          return { ok: true, restarted: `pr-${target}`, ...(cancelled.length > 0 ? { cancelled_rounds: cancelled } : {}) };
+          return recoverPrForOperator({
+            store: d.store,
+            pump: () => d.pump(),
+            killSession: async (pr) => {
+              const name = `pr-${pr}`;
+              if (await sessions.tmux.hasSession(name)) await sessions.tmux.killSession(name);
+              if (await sessions.tmux.hasSession(name)) {
+                throw new Error(`session ${name} survived operator restart; refusing ownership reset`);
+              }
+            },
+          }, target, "restart-session");
         },
         pausePr(pr, reason) {
           const row = d.store.getPr(pr);

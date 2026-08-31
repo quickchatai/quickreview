@@ -27,7 +27,7 @@ interface CommandRow {
   payload_sha256: string;
   payload_path: string;
   inject_path: string;
-  status: "pending" | "running" | "acked" | "failed";
+  status: "pending" | "running" | "acked" | "failed" | "cancelled";
   owner_token: string | null;
   attempt: number;
   started_at: string | null;

@@ -198,6 +198,81 @@ describe("durable PR-session command slot", () => {
     }
   });
 
+  it("operator recovery cancels only the target PR's blocking round command", () => {
+    const store = open();
+    store.createSessionCommand(input("cmd-target"));
+    store.createSessionCommand(input("cmd-other", 5409));
+
+    const result = store.cancelBlockingSessionCommandsForOperator(5408, [], "restart-session");
+
+    expect(result).toEqual({ cancelled_command_ids: ["cmd-target"], recovered_wake_ids: [] });
+    expect(store.getSessionCommand("cmd-target")).toMatchObject({ status: "cancelled", failure: "operator restart-session" });
+    expect(store.blockingSessionCommand("pr-5408")).toBeUndefined();
+    expect(store.blockingSessionCommand("pr-5409")?.id).toBe("cmd-other");
+  });
+
+  it("restores non-round payloads byte-for-byte ahead of later held wakes", () => {
+    const store = open();
+    store.createSessionCommand({ ...input("cmd-wake"), kind: "wake", round_no: null });
+    store.holdWake(5408, "later wake\n", "author_reply");
+
+    const result = store.cancelBlockingSessionCommandsForOperator(
+      5408,
+      [{ id: "cmd-wake", payload: "original wake\n" }],
+      "restart-session",
+    );
+
+    expect(result.cancelled_command_ids).toEqual(["cmd-wake"]);
+    expect(store.heldWakes(5408).map((wake) => wake.payload)).toEqual(["original wake\n", "later wake\n"]);
+    expect(store.getSessionCommand("cmd-wake")?.status).toBe("cancelled");
+  });
+
+  it("rolls back when a blocking non-round payload was not recovered", () => {
+    const store = open();
+    store.createSessionCommand({ ...input("cmd-wake"), kind: "wake", round_no: null });
+
+    expect(() => store.cancelBlockingSessionCommandsForOperator(5408, [], "restart-session"))
+      .toThrow(/payload set does not match/);
+    expect(store.blockingSessionCommand("pr-5408")?.id).toBe("cmd-wake");
+    expect(store.heldWakes(5408)).toEqual([]);
+  });
+
+  it("migrates the status constraint so existing rows can be operator-cancelled", () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-session-command-cancelled-"));
+    try {
+      const path = join(dir, "state.db");
+      const old = new Database(path);
+      old.exec(`
+        CREATE TABLE session_commands (
+          id TEXT PRIMARY KEY, pr INTEGER NOT NULL, session TEXT NOT NULL,
+          kind TEXT NOT NULL, round_no INTEGER, payload_sha256 TEXT NOT NULL,
+          payload_path TEXT NOT NULL, inject_path TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('pending','running','acked','failed')),
+          owner_token TEXT, attempt INTEGER NOT NULL DEFAULT 0,
+          unknown_checks INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL, updated_at TEXT NOT NULL, next_check_at TEXT NOT NULL,
+          started_at TEXT, settled_at TEXT, failed_at TEXT, failure TEXT
+        );
+        CREATE UNIQUE INDEX session_commands_one_active
+          ON session_commands(session) WHERE status IN ('pending', 'running');
+        CREATE UNIQUE INDEX session_commands_inject_path ON session_commands(inject_path);
+        CREATE INDEX session_commands_pr_created ON session_commands(pr, created_at);
+      `);
+      old.prepare(`INSERT INTO session_commands
+        (id,pr,session,kind,round_no,payload_sha256,payload_path,inject_path,status,owner_token,attempt,created_at,updated_at,next_check_at)
+        VALUES ('cmd-old',5408,'pr-5408','round',20,?,?,?,'pending',NULL,0,?,?,?)`)
+        .run("a".repeat(64), "/state/old.md", "/inject/old.md", T0, T0, "2026-08-27T20:02:00.000Z");
+      old.close();
+
+      const second = open(path);
+      expect(second.cancelBlockingSessionCommandsForOperator(5408, [], "restart-session").cancelled_command_ids)
+        .toEqual(["cmd-old"]);
+      expect(second.getSessionCommand("cmd-old")?.status).toBe("cancelled");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("reconstructs the same active slot after a store restart", () => {
     const dir = mkdtempSync(join(tmpdir(), "qcr-session-command-"));
     try {

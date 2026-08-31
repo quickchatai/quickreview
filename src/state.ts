@@ -419,6 +419,52 @@ export interface DrainState {
   since: string | null;
 }
 
+const SESSION_COMMAND_COLUMNS_SQL = `(
+  id             TEXT PRIMARY KEY,
+  pr             INTEGER NOT NULL,
+  session        TEXT NOT NULL,
+  kind           TEXT NOT NULL,
+  round_no       INTEGER,
+  payload_sha256 TEXT NOT NULL,
+  payload_path   TEXT NOT NULL,
+  inject_path    TEXT NOT NULL,
+  status         TEXT NOT NULL CHECK (status IN ('pending', 'running', 'acked', 'failed', 'cancelled')),
+  owner_token    TEXT,
+  attempt        INTEGER NOT NULL DEFAULT 0,
+  unknown_checks INTEGER NOT NULL DEFAULT 0,
+  created_at     TEXT NOT NULL,
+  updated_at     TEXT NOT NULL,
+  next_check_at  TEXT NOT NULL,
+  started_at     TEXT,
+  settled_at     TEXT,
+  failed_at      TEXT,
+  failure        TEXT
+)`;
+
+const SESSION_COMMAND_INDEXES_SQL = `
+CREATE UNIQUE INDEX IF NOT EXISTS session_commands_one_active
+  ON session_commands(session) WHERE status IN ('pending', 'running');
+CREATE UNIQUE INDEX IF NOT EXISTS session_commands_inject_path ON session_commands(inject_path);
+CREATE INDEX IF NOT EXISTS session_commands_pr_created ON session_commands(pr, created_at);`;
+
+const PENDING_WAKE_ORDER_SQL = `held_at,
+  CASE WHEN reason LIKE 'operator_recovered:%' THEN 0 ELSE 1 END,
+  id`;
+const PENDING_WAKE_REVERSE_ORDER_SQL = `held_at DESC,
+  CASE WHEN reason LIKE 'operator_recovered:%' THEN 0 ELSE 1 END DESC,
+  id DESC`;
+
+const BLOCKING_SESSION_COMMAND_SQL = `(
+  c.status IN ('pending', 'running')
+  OR (
+    c.status='failed' AND (
+      c.kind!='round'
+      OR NOT EXISTS (SELECT 1 FROM rounds r WHERE r.pr=c.pr AND r.round_no=c.round_no)
+      OR EXISTS (SELECT 1 FROM rounds r WHERE r.pr=c.pr AND r.round_no=c.round_no AND r.status='running')
+    )
+  )
+)`;
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS pr_state (
   number INTEGER PRIMARY KEY,
@@ -591,31 +637,8 @@ CREATE INDEX IF NOT EXISTS events_kind_pr ON events(kind, pr, id);
 -- the partial UNIQUE index permits exactly one pending/running owner per PR
 -- session. Payload bytes live at payload_path; the row is ownership + finite
 -- lease evidence and is shared by round dispatch and ordinary wakes.
-CREATE TABLE IF NOT EXISTS session_commands (
-  id             TEXT PRIMARY KEY,
-  pr             INTEGER NOT NULL,
-  session        TEXT NOT NULL,
-  kind           TEXT NOT NULL,
-  round_no       INTEGER,
-  payload_sha256 TEXT NOT NULL,
-  payload_path   TEXT NOT NULL,
-  inject_path    TEXT NOT NULL,
-  status         TEXT NOT NULL CHECK (status IN ('pending', 'running', 'acked', 'failed')),
-  owner_token    TEXT,
-  attempt        INTEGER NOT NULL DEFAULT 0,
-  unknown_checks INTEGER NOT NULL DEFAULT 0,
-  created_at     TEXT NOT NULL,
-  updated_at     TEXT NOT NULL,
-  next_check_at  TEXT NOT NULL,
-  started_at     TEXT,
-  settled_at     TEXT,
-  failed_at      TEXT,
-  failure        TEXT
-);
-CREATE UNIQUE INDEX IF NOT EXISTS session_commands_one_active
-  ON session_commands(session) WHERE status IN ('pending', 'running');
-CREATE UNIQUE INDEX IF NOT EXISTS session_commands_inject_path ON session_commands(inject_path);
-CREATE INDEX IF NOT EXISTS session_commands_pr_created ON session_commands(pr, created_at);
+CREATE TABLE IF NOT EXISTS session_commands ${SESSION_COMMAND_COLUMNS_SQL};
+${SESSION_COMMAND_INDEXES_SQL}
 -- Durable heartbeat for local correctness supervisors. last_attempt_at
 -- advances before async work; a callback that hangs therefore becomes stale
 -- even while the daemon's process heartbeat keeps advancing.
@@ -876,7 +899,7 @@ export interface AnomalyRecord {
 }
 
 /** Durable command lifecycle at the daemon→Pi boundary. */
-export type SessionCommandStatus = "pending" | "running" | "acked" | "failed";
+export type SessionCommandStatus = "pending" | "running" | "acked" | "failed" | "cancelled";
 export type SessionCommandKind = "round" | "wake" | "legacy";
 
 /** One durable daemon→Pi command. `next_check_at` is non-null in every state so
@@ -1055,7 +1078,37 @@ export class StateStore {
         /* column already present */
       }
     }
+    this.migrateSessionCommandCancelledStatus();
     this.runDataMigrations();
+  }
+
+  /** Existing databases carry a CHECK constraint that predates operator
+   * cancellation. Rebuild this one table in-place; every column and index is
+   * copied, and the transaction makes the old or new shape visible atomically. */
+  private migrateSessionCommandCancelledStatus(): void {
+    const table = this.db
+      .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='session_commands'")
+      .get() as { sql: string } | undefined;
+    if (!table || table.sql.includes("'cancelled'")) return;
+    this.db.transaction(() => {
+      this.db.exec(`
+        DROP INDEX IF EXISTS session_commands_one_active;
+        DROP INDEX IF EXISTS session_commands_inject_path;
+        DROP INDEX IF EXISTS session_commands_pr_created;
+        ALTER TABLE session_commands RENAME TO session_commands_before_cancelled;
+        CREATE TABLE session_commands ${SESSION_COMMAND_COLUMNS_SQL};
+        INSERT INTO session_commands
+          (id, pr, session, kind, round_no, payload_sha256, payload_path, inject_path,
+           status, owner_token, attempt, unknown_checks, created_at, updated_at,
+           next_check_at, started_at, settled_at, failed_at, failure)
+        SELECT id, pr, session, kind, round_no, payload_sha256, payload_path, inject_path,
+           status, owner_token, attempt, unknown_checks, created_at, updated_at,
+           next_check_at, started_at, settled_at, failed_at, failure
+          FROM session_commands_before_cancelled;
+        DROP TABLE session_commands_before_cancelled;
+        ${SESSION_COMMAND_INDEXES_SQL}
+      `);
+    })();
   }
 
   /**
@@ -1670,18 +1723,73 @@ export class StateStore {
   blockingSessionCommand(session: string): SessionCommandRow | undefined {
     return this.db.prepare(
       `SELECT c.* FROM session_commands c
-        WHERE c.session=@session AND (
-          c.status IN ('pending', 'running')
-          OR (
-            c.status='failed' AND (
-              c.kind!='round'
-              OR NOT EXISTS (SELECT 1 FROM rounds r WHERE r.pr=c.pr AND r.round_no=c.round_no)
-              OR EXISTS (SELECT 1 FROM rounds r WHERE r.pr=c.pr AND r.round_no=c.round_no AND r.status='running')
-            )
-          )
-        )
+        WHERE c.session=@session AND ${BLOCKING_SESSION_COMMAND_SQL}
         ORDER BY c.created_at DESC LIMIT 1`,
     ).get({ session }) as SessionCommandRow | undefined;
+  }
+
+  /** Every durable owner that blocks this PR session, oldest first. Both the
+   * PR and canonical session name are required so operator recovery cannot
+   * touch a malformed row belonging to another session. */
+  blockingSessionCommandsForPr(pr: number): SessionCommandRow[] {
+    return this.db.prepare(
+      `SELECT c.* FROM session_commands c
+        WHERE c.pr=@pr AND c.session=@session AND ${BLOCKING_SESSION_COMMAND_SQL}
+        ORDER BY c.created_at, c.id`,
+    ).all({ pr, session: `pr-${pr}` }) as SessionCommandRow[];
+  }
+
+  /**
+   * Terminalize stale ownership after the operator has killed the target Pi.
+   * Non-round commands own the only durable copy of their conversational
+   * payload, so the caller must supply every one byte-for-byte; those payloads
+   * become ordered held wakes in the same transaction that releases the slot.
+   */
+  cancelBlockingSessionCommandsForOperator(
+    pr: number,
+    recovered: Array<{ id: string; payload: string }>,
+    reason: "restart-session",
+  ): { cancelled_command_ids: string[]; recovered_wake_ids: number[] } {
+    const reset = this.db.transaction(() => {
+      const rows = this.blockingSessionCommandsForPr(pr);
+      const expected = rows.filter((row) => row.kind !== "round").map((row) => row.id).sort();
+      const supplied = recovered.map((row) => row.id).sort();
+      if (expected.length !== supplied.length || expected.some((id, i) => id !== supplied[i])) {
+        throw new Error(`operator recovery payload set does not match blocking commands for #${pr}`);
+      }
+      const byId = new Map(recovered.map((row) => [row.id, row.payload]));
+      const wakeIds: number[] = [];
+      const ts = this.ts();
+      for (const row of rows) {
+        if (row.kind !== "round") {
+          const payload = byId.get(row.id);
+          if (payload === undefined) throw new Error(`operator recovery payload missing for ${row.id}`);
+          const inserted = this.db.prepare(
+            "INSERT INTO pending_wakes (pr, payload, reason, held_at) VALUES (?, ?, ?, ?)",
+          ).run(pr, payload, `operator_recovered:${row.kind}:${row.id}`, row.created_at);
+          wakeIds.push(Number(inserted.lastInsertRowid));
+        }
+        const changed = this.db.prepare(
+          `UPDATE session_commands
+              SET status='cancelled', owner_token=NULL, updated_at=@ts,
+                  next_check_at=@ts, failure=@failure
+            WHERE id=@id AND pr=@pr AND session=@session
+              AND status IN ('pending', 'running', 'failed')`,
+        ).run({
+          id: row.id,
+          pr,
+          session: `pr-${pr}`,
+          ts,
+          failure: `operator ${reason}`,
+        }).changes;
+        if (changed !== 1) throw new Error(`operator recovery lost command ${row.id}`);
+      }
+      return { cancelled_command_ids: rows.map((row) => row.id), recovered_wake_ids: wakeIds };
+    })();
+    if (reset.cancelled_command_ids.length > 0) {
+      this.logEvent("session_commands_operator_cancelled", pr, { reason, ...reset });
+    }
+    return reset;
   }
 
   activeSessionCommands(): SessionCommandRow[] {
@@ -1912,21 +2020,24 @@ export class StateStore {
       .prepare("INSERT INTO pending_wakes (pr, payload, reason, held_at) VALUES (?, ?, ?, ?)")
       .run(pr, payload, reason, this.now().toISOString());
     const overflow = this.db
-      .prepare("SELECT id FROM pending_wakes WHERE pr = ? ORDER BY id DESC LIMIT -1 OFFSET ?")
+      .prepare(`SELECT id FROM pending_wakes WHERE pr = ?
+        ORDER BY ${PENDING_WAKE_REVERSE_ORDER_SQL} LIMIT -1 OFFSET ?`)
       .all(pr, cap) as Array<{ id: number }>;
     for (const row of overflow) this.db.prepare("DELETE FROM pending_wakes WHERE id = ?").run(row.id);
     return overflow.map((r) => r.id);
   }
 
   heldWakes(pr: number): PendingWakeRow[] {
-    return this.db.prepare("SELECT * FROM pending_wakes WHERE pr = ? ORDER BY id").all(pr) as PendingWakeRow[];
+    return this.db.prepare(`SELECT * FROM pending_wakes WHERE pr = ?
+      ORDER BY ${PENDING_WAKE_ORDER_SQL}`).all(pr) as PendingWakeRow[];
   }
 
   /** Lease only the oldest held wake. A live lease blocks later rows so
    * concurrent flushers cannot reorder author messages. */
   claimNextHeldWake(pr: number, token: string, leaseBefore: string): PendingWakeRow | null {
     const claim = this.db.transaction((n: number): PendingWakeRow | null => {
-      const row = this.db.prepare("SELECT * FROM pending_wakes WHERE pr = ? ORDER BY id LIMIT 1").get(n) as PendingWakeRow | undefined;
+      const row = this.db.prepare(`SELECT * FROM pending_wakes WHERE pr = ?
+        ORDER BY ${PENDING_WAKE_ORDER_SQL} LIMIT 1`).get(n) as PendingWakeRow | undefined;
       if (!row) return null;
       if (row.claim_token && row.claimed_at && row.claimed_at > leaseBefore) return null;
       const now = this.now().toISOString();
