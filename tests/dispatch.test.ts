@@ -602,6 +602,20 @@ describe("dispatchOnce", () => {
     expect(adapter.calls.filter((c) => c.pr === 26)).toHaveLength(0);
   });
 
+  it("never dispatches a round ahead of an older held conversational wake", async () => {
+    queue(28, "2026-08-13T09:00:00Z");
+    queue(29, "2026-08-13T09:01:00Z");
+    store.holdWake(28, "operator-recovered author reply", "operator_recovered:wake:cmd-28");
+    const { hooks, orders } = recordingHooks();
+
+    const dispatched = await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+
+    expect(dispatched.map((o) => o.pr)).toEqual([29]);
+    expect(orders.map((o) => o.order.pr)).toEqual([29]);
+    expect(store.heldWakes(28)).toHaveLength(1);
+    expect(adapter.calls.filter((c) => c.pr === 28)).toHaveLength(0);
+  });
+
   it("builds the round order from the files API: lenses and the migration gate", async () => {
     queue(31, "2026-08-13T09:00:00Z", { title: "Terraform the ingest cluster", head: "abc123" });
     adapter.files.set(31, [

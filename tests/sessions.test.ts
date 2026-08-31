@@ -689,6 +689,67 @@ describe("durable command ownership", () => {
     }
   });
 
+  it("fences and replays a started ordinary wake under the same id and exact bytes", async () => {
+    const store = new StateStore(join(root, "state", "state.db"), () => new Date("2026-08-13T10:00:00Z"));
+    try {
+      const m = manager(undefined, store);
+      m.setTitleResolver((pr) => (pr === 42 ? order.title : undefined));
+      store.upsertPr({ number: 42, state: "queued", head_sha: "abc123", title: order.title, author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+      liveSessions.add("pr-42");
+      await m.inject(42, "oldest wake 🚀\0body");
+      const original = store.activeSessionCommand("pr-42")!;
+      const expectedBytes = Buffer.from("oldest wake 🚀\0body\n", "utf8");
+      const bytes = readFileSync(original.payload_path);
+      expect(bytes).toEqual(expectedBytes);
+      expect(original.payload_sha256).toBe(createHash("sha256").update(expectedBytes).digest("hex"));
+      store.claimSessionCommand(original.id, "bridge-old", "2026-08-13T10:02:00Z");
+      store.markSessionCommandStarted(original.id, "bridge-old", "2026-08-13T10:45:00Z");
+      for (let i = 0; i < 6; i++) store.holdWake(42, `later-${i}`, "author_reply");
+
+      expect(await m.retrySessionCommand(original.id, "running bound expired")).toBe("retried");
+
+      expect(store.getSessionCommand(original.id)).toMatchObject({
+        id: original.id,
+        kind: "wake",
+        status: "pending",
+        attempt: 1,
+        started_at: null,
+      });
+      expect(readFileSync(original.payload_path)).toEqual(expectedBytes);
+      expect(readFileSync(original.inject_path)).toEqual(expectedBytes);
+      expect(store.heldWakes(42).map((wake) => wake.payload)).toEqual([
+        "later-1", "later-2", "later-3", "later-4", "later-5",
+      ]);
+      const kill = tmuxArgs().findIndex((a) => a[0] === "kill-session" && a.includes("=pr-42"));
+      const birth = tmuxArgs().findIndex((a, index) => index > kill && a[0] === "new-session" && a.includes("pr-42"));
+      expect(kill).toBeGreaterThanOrEqual(0);
+      expect(birth).toBeGreaterThan(kill);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("does not replay an ordinary wake whose settlement wins during the fence", async () => {
+    const store = new StateStore(join(root, "state", "state.db"), () => new Date("2026-08-13T10:00:00Z"));
+    try {
+      const m = manager(undefined, store);
+      m.setTitleResolver(() => order.title);
+      store.upsertPr({ number: 42, state: "queued", head_sha: "abc123", title: order.title, author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+      liveSessions.add("pr-42");
+      await m.inject(42, "author reply");
+      const command = store.activeSessionCommand("pr-42")!;
+      store.claimSessionCommand(command.id, "bridge-old", "2026-08-13T10:02:00Z");
+      store.markSessionCommandStarted(command.id, "bridge-old", "2026-08-13T10:45:00Z");
+      onKillSession = () => { store.finishSessionCommand(command.id, "bridge-old", "acked"); };
+
+      expect(await m.retrySessionCommand(command.id, "expired")).toBe("settled");
+      expect(store.getSessionCommand(command.id)?.status).toBe("acked");
+      expect(tmuxArgs().filter((a) => a[0] === "new-session")).toHaveLength(0);
+    } finally {
+      store.close();
+    }
+  });
+
   it("refuses replay when the old tmux session survives the kill", async () => {
     const store = new StateStore(join(root, "state", "state.db"), () => new Date("2026-08-13T10:00:00Z"));
     try {

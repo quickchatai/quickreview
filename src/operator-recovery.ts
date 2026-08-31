@@ -2,8 +2,8 @@
 // making progress. This is deliberately outside dispatch: it fences
 // the one sticky Pi first, repairs only that PR's command slot, then asks the
 // ordinary pump to decide what work is actually eligible.
-import { createHash } from "node:crypto";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync, readFileSync, renameSync, rmSync } from "node:fs";
 import type { StateStore } from "./state.js";
 
 export type OperatorRecoveryMode = "rerun-round" | "restart-session";
@@ -86,20 +86,40 @@ export async function recoverPrForOperator(
 
     await deps.killSession(pr);
 
-    // The old bridge is fenced. First commit the all-or-nothing ownership
-    // reset while the original inject files remain intact. Only then remove
-    // those files, before any replacement session can be born. A concurrent
-    // supervisor can no longer reconstruct a cancelled command after commit.
-    reset = deps.store.cancelBlockingSessionCommandsForOperator(
-      pr,
-      payloads
-        .filter(({ command }) => command.kind !== "round")
-        .map(({ command, text }) => ({ id: command.id, payload: text })),
-      "restart-session",
-    );
-    for (const { command } of payloads) {
-      if (existsSync(command.inject_path)) rmSync(command.inject_path, { force: true });
+    // Keep the blocker in SQLite while every old inject file is moved out of
+    // the bridge's *.md namespace. That closes the release→cleanup gap: no
+    // concurrent dispatch can birth a replacement Pi beside stale input. If
+    // the exact blocker set changed while kill was in flight, restore the
+    // quarantined files and leave the winner untouched.
+    const quarantined: Array<{ commandId: string; injectPath: string; quarantinePath: string }> = [];
+    try {
+      for (const { command } of payloads) {
+        if (!existsSync(command.inject_path)) continue;
+        const quarantinePath = `${command.inject_path}.operator-recovery-${randomUUID()}`;
+        renameSync(command.inject_path, quarantinePath);
+        quarantined.push({ commandId: command.id, injectPath: command.inject_path, quarantinePath });
+      }
+      reset = deps.store.cancelBlockingSessionCommandsForOperator(
+        pr,
+        payloads
+          .filter(({ command }) => command.kind !== "round")
+          .map(({ command, text }) => ({ id: command.id, payload: text })),
+        "restart-session",
+        blockers.map((command) => command.id),
+      );
+    } catch (error) {
+      const stillBlocking = new Set(deps.store.blockingSessionCommandsForPr(pr).map((command) => command.id));
+      for (const { commandId, injectPath, quarantinePath } of [...quarantined].reverse()) {
+        if (!existsSync(quarantinePath)) continue;
+        // Restore only a command that still owns work. If settlement won the
+        // fence, putting its old file back into *.md would duplicate delivery
+        // beside the successor that caused the blocker-set CAS to refuse.
+        if (stillBlocking.has(commandId) && !existsSync(injectPath)) renameSync(quarantinePath, injectPath);
+        else rmSync(quarantinePath, { force: true });
+      }
+      throw error;
     }
+    for (const { quarantinePath } of quarantined) rmSync(quarantinePath, { force: true });
   }
 
   const failure = deps.store.openReviewFailure(pr);
@@ -108,14 +128,12 @@ export async function recoverPrForOperator(
     : false;
   const cancelled = deps.store.cancelRunningRounds(pr, mode);
   const recoveredFailure = deps.store.recoverReviewFailure(pr, mode);
-  const successorPromoted = deps.store.promoteSuccessor(pr);
-  if (!successorPromoted) {
-    deps.store.upsertPr({
-      ...row,
-      state: "queued",
-      trigger_ts: (deps.now ?? (() => new Date()))().toISOString(),
-    });
-  }
+  const successor = deps.store.successorFor(pr);
+  if (successor) deps.store.promoteSuccessor(pr);
+  else deps.store.queuePrForOperatorRecovery(
+    pr,
+    (deps.now ?? (() => new Date()))().toISOString(),
+  );
 
   await deps.pump();
   const after = deps.store.getPr(pr);
@@ -135,12 +153,15 @@ export async function recoverPrForOperator(
   };
   if (!redispatched) {
     const blocker = deps.store.blockingSessionCommand(`pr-${pr}`);
+    const held = deps.store.heldWakes(pr).length;
     return {
       ok: false,
       ...base,
       reason: blocker
         ? `PR #${pr} remains queued behind session command ${blocker.id} (${blocker.status})`
-        : `PR #${pr} has no running round after ${mode} (state=${after?.state ?? "missing"})`,
+        : held > 0
+          ? `PR #${pr} remains queued behind ${held} held conversational wake(s)`
+          : `PR #${pr} has no running round after ${mode} (state=${after?.state ?? "missing"})`,
       no_op_state: after?.state ?? "missing",
       ...(blocker ? { blocking_command: blocker.id } : {}),
     };

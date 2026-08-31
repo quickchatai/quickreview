@@ -92,19 +92,88 @@ describe("operator PR recovery", () => {
     expect(result).toMatchObject({ ok: true, redispatched: true, cancelled_session_commands: [c.row.id] });
   });
 
-  it("restores a cancelled wake payload before pumping", async () => {
+  it("restores a cancelled wake ahead of dispatch and reports that no round started", async () => {
     const { store, dir, pr } = setup(5454);
     const c = command(store, dir, pr, "wake", "zażółć 🧭\0\n");
     const pump = vi.fn(async () => {
-      store.setPrState(pr, "reviewing");
-      store.startRound(pr, "re-review", ["pass-baseline"], 75);
+      expect(store.heldWakes(pr).map((wake) => wake.payload)).toEqual([c.payload]);
       return [];
     });
 
     const result = await recoverPrForOperator({ store, pump, killSession: async () => {} }, pr, "restart-session");
 
-    expect(result).toMatchObject({ ok: true, recovered_wakes: 1 });
+    expect(result).toMatchObject({ ok: false, redispatched: false, recovered_wakes: 1 });
+    expect(result.reason).toContain("held conversational wake");
     expect(store.heldWakes(pr).map((wake) => wake.payload)).toEqual([c.payload]);
+  });
+
+  it("refuses to cancel a successor command that appears while the old session is being fenced", async () => {
+    const { store, dir, pr } = setup();
+    const old = command(store, dir, pr, "round");
+    const successorPayload = "successor round\n";
+    const successorPayloadPath = join(dir, "successor.payload.md");
+    const successorInjectPath = join(dir, "successor.inject.md");
+    writeFileSync(successorPayloadPath, successorPayload);
+    writeFileSync(successorInjectPath, successorPayload);
+    const pump = vi.fn(async () => []);
+
+    await expect(recoverPrForOperator({
+      store,
+      pump,
+      killSession: async () => {
+        store.claimSessionCommand(old.row.id, "bridge-old", T0);
+        store.markSessionCommandStarted(old.row.id, "bridge-old", T0);
+        store.finishSessionCommand(old.row.id, "bridge-old", "acked");
+        store.createSessionCommand({
+          id: "cmd-successor",
+          pr,
+          session: `pr-${pr}`,
+          kind: "round",
+          round_no: 10,
+          payload_sha256: createHash("sha256").update(successorPayload).digest("hex"),
+          payload_path: successorPayloadPath,
+          inject_path: successorInjectPath,
+          next_check_at: T0,
+        });
+      },
+    }, pr, "restart-session")).rejects.toThrow(/blocker set changed/);
+
+    expect(pump).not.toHaveBeenCalled();
+    expect(store.getSessionCommand("cmd-successor")?.status).toBe("pending");
+    expect(readFileSync(successorInjectPath, "utf8")).toBe(successorPayload);
+    expect(() => readFileSync(old.injectPath)).toThrow(); // the acked predecessor must not re-enter *.md delivery
+  });
+
+  it("never reopens a PR that closes while its old session is being fenced", async () => {
+    const { store, dir, pr } = setup();
+    command(store, dir, pr, "round");
+    const pump = vi.fn(async () => []);
+
+    const result = await recoverPrForOperator({
+      store,
+      pump,
+      killSession: async () => { store.setPrState(pr, "closed"); },
+    }, pr, "restart-session");
+
+    expect(result).toMatchObject({ ok: false, redispatched: false, no_op_state: "closed" });
+    expect(store.getPr(pr)?.state).toBe("closed");
+  });
+
+  it("changes nothing when the old session cannot be fenced", async () => {
+    const { store, dir, pr } = setup();
+    const c = command(store, dir, pr, "wake");
+    const pump = vi.fn(async () => []);
+
+    await expect(recoverPrForOperator({
+      store,
+      pump,
+      killSession: async () => { throw new Error("tmux survived"); },
+    }, pr, "restart-session")).rejects.toThrow(/tmux survived/);
+
+    expect(pump).not.toHaveBeenCalled();
+    expect(store.blockingSessionCommand(`pr-${pr}`)?.id).toBe(c.row.id);
+    expect(readFileSync(c.injectPath, "utf8")).toBe(c.payload);
+    expect(store.heldWakes(pr)).toEqual([]);
   });
 
   it("changes nothing when immutable payload evidence is corrupt", async () => {

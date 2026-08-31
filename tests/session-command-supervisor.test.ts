@@ -75,6 +75,49 @@ function seedRoundCommand(opts: {
   return { id, pr, roundId, round };
 }
 
+function seedWakeCommand(opts: {
+  id?: string;
+  pr?: number;
+  status?: "pending" | "running" | "failed";
+  startedAt?: string;
+  attempt?: number;
+  nextCheckAt?: string;
+} = {}) {
+  const id = opts.id ?? "wake-1";
+  const pr = opts.pr ?? 5454;
+  store.upsertPr({
+    number: pr,
+    state: "queued",
+    head_sha: "abc123",
+    title: `PR ${pr}`,
+    author: "alice",
+    trigger_ts: clock.toISOString(),
+    stale_recheck: 0,
+    migration_gate: 0,
+  });
+  store.createSessionCommand({
+    id,
+    pr,
+    session: `pr-${pr}`,
+    kind: "wake",
+    round_no: null,
+    payload_sha256: "b".repeat(64),
+    payload_path: join(root, "state", "session-commands", `${id}.md`),
+    inject_path: join(root, "inject", `pr-${pr}`, `wake--cmd-${id}.md`),
+    next_check_at: opts.nextCheckAt ?? "2026-08-27T19:45:00.000Z",
+  });
+  if (opts.status === "running" || opts.status === "failed") {
+    store.claimSessionCommand(id, "bridge-1", opts.nextCheckAt ?? "2026-08-27T19:45:00.000Z");
+    if (opts.startedAt) {
+      store.markSessionCommandStarted(id, "bridge-1", opts.nextCheckAt ?? "2026-08-27T19:45:00.000Z");
+      store.db.prepare("UPDATE session_commands SET started_at=? WHERE id=?").run(opts.startedAt, id);
+    }
+    if (opts.status === "failed") store.failActiveSessionCommand(id, "pre-fix failed wake");
+  }
+  if (opts.attempt !== undefined) store.db.prepare("UPDATE session_commands SET attempt=? WHERE id=?").run(opts.attempt, id);
+  return { id, pr };
+}
+
 function hooks(overrides: Partial<SessionHooks> = {}): SessionHooks {
   return {
     async dispatchRound() {},
@@ -106,6 +149,68 @@ function supervisor(
 }
 
 describe("bounded round-stage supervision", () => {
+  it("replays a started ordinary wake at its hard bound instead of making it a permanent blocker", async () => {
+    const { id, pr } = seedWakeCommand({
+      status: "running",
+      startedAt: "2026-08-27T19:00:00.000Z",
+      nextCheckAt: "2026-08-27T19:45:00.000Z",
+    });
+    const retry = vi.fn(async () => "retried" as const);
+
+    await supervisor(hooks({ retrySessionCommand: retry })).supervisor.scan();
+
+    expect(retry).toHaveBeenCalledWith(id, expect.stringContaining("fixed 45-minute running bound"));
+    expect(store.getSessionCommand(id)?.status).toBe("running"); // the production hook performs the fenced reset
+    expect(store.openReviewFailure(pr)).toBeUndefined();
+  });
+
+  it("recovers the pre-fix failed ordinary-wake rows that used to disappear from supervision", async () => {
+    const { id } = seedWakeCommand({ status: "failed", attempt: 1 });
+    const retry = vi.fn(async () => "retried" as const);
+
+    await supervisor(hooks({ retrySessionCommand: retry })).supervisor.scan();
+
+    expect(retry).toHaveBeenCalledWith(id, "pre-fix failed wake");
+    expect(store.getSessionCommand(id)).toMatchObject({ status: "failed", recovery_attempts: 1 });
+  });
+
+  it("stops automatic non-round recovery after finite failed replay attempts", async () => {
+    const { id, pr } = seedWakeCommand({ status: "failed", attempt: 1 });
+    const retry = vi.fn(async () => "retry_failed" as const);
+    const kill = vi.fn(async () => {});
+    const s = supervisor(hooks({ retrySessionCommand: retry, killSession: kill })).supervisor;
+
+    await expect(s.scan()).rejects.toThrow(/recovery failed before replay/);
+    await expect(s.scan()).rejects.toThrow(/recovery failed before replay/);
+    await s.scan();
+
+    expect(retry).toHaveBeenCalledTimes(2);
+    expect(kill).toHaveBeenCalledWith(pr);
+    expect(store.getSessionCommand(id)?.status).toBe("failed");
+    expect(store.openReviewFailure(pr)).toMatchObject({
+      command_id: id,
+      stage: "session_command",
+      attempts: 2,
+      retry_cap: 2,
+      work_owed: 1,
+    });
+    expect(store.dueSessionCommands(clock.toISOString())).toEqual([]);
+  });
+
+  it("does not reopen failed-loud debt when operator cancellation wins the exhaustion fence", async () => {
+    const { id, pr } = seedWakeCommand({ status: "failed", attempt: 1 });
+    store.db.prepare("UPDATE session_commands SET recovery_attempts=2 WHERE id=?").run(id);
+    const kill = vi.fn(async () => {
+      store.db.prepare("UPDATE session_commands SET status='cancelled' WHERE id=?").run(id);
+    });
+
+    await supervisor(hooks({ killSession: kill })).supervisor.scan();
+
+    expect(kill).toHaveBeenCalledWith(pr);
+    expect(store.getSessionCommand(id)?.status).toBe("cancelled");
+    expect(store.openReviewFailure(pr)).toBeUndefined();
+  });
+
   it("cancels an obsolete unstarted predecessor through bounded recovery", async () => {
     const { id, pr, roundId, round } = seedRoundCommand({ status: "pending", nextCheckAt: "2026-08-27T20:45:00.000Z" });
     store.recordSuccessor({ pr, predecessor_round_id: roundId, head_sha: "fresh-head", provenance: "system", reason: "push" });

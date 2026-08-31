@@ -385,7 +385,7 @@ export class PiSessionManager implements SessionHooks {
 
   // ---- birth / adoption --------------------------------------------------
 
-  private writeAtomic(path: string, body: string): void {
+  private writeAtomic(path: string, body: string | Buffer): void {
     mkdirSync(dirname(path), { recursive: true });
     const tmp = `${path}.tmp-${process.pid}-${this.injectSeq++}`;
     writeFileSync(tmp, body);
@@ -558,7 +558,7 @@ export class PiSessionManager implements SessionHooks {
         const payload = readFileSync(command.payload_path);
         const hash = createHash("sha256").update(payload).digest("hex");
         if (hash !== command.payload_sha256) throw new Error(`payload hash ${hash} != ${command.payload_sha256}`);
-        this.writeAtomic(command.inject_path, payload.toString("utf8"));
+        this.writeAtomic(command.inject_path, payload);
         restored.push(command.id);
       } catch (err) {
         const failure = `restart reconstruction failed: ${String(err)}`;
@@ -615,7 +615,7 @@ export class PiSessionManager implements SessionHooks {
           const payload = readFileSync(injectPath);
           const id = randomUUID();
           const payloadPath = this.sessionCommandPayloadPath(id);
-          this.writeAtomic(payloadPath, payload.toString("utf8"));
+          this.writeAtomic(payloadPath, payload);
           store.createSessionCommand({
             id,
             pr: prOfSession(entry.name)!,
@@ -903,14 +903,17 @@ export class PiSessionManager implements SessionHooks {
     }
   }
 
-  /**: retry an unstarted durable command without ever leaving the
-   * possibly-queued copy alive. The old tmux session is killed and absence is
-   * verified BEFORE ownership returns to pending; only then is the same
-   * id/path/payload exposed to a freshly born bridge. */
+  /**: retry one durable command without ever leaving the old
+   * consumer alive beside its replay. Rounds may only use this before start;
+   * an ordinary wake may use it after acceptance because the tmux fence comes
+   * first. In both cases the same id, path and exact payload bytes survive. */
   async retrySessionCommand(commandId: string, _reason: string): Promise<SessionCommandRetryResult> {
     const store = this.commandStore;
     const command = store?.getSessionCommand(commandId);
-    if (!store || !command || (command.status !== "pending" && command.status !== "running") || command.started_at !== null) return "retry_failed";
+    if (
+      !store || !command || !["pending", "running", "failed"].includes(command.status)
+      || (command.kind === "round" && command.started_at !== null)
+    ) return "retry_failed";
 
     let payload: Buffer;
     try {
@@ -928,21 +931,23 @@ export class PiSessionManager implements SessionHooks {
       }
     }
 
-    // Nothing can write a new verdict after the old tmux session is proven
-    // absent. Check filesystem first, then let SQLite atomically fence a
-    // verdict watcher / bridge acceptance that won during the kill.
+    // Nothing can consume or settle the old command after the tmux session is
+    // proven absent. Check the merits lifecycle, then atomically return the
+    // same ownership row to pending. A settlement that won during the kill is
+    // success, never grounds for duplicate replay.
     if (command.kind === "round" && command.round_no !== null) {
       if (existsSync(join(this.root, "verdict", `pr-${command.pr}-round-${command.round_no}.json`))) return "round_finished";
       const round = store.roundsFor(command.pr).find((row) => row.round_no === command.round_no);
       if (!round || round.status !== "running") return "round_finished";
     }
-    if (!store.retryUnstartedSessionCommand(
+    if (!store.retrySessionCommandAfterFence(
       command.id,
       command.attempt,
       this.commandDeadline(this.sessionCommandStartLeaseMs()),
     )) {
       const current = store.getSessionCommand(command.id);
-      if (current?.started_at !== null && current?.started_at !== undefined) return "accepted_race";
+      if (current?.status === "acked") return "settled";
+      if (command.kind === "round" && current?.started_at !== null && current?.started_at !== undefined) return "accepted_race";
       if (command.kind === "round" && command.round_no !== null) {
         const round = store.roundsFor(command.pr).find((row) => row.round_no === command.round_no);
         if (!round || round.status !== "running") return "round_finished";
@@ -950,13 +955,13 @@ export class PiSessionManager implements SessionHooks {
       return "retry_failed";
     }
     try {
-      this.writeAtomic(command.inject_path, payload.toString("utf8"));
+      this.writeAtomic(command.inject_path, payload);
       await this.ensureSessionForWake(command.pr);
       return "retried";
     } catch (error) {
-      // The pending row + immutable payload remain a finite obligation. The
-      // next supervisor scan retries rebirth; declaring terminal failure here
-      // would remove the only due item before round recovery ran.
+      // The pending row + immutable payload remain the one obligation. The
+      // next finite supervisor check retries rebirth; no held-wake conversion
+      // can evict or reorder it.
       console.log(`[quickreviewd] sessions: command ${command.id} recovery rebirth failed: ${String(error)}`);
       return "retry_failed";
     }

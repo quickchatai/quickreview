@@ -697,9 +697,15 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       return false;
     }
     const active = store.blockingSessionCommand(`pr-${row.number}`);
-    if (!active) return true;
-    log(`dispatch: #${row.number} skipped — session command ${active.id} is ${active.status}`);
-    return false;
+    if (active) {
+      log(`dispatch: #${row.number} skipped — session command ${active.id} is ${active.status}`);
+      return false;
+    }
+    if (store.hasHeldWakes(row.number)) {
+      log(`dispatch: #${row.number} skipped — held conversational wakes must drain first`);
+      return false;
+    }
+    return true;
   });
   for (const row of commandEligible.slice(0, slots)) {
     // One PR = one worktree = at most one round in flight. A queued row with a

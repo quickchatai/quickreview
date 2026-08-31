@@ -185,11 +185,16 @@ export class SessionCommandSupervisor {
     if (!due) return;
 
     if (command.status === "failed") {
-      await this.failRound(
-        command,
-        command.started_at === null ? "command_start" : "running_hard_bound",
-        command.failure ?? `command ${command.id} failed without detail`,
-      );
+      const detail = command.failure ?? `command ${command.id} failed without detail`;
+      if (command.kind === "round") {
+        await this.failRound(
+          command,
+          command.started_at === null ? "command_start" : "running_hard_bound",
+          detail,
+        );
+      } else {
+        await this.recoverNonRound(command, detail);
+      }
       return;
     }
     if (command.status === "acked") {
@@ -238,8 +243,8 @@ export class SessionCommandSupervisor {
       });
       if (command.kind === "round" && command.round_no !== null) {
         await this.failRound(command, "command_start", reason);
-      } else if (this.deps.store.failActiveSessionCommand(command.id, reason)) {
-        this.deps.store.logAnomaly("session_command_failed", command.pr, null, reason);
+      } else {
+        await this.recoverNonRound(command, reason);
       }
       return;
     }
@@ -294,6 +299,10 @@ export class SessionCommandSupervisor {
   }
 
   private async recoverMissingStart(command: SessionCommandRow, reason: string): Promise<void> {
+    if (command.kind !== "round") {
+      await this.recoverNonRound(command, reason);
+      return;
+    }
     const retryCap = this.deps.cfg.daemon.session_command_max_start_retries ?? DEFAULT_SESSION_COMMAND_MAX_START_RETRIES;
     // attempt=1 is the original submission; retryCap counts additional starts.
     if (command.attempt <= retryCap && this.deps.hooks.retrySessionCommand) {
@@ -471,9 +480,92 @@ export class SessionCommandSupervisor {
     });
     if (command.kind === "round" && command.round_no !== null) {
       await this.failRound(command, "running_hard_bound", reason);
-    } else if (this.deps.store.failActiveSessionCommand(command.id, reason)) {
-      this.deps.store.logAnomaly("session_command_failed", command.pr, null, reason);
+    } else {
+      await this.recoverNonRound(command, reason);
     }
+  }
+
+  /** Ordinary wakes own conversation work rather than a merits round. Replay
+   * the same row/bytes after the production hook fences the old Pi; never
+   * convert the payload back into the capped held-wake queue. */
+  private async recoverNonRound(command: SessionCommandRow, reason: string): Promise<void> {
+    const retryCap = this.deps.cfg.daemon.session_command_max_start_retries ?? DEFAULT_SESSION_COMMAND_MAX_START_RETRIES;
+    if (command.recovery_attempts < retryCap && this.deps.hooks.retrySessionCommand) {
+      // Spend the allowance before tmux/filesystem work. If rebirth fails
+      // before a bridge reserves the row, the finite bound still advances.
+      if (!this.deps.store.beginSessionCommandRecovery(command.id, command.recovery_attempts)) {
+        throw new Error(`command ${command.id} lost its automatic-recovery claim`);
+      }
+      const recoveryAttempt = command.recovery_attempts + 1;
+      const result = await this.deps.hooks.retrySessionCommand(command.id, reason);
+      if (result === "retried") {
+        this.deps.store.logEvent("session_command_nonround_recovery", command.pr, {
+          command_id: command.id,
+          kind: command.kind,
+          recovery_attempt: recoveryAttempt,
+          retry_cap: retryCap,
+          delivery_attempt: command.attempt,
+          reason,
+        });
+        return;
+      }
+      if (result === "settled") {
+        this.deps.store.logEvent("session_command_nonround_settled_race", command.pr, {
+          command_id: command.id,
+          kind: command.kind,
+          reason,
+        });
+        return;
+      }
+      if (result === "accepted_race") {
+        const next = this.deadlineFromNowSeconds(
+          this.deps.cfg.daemon.session_command_unknown_grace_s ?? DEFAULT_SESSION_COMMAND_UNKNOWN_GRACE_S,
+        );
+        this.deps.store.scheduleSessionCommandCheck(command.id, next);
+        this.deps.store.logEvent("session_command_nonround_recovery_deferred", command.pr, {
+          command_id: command.id,
+          next_check_at: next,
+          reason: "acceptance won recovery race",
+        });
+        return;
+      }
+      // A failed fence/rebirth leaves the same command as the only obligation.
+      // Keep supervisor health red; never release it or submit a successor.
+      throw new Error(`command ${command.id} non-round recovery failed before replay`);
+    }
+
+    if (!this.deps.hooks.killSession) {
+      throw new Error(`cannot exhaust non-round command ${command.id}: kill hook unavailable`);
+    }
+    await this.deps.hooks.killSession(command.pr);
+    const current = this.deps.store.getSessionCommand(command.id);
+    // Settlement or explicit operator cancellation may win while the fence is
+    // in flight. Both terminalize this supervisor obligation; never reopen a
+    // failure over the operator's successful reset.
+    if (!current || current.status === "acked" || current.status === "cancelled") return;
+    if (current.status === "pending" || current.status === "running") {
+      if (!this.deps.store.failActiveSessionCommand(command.id, reason)) return;
+    }
+    const failed = this.deps.store.getSessionCommand(command.id);
+    if (!failed || failed.status !== "failed") return;
+    const row = this.deps.store.getPr(command.pr);
+    this.deps.store.openReviewFailure({
+      pr: command.pr,
+      command_id: command.id,
+      round_id: null,
+      round_no: null,
+      head_sha: row?.head_sha ?? "",
+      stage: "session_command",
+      detail: reason,
+      attempts: failed.recovery_attempts,
+      retry_cap: retryCap,
+    });
+    this.deps.store.logAnomaly(
+      "session_command_recovery_exhausted",
+      command.pr,
+      null,
+      `${reason}; automatic same-command replay exhausted and operator recovery is required`,
+    );
   }
 
   private async failRound(command: SessionCommandRow, stage: RoundInfrastructureStage, detail: string): Promise<void> {

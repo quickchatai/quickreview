@@ -114,6 +114,15 @@ describe("durable PR-session command slot", () => {
     expect(store.dueSessionCommands(T0)).toEqual([]);
   });
 
+  it("durably bounds automatic recovery even before another bridge reserves the replay", () => {
+    const store = open();
+    store.createSessionCommand({ ...input("cmd-a"), kind: "wake", round_no: null });
+
+    expect(store.beginSessionCommandRecovery("cmd-a", 0)).toBe(true);
+    expect(store.beginSessionCommandRecovery("cmd-a", 0)).toBe(false);
+    expect(store.getSessionCommand("cmd-a")).toMatchObject({ recovery_attempts: 1, attempt: 0 });
+  });
+
   it("reconciles a correlated start and supervisor-fails active ownership atomically", () => {
     const store = open();
     store.createSessionCommand(input("cmd-a"));
@@ -191,7 +200,11 @@ describe("durable PR-session command slot", () => {
       old.close();
 
       const migrated = open(path);
-      expect(migrated.getSessionCommand("cmd-old")).toMatchObject({ status: "pending", unknown_checks: 0 });
+      expect(migrated.getSessionCommand("cmd-old")).toMatchObject({
+        status: "pending",
+        unknown_checks: 0,
+        recovery_attempts: 0,
+      });
       expect(migrated.supervisorLease("round-stage")).toBeUndefined();
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -203,7 +216,7 @@ describe("durable PR-session command slot", () => {
     store.createSessionCommand(input("cmd-target"));
     store.createSessionCommand(input("cmd-other", 5409));
 
-    const result = store.cancelBlockingSessionCommandsForOperator(5408, [], "restart-session");
+    const result = store.cancelBlockingSessionCommandsForOperator(5408, [], "restart-session", ["cmd-target"]);
 
     expect(result).toEqual({ cancelled_command_ids: ["cmd-target"], recovered_wake_ids: [] });
     expect(store.getSessionCommand("cmd-target")).toMatchObject({ status: "cancelled", failure: "operator restart-session" });
@@ -220,6 +233,7 @@ describe("durable PR-session command slot", () => {
       5408,
       [{ id: "cmd-wake", payload: "original wake\n" }],
       "restart-session",
+      ["cmd-wake"],
     );
 
     expect(result.cancelled_command_ids).toEqual(["cmd-wake"]);
@@ -227,11 +241,30 @@ describe("durable PR-session command slot", () => {
     expect(store.getSessionCommand("cmd-wake")?.status).toBe("cancelled");
   });
 
+  it("never evicts an operator-recovered payload when later wakes fill the cap", () => {
+    const store = open();
+    store.createSessionCommand({ ...input("cmd-wake"), kind: "wake", round_no: null });
+    for (let i = 0; i < 5; i++) store.holdWake(5408, `later-${i}`, "author_reply");
+
+    store.cancelBlockingSessionCommandsForOperator(
+      5408,
+      [{ id: "cmd-wake", payload: "recovered-first" }],
+      "restart-session",
+      ["cmd-wake"],
+    );
+    store.holdWake(5408, "latest", "author_reply");
+
+    const wakes = store.heldWakes(5408);
+    expect(wakes).toHaveLength(5);
+    expect(wakes[0]).toMatchObject({ payload: "recovered-first", reason: "operator_recovered:wake:cmd-wake" });
+    expect(wakes.slice(1).map((wake) => wake.payload)).toEqual(["later-2", "later-3", "later-4", "latest"]);
+  });
+
   it("rolls back when a blocking non-round payload was not recovered", () => {
     const store = open();
     store.createSessionCommand({ ...input("cmd-wake"), kind: "wake", round_no: null });
 
-    expect(() => store.cancelBlockingSessionCommandsForOperator(5408, [], "restart-session"))
+    expect(() => store.cancelBlockingSessionCommandsForOperator(5408, [], "restart-session", ["cmd-wake"]))
       .toThrow(/payload set does not match/);
     expect(store.blockingSessionCommand("pr-5408")?.id).toBe("cmd-wake");
     expect(store.heldWakes(5408)).toEqual([]);
@@ -265,7 +298,7 @@ describe("durable PR-session command slot", () => {
       old.close();
 
       const second = open(path);
-      expect(second.cancelBlockingSessionCommandsForOperator(5408, [], "restart-session").cancelled_command_ids)
+      expect(second.cancelBlockingSessionCommandsForOperator(5408, [], "restart-session", ["cmd-old"]).cancelled_command_ids)
         .toEqual(["cmd-old"]);
       expect(second.getSessionCommand("cmd-old")?.status).toBe("cancelled");
     } finally {

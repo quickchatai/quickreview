@@ -431,6 +431,7 @@ const SESSION_COMMAND_COLUMNS_SQL = `(
   status         TEXT NOT NULL CHECK (status IN ('pending', 'running', 'acked', 'failed', 'cancelled')),
   owner_token    TEXT,
   attempt        INTEGER NOT NULL DEFAULT 0,
+  recovery_attempts INTEGER NOT NULL DEFAULT 0,
   unknown_checks INTEGER NOT NULL DEFAULT 0,
   created_at     TEXT NOT NULL,
   updated_at     TEXT NOT NULL,
@@ -448,10 +449,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS session_commands_inject_path ON session_comman
 CREATE INDEX IF NOT EXISTS session_commands_pr_created ON session_commands(pr, created_at);`;
 
 const PENDING_WAKE_ORDER_SQL = `held_at,
-  CASE WHEN reason LIKE 'operator_recovered:%' THEN 0 ELSE 1 END,
+  CASE WHEN reason GLOB 'operator_recovered:*' THEN 0 ELSE 1 END,
   id`;
 const PENDING_WAKE_REVERSE_ORDER_SQL = `held_at DESC,
-  CASE WHEN reason LIKE 'operator_recovered:%' THEN 0 ELSE 1 END DESC,
+  CASE WHEN reason GLOB 'operator_recovered:*' THEN 0 ELSE 1 END DESC,
   id DESC`;
 
 const BLOCKING_SESSION_COMMAND_SQL = `(
@@ -916,6 +917,9 @@ export interface SessionCommandRow {
   status: SessionCommandStatus;
   owner_token: string | null;
   attempt: number;
+  /** Automatic kill-before-replay attempts. Unlike bridge reservations, this
+   * advances even when session rebirth fails before a new owner can claim. */
+  recovery_attempts: number;
   /** Consecutive supervisor observations where JSONL/liveness evidence was
    * unavailable. Reset on retry; bounded so unknown cannot buy silence. */
   unknown_checks: number;
@@ -960,8 +964,9 @@ export interface PendingWakeRow {
   attempts: number;
 }
 
-/** Per-PR ceiling on held wakes. A PR whose author writes more than this while
- * one round runs loses the oldest holds — logged, never silent. */
+/** Per-PR ceiling on held wakes. Ordinary wakes yield their oldest rows when
+ * pressure exceeds this cap. Operator-recovered rows are protected: if those
+ * alone exceed the cap, preserving owed work wins over the numeric ceiling. */
 export const MAX_HELD_WAKES = 5;
 
 /**
@@ -1071,6 +1076,9 @@ export class StateStore {
       "ALTER TABLE pending_wakes ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
       // one finite ambiguity allowance per command attempt.
       "ALTER TABLE session_commands ADD COLUMN unknown_checks INTEGER NOT NULL DEFAULT 0",
+      // automatic same-command replay attempts are durable even when
+      // rebirth fails before a new bridge can reserve the command.
+      "ALTER TABLE session_commands ADD COLUMN recovery_attempts INTEGER NOT NULL DEFAULT 0",
     ]) {
       try {
         this.db.exec(ddl);
@@ -1099,10 +1107,10 @@ export class StateStore {
         CREATE TABLE session_commands ${SESSION_COMMAND_COLUMNS_SQL};
         INSERT INTO session_commands
           (id, pr, session, kind, round_no, payload_sha256, payload_path, inject_path,
-           status, owner_token, attempt, unknown_checks, created_at, updated_at,
+           status, owner_token, attempt, recovery_attempts, unknown_checks, created_at, updated_at,
            next_check_at, started_at, settled_at, failed_at, failure)
         SELECT id, pr, session, kind, round_no, payload_sha256, payload_path, inject_path,
-           status, owner_token, attempt, unknown_checks, created_at, updated_at,
+           status, owner_token, attempt, recovery_attempts, unknown_checks, created_at, updated_at,
            next_check_at, started_at, settled_at, failed_at, failure
           FROM session_commands_before_cancelled;
         DROP TABLE session_commands_before_cancelled;
@@ -1224,6 +1232,15 @@ export class StateStore {
 
   setPrState(n: number, state: PrLifecycleState): void {
     this.db.prepare("UPDATE pr_state SET state = ?, updated_at = ? WHERE number = ?").run(state, this.ts(), n);
+  }
+
+  /** Publish an operator rerun without writing a pre-fence PR snapshot back
+   * over newer reconcile/webhook state. A close that wins the fence is final. */
+  queuePrForOperatorRecovery(n: number, triggerTs: string): boolean {
+    return this.db.prepare(
+      `UPDATE pr_state SET state='queued', trigger_ts=?, updated_at=?
+        WHERE number=? AND state!='closed'`,
+    ).run(triggerTs, this.ts(), n).changes === 1;
   }
 
   // ---- rounds ------------------------------------------------------------
@@ -1749,9 +1766,15 @@ export class StateStore {
     pr: number,
     recovered: Array<{ id: string; payload: string }>,
     reason: "restart-session",
+    expectedCommandIds: string[],
   ): { cancelled_command_ids: string[]; recovered_wake_ids: number[] } {
     const reset = this.db.transaction(() => {
       const rows = this.blockingSessionCommandsForPr(pr);
+      const currentIds = rows.map((row) => row.id).sort();
+      const capturedIds = [...expectedCommandIds].sort();
+      if (currentIds.length !== capturedIds.length || currentIds.some((id, i) => id !== capturedIds[i])) {
+        throw new Error(`operator recovery blocker set changed while fencing #${pr}`);
+      }
       const expected = rows.filter((row) => row.kind !== "round").map((row) => row.id).sort();
       const supplied = recovered.map((row) => row.id).sort();
       if (expected.length !== supplied.length || expected.some((id, i) => id !== supplied[i])) {
@@ -1784,12 +1807,21 @@ export class StateStore {
         }).changes;
         if (changed !== 1) throw new Error(`operator recovery lost command ${row.id}`);
       }
-      return { cancelled_command_ids: rows.map((row) => row.id), recovered_wake_ids: wakeIds };
+      const droppedWakeIds = this.trimHeldWakes(pr);
+      return {
+        cancelled_command_ids: rows.map((row) => row.id),
+        recovered_wake_ids: wakeIds,
+        dropped_wake_ids: droppedWakeIds,
+      };
     })();
+    const result = {
+      cancelled_command_ids: reset.cancelled_command_ids,
+      recovered_wake_ids: reset.recovered_wake_ids,
+    };
     if (reset.cancelled_command_ids.length > 0) {
       this.logEvent("session_commands_operator_cancelled", pr, { reason, ...reset });
     }
-    return reset;
+    return result;
   }
 
   activeSessionCommands(): SessionCommandRow[] {
@@ -1800,13 +1832,22 @@ export class StateStore {
 
   /** Finite command-stage obligations. Acked round commands remain due only
    * while their round is still running: settlement without a verdict is a
-   * liveness failure, whereas completed historical commands need no scans. */
+   * liveness failure, whereas completed historical commands need no scans.
+   * A failed non-round command remains due until bounded same-command replay
+   * succeeds or a durable review_failure records operator-owned exhaustion. */
   dueSessionCommands(at: string): SessionCommandRow[] {
     return this.db.prepare(
       `SELECT c.* FROM session_commands c
         WHERE c.next_check_at <= @at
           AND (
             c.status IN ('pending', 'running')
+            OR (
+              c.status='failed' AND c.kind!='round'
+              AND NOT EXISTS (
+                SELECT 1 FROM review_failures f
+                 WHERE f.command_id=c.id AND f.work_owed=1
+              )
+            )
             OR (
               c.status IN ('acked', 'failed') AND c.kind='round'
               AND EXISTS (
@@ -1846,6 +1887,23 @@ export class StateStore {
       `UPDATE session_commands SET updated_at=@ts, next_check_at=@next
         WHERE id=@id AND status IN ('pending', 'running', 'acked', 'failed')`,
     ).run({ id, ts, next: nextCheckAt }).changes === 1;
+  }
+
+  /** Spend one durable automatic replay allowance before crossing the async
+   * tmux/filesystem boundary. A failed rebirth therefore cannot retry forever
+   * merely because no new bridge lived long enough to increment `attempt`. */
+  beginSessionCommandRecovery(id: string, expectedAttempts: number): boolean {
+    const ts = this.ts();
+    return this.db.prepare(
+      `UPDATE session_commands
+          SET recovery_attempts=recovery_attempts+1, updated_at=@ts
+        WHERE id=@id AND recovery_attempts=@expected
+          AND status IN ('pending', 'running', 'failed')
+          AND NOT EXISTS (
+            SELECT 1 FROM review_failures f
+             WHERE f.command_id=session_commands.id AND f.work_owed=1
+          )`,
+    ).run({ id, expected: expectedAttempts, ts }).changes === 1;
   }
 
   /** Supervisor terminalization is owner-independent only after external
@@ -1936,12 +1994,17 @@ export class StateStore {
   }
 
   /** Kill-before-replay CAS. The caller has already proved the old session is
-   * absent; this transaction then refuses if acceptance or round completion
-   * won while that kill was in flight. */
-  retryUnstartedSessionCommand(id: string, expectedAttempt: number, nextCheckAt: string): boolean {
+   * absent. A round may only replay before correlated acceptance; ordinary
+   * wakes may replay after acceptance because the old consumer is fenced and
+   * the same row still owns the immutable payload. */
+  retrySessionCommandAfterFence(id: string, expectedAttempt: number, nextCheckAt: string): boolean {
     const retry = this.db.transaction((): boolean => {
       const row = this.getSessionCommand(id);
-      if (!row || (row.status !== "pending" && row.status !== "running") || row.started_at !== null || row.attempt !== expectedAttempt) return false;
+      if (
+        !row || !["pending", "running", "failed"].includes(row.status)
+        || row.attempt !== expectedAttempt
+        || (row.kind === "round" && row.started_at !== null)
+      ) return false;
       if (row.kind === "round") {
         const round = this.db.prepare(
           "SELECT status FROM rounds WHERE pr=? AND round_no=?",
@@ -1954,8 +2017,14 @@ export class StateStore {
             SET status='pending', owner_token=NULL, updated_at=@ts,
                 next_check_at=@next, unknown_checks=0,
                 started_at=NULL, settled_at=NULL, failed_at=NULL, failure=NULL
-          WHERE id=@id AND status IN ('pending', 'running')
-            AND started_at IS NULL AND attempt=@attempt`,
+          WHERE id=@id AND status IN ('pending', 'running', 'failed')
+            AND attempt=@attempt
+            AND NOT EXISTS (
+              SELECT 1 FROM session_commands active
+               WHERE active.session=session_commands.session
+                 AND active.id!=session_commands.id
+                 AND active.status IN ('pending', 'running')
+            )`,
       ).run({ id, attempt: expectedAttempt, ts, next: nextCheckAt }).changes === 1;
     });
     return retry();
@@ -2012,6 +2081,23 @@ export class StateStore {
 
   // ---- held wakes (single-shepherd S4) -----------------------------------
 
+  /** Enforce the ordinary wake budget without ever deleting an obligation
+   * restored by operator recovery. Protected rows consume capacity first; if
+   * they alone exceed the cap, all survive and new ordinary wakes are dropped. */
+  private trimHeldWakes(pr: number, cap = MAX_HELD_WAKES): number[] {
+    const protectedCount = (this.db.prepare(
+      "SELECT COUNT(*) AS c FROM pending_wakes WHERE pr=? AND reason GLOB 'operator_recovered:*'",
+    ).get(pr) as { c: number }).c;
+    const ordinaryCap = Math.max(0, cap - protectedCount);
+    const overflow = this.db.prepare(
+      `SELECT id FROM pending_wakes
+        WHERE pr=? AND reason NOT GLOB 'operator_recovered:*'
+        ORDER BY ${PENDING_WAKE_REVERSE_ORDER_SQL} LIMIT -1 OFFSET ?`,
+    ).all(pr, ordinaryCap) as Array<{ id: number }>;
+    for (const row of overflow) this.db.prepare("DELETE FROM pending_wakes WHERE id = ?").run(row.id);
+    return overflow.map((row) => row.id);
+  }
+
   /** Hold a rendered wake until this PR's round ends. Returns the ids dropped
    * to stay under `cap` (oldest first) so the caller can log them — a silently
    * dropped author reply is worse than a late one. */
@@ -2019,17 +2105,16 @@ export class StateStore {
     this.db
       .prepare("INSERT INTO pending_wakes (pr, payload, reason, held_at) VALUES (?, ?, ?, ?)")
       .run(pr, payload, reason, this.now().toISOString());
-    const overflow = this.db
-      .prepare(`SELECT id FROM pending_wakes WHERE pr = ?
-        ORDER BY ${PENDING_WAKE_REVERSE_ORDER_SQL} LIMIT -1 OFFSET ?`)
-      .all(pr, cap) as Array<{ id: number }>;
-    for (const row of overflow) this.db.prepare("DELETE FROM pending_wakes WHERE id = ?").run(row.id);
-    return overflow.map((r) => r.id);
+    return this.trimHeldWakes(pr, cap);
   }
 
   heldWakes(pr: number): PendingWakeRow[] {
     return this.db.prepare(`SELECT * FROM pending_wakes WHERE pr = ?
       ORDER BY ${PENDING_WAKE_ORDER_SQL}`).all(pr) as PendingWakeRow[];
+  }
+
+  hasHeldWakes(pr: number): boolean {
+    return (this.db.prepare("SELECT COUNT(*) AS c FROM pending_wakes WHERE pr=?").get(pr) as { c: number }).c > 0;
   }
 
   /** Lease only the oldest held wake. A live lease blocks later rows so
