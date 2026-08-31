@@ -273,29 +273,49 @@ const GIT_READONLY_SUBVERBS: Readonly<Record<string, ReadonlySet<string>>> = {
  *   1. INJECT config inline — `-c key=value`, `--config-env=key=ENVVAR`.
  *   2. NAME a program — `--upload-pack`, `--receive-pack`, `--exec`,
  *      `--exec-path` (where git looks for its own subcommand binaries).
- *   3. RELOCATE the config file git reads — `--git-dir`, `--work-tree`.
+ *   3. RELOCATE the config git reads — at ANY of its three scopes:
+ *        · repo    — `--git-dir`, `--work-tree`, `GIT_DIR`, `GIT_WORK_TREE`
+ *        · global  — `GIT_CONFIG_GLOBAL`, and the search path it falls back
+ *                    to: `HOME` (`$HOME/.gitconfig`) and `XDG_CONFIG_HOME`
+ *                    (`$XDG_CONFIG_HOME/git/config`)
+ *        · system  — `GIT_CONFIG_SYSTEM`
+ *      The env half lives in COMMAND_INJECTING_ENV below.
  *
  * All three end in the same place, because git executes config-supplied shell
  * from `alias.*` (`!cmd`), `core.pager`, `credential.helper` (`!cmd`),
  * `core.sshCommand`, `diff.external`, `diff.*.textconv` and `filter.*.clean`.
  *
- * VERIFIED by execution on this host, not inferred:
+ * VERIFIED by execution, not inferred:
  *
  *   git -c "alias.probe=!<cmd>" probe                     → ran <cmd>
  *   git --git-dir=<dir> diff --no-index <A> <B>           → ran <cmd>
+ *   HOME=<dir> git diff --no-index <A> <B>                → ran <cmd>
+ *   XDG_CONFIG_HOME=<dir> git diff --no-index <A> <B>     → ran <cmd>
  *
- * The third is the worst of them and was the last found. The minimum viable
- * evil "repo" is ONE PLAIN-TEXT FILE: `--no-index` means git never validates
- * the directory as a repository, so there is no `objects/`, no `refs/`, no
- * `git init` and no exec bit — a session writes `config` with its ordinary
- * write tool. `--ext-diff` is NOT required, because `git diff` honours
- * `diff.external` by default. Both the flag and `GIT_DIR=` work; the
- * space-separated `--git-dir <dir>` blocked only incidentally, because the
- * path landed where the verb was expected.
+ * Category 3 is the worst of them and took two rounds to see whole. The
+ * minimum viable evil "repo" is ONE PLAIN-TEXT FILE: `--no-index` means git
+ * never validates the directory as a repository, so there is no `objects/`,
+ * no `refs/`, no `git init` and no exec bit — a session writes the config
+ * with its ordinary write tool. `--ext-diff` is NOT required, because
+ * `git diff` honours `diff.external` by default.
  *
- * `-C <dir>` is deliberately NOT here: it only changes directory and can
- * neither relocate config nor name a command — and the alias-from-another-repo
- * trick it used to enable is dead under the verb allowlist above.
+ * The lesson of the miss is worth keeping: the explicit pointers
+ * (`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`) were blocked while the implicit
+ * SEARCH PATH they fall back to — `HOME`, `XDG_CONFIG_HOME` — was open. The
+ * category is any control over WHICH CONFIG GIT READS, not the subset of it
+ * that names a config file outright.
+ *
+ * `-C <dir>` is deliberately NOT here, and the reason is narrower than it once
+ * claimed. `-C` DOES reach config: it chdirs, git then DISCOVERS the
+ * repository there and reads its config, arriving at the same `diff.external`.
+ * (An earlier note here asserted it "can neither relocate config nor name a
+ * command" — that was false, and produced by testing against a stub `.git`
+ * rather than a real repository.) It stays allowed because discovery requires
+ * a VALID repository whose config the session controls, and `git init` and
+ * `git clone` are both off the verb allowlist above — so the session cannot
+ * create one. That is a real bound, but it is a different bound, and this file
+ * has already paid once for a docstring asserting a closedness it did not
+ * have.
  */
 const GIT_COMMAND_INJECTING_OPTS =
   /^(?:-c|--config-env|--upload-pack|--receive-pack|--exec|--exec-path|--git-dir|--work-tree)(?:=|$)/;
@@ -375,10 +395,20 @@ const COMMAND_INJECTING_ENV = new Set([
   "GIT_PROXY_COMMAND", "GIT_CONFIG", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM",
   "GIT_CONFIG_COUNT", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_TEMPLATE_DIR",
   // The env twins of `--git-dir` / `--work-tree` / `--exec-path`: the
-  // config-RELOCATING third member of the family. `GIT_DIR=<dir> git diff
-  // --no-index A B` runs `diff.external` out of `<dir>/config` — VERIFIED
-  // executing on this host, with `<dir>` holding nothing but that one file.
+  // config-RELOCATING third member of the family, at the REPO scope.
+  // `GIT_DIR=<dir> git diff --no-index A B` runs `diff.external` out of
+  // `<dir>/config` — VERIFIED executing, with `<dir>` holding nothing but
+  // that one plain-text file.
   "GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_EXEC_PATH",
+  // …and the same category at the GLOBAL/XDG scope. `GIT_CONFIG_GLOBAL` and
+  // `GIT_CONFIG_SYSTEM` above are the EXPLICIT pointers; these two are the
+  // implicit SEARCH PATH those fall back to — `$HOME/.gitconfig` and
+  // `$XDG_CONFIG_HOME/git/config`. Blocking the explicit door and leaving the
+  // implicit one open beside it is exactly the shape of the miss. Same
+  // primitive and the same cost as the repo-scope form: one plain-text file
+  // written with the ordinary write tool, plus one ALLOWED command.
+  // VERIFIED executing: HOME=<dir> git diff --no-index A B.
+  "HOME", "XDG_CONFIG_HOME",
   "EDITOR", "VISUAL", "SSH_ASKPASS",
   "LD_PRELOAD", "LD_AUDIT", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES",
   "BASH_ENV", "ENV", "PATH", "SHELL", "IFS", "PYTHONSTARTUP", "NODE_OPTIONS",

@@ -323,6 +323,38 @@ describe("checkBashCommand — git is read-only", () => {
   });
 
   /**
+   * The FOURTH member of "relocate", and the one that showed the category had
+   * been implemented too narrowly: git reads config at THREE scopes, and the
+   * global/XDG scope has its own relocation controls.
+   *
+   * `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM` — the EXPLICIT pointers — were
+   * already blocked. `HOME` and `XDG_CONFIG_HOME` are the implicit SEARCH PATH
+   * those fall back to (`$HOME/.gitconfig`, `$XDG_CONFIG_HOME/git/config`), and
+   * were open. The explicit door was shut and the implicit one beside it was
+   * not.
+   *
+   * VERIFIED by execution:
+   *   git config -f <dir>/.gitconfig diff.external 'sh -c "<cmd>" --'
+   *   HOME=<dir> git diff --no-index <dir>/A <dir>/B          → ran <cmd>
+   *   XDG_CONFIG_HOME=<dir> git diff --no-index …             → ran <cmd>
+   *
+   * Same primitive and the same cost as the repo-scope form: one plain-text
+   * file plus one guard-ALLOWED command. No repo, no `git init`, no exec bit,
+   * no `--ext-diff`.
+   */
+  it("blocks HOME / XDG_CONFIG_HOME — the global scope relocates too", () => {
+    // The exact verified chains.
+    block("HOME=/tmp/g6 git diff --no-index /tmp/g6/A /tmp/g6/B", "names a program");
+    block("XDG_CONFIG_HOME=/tmp/g8 git diff --no-index /tmp/g8/A /tmp/g8/B", "names a program");
+    // The explicit pointers this category already covered stay covered — the
+    // point is that all four spellings reach the same config.
+    block("GIT_CONFIG_GLOBAL=/tmp/g6/.gitconfig git log", "names a program");
+    block("GIT_CONFIG_SYSTEM=/tmp/g6/.gitconfig git log", "names a program");
+    // …and the rule is the variable, not the command it prefixes.
+    block("HOME=/tmp/g6 rg foo src/", "names a program");
+  });
+
+  /**
    * The regression the third round caught: `-c` after the verb is git's
    * COMBINED MERGE DIFF option, not config injection — and CLAUDE.md's
    * ratified recheck decision requires auditing a hand-resolved conflict
