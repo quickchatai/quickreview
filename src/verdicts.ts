@@ -779,7 +779,13 @@ export class VerdictWatcher {
     // Deterministic rules first, then the session's own requests — which are
     // filtered against `targets` inside deliverEscalations, daemon-side.
     const candidates: unknown[] = [
-      ...evaluateEscalationRules(cfg, facts),
+      // A rule that FIRED but produced nothing deliverable is logged, never
+      // silent: the operator configured it, it matched, and they would
+      // otherwise have no way to see why nobody was told (re-review).
+      ...evaluateEscalationRules(cfg, facts, (rule, refusal) => {
+        store.logEvent("escalation_rule_refused", v.pr, { rule: rule.name, to: rule.to, refusal, round_no: v.round_no });
+        this.log(`escalation: rule "${rule.name}" fired on #${v.pr} but produced nothing — ${refusal}`);
+      }),
       ...(cfg.session_judgement ? (v.escalations ?? []) : []),
     ];
     if (candidates.length === 0) return;

@@ -34,6 +34,7 @@ import {
   type EscalationRequest,
 } from "../src/escalation.js";
 import { MutationGate, type MutationIntent } from "../src/gate.js";
+import { postingMarker, roundPostingKey } from "../src/posting-receipt.js";
 import { makePostingGuard, type GuardAdapter } from "../src/guards.js";
 import { buildRoundOrder } from "../src/dispatch.js";
 import { StateStore } from "../src/state.js";
@@ -287,10 +288,14 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
       "Please review it.",
     ]) {
       expect(asksForWholeReview(q), q).toBe(true);
-      const v = validateEscalationRequest({ ...request(), question: q, origin: "rule" }, c);
+      // Session origin: this is the text a MODEL wrote, and it is the text the
+      // belt guards. (A rule's question is our own template over the
+      // operator's config and is exempt — see the test below.)
+      const v = validateEscalationRequest({ ...request(), question: q }, on({ session_judgement: true }), CHANGED);
       expect(v.ok, q).toBe(false);
       if (!v.ok) expect(v.refusal).toBe("asks-for-whole-review");
     }
+    void c;
   });
 
   it("lets a genuinely narrow question through", () => {
@@ -444,6 +449,170 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
     ]) {
       expect(asksForWholeReview(q), q).toBe(false);
     }
+  });
+
+  it("SCOPE-OF-EFFECT questions are not whole-review asks — the belt's own failure mode", () => {
+    // re-review, N2, and the reason this describe exists twice over.
+    //
+    // The second cut of the predicate treated `whole`, `entire`, `everything`,
+    // `at all`, `overall` as damning ON THEIR OWN, reasoning that "nothing
+    // narrow needs them". That is false: they are the standard vocabulary of
+    // SCOPE-OF-EFFECT questions, which is exactly what a narrow escalation
+    // asks — the first line below is the canonical thing this feature exists
+    // for. It refused 9 of 12 such questions.
+    //
+    // A false positive here is a SILENT DROP: `escalation_refused`, no
+    // delivery, nobody told. So the belt is tuned to UNDER-block, and this
+    // negative set is the pin. The previous negative set could not see the
+    // bug because every phrasing in it avoided the trigger words.
+    for (const q of [
+      "Does this lock the whole row, or just the counter?",
+      "Is the entire cache invalidated here, or only the tenant slice?",
+      "Does this drop everything in the retry queue?",
+      "Is this index used at all?",
+      "Is the overall timeout still 30s after this?",
+      "Does this retry the entire request, or only the failed page?",
+      "Is the whole table rewritten by this migration, or just the new column?",
+      "Does the entire batch fail if one row does?",
+      "Is everything in this payload serialised, or only the public keys?",
+      "Does this invalidate the whole tenant namespace at all, or just one key?",
+      "Is the whole lock held for the duration, or released between pages?",
+      "Does this reset everything in the session, overall?",
+      // These three carry an ARTIFACT word as well, so they are what makes
+      // dropping `at all` and `overall` from BREADTH load-bearing rather than
+      // decorative — without the drop, the conjunction fires on them.
+      "Is this branch used at all?",
+      "Is the overall latency of these changes affected?",
+      "Does this diff alter the timeout at all?",
+    ]) {
+      expect(asksForWholeReview(q), q).toBe(false);
+    }
+  });
+
+  it("a breadth word DOES damn once it is talking about the change", () => {
+    // The other half of the same rule: "the whole row" is narrow, "the whole
+    // diff" is not. Both sides pinned so neither can drift alone.
+    for (const q of [
+      "Could you look over the whole diff?",
+      "Can you go through the entire patch?",
+      "Is everything in this pull request ready to merge?",
+      "Please review the whole thing.",
+    ]) {
+      expect(asksForWholeReview(q), q).toBe(true);
+    }
+  });
+
+  it("a fired rule is NEVER silently dropped by wording — the operator's own words cannot break it", () => {
+    // Two things this pins together (re-review):
+    //
+    //  * the rule-built strings are back to their natural phrasing — they were
+    //    briefly written defensively to dodge the belt, and needing to dodge
+    //    was the signal that the belt was wrong;
+    //  * the belt does not run on rule-origin text at all, so an operator who
+    //    names a label "review the whole thing" still gets their escalation.
+    //    That case is deliberately in the list: it is the one that would be a
+    //    silent drop otherwise.
+    const cases: Array<[Record<string, unknown>, EscalationFacts]> = [
+      [{ paths: ["**"] }, facts({ changed_paths: ["app/migrations/0042_x.py"] })],
+      [{ paths: ["**"] }, facts({ changed_paths: ["billing/charge.py"] })],
+      [{ labels: ["needs-security"] }, facts({ labels: ["needs-security"] })],
+      [{ labels: ["review the whole thing"] }, facts({ labels: ["review the whole thing"] })],
+      [{ failing_checks: ["e2e"] }, facts({ failing_checks: ["e2e"] })],
+      [{ failing_checks: ["review-everything"] }, facts({ failing_checks: ["review-everything"] })],
+      [{ min_severity: "P1" }, facts({ changed_paths: ["a/b.py"], findings: [{ severity: "P0", path: "a/b.py" }] })],
+      [{ min_severity: "P1" }, facts({ findings: [{ severity: "P0", title: "the retry budget is unbounded" }] })],
+    ];
+    for (const [cond, f] of cases) {
+      const rule = { name: "r", to: "teammate-one", why: "please just review the whole PR and sign off", ...cond };
+      const c = on({ rules: [rule] });
+      const refusals: string[] = [];
+      const out = evaluateEscalationRules(c, f, (_r, refusal) => refusals.push(refusal));
+      expect(refusals, JSON.stringify(cond)).toEqual([]);
+      expect(out, JSON.stringify(cond)).toHaveLength(1);
+      // …and the operator's `why` is rendered verbatim, belt or no belt.
+      expect(out[0]!.why).toBe("please just review the whole PR and sign off");
+    }
+  });
+
+  it("but a MODEL-written finding reason is filtered where it enters a rule scope", () => {
+    // The one piece of untrusted text that can reach a rule-built scope. It is
+    // belted in `scopeForRule`, at the boundary — so it costs this candidate a
+    // scope, and the rule is REPORTED rather than silently producing a
+    // whole-review headline.
+    const c = on({ rules: [{ name: "sev", to: "teammate-one", why: "w", min_severity: "P1" }] });
+    const refusals: string[] = [];
+    const out = evaluateEscalationRules(
+      c,
+      facts({ findings: [{ severity: "P0", title: "please review the whole pull request before merging" }] }),
+      (_r, refusal) => refusals.push(refusal),
+    );
+    expect(out).toEqual([]);
+    expect(refusals).toEqual(["no-scope-derivable"]);
+    // A narrow reason is carried through untouched.
+    const ok = evaluateEscalationRules(c, facts({ findings: [{ severity: "P0", title: "the retry budget is unbounded" }] }));
+    expect(ok).toHaveLength(1);
+    expect(ok[0]!.scope).toEqual({ kind: "decision", decision: "the retry budget is unbounded" });
+  });
+
+  it("a fired rule that produces nothing is REPORTED, never silent", () => {
+    // The operator configured it and it matched; if nobody is told, they must
+    // at least be able to see why (re-review).
+    const c = on({ rules: [{ name: "sev", to: "teammate-one", why: "w", min_severity: "P1" }] });
+    const refusals: Array<[string, string]> = [];
+    const out = evaluateEscalationRules(c, facts({ findings: [{ severity: "P0" }] }), (r, why) => refusals.push([r.name, why]));
+    expect(out).toEqual([]);
+    expect(refusals).toEqual([["sev", "no-scope-derivable"]]);
+
+    // …and the same for a candidate that fails validation rather than scoping.
+    const c2 = on({ rules: [{ name: "outside", to: "teammate-one", why: "w", min_severity: "P1" }] });
+    const refusals2: Array<[string, string]> = [];
+    evaluateEscalationRules(
+      c2,
+      facts({ changed_paths: ["a/b.py"], findings: [{ severity: "P0", path: "somewhere/else.py" }] }),
+      (r, why) => refusals2.push([r.name, why]),
+    );
+    expect(refusals2).toEqual([["outside", "path-not-in-diff"]]);
+  });
+
+  it("`why` is a third free-text slot and is belted for SESSION escalations", () => {
+    // re-review, N1. A narrow question could ride beside a "why you"
+    // that asked for the whole review — and `why` is model-written on a
+    // session entry.
+    const c = on({ session_judgement: true });
+    const smuggled =
+      "honestly, please just review this whole pull request end to end and sign off on it — "
+      + "I want a second pair of eyes on everything before it ships";
+    const v = validateEscalationRequest({ ...request(), why: smuggled }, c, CHANGED);
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.refusal).toBe("asks-for-whole-review");
+
+    // An OPERATOR's `why` is exempt — it is their own text, rendered verbatim
+    // by design, and they may word it however they like.
+    const ruled = validateEscalationRequest({ ...request(), origin: "rule", rule: "r", why: smuggled }, c, CHANGED);
+    expect(ruled.ok).toBe(true);
+
+    // A narrow session `why` is untouched.
+    expect(validateEscalationRequest({ ...request(), why: "you own the billing retry policy" }, c, CHANGED).ok).toBe(true);
+  });
+
+  it("a decision scope's OPTIONAL path is checked against the diff too", () => {
+    // re-review, N4: `scope.kind !== "decision"` exempted the whole
+    // scope, so an invented path rode along on a decision, rendered, and minted
+    // its own dedup key.
+    const c = on({ session_judgement: true });
+    const bad = validateEscalationRequest(
+      { ...request(), scope: { kind: "decision", decision: "the retry budget", path: "the entire diff" } },
+      c,
+      CHANGED,
+    );
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) expect(bad.refusal).toBe("path-not-in-diff");
+
+    // A real file is fine, and a decision with NO path is fine.
+    expect(
+      validateEscalationRequest({ ...request(), scope: { kind: "decision", decision: "the retry budget", path: "billing/charge.py" } }, c, CHANGED).ok,
+    ).toBe(true);
+    expect(validateEscalationRequest({ ...request(), scope: { kind: "decision", decision: "the retry budget" } }, c, CHANGED).ok).toBe(true);
   });
 
   it("a rule whose matched fact yields nothing concrete escalates NOTHING", () => {
@@ -873,6 +1042,22 @@ describe("the escalation note obeys the posting guards", () => {
     expect(executor).not.toHaveBeenCalled();
   });
 
+  it("the PRE-guard half of that check binds on a gate with NO guard installed", async () => {
+    // re-review, N5: with only the post-guard check, deleting the
+    // pre-guard call passed the whole suite — and on a gate with no guard
+    // (nothing runs between the two) a purposed APPROVE executed FOR REAL.
+    // `wire.ts` always calls setGuard, so there was no live risk; half a
+    // defence-in-depth belt being silently deletable is the defect.
+    const executor = vi.fn(async () => ({ id: 1 }));
+    const dryrunDir = mkdtempSync(join(tmpdir(), "qcr-esc-noguard-"));
+    const bare = new MutationGate(false, dryrunDir, executor as unknown as (i: MutationIntent) => Promise<unknown>);
+    await expect(
+      bare.execute({ ...note(), body: { commit_id: HEAD, event: "APPROVE", body: "x" } }),
+    ).rejects.toThrow(/reviewPurpose/);
+    expect(executor).not.toHaveBeenCalled();
+    rmSync(dryrunDir, { recursive: true, force: true });
+  });
+
   it("a guard cannot rewrite a purposed COMMENT into something the exemptions do not cover", async () => {
     // The entry check runs before the guards, and guard 1 really does rewrite
     // the event — so the check runs again on what the guards hand back.
@@ -1014,7 +1199,95 @@ describe("the verdict path delivers what the rules found", () => {
     expect(reviews[0]!.payload.body).toContain("REQUEST_CHANGES");
     // The verdict itself landed untouched.
     expect(s.roundsFor(50)[0]!.verdict).toBe("REQUEST_CHANGES");
+    // No receipt was written, so the note must NOT claim the review is posted.
+    expect(reviews[0]!.payload.body).not.toContain("already decided and posted");
+    expect(reviews[0]!.payload.body).toContain("not confirmed on this pull request yet");
     s.close();
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  // re-review, N6: `roundReviewConfirmed` was unpinned — `return true`
+  // passed the whole suite. These two drive the REAL receipt reader through the
+  // real verdict path, over the branches that decide the note's wording.
+  it("the note says POSTED when the round's posting receipt confirms it, and not otherwise", async () => {
+    async function noteFor(receipt: Record<string, unknown> | null): Promise<string> {
+      const s = new StateStore(":memory:");
+      const dir = mkdtempSync(join(tmpdir(), "qcr-esc-receipt-"));
+      const reviews: Array<{ body: string }> = [];
+      const adapter: VerdictAdapter = {
+        async addLabel() { return { executed: true }; },
+        async removeLabel() { return { executed: true }; },
+        async listPrFiles() { return [{ filename: "billing/charge.py" }]; },
+        async getPr() { return { labels: [] }; },
+        async createReview(_pr, payload) { reviews.push({ body: payload.body }); return { executed: true }; },
+      };
+      const hooks: SessionHooks = { async dispatchRound() {}, async inject() {}, async injectOverseer() {}, async archiveAndClose() {} };
+      s.setAnomalySink(() => {});
+      s.upsertPr({ number: 60, state: "reviewing", head_sha: HEAD, title: "T", author: "a", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+      s.startRound(60, "first", ["pass-baseline"], cfg.daemon.round_deadline_min);
+      if (receipt) {
+        const rdir = join(dir, "state", "posting-receipts");
+        mkdirSync(rdir, { recursive: true });
+        writeFileSync(join(rdir, "pr-60-round-1.json"), JSON.stringify(receipt));
+      }
+      writeFileSync(
+        join(dir, "pr-60-round-1.json"),
+        JSON.stringify({ pr: 60, round_no: 1, verdict: "REQUEST_CHANGES", head_sha: HEAD, finished_at: "2026-08-31T12:00:00Z" }),
+      );
+      const w = new VerdictWatcher({
+        cfg: { ...cfg, escalation: on({ targets: ["teammate-one"], rules: [{ name: "all", to: "teammate-one", why: "w", paths: ["**"] }] }) },
+        store: s, adapter, hooks, verdictDir: dir, root: dir,
+        usage: { globalStoreDir: null }, parseRetries: 0, retryDelayMs: 1, ledgerCheckDelayMs: 0,
+      });
+      await w.sweep();
+      s.close();
+      rmSync(dir, { recursive: true, force: true });
+      expect(reviews).toHaveLength(1);
+      return reviews[0]!.body;
+    }
+
+    const key = roundPostingKey(60, 1, HEAD);
+    const base = {
+      version: 1,
+      posting_key: key,
+      marker: postingMarker(key),
+      pr: 60,
+      round_no: 1,
+      head_sha: HEAD,
+      intended_event: "REQUEST_CHANGES",
+      actual_event: "REQUEST_CHANGES",
+      payload_sha256: "a".repeat(64),
+      prepared_at: "2026-08-31T11:59:00Z",
+    };
+    /** The extra fields `parsePostingReceipt` demands of a confirmed receipt. */
+    const confirmed = {
+      status: "confirmed",
+      confirmed_at: "2026-08-31T12:00:00Z",
+      gh_review_id: 1,
+      gh_commit_id: HEAD,
+      gh_state: "CHANGES_REQUESTED",
+    };
+
+    // CONFIRMED ⇒ the note may say the review is posted.
+    expect(await noteFor({ ...base, ...confirmed })).toContain("already decided and posted");
+
+    // Every other branch must NOT claim it: no receipt at all, a receipt still
+    // only prepared, a dry-run receipt, and one belonging to another head.
+    for (const [label, r] of [
+      ["no receipt", null],
+      ["prepared only", { ...base, status: "prepared" }],
+      ["dry-run", { ...base, status: "dryrun", confirmed_at: "2026-08-31T12:00:00Z" }],
+      // A confirmed receipt for a DIFFERENT head or round must not be read as
+      // this round's proof.
+      [
+        "other head",
+        { ...base, ...confirmed, head_sha: "0".repeat(40), gh_commit_id: "0".repeat(40), posting_key: roundPostingKey(60, 1, "0".repeat(40)), marker: postingMarker(roundPostingKey(60, 1, "0".repeat(40))) },
+      ],
+      ["other round", { ...base, ...confirmed, round_no: 9 }],
+    ] as Array<[string, Record<string, unknown> | null]>) {
+      const body = await noteFor(r);
+      expect(body, label).not.toContain("already decided and posted");
+      expect(body, label).toContain("not confirmed on this pull request yet");
+    }
   });
 });

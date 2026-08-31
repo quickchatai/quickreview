@@ -35,16 +35,20 @@
 //    discriminated union with no "the whole PR" member. (b)
 //    `validateEscalationRequest` refuses a scope whose path or decision is
 //    blank — an escalation with nothing to look at is not an escalation.
-//    (c) a `code`/`migration` path must be a file THIS PR ACTUALLY TOUCHES,
-//    compared exactly against the diff: without that, `path: "the entire diff"`
-//    and `path: "**"` both passed, which is how a whole-PR escalation was
-//    still spellable until the review found it. (d) the comment body is
-//    RENDERED from the scope by `renderEscalationComment`, and `decision` — the
-//    other free-text slot — is capped to a NAME, not a paragraph. (e) the belt:
-//    both free-text slots, `question` and `decision`, go through
-//    `asksForWholeReview`. That last one is a heuristic over natural language
-//    and will never be complete; it is the belt precisely because (a)–(d) are
-//    the braces.
+//    (c) EVERY path in a scope must be a file THIS PR ACTUALLY TOUCHES —
+//    including a `decision` scope's optional one — compared exactly against
+//    the diff: without that, `path: "the entire diff"` and `path: "**"` both
+//    passed, which is how a whole-PR escalation was still spellable until the
+//    review found it. (d) the comment body is RENDERED from the scope
+//    by `renderEscalationComment`, and `decision` is capped to a NAME, not a
+//    paragraph. (e) the belt: all three free-text slots — `question`,
+//    `decision`, and a session's `why` — go through `asksForWholeReview`.
+//
+//    (a)–(d) are the BRACES and they are exact: a whole-PR *scope* is
+//    unspellable. (e) is a heuristic over natural language, it will never be
+//    complete, and it is deliberately tuned to under-block rather than over-
+//    block — a false positive is a SILENT DROP, and the braces are what the
+//    guarantee rests on.
 //
 // This is the discipline the codebase already has twice — `[check this]`
 // inline comments and the `### For a human to double-check` review section
@@ -249,25 +253,50 @@ export const MAX_ESCALATION_DECISION = 120;
  * free-text slots — `question` and `decision` — and this is what keeps a
  * whole-review ask out of them.
  *
- * The first version of this regex missed 7 of 7 natural phrasings the
- * reviewer tried ("Could you cast an eye over all of it?", "Please read
- * through the changes.", "Are you happy with everything here?"). The rewrite
- * is two rules rather than one pattern:
+ * The first version missed 7 of 7 natural phrasings the reviewer tried
+ * ("Could you cast an eye over all of it?", "Are you happy with everything
+ * here?"). The second version caught those and then OVER-blocked: it treated
+ * `whole`, `entire`, `everything` as damning on their own, on the reasoning
+ * that "nothing narrow needs them" — which is simply false. Those are the
+ * standard vocabulary of SCOPE-OF-EFFECT questions, and a scope-of-effect
+ * question is the canonical thing this feature exists to ask:
+ *
+ *     Does this lock the whole row, or just the counter?
+ *     Is the entire cache invalidated here, or only the tenant slice?
+ *
+ * It refused 9 of 12 natural narrow questions, and a false positive here is a
+ * SILENT DROP — `escalation_refused`, no delivery, nobody told. Over-blocking
+ * is therefore the more expensive direction, not the safe one: it is the
+ * difference between a feature that works when switched on and one that
+ * quietly does not.
+ *
+ * So a breadth word only damns when it is talking about THE CHANGE:
  *
  *   BREADTH   — a word that means "the lot": whole, entire, everything,
- *               all of it, a second pair of eyes, top to bottom, at all…
- *               These are damning on their own; nothing narrow needs them.
- *   ARTIFACT + ASK — naming the change as a whole (PR, diff, branch, the
- *               changes) TOGETHER with a review-ish verb. Either alone is
- *               fine: "does this change the semantics?" names no artifact in
- *               the whole sense, and "we reviewed the retry path" asks for
- *               nothing.
+ *               all of it, a second pair of eyes, top to bottom… On its own
+ *               it means nothing; "the whole row" is as narrow as it gets.
+ *   ARTIFACT  — the change named as a whole: PR, diff, branch, the changes.
+ *   ASK       — a review-ish verb: review, sign off, cast an eye, happy with.
  *
- * It will never be complete — natural language is not a closed set — which is
- * exactly why it is the belt and not the braces.
+ *   refuse ⟺ (BREADTH ∧ (ARTIFACT ∨ ASK)) ∨ (ARTIFACT ∧ ASK)
+ *
+ * "the whole row" has BREADTH and neither of the others — narrow, allowed.
+ * "the whole diff" has BREADTH and ARTIFACT — refused. Pure intensifiers
+ * (`at all`, `overall`) are deliberately NOT breadth words: "is this index
+ * used at all?" is a perfectly narrow question.
+ *
+ * It will never be complete — natural language is not a closed set. Whole-PR
+ * phrasings that name no artifact and use no breadth word ("Is this safe to
+ * merge?", "LGTM?", "Any objections?") get through, and that is accepted: the
+ * BRACES are what make a whole-PR *scope* unspellable, and this is only the
+ * belt over the free-text slots. Both sides are pinned in
+ * `tests/escalation.test.ts` — the phrasings it must catch, and the narrow
+ * questions it must not touch.
  */
+// NB `at all` and `overall` are absent on purpose (re-review): they are
+// pure intensifiers, not breadth — "is this index used at all?" is narrow.
 const BREADTH_RE =
-  /\b(?:whole|entire|everything|overall|in general|as a whole|top to bottom|end[- ]to[- ]end|full review|at all|all of (?:it|this|them|these)|it all|(?:second|another|extra|fresh) (?:pair|set) of eyes|review it|look at it)\b/i;
+  /\b(?:whole|entire|everything|in general|as a whole|top to bottom|end[- ]to[- ]end|full review|all of (?:it|this|them|these)|it all|(?:second|another|extra|fresh) (?:pair|set) of eyes|review it|look at it)\b/i;
 
 const WHOLE_ARTIFACT_RE =
   /\b(?:pull\s*requests?|prs?|mrs?|merge\s*requests?|diffs?|branch|change\s?sets?|changes|patch|submission|the code here)\b/i;
@@ -277,11 +306,16 @@ const REVIEW_ASK_RE =
 
 /**
  * Does this text ask for a review of the change rather than a look at one
- * thing? Applied to BOTH free-text slots — `question` and a `decision` name.
+ * thing? Applied to all THREE free-text slots — `question`, a `decision`
+ * name, and (for a session-origin escalation only) `why`.
  */
 export function asksForWholeReview(text: string): boolean {
-  if (BREADTH_RE.test(text)) return true;
-  return WHOLE_ARTIFACT_RE.test(text) && REVIEW_ASK_RE.test(text);
+  const artifact = WHOLE_ARTIFACT_RE.test(text);
+  const ask = REVIEW_ASK_RE.test(text);
+  // A breadth word damns only when it is talking about the change — either by
+  // naming it, or by asking for a review of it.
+  if (BREADTH_RE.test(text) && (artifact || ask)) return true;
+  return artifact && ask;
 }
 
 /**
@@ -319,29 +353,53 @@ export function validateEscalationRequest(
   // of the model, never negotiable by the text of a verdict file.
   if (!cfg.targets.includes(target)) return { ok: false, refusal: "target-not-configured" };
 
-  const scope = normalizeScope(r.scope);
-  if (!scope) return { ok: false, refusal: "no-scope" };
-  // A path must be a REAL file in this PR's diff. Compared exactly against
-  // what GitHub returned — no globbing, no prefix match, nothing an invented
-  // string could satisfy.
-  if (scope.kind !== "decision" && changedPaths !== undefined && !changedPaths.includes(scope.path)) {
-    return { ok: false, refusal: "path-not-in-diff" };
-  }
-  // A decision NAME goes through the same whole-review check as the question:
-  // it is the other free-text slot, and it is the one that reads as the
-  // headline of the note.
-  if (scope.kind === "decision" && asksForWholeReview(scope.decision)) {
-    return { ok: false, refusal: "asks-for-whole-review" };
-  }
-
-  const question = str(r.question).replace(/\s+/g, " ").slice(0, MAX_ESCALATION_QUESTION);
-  if (!question) return { ok: false, refusal: "no-question" };
-  if (asksForWholeReview(question)) return { ok: false, refusal: "asks-for-whole-review" };
-
   const origin: EscalationOrigin = str(r.origin) === "rule" ? "rule" : "session";
   if (origin === "session" && !cfg.session_judgement) return { ok: false, refusal: "session-judgement-off" };
 
+  const scope = normalizeScope(r.scope);
+  if (!scope) return { ok: false, refusal: "no-scope" };
+  // EVERY path in a scope must be a REAL file in this PR's diff — including a
+  // `decision` scope's OPTIONAL path, which the first cut exempted along with
+  // the whole scope kind (re-review, N4): `{kind: "decision", path:
+  // "the entire diff"}` rendered that string and minted a distinct dedup key.
+  // Compared exactly against what GitHub returned — no globbing, no prefix
+  // match, nothing an invented string could satisfy.
+  const scopePath: string | undefined = scope.path;
+  if (scopePath !== undefined && changedPaths !== undefined && !changedPaths.includes(scopePath)) {
+    return { ok: false, refusal: "path-not-in-diff" };
+  }
+  const question = str(r.question).replace(/\s+/g, " ").slice(0, MAX_ESCALATION_QUESTION);
+  if (!question) return { ok: false, refusal: "no-question" };
   const why = str(r.why).replace(/\s+/g, " ").slice(0, MAX_ESCALATION_QUESTION);
+
+  // ---- the belt, and exactly whose text it guards -------------------------
+  //
+  // All THREE free-text slots — `question`, a `decision` name, and `why` —
+  // but only on a SESSION-origin escalation, because that is the text a MODEL
+  // wrote. Rule-origin text is the operator's own config plus our template:
+  //
+  //   * `why` is rendered verbatim by design; an operator may word their
+  //     reason however they like (re-review, N1 — this slot was
+  //     unbelted entirely, so a narrow question could ride beside a
+  //     "**Why you:** just review the whole thing and sign off").
+  //   * a rule's `question` and `decision` are composed by `questionForRule`
+  //     and `scopeForRule` from the operator's own rule name, label or check
+  //     name. Belting those means an operator who names a label
+  //     "review the whole thing" gets their fired rule SILENTLY DROPPED —
+  //     a false positive is a silent drop, and this feature's worst failure
+  //     is a configured rule that quietly does nothing.
+  //
+  // The one piece of untrusted text that can reach a RULE scope is a finding's
+  // reason, and that is filtered where it enters — `scopeForRule` — rather
+  // than here, so the filtering happens once, at the boundary, and cannot
+  // silently drop the whole rule.
+  if (origin === "session") {
+    if (asksForWholeReview(question)) return { ok: false, refusal: "asks-for-whole-review" };
+    if (scope.kind === "decision" && asksForWholeReview(scope.decision)) {
+      return { ok: false, refusal: "asks-for-whole-review" };
+    }
+    if (asksForWholeReview(why)) return { ok: false, refusal: "asks-for-whole-review" };
+  }
   const rule = str(r.rule);
   return {
     ok: true,
@@ -441,7 +499,16 @@ export function scopeForRule(rule: EscalationRule, facts: EscalationFacts): Esca
   if (rule.min_severity) {
     const hit = facts.findings.find((f) => severityAtLeast(String(f.severity ?? ""), rule.min_severity as EscalationSeverityFloor));
     if (hit?.path) return { kind: "code", path: hit.path };
-    if (hit?.title) return { kind: "decision", decision: hit.title.slice(0, 120) };
+    // The finding's reason is the ONE piece of MODEL-written text that can
+    // reach a rule-built scope, so it is belted HERE, at the boundary it
+    // enters — not in `validateEscalationRequest`, where a trip would drop the
+    // operator's whole rule instead of just this candidate name. A reason that
+    // asks for a whole review simply yields no scope, and the caller reports
+    // `no-scope-derivable`.
+    if (hit?.title) {
+      const decision = hit.title.replace(/\s+/g, " ").slice(0, MAX_ESCALATION_DECISION);
+      if (!asksForWholeReview(decision)) return { kind: "decision", decision };
+    }
   }
   if (rule.failing_checks.length > 0) {
     const hit = facts.failing_checks.find((c) => rule.failing_checks.some((n) => n.toLowerCase() === c.toLowerCase()));
@@ -449,17 +516,24 @@ export function scopeForRule(rule: EscalationRule, facts: EscalationFacts): Esca
   }
   if (rule.labels.length > 0) {
     const hit = facts.labels.find((l) => rule.labels.some((n) => n.toLowerCase() === l.toLowerCase()));
-    if (hit) return { kind: "decision", decision: `what the "${hit}" label is asking for here` };
+    if (hit) return { kind: "decision", decision: `what the "${hit}" label is asking for on this pull request` };
   }
   return null;
 }
 
-/** The question a fired rule asks. Narrow by construction — it names the
- * scope and the rule, and asks for a judgement on that one thing. The wording
- * deliberately avoids every whole-artifact noun, so a rule-built question can
- * never trip its own `asksForWholeReview` check. */
+/**
+ * The question a fired rule asks. Narrow by construction — it names the scope
+ * and the rule, and asks for a judgement on that one thing.
+ *
+ * This wording, and the label decision above, were briefly written DEFENSIVELY
+ * to dodge `asksForWholeReview` while that predicate over-blocked. Both are
+ * back to their natural phrasing (re-review: needing to dodge the belt
+ * was the signal that the belt was wrong, and it has been fixed instead).
+ * `tests/escalation.test.ts` pins that every rule-built string passes its own
+ * check, so a future reword that would silently drop a fired rule fails loudly.
+ */
 export function questionForRule(rule: EscalationRule, scope: EscalationScope): string {
-  return `Your rule "${rule.name}" fires here. Is ${renderScope(scope)} right, in your judgement?`;
+  return `Your rule "${rule.name}" fires on this change. Is ${renderScope(scope)} right, in your judgement?`;
 }
 
 /**
@@ -467,13 +541,32 @@ export function questionForRule(rule: EscalationRule, scope: EscalationScope): s
  * no I/O, no model. This is the function `tests/escalation.test.ts` drives to
  * prove the deterministic half is inspectable without an LLM.
  */
-export function evaluateEscalationRules(cfg: EscalationConfig, facts: EscalationFacts): EscalationRequest[] {
+export function evaluateEscalationRules(
+  cfg: EscalationConfig,
+  facts: EscalationFacts,
+  /**
+   * Called when a rule FIRED but its candidate did not survive validation.
+   *
+   * A deterministic rule that silently produces nothing is the worst failure
+   * this feature has (re-review): the operator configured it, it
+   * matched, and nobody was told — including the operator. Session-origin
+   * candidates already log `escalation_refused` at delivery; this is the same
+   * visibility for the half that is refused before delivery is even reached.
+   * Optional so the function stays pure for its own tests.
+   */
+  onRefused?: (rule: EscalationRule, refusal: EscalationRefusal | "no-scope-derivable") => void,
+): EscalationRequest[] {
   if (!cfg.enabled) return [];
   const out: EscalationRequest[] = [];
   for (const rule of cfg.rules) {
     if (!ruleFires(rule, facts)) continue;
     const scope = scopeForRule(rule, facts);
-    if (!scope) continue; // nothing concrete to point at ⇒ no escalation (invariant 2)
+    if (!scope) {
+      // Nothing concrete to point at ⇒ no escalation (invariant 2), but the
+      // operator's rule DID fire, so this is not silence.
+      onRefused?.(rule, "no-scope-derivable");
+      continue;
+    }
     const candidate = {
       target: rule.to,
       scope,
@@ -487,6 +580,7 @@ export function evaluateEscalationRules(cfg: EscalationConfig, facts: Escalation
     // pointing a person at a file this PR does not touch.
     const v = validateEscalationRequest(candidate, cfg, facts.changed_paths);
     if (v.ok) out.push(v.request);
+    else onRefused?.(rule, v.refusal);
   }
   return out;
 }
