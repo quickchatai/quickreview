@@ -1,7 +1,7 @@
 // bash-guard — pi extension enforcing the sessions' no-exec policy at the
 // tool-call boundary. Review sessions read code; they never run it. The guard
 // inspects every bash tool call and blocks any segment whose program is not on
-// the read-only allowlist, plus mutating `gh` verbs (sanctioned mutations go
+// the read-only allowlist, plus mutating `gh` and `git` verbs (sanctioned mutations go
 // through the repo's own scripts/*.sh surface, which IS allowed for the
 // specific script basenames below — approve-pr.sh, mint-token.sh (read-only
 // gh needs it) and the pr-*/post-review/reply-thread helpers; deploy.sh
@@ -65,22 +65,124 @@ function sanctionedScript(token: string): { sanctioned: boolean; name?: string }
   return { sanctioned: SANCTIONED_SCRIPTS.has(m[1]!), name: m[1]! };
 }
 
-/** gh is read-only except for explicit mutating verbs and mutating api calls. */
+/**
+ * `gh` is READ-ONLY. It used to be a blocklist of three verbs —
+ * `gh pr merge|close|edit` — which left `gh pr review <n> --approve` allowed:
+ * a direct approval around the mutation gate, the CI gate and `dry_run`, using
+ * a credential the session can mint from the sanctioned `scripts/mint-token.sh`
+ * (that installation token carries `pull_requests: write`, and it is the very
+ * token `scripts/approve-pr.sh` uses to POST an APPROVE review). A blocklist
+ * also has to be extended every time `gh` grows a verb, and it had not been.
+ *
+ * So the shape is inverted: only the read verbs named here are allowed, plus
+ * `gh api` without a mutating method or field flag. Every posting mutation goes
+ * through the sanctioned scripts, which mirror the gate's guards.
+ */
+const GH_READONLY_VERBS: Readonly<Record<string, ReadonlySet<string>>> = {
+  pr: new Set(["view", "list", "diff", "checks", "status"]),
+  issue: new Set(["view", "list", "status"]),
+  run: new Set(["view", "list"]),
+  // `gh workflow run` DISPATCHES a workflow — CI execution the reviewer must
+  // never start (scoping rule 2: the reviewer reads CI results, never runs it).
+  workflow: new Set(["view", "list"]),
+  release: new Set(["view", "list"]),
+  repo: new Set(["view"]),
+  label: new Set(["list"]),
+  cache: new Set(["list"]),
+  auth: new Set(["status"]),
+};
+
+/** `gh` namespaces that are read-only whatever the verb. */
+const GH_READONLY_NAMESPACES: ReadonlySet<string> = new Set(["search", "status", "version", "help"]);
+
 function checkGh(args: string[]): BashCheck {
-  if (args[0] === "pr" && args[1] !== undefined && ["merge", "close", "edit"].includes(args[1])) {
-    return block(`exec policy: 'gh pr ${args[1]}' is a mutating command`);
-  }
-  if (args[0] === "api") {
-    for (let i = 1; i < args.length; i++) {
-      const a = args[i]!;
-      if ((a === "-X" || a === "--method") && /^(POST|PUT|PATCH|DELETE)$/i.test(args[i + 1] ?? "")) {
-        return block(`exec policy: 'gh api ${a} ${args[i + 1]}' mutates`);
+  // Skip leading global flags so `gh --repo o/n pr view` is judged on `pr`.
+  let i = 0;
+  while (i < args.length && args[i]!.startsWith("-")) i++;
+  const ns = args[i];
+  if (ns === undefined) return { allowed: true }; // bare `gh` prints help
+  if (ns === "api") {
+    for (let j = i + 1; j < args.length; j++) {
+      const a = args[j]!;
+      if ((a === "-X" || a === "--method") && /^(POST|PUT|PATCH|DELETE)$/i.test(args[j + 1] ?? "")) {
+        return block(`exec policy: 'gh api ${a} ${args[j + 1]}' mutates`);
       }
+      // `-XPOST` — the attached form. The old exact `-X` compare missed it.
+      if (/^-X(POST|PUT|PATCH|DELETE)$/i.test(a)) return block(`exec policy: '${a}' mutates`);
       if (/^--method=(POST|PUT|PATCH|DELETE)$/i.test(a)) return block(`exec policy: '${a}' mutates`);
       if (a === "-f" || a === "-F" || a.startsWith("--field") || a.startsWith("--raw-field")) {
         return block("exec policy: 'gh api' with field flags mutates");
       }
     }
+    return { allowed: true };
+  }
+  if (GH_READONLY_NAMESPACES.has(ns)) return { allowed: true };
+  const verbs = GH_READONLY_VERBS[ns];
+  if (verbs === undefined) {
+    return block(`exec policy: 'gh ${ns}' is not a sanctioned read-only gh command`);
+  }
+  // Skip flags between the namespace and its verb (`gh pr --help`).
+  let k = i + 1;
+  while (k < args.length && args[k]!.startsWith("-")) k++;
+  const verb = args[k];
+  if (verb === undefined) return { allowed: true }; // `gh pr` alone prints help
+  if (verbs.has(verb)) return { allowed: true };
+  return block(
+    `exec policy: 'gh ${ns} ${verb}' is a mutating command — every GitHub write goes through the sanctioned scripts/*.sh, never raw gh`,
+  );
+}
+
+/**
+ * `git` is READ-ONLY too. It sat unconditionally on ALLOWED, three
+ * lines from `gh`'s filter: `git push` (a GitHub write around the one gate) and
+ * the discard family (`reset --hard`, `checkout --`, `clean -fdx`, `stash` —
+ * which destroy work in a worktree the daemon owns) were all permitted.
+ *
+ * A blocklist rather than an allowlist, deliberately, and for the same reason
+ * `gh`'s went the other way: reading is what a review session does all day with
+ * `git`, and a missed read verb wedges a live review, whereas the write verbs
+ * are a closed, well-known set. `worktree`, `remote` and `config` carry a
+ * read-only sub-form and are judged on it.
+ */
+const GIT_MUTATING: ReadonlySet<string> = new Set([
+  "push", "pull", "commit", "merge", "rebase", "cherry-pick", "revert", "am",
+  "apply", "reset", "checkout", "switch", "restore", "clean", "stash", "mv",
+  "rm", "init", "clone", "submodule", "update-ref", "update-index",
+  "filter-branch", "fast-import", "gc", "prune", "repack", "notes", "replace",
+  "sparse-checkout", "commit-tree", "hash-object", "write-tree",
+]);
+
+/** Sub-verbs that make an otherwise-mutating git namespace a plain read. */
+const GIT_READONLY_SUBVERBS: Readonly<Record<string, ReadonlySet<string>>> = {
+  worktree: new Set(["list"]),
+  remote: new Set(["-v", "--verbose", "show", "get-url"]),
+  config: new Set(["--get", "--get-all", "--get-regexp", "--list", "-l"]),
+};
+
+function checkGit(args: string[]): BashCheck {
+  // Skip `-C <dir>` and other leading global options so the verb is found.
+  let i = 0;
+  while (i < args.length && args[i]!.startsWith("-")) {
+    if (args[i] === "-C" || args[i] === "-c") i++; // its value is not a verb
+    i++;
+  }
+  const verb = args[i];
+  if (verb === undefined) return { allowed: true }; // bare `git` prints usage
+  const sub = GIT_READONLY_SUBVERBS[verb];
+  if (sub !== undefined) {
+    return args.slice(i + 1).some((a) => sub.has(a))
+      ? { allowed: true }
+      : block(`exec policy: 'git ${verb}' is only allowed in its read-only form (${[...sub].join(", ")})`);
+  }
+  if (verb === "push") {
+    return block(
+      "exec policy: 'git push' is a GitHub mutation — every write goes through the ONE mutation gate, never a session's shell",
+    );
+  }
+  if (GIT_MUTATING.has(verb)) {
+    return block(
+      `exec policy: 'git ${verb}' writes — this worktree is the daemon's, and the reviewer only reads it (use 'git show <rev>:<path>' to read another revision)`,
+    );
   }
   return { allowed: true };
 }
@@ -132,6 +234,7 @@ function checkProgram(prog: string, args: string[]): BashCheck {
     return block("exec policy: 'bash' may only run sanctioned scripts/*.sh");
   }
   if (base === "gh") return checkGh(args.filter((a) => a.length > 0));
+  if (base === "git") return checkGit(args.filter((a) => a.length > 0));
   if (base === "xargs") {
     // xargs runs another program — vet the target too.
     const target = args.find((a) => !a.startsWith("-") && a !== "{}");

@@ -94,6 +94,115 @@ describe("checkBashCommand — gh mutating verbs", () => {
   });
 });
 
+/**
+ * / MC-04 + MC-06 — the two write channels the exec policy left open.
+ *
+ * `gh pr review <n> --approve` was permitted: a direct approval around the
+ * mutation gate, the CI gate and `dry_run`. It is not hypothetical — the
+ * predecessor system posted 47 approvals exactly that way (docs/retro), and a
+ * session can mint the credential itself from the sanctioned
+ * `scripts/mint-token.sh`, whose installation token carries `pull_requests:
+ * write` and is the very token `scripts/approve-pr.sh` uses to POST an APPROVE.
+ *
+ * `git` sat unconditionally on the read-only allowlist three lines from `gh`'s
+ * filter, so `git push` (a GitHub write around the ONE gate) and the discard
+ * family were both allowed.
+ */
+describe("checkBashCommand — gh is read-only", () => {
+  it("blocks the approval that went around the gate", () => {
+    block("gh pr review 5249 --approve", "gh pr review");
+    block("gh pr review 5249 --approve --body 'lgtm'");
+    block("gh pr review --approve 5249");
+    block("gh pr comment 5249 --body hi", "gh pr comment");
+    block("GH_TOKEN=x gh pr review 5249 --approve");
+    // The credential recipe the templates hand the session, in one line.
+    block('GH_TOKEN="$(scripts/mint-token.sh)" gh pr review 5249 --approve');
+  });
+
+  it("blocks every other mutating pr verb, including ones nobody enumerated", () => {
+    for (const verb of ["ready", "reopen", "lock", "unlock", "create", "merge", "close", "edit"]) {
+      block(`gh pr ${verb} 5249`, `gh pr ${verb}`);
+    }
+  });
+
+  it("blocks workflow dispatch — the reviewer reads CI, it never starts it", () => {
+    block("gh workflow run ci.yml", "gh workflow run");
+    block("gh workflow enable ci.yml");
+    allow("gh workflow list");
+    allow("gh run view 12345");
+  });
+
+  it("blocks whole mutating namespaces rather than enumerating their verbs", () => {
+    block("gh release create v1", "gh release create");
+    block("gh secret set TOKEN", "gh secret");
+    block("gh repo clone o/n", "gh repo clone");
+    block("gh issue create --title x", "gh issue create");
+    block("gh browse");
+  });
+
+  it("catches the attached -X form the exact compare missed", () => {
+    block("gh api -XPOST repos/o/n/issues", "-XPOST");
+    block("gh api -XDELETE repos/o/n/labels/x");
+    allow("gh api -XGET repos/o/n/pulls/5");
+  });
+
+  it("still allows every read the round templates actually use", () => {
+    allow("gh pr view 5249 --json title,body");
+    allow("gh pr list --label 'AI review requested'");
+    allow("gh pr diff 5249");
+    allow("gh pr checks 5249");
+    allow("gh issue view 42");
+    allow("gh api repos/o/n/pulls/5/files --paginate");
+    allow("gh search prs --repo o/n");
+  });
+});
+
+describe("checkBashCommand — git is read-only", () => {
+  it("blocks the push — a GitHub write must go through the ONE gate", () => {
+    block("git push origin HEAD", "mutation gate");
+    block("git push --force origin wip:master");
+    block("cd /tmp && git push", "mutation gate");
+    block("git -C /opt/quickreview/wt/pr-5249 push origin HEAD");
+  });
+
+  it("blocks the discard family — this worktree is the daemon's", () => {
+    block("git reset --hard origin/main", "git reset");
+    block("git checkout -- src/a.ts", "git checkout");
+    block("git clean -fdx", "git clean");
+    block("git stash", "git stash");
+    block("git commit -am wip", "git commit");
+    block("git rebase main");
+    block("git apply /tmp/p.patch");
+    block("git pull");
+  });
+
+  it("blocks a mutating git hidden behind a separator or substitution", () => {
+    block("git diff && git push origin HEAD", "mutation gate");
+    block("echo $(git reset --hard)", "git reset");
+    block("git diff --name-only | xargs git checkout --", "git checkout");
+  });
+
+  it("still allows the reads a review session lives on", () => {
+    allow("git diff origin/main...HEAD");
+    allow("git log --oneline -20");
+    allow("git show abc123:src/a.ts");
+    allow("git status");
+    allow("git blame src/a.ts");
+    allow("git merge-base origin/main HEAD");
+    allow("git ls-files 'src/**'");
+    allow("git rev-parse HEAD");
+    allow("git fetch origin main"); // a read of GitHub, not a write to it
+    allow("git worktree list");
+    allow("git config --get remote.origin.url");
+    allow("git -C /opt/quickreview/wt/pr-5249 diff");
+  });
+
+  it("blocks the write form of a namespace whose read form is allowed", () => {
+    block("git worktree add /tmp/wt HEAD", "read-only form");
+    block("git config user.email evil@example.com", "read-only form");
+  });
+});
+
 describe("activate (pi hookup)", () => {
   it("registers a tool_call handler that blocks bash exec and passes everything else", () => {
     let handler: ((event: Record<string, unknown>) => unknown) | undefined;
