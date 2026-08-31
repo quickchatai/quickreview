@@ -302,7 +302,7 @@ describe("the first frame (ruling 6 — structural, not timed)", () => {
 
 describe("connection triage", () => {
   const base = {
-    host: "my-vm",
+    host: "example-vm",
     masterAlive: false,
     controlSocketExists: false,
     identityFiles: ["/home/x/.ssh/google_compute_engine"],
@@ -315,7 +315,7 @@ describe("connection triage", () => {
     const d = classifyConnection({
       ...base,
       agent: { reachable: true, identities: [] },
-      connect: { ok: false, stderr: "my-vm: Permission denied (publickey).", timedOut: false },
+      connect: { ok: false, stderr: "example-vm: Permission denied (publickey).", timedOut: false },
     });
     expect(d.kind).toBe("no-agent-key");
     expect(d.cause).toContain("google_compute_engine");
@@ -346,18 +346,18 @@ describe("connection triage", () => {
     });
     expect(d.kind).toBe("wedged-master");
     expect(d.cause).toContain("/home/x/.ssh/cm-alice@my-vm:22");
-    expect(d.remedy).toBe("ssh -O exit my-vm");
+    expect(d.remedy).toBe("ssh -O exit example-vm");
   });
 
   it("separates a genuinely unreachable host from both of those", async () => {
     const { classifyConnection } = await import("../src/tui/sshtriage.js");
     const d = classifyConnection({
       ...base,
-      connect: { ok: false, stderr: "ssh: Could not resolve hostname my-vm: Name or service not known", timedOut: false },
+      connect: { ok: false, stderr: "ssh: Could not resolve hostname example-vm: Name or service not known", timedOut: false },
     });
     expect(d.kind).toBe("host-unreachable");
     expect(d.cause).toContain("did not answer");
-    expect(d.remedy).toBe("ssh -v my-vm true");
+    expect(d.remedy).toBe("ssh -v example-vm true");
   });
 
   it("reads an empty agent as the key case even when ssh says nothing useful", async () => {
@@ -459,6 +459,24 @@ describe("startup progress", () => {
     expect(stalled).toContain("⚠");
     expect(stalled).toContain("still running, no result yet");
     expect(stalled).toContain("45s");
+  });
+
+  it("a progress note never restarts the stall clock", async () => {
+    const { STALL_AFTER_MS, StartupProgress, startupLines } = await import("../src/tui/startup.js");
+    let now = 0;
+    const p = new StartupProgress([{ key: "a", label: "companion container" }], { now: () => now });
+    p.begin("a");
+    now = STALL_AFTER_MS + 5_000;
+    // docker chattering is not progress towards finishing: a step that has been
+    // running past the threshold still says so.
+    p.note("a", "pulling the image");
+    const line = startupLines(p.steps(), now)[0]!.replace(/\x1b\[[0-9;]*m/g, "");
+    expect(line).toContain("⚠");
+    expect(line).toContain("still running");
+    // …and a note on a finished step is ignored rather than reviving it.
+    p.done("a");
+    p.note("a", "late");
+    expect(p.steps()[0]).toMatchObject({ state: "done" });
   });
 
   it("never lets a reporting failure break the bring-up it reports on", async () => {

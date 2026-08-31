@@ -78,6 +78,13 @@ export class StartupProgress {
     this.set(key, { state: "running", startedAt: this.now(), ...(detail !== undefined ? { detail } : {}) });
   }
 
+  /** Update a running step's detail WITHOUT restarting its clock — "what it is
+   * doing right now". Restarting it would hide a stall behind chatter. */
+  note(key: string, detail: string): void {
+    if (this.byKey.get(key)?.state !== "running") return;
+    this.set(key, { detail });
+  }
+
   done(key: string, detail?: string): void {
     this.set(key, { state: "done", endedAt: this.now(), ...(detail !== undefined ? { detail } : {}) });
   }

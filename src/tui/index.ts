@@ -609,7 +609,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
       }
       progress.begin("container");
       await companion.ensureUp((line) => {
-        progress.begin("container", line);
+        progress.note("container", line);
         app.notice(`companion: ${line}`);
       });
       progress.done("container");
