@@ -256,14 +256,21 @@ export async function fileImprovementPr(payload: ImprovementPayload, ctx: Improv
       body: { remote: "origin", source: payload.branch, target: botBranch },
       note: `push ${botBranch} (${verdict.files} files, ${verdict.lines} lines)`,
     };
-    let pushed = false;
-    if (ctx.gate.isDryRun) {
-      await ctx.gate.execute(pushIntent);
-    } else {
+    // the push goes through the gate in BOTH modes. It used to consult
+    // the gate only when `isDryRun` was true and shell out directly otherwise —
+    // so the one mode in which the push was real was the one mode the gate
+    // never saw, which is precisely the bypass rule 1 forbids. The gate now
+    // owns the decision (kind check, guards, dry-run branch) and calls this
+    // performer only when the mutation is genuinely to happen.
+    const pushResult = await ctx.gate.execute(pushIntent, async () => {
       await ctx.run(["push", "origin", `${payload.branch}:refs/heads/${botBranch}`]);
-      pushed = true;
       ctx.store.logEvent("branch_pushed", null, { branch: botBranch });
-    }
+      return { pushed: true };
+    });
+    // A refused push means no branch exists on the remote — opening a PR
+    // against it would fail or, worse, target a stale branch of the same name.
+    if (pushResult.blocked) return reject(`gate refused the branch push: ${pushResult.blocked}`, { branch: botBranch });
+    const pushed = pushResult.executed;
 
     const pull = await ctx.adapter.createPull(botBranch, base, payload.title, payload.body);
     const prNumber = (pull.response as { number?: number } | undefined)?.number ?? 0;

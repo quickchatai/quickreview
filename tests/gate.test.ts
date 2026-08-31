@@ -274,3 +274,87 @@ describe("the app-self-config gate class (ratified rule-1 amendment, 2026-08-30)
     expect(APP_SELF_CONFIG_KINDS as readonly string[]).not.toContain("request_reviewer");
   });
 });
+
+/**
+ * / MC-07 — the gate genuinely mediates `method: "git"` pushes.
+ *
+ * `src/gate.ts`'s header has always claimed it covers "REST, GraphQL or git
+ * push". It did not: `GitHubAdapter.executeMutation` throws on `method: "git"`,
+ * so `src/improvements.ts` consulted the gate ONLY when `isDryRun` was true and
+ * shelled straight to `git push` otherwise — the one mode in which the push was
+ * real was the one mode the gate never saw. The honest shape chosen (rather
+ * than softening the header) is a caller-supplied performer that the GATE, not
+ * the call site, decides whether to run.
+ */
+describe("MutationGate — git pushes", () => {
+  const push: MutationIntent = {
+    kind: "push_branch",
+    method: "git",
+    path: "git push origin wip:refs/heads/bot/improve-x",
+    body: { remote: "origin", source: "wip", target: "bot/improve-x" },
+    note: "push bot/improve-x",
+  };
+
+  it("runs the performer in LIVE mode — the push happens through the gate, not around it", async () => {
+    const executor = vi.fn(async () => ({ ok: true }));
+    const perform = vi.fn(async () => ({ pushed: true }));
+    const gate = new MutationGate(false, join(dir, "dryrun"), executor);
+
+    const result = await gate.execute(push, perform);
+
+    expect(perform).toHaveBeenCalledTimes(1);
+    // The REST executor is never the one that pushes — it throws on "git".
+    expect(executor).not.toHaveBeenCalled();
+    expect(result.executed).toBe(true);
+    expect(result.response).toEqual({ pushed: true });
+  });
+
+  it("does NOT run the performer in dry-run — it records the intent instead", async () => {
+    const perform = vi.fn(async () => ({ pushed: true }));
+    const gate = new MutationGate(true, join(dir, "dryrun"), async () => ({}));
+
+    const result = await gate.execute(push, perform);
+
+    expect(perform).not.toHaveBeenCalled();
+    expect(result.executed).toBe(false);
+    expect(JSON.parse(readFileSync(result.dryRunFile!, "utf8"))).toMatchObject({ kind: "push_branch", method: "git" });
+  });
+
+  it("a guard can refuse the push, and then it never happens", async () => {
+    const perform = vi.fn(async () => ({ pushed: true }));
+    const gate = new MutationGate(false, join(dir, "dryrun"), async () => ({}));
+    gate.setGuard({ before: async () => ({ block: "pr-closed" }) });
+
+    const result = await gate.execute(push, perform);
+
+    expect(perform).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ executed: false, blocked: "pr-closed" });
+  });
+
+  it("the performer seam cannot widen: it is refused for any method but git", async () => {
+    const executor = vi.fn(async () => ({ ok: true }));
+    const perform = vi.fn(async () => ({ smuggled: true }));
+    const gate = new MutationGate(false, join(dir, "dryrun"), executor);
+
+    // `intent` is the ordinary REST add_label at the top of this file.
+    await expect(gate.execute(intent, perform)).rejects.toThrow(/only allowed for method "git"/);
+    expect(perform).not.toHaveBeenCalled();
+    expect(executor).not.toHaveBeenCalled();
+  });
+
+  it("an unknown kind is still rejected before the performer is even considered", async () => {
+    const perform = vi.fn(async () => ({ pushed: true }));
+    const gate = new MutationGate(false, join(dir, "dryrun"), async () => ({}));
+    await expect(
+      gate.execute({ ...push, kind: "push_to_master" as never }, perform),
+    ).rejects.toThrow(/unknown mutation kind/);
+    expect(perform).not.toHaveBeenCalled();
+  });
+
+  it("forceLive on a push still throws — the git seam did not widen the dry-run bypass", async () => {
+    const perform = vi.fn(async () => ({ pushed: true }));
+    const gate = new MutationGate(true, join(dir, "dryrun"), async () => ({}));
+    await expect(gate.execute({ ...push, forceLive: true }, perform)).rejects.toThrow(/forceLive is not allowed/);
+    expect(perform).not.toHaveBeenCalled();
+  });
+});

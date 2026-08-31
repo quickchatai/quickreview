@@ -3,6 +3,11 @@
 // In dry-run (config.dry_run, the default until cutover) the intent is written
 // to state/dryrun/ instead of being executed. There is deliberately no
 // review-dismissal intent kind: the never-dismiss invariant is structural.
+//
+// "or git push" is load-bearing and was NOT true until: the improvement
+// branch push consulted the gate only in dry-run. It is true now — a git intent
+// carries a `GitPerformer` (see below) and the gate, not the call site, decides
+// whether it runs.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -107,6 +112,28 @@ export interface GateResult {
 
 export type MutationExecutor = (intent: MutationIntent) => Promise<unknown>;
 
+/**
+ * How a `method: "git"` intent is actually performed.
+ *
+ * A git push cannot go through the REST executor — `GitHubAdapter.executeMutation`
+ * throws on `method === "git"` — so before `src/improvements.ts`
+ * consulted the gate ONLY in dry-run and shelled straight to `git push` in
+ * live mode: the one mode where the push is real was the one mode the gate
+ * never saw. That is the shape rule 1 forbids, and this header claimed
+ * otherwise ("REST, GraphQL or git push").
+ *
+ * The decision taken instead of softening the header: the gate genuinely
+ * mediates the push. The caller — which is the only thing that knows which
+ * scratch worktree the push must run in — hands the gate a performer, and the
+ * GATE, never the call site, decides whether it runs: the kind check, the
+ * `forceLive` check, the guards and the dry-run branch all run first, exactly
+ * as they do for a REST mutation.
+ *
+ * The seam cannot widen: `execute` throws if a performer accompanies any
+ * method other than `"git"`, so it can never stand in for the REST executor.
+ */
+export type GitPerformer = () => Promise<unknown>;
+
 /** A guard's answer: refuse (`block`), or let it through — optionally with a
  * rewritten intent (the human-approval downgrade posts a COMMENT instead of a
  * REQUEST_CHANGES). Returning `{}` means "no opinion". */
@@ -156,13 +183,20 @@ export class MutationGate {
     this.logFn = logFn;
   }
 
-  async execute(intentIn: MutationIntent): Promise<GateResult> {
+  async execute(intentIn: MutationIntent, perform?: GitPerformer): Promise<GateResult> {
     let intent = intentIn;
     // Checked before anything else — an unknown kind is never recorded to
     // state/dryrun/ either, so a retired kind cannot even leave evidence
     // suggesting the daemon still performs it.
     if (!(MUTATION_KINDS as readonly string[]).includes(intent.kind)) {
       throw new Error(`gate: unknown mutation kind "${intent.kind}" — refusing to execute or record it`);
+    }
+    // The git performer exists for `method: "git"` and nothing else:
+    // otherwise it would be a second executor, i.e. a way to run an arbitrary
+    // mutation the REST executor never saw. Checked before the guards so the
+    // refusal is unconditional.
+    if (perform && intent.method !== "git") {
+      throw new Error(`gate: a git performer is only allowed for method "git", not ${intent.method} (${intent.kind})`);
     }
     if (intent.forceLive && intent.kind !== "supersede_own_review") {
       throw new Error(`forceLive is not allowed for kind ${intent.kind}`);
@@ -200,7 +234,10 @@ export class MutationGate {
       await this.guard?.after?.(intent, recorded);
       return recorded;
     }
-    const response = await this.executor(intent);
+    // A `method: "git"` intent runs its performer; everything else runs the
+    // REST executor (which still throws on "git", so a git intent that arrives
+    // without a performer cannot execute).
+    const response = perform ? await perform() : await this.executor(intent);
     const executed: GateResult = { executed: true, response };
     await this.guard?.after?.(intent, executed);
     return executed;

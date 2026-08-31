@@ -377,3 +377,89 @@ describe("fileImprovementPr / fileIssue (dry-run)", () => {
     });
   });
 });
+
+/**
+ * / MC-07 — the improvement-branch push is gated in LIVE mode too.
+ *
+ * The whole suite above runs in dry-run, which is exactly why the bypass
+ * survived: `fileImprovementPr` called `gate.execute(pushIntent)` when
+ * `isDryRun` was true and shelled straight to `git push` otherwise. The one
+ * mode in which the push is real was the one mode with no kind check, no guard
+ * and no `after` hook — the mutation path around the gate that rule 1 forbids.
+ * These cases run the gate LIVE.
+ */
+describe("fileImprovementPr — the push goes through the gate in live mode", () => {
+  let dir: string;
+  let store: StateStore;
+  let gate: MutationGate;
+  let adapter: GitHubAdapter;
+  /** Every intent the gate's guard saw — proof the gate mediated it. */
+  let seen: string[];
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "qcr-improve-live-"));
+    store = new StateStore(":memory:");
+    gate = new MutationGate(false, join(dir, "dryrun"), async (i) => {
+      if (i.method === "git") throw new Error("the REST executor must never perform a git push");
+      return { number: 4242 };
+    });
+    seen = [];
+    gate.setGuard({
+      before: async (i) => {
+        seen.push(i.kind);
+        return {};
+      },
+    });
+    adapter = new GitHubAdapter(cfg, fakeMinter, gate, (async () => {
+      throw new Error("no direct fetch expected");
+    }) as unknown as typeof fetch);
+  });
+  afterEach(() => {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function liveRunner(): { run: Run; calls: string[][] } {
+    const calls: string[][] = [];
+    const run: Run = async (args) => {
+      calls.push(args);
+      if (args[0] === "diff") return numstat([[3, 1, "docs/readme.md"]]);
+      return "";
+    };
+    return { run, calls };
+  }
+
+  it("the gate SEES the push_branch intent, and the git push runs from inside it", async () => {
+    const { run, calls } = liveRunner();
+    const out = await fileImprovementPr(
+      { branch: "wip/docs", title: "Docs: clarify retry", body: "rationale", slug: "clarify-retry" },
+      { cfg, adapter, gate, store, run, scratchDir: join(dir, "scratch") },
+    );
+
+    expect(out).toMatchObject({ ok: true, pushed: true, dry_run: false });
+    // The bypass this pins: before `push_branch` never reached the gate
+    // in live mode, so this list began at `create_pull`.
+    expect(seen).toEqual(["push_branch", "create_pull", "add_label"]);
+    expect(calls.map((c) => c[0])).toContain("push");
+    expect(store.eventsOn(new Date().toISOString().slice(0, 10)).some((e) => e.kind === "branch_pushed")).toBe(true);
+  });
+
+  it("a guard refusal stops the push AND the PR — no branch, no pull", async () => {
+    const { run, calls } = liveRunner();
+    gate.setGuard({
+      before: async (i) => {
+        seen.push(i.kind);
+        return i.kind === "push_branch" ? { block: "pr-closed" } : {};
+      },
+    });
+    const out = await fileImprovementPr(
+      { branch: "wip/docs", title: "Docs: clarify retry", body: "rationale", slug: "clarify-retry" },
+      { cfg, adapter, gate, store, run, scratchDir: join(dir, "scratch") },
+    );
+
+    expect(out.ok).toBe(false);
+    expect(out.reason).toContain("gate refused");
+    expect(calls.map((c) => c[0])).not.toContain("push");
+    expect(seen).toEqual(["push_branch"]); // never reached create_pull
+  });
+});
