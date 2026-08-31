@@ -193,11 +193,19 @@ export function gitConfigChanges(
   after: GitConfigFingerprint,
 ): Array<{ path: string; before: string; after: string }> {
   if (before.digest === after.digest) return [];
-  const paths = new Set([...Object.keys(before.files), ...Object.keys(after.files)]);
+  // Total over a malformed fingerprint rather than throwing on one. That is not
+  // defensiveness for its own sake: it makes the caller's "no baseline ⇒ never
+  // judged" guard LOAD-BEARING instead of a comment in front of an exception
+  // the surrounding try/catch happened to swallow. Remove that guard now and a
+  // round with no baseline reports every watched path as changed — which a test
+  // can see, and which mutation-verification could not see before.
+  const beforeFiles = before.files ?? {};
+  const afterFiles = after.files ?? {};
+  const paths = new Set([...Object.keys(beforeFiles), ...Object.keys(afterFiles)]);
   const out: Array<{ path: string; before: string; after: string }> = [];
   for (const path of [...paths].sort()) {
-    const b = before.files[path] ?? "absent";
-    const a = after.files[path] ?? "absent";
+    const b = beforeFiles[path] ?? "absent";
+    const a = afterFiles[path] ?? "absent";
     if (b !== a) out.push({ path, before: b, after: a });
   }
   return out;

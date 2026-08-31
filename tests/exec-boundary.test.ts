@@ -236,6 +236,22 @@ describe("— the layer that was NOT told about them", () => {
     expect(auditUngatedReviews([review({ state: "PENDING" })], HEAD, noTraces, bot)).toHaveLength(0);
   });
 
+  it("the migration excuse covers ONE comment, not every comment forever", () => {
+    // Mutation-verification caught this: with a single COMMENT in the fixture,
+    // an excuse bounded to 1 and an excuse bounded to 99 are indistinguishable.
+    // `migrationPrecheck` is `lastEventAt(…) !== undefined` with no time bound,
+    // so an unbounded excuse permanently blinds the audit to every COMMENT on
+    // any PR that has ever had a migration comment — a detection weakening
+    // dressed as a false-positive fix.
+    const found = auditUngatedReviews(
+      [review({ id: 1, state: "COMMENTED" }), review({ id: 2, state: "COMMENTED" })],
+      HEAD,
+      { ...noTraces, migrationPrecheck: true },
+      bot,
+    );
+    expect(found.map((r) => r.review_id)).toEqual([2]);
+  });
+
   it("a REQUEST_CHANGES mark does not vouch for an APPROVE at the same head", () => {
     // The specific hole a looser rule would leave: bypass 1's whole point is
     // an approval, and a round that legitimately posted REQUEST_CHANGES at this

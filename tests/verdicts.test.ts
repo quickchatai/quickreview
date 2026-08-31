@@ -380,6 +380,20 @@ describe("measured round usage", () => {
     expect(store.db.prepare("SELECT COUNT(*) c FROM events WHERE kind = 'git_config_modified'").get()).toMatchObject({ c: 0 });
   });
 
+  it("…and a MALFORMED baseline is not judged either", async () => {
+    // The teeth behind the previous test. Mutation-verification found that
+    // deleting the "no baseline ⇒ never judged" guard changed nothing
+    // observable, because the surrounding try/catch swallowed the throw that
+    // followed. `gitConfigChanges` is now total over a malformed fingerprint,
+    // so the guard is load-bearing: without it, this round reports every
+    // watched path as changed.
+    const roundId = reviewingRound(111);
+    writeSessionJsonl(111, [modelLine(), jsonlLine(10, 1)]);
+    store.recordRoundGitConfig(roundId, { not: "a fingerprint" });
+    await watcher({}).handleFile(write(111, 1, verdictFile({ pr: 111 })));
+    expect(store.db.prepare("SELECT COUNT(*) c FROM events WHERE kind = 'git_config_modified'").get()).toMatchObject({ c: 0 });
+  });
+
   it("an UNCHANGED tree is silent — the check must not fire on every round", async () => {
     const roundId = reviewingRound(110);
     writeSessionJsonl(110, [modelLine(), jsonlLine(10, 1)]);

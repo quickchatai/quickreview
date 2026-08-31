@@ -166,6 +166,30 @@ describe("recording at round start", () => {
     expect(adapter.calls.filter((c) => c.fn === "listPrFiles")).toHaveLength(1);
   });
 
+  // the git-config baseline. Mutation-verification caught that
+  // nothing covered THIS half: every other test injects the baseline straight
+  // into the round row, so deleting dispatch's call left the suite green while
+  // the integrity check silently never ran for any real round. A layer nobody
+  // calls is precisely the failure mode this ticket is about.
+  it("takes the git-config fingerprint when the round starts", async () => {
+    queue(29, "2026-08-13T09:00:00Z");
+    adapter.files.set(29, [file("a.ts", 1, 1)]);
+    const { hooks } = recordingHooks();
+
+    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+
+    const round = store.roundsFor(29)[0]!;
+    const fp = store.roundGitConfig(round.id) as { digest?: unknown; files?: Record<string, string> } | undefined;
+    expect(fp, "dispatch must record a baseline, or verdicts has nothing to compare").toBeTruthy();
+    expect(typeof fp!.digest).toBe("string");
+    // The clone's own config and the PINNED global file are both in it — the
+    // pin concentrates the target onto one file, so leaving it unwatched would
+    // trade a search path for a single unguarded door.
+    const watched = Object.keys(fp!.files ?? {});
+    expect(watched.some((p) => p.endsWith("/.git/config"))).toBe(true);
+    expect(watched.some((p) => p.endsWith("/pihome/.gitconfig"))).toBe(true);
+  });
+
   // the audit trail — which tier held the veto in this round.
   it("records the validator's tier on the round row and the dispatch event", async () => {
     queue(23, "2026-08-13T09:00:00Z");
