@@ -98,6 +98,16 @@ const CORPUS = [
   // write `<clone>/.git/config` AND to make a subsequent plain
   // `git diff <base> <head>` execute, with the config-scope pin in force.
   { round: 6, via: "bash", chain: `awk 'BEGIN{print "[diff]" >>".git/config"}'`, outcome: null, note: "awk's no-space redirect form; the SPACED form blocked only by accident" },
+  // Round 7 — the second adversarial review. Every awk body rule keyed on a
+  // quote, `$` or `(` after the operator, so a BARE IDENTIFIER holding the
+  // command or the filename matched none of them. The first is the severe one:
+  // arbitrary execution with no config file touched, which means layer 4 has
+  // nothing to compare and the outcome layer has no review to see. awk is off
+  // ALLOWED as a result, so all three are refused on the program token now.
+  { round: 7, via: "bash", chain: `awk 'BEGIN{c="sh"; print "id" | c}'`, outcome: null, note: "exec through a variable — invisible to ALL FIVE layers before this" },
+  { round: 7, via: "bash", chain: `awk 'BEGIN{f="/tmp/out"; print "x" > f}'`, outcome: null, note: "write through a variable" },
+  { round: 7, via: "bash", chain: `awk 'BEGIN{f=".git/config"; printf "[diff]" >> f}'`, outcome: null, note: "the round-2 chain restored end to end through a variable" },
+  { round: 7, via: "bash", chain: "sed --expression='w /tmp/x' f", outcome: null, note: "the script GLUED to its flag; the spaced -e form was already caught" },
   { round: 6, via: "bash", chain: "sed -n 'w .git/config' payload", outcome: null, note: "sed's `w` command writes without -i, so an in-place check never saw it" },
   { round: 6, via: "bash", chain: `find . -maxdepth 0 -fprintf .git/config "x"`, outcome: null, note: "find writes an arbitrary path" },
   { round: 6, via: "bash", chain: "sort -o .git/config payload", outcome: null, note: "sort writes an arbitrary path" },
@@ -430,14 +440,15 @@ describe("— the audit no longer fires on the reads that ARE the job", () => {
     expect(kindOf("sed -n 'w .git/config' payload")).toBe("reader_write_or_exec");
     expect(kindOf("sort -o .git/config payload")).toBe("reader_write_or_exec");
     expect(kindOf(`find . -maxdepth 0 -fprintf .git/config "x"`)).toBe("reader_write_or_exec");
-    expect(kindOf(`awk 'BEGIN{system("/tmp/pwn.sh")}'`)).toBe("reader_write_or_exec");
+    // awk is off the allowlist entirely now, so it audits as what it is.
+    expect(kindOf(`awk 'BEGIN{c="sh"; print "id" | c}'`)).toBe("interpreter");
+    expect(kindOf("awk -F: '{print $1}' /etc/passwd")).toBe("interpreter");
     expect(kindOf("find . -maxdepth 0 -exec /tmp/pwn.sh ;")).toBe("reader_write_or_exec");
     // …and their read-only forms stay silent.
     expect(kindOf("sed -n '10,20p' src/a.ts")).toBeUndefined();
     expect(kindOf("sort -u names.txt | uniq -c")).toBeUndefined();
     expect(kindOf("find src -name '*.ts' -maxdepth 3")).toBeUndefined();
-    expect(kindOf(`awk -F: '{print $1}' /etc/passwd`)).toBeUndefined();
-    expect(kindOf(`awk '$3 > 100 {print $1}' data.tsv`)).toBeUndefined();
+    expect(kindOf("cut -d: -f1 /etc/passwd")).toBeUndefined();
   });
 });
 

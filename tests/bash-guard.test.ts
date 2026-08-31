@@ -585,7 +585,7 @@ describe("checkWritePath / git's configuration surface", () => {
 
 // ---- round 2: allowlisted for READING is not allowlisted outright ---
 //
-// awk, sed, sort and find are on ALLOWED because a reviewer slices text all
+// sed, sort and find are on ALLOWED because a reviewer slices text all
 // day. Each also has a write or exec mode, and until the first adversarial
 // review of every one was permitted. All VERIFIED on this host: the
 // four write forms each wrote `<clone>/.git/config` and made a subsequent plain
@@ -599,14 +599,11 @@ describe("read-only programs with write/exec modes", () => {
     block("sed -ni 'p' src/a.ts", "reads code");          // clustered short form
     block("sort -o out.txt in.txt", "writes a file");
     block("find . -maxdepth 0 -fprintf out.txt '%p'", "writes a file");
-    block(`awk 'BEGIN{print "x" >>".git/config"}'`, "configuration surface");
-    block(`awk 'BEGIN { print "x" > "/tmp/out" }'`, "redirected to a file");
+    block("sed --expression='w /tmp/x' f", "reads code");   // script GLUED to its flag
+    block("sed -e'w /tmp/x' f", "reads code");
   });
 
   it("refuses the EXEC modes — these ran a command with no config involved", () => {
-    block(`awk 'BEGIN{system("/tmp/pwn.sh")}'`, "system()");
-    block(`awk 'BEGIN{"/tmp/pwn.sh" | getline x}'`, "getline");
-    block(`awk 'BEGIN{print "x" | "sh"}'`, "pipe to a command");
     block("find . -maxdepth 0 -exec /tmp/pwn.sh ;", "runs a command");
     block("find . -name '*.ts' -delete", "runs a command or writes");
     block("find . -maxdepth 1 -ok rm {} ;", "runs a command");
@@ -622,11 +619,8 @@ describe("read-only programs with write/exec modes", () => {
     allow("sort -n -k2 data.tsv | head -5");
     allow("find src -name '*.ts' -maxdepth 3");
     allow("find . -type f -newer package.json");
-    allow("awk -F: '{print $1}' /etc/passwd");
-    allow("awk '$3 > 100 {print $1}' data.tsv");          // numeric compare, not a redirect
-    allow("awk '{if ($2 > 5) print $1}' data.tsv");
-    allow(`awk '{print ($1=="a") || ($2=="b")}' data.tsv`); // `||` is not a command pipe
-    allow("awk '{print $1}' data.tsv | sort | uniq -c");
+    allow("cut -d: -f1 /etc/passwd");                     // what awk used to be reached for
+    allow("jq -r '.[].name' data.json | sort | uniq -c");
     allow("git diff --name-only | xargs grep -n TODO");
   });
 
@@ -638,5 +632,61 @@ describe("read-only programs with write/exec modes", () => {
   it("checkReaderModes is inert for every other program", () => {
     expect(checkReaderModes("rg", ["-n", "foo"]).allowed).toBe(true);
     expect(checkReaderModes("cat", ["-o", "x"]).allowed).toBe(true);
+    // …including awk, which no longer has a rule set here at all.
+    expect(checkReaderModes("awk", ["BEGIN{system(\"x\")}"]).allowed).toBe(true);
+  });
+});
+
+// ---- round 3: awk is OFF the allowlist -----------------------------
+//
+// It was on it, gated by four regexes, and all four keyed on a quote, `$` or
+// `(` after the operator — so a bare identifier holding the command defeated
+// every one. VERIFIED executing, with all five layers in force:
+//
+//     awk 'BEGIN{c="sh"; print "<cmd>" | c}'   → ran <cmd>, NO config touched
+//
+// which means the guard allowed it, the config pin was irrelevant, the audit
+// missed it, the round-boundary integrity check had nothing to compare (no
+// config file was written) and the outcome layer only sees reviews. Arbitrary
+// execution invisible to the whole stack, against a manifesto non-goal.
+//
+// The fix is this file's own seventh review rule applied to itself: awk is a
+// language whose exec and write forms take arbitrary EXPRESSIONS, so a
+// command-string rule cannot parse it and a fifth pattern would have been the
+// seventh round of the same mistake.
+describe("awk is not a read-only program (round 3)", () => {
+  it("refuses awk in every spelling, including the indirection that beat the rules", () => {
+    block(`awk 'BEGIN{c="sh"; print "id" | c}'`, "programming language");
+    block(`awk 'BEGIN{f="/tmp/out"; print "x" > f}'`, "programming language");
+    block(`awk 'BEGIN{f=".git/config"; printf "[diff]" >> f}'`, "programming language");
+    block(`awk 'BEGIN{system("id")}'`, "programming language");
+    block("awk -F: '{print $1}' /etc/passwd", "programming language");   // even the innocent form
+    block("gawk '{print}' f", "gawk");
+    block("mawk '{print}' f", "mawk");
+    block("nawk '{print}' f", "nawk");
+    block("git diff --name-only | xargs awk '{print}'", "programming language");
+    block("cat f | awk '{print $1}'", "programming language");
+  });
+
+  it("names the replacement, so the session re-plans instead of retrying", () => {
+    const why = checkBashCommand("awk '{print $1}' f").reason ?? "";
+    expect(why).toContain("rg/grep/jq/cut/sort/sed -n");
+  });
+
+  it("takes the other language runtimes with it", () => {
+    block("perl -ne 'print' f", "arbitrary code");
+    block("ruby -e 'puts 1'", "arbitrary code");
+  });
+
+  it("leaves the text vocabulary a reviewer actually needs", () => {
+    for (const cmd of [
+      "rg -n 'foo' src/",
+      "grep -c TODO src/a.ts",
+      "jq -r '.version' package.json",
+      "cut -d, -f2 data.csv | sort -u",
+      "sed -n '10,20p' src/a.ts",
+      "head -50 src/a.ts | nl -ba",
+      "tr -d '\\r' < f | wc -l",
+    ]) allow(cmd);
   });
 });

@@ -323,7 +323,7 @@ export type ExecViolationKind =
   | "reader_write_or_exec";
 
 /** Interpreters — the original rule, unchanged. */
-const EXEC_VIOLATION_RE = /\b(?:python3?|pytest|uv|npm|npx|node|make|pip3?|poetry|cargo|go (?:run|test))\b/;
+const EXEC_VIOLATION_RE = /\b(?:python3?|pytest|uv|npm|npx|node|make|pip3?|poetry|cargo|go (?:run|test)|[gmn]?awk|perl|ruby|php)\b/;
 
 /** A `gh api` call that will not be a GET: an explicit mutating method, or any
  * body-carrying flag (gh promotes GET→POST when a body is present — the
@@ -396,7 +396,10 @@ const GIT_CONFIG_SURFACE_WRITE_RE =
 const AUDIT_READERS: ReadonlySet<string> = new Set([
   "rg", "grep", "egrep", "fgrep", "ag", "ack", "cat", "head", "tail", "nl", "wc",
   "jq", "cut", "tr", "uniq", "sort", "ls", "echo", "printf", "diff", "comm",
-  "column", "find", "basename", "dirname", "stat", "awk", "sed", "xargs", "test",
+  "column", "find", "basename", "dirname", "stat", "sed", "xargs", "test",
+  // `awk` was here and is not any more (round 3): it is off the
+  // guard's ALLOWED set, so an awk invocation in a transcript is itself a
+  // policy violation, and it is classified as the interpreter it is.
 ]);
 
 /**
@@ -414,12 +417,15 @@ const AUDIT_READERS: ReadonlySet<string> = new Set([
  * here. Its target is a variable, so no reader of command strings can ever see
  * it; that one is caught by the round-boundary integrity check in
  * `execboundary.ts`, which is why that check exists.
+ *
+ * `awk` had an entry here and no longer does. The same indirection defeated it
+ * (`print "cmd" | c`), and the answer was not a fifth pattern: awk came off the
+ * guard's ALLOWED set entirely, so any awk at all is now an `interpreter` line.
  */
 const READER_MODE_AUDIT: Readonly<Record<string, RegExp>> = {
   find: /(?:^|\s)-(?:exec|execdir|ok|okdir|delete|fprintf|fprint|fprint0|fls)(?:\s|$)/,
   sort: /(?:^|\s)(?:--(?:output|compress-program)(?:=|\s)|-(?!-)[a-zA-Z]*o(?:\s|$))/,
   sed: /(?:^|\s)(?:--(?:in-place|file)|-(?!-)[a-zA-Z]*[if])|['"\s](?:[0-9$,]|\/[^/]*\/)*\s*[wWe]\s/,
-  awk: /\bsystem\s*\(|\|\s*&?\s*getline|\b(?:print|printf)\b[^;}\n]*>>?\s*["'$(]/,
 };
 
 /** The first real program token in a segment: `VAR=val` prefixes, `env` and its

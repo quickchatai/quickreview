@@ -29,12 +29,61 @@
 //     caller RE-POINTING the pin (COMMAND_INJECTING_ENV), and that job stays.
 import type { Pi, ToolCallEvent } from "@earendil-works/pi-coding-agent";
 
-/** Read-only programs a review session may run directly. */
+/**
+ * Read-only programs a review session may run directly.
+ *
+ * **`awk` is deliberately ABSENT, and must not be re-added** (round 3).
+ * It was here, gated by four regexes in `checkReaderModes`, and that gating was
+ * unsound in a way no fifth regex fixes. `awk` is a programming language in
+ * which `system(x)`, `x | getline`, `print | x` and `print > x` are all
+ * first-class and every one takes an ARBITRARY EXPRESSION. The rules keyed on a
+ * quote, `$` or `(` after the operator, so a bare identifier holding the
+ * command defeated all of them. VERIFIED executing:
+ *
+ *     awk 'BEGIN{c="sh"; print "<cmd>" | c}'        → ran <cmd>
+ *     awk 'BEGIN{f="<path>"; print "x" > f}'        → wrote <path>
+ *     awk 'BEGIN{f=".git/config"; printf … >> f}'   → then a plain `git diff` ran <cmd>
+ *
+ * The first is the one that mattered: arbitrary execution with **no config file
+ * touched**, so the round-boundary integrity check could not see it either, and
+ * the outcome layer only sees reviews. Five layers, none of them covering it —
+ * against a manifesto non-goal that says the reviewer never executes anything.
+ * That is `T=.git/config; cat p >> $T` moved one level in, into a language
+ * being parsed with regexes, and this file's own seventh review rule says stop
+ * adding patterns and change the shape.
+ *
+ * The cost is close to zero: `awk` appears in no prompt, no agent and no
+ * session-sanctioned script (the only occurrence in the tree is
+ * `scripts/deploy.sh`, which sessions cannot run). A reviewer keeps `rg`,
+ * `grep`, `jq`, `cut`, `sort`, `uniq`, `head`, `tail`, `wc`, `nl`, `tr` and
+ * `sed -n` — and `gawk`/`mawk`/`nawk` were never here either.
+ *
+ * `sed` stays, on a narrower argument: its script language has exactly three
+ * file/exec verbs (`w`/`r`/`e`) and they are single letters at a command
+ * position, not expressions. That is parseable; awk's is not. The residual —
+ * a `w` flag on a non-`/` `s` delimiter — is declared in
+ * docs/exec-boundary.md and covered by the integrity check when it lands on a
+ * config file.
+ */
 const ALLOWED = new Set([
   "git", "rg", "grep", "cat", "ls", "find", "head", "tail", "wc", "jq", "sed",
-  "awk", "sort", "uniq", "diff", "gh", "echo", "printf", "cut", "tr", "xargs",
+  "sort", "uniq", "diff", "gh", "echo", "printf", "cut", "tr", "xargs",
   "dirname", "basename", "test", "true", "false", "date", "nl", "stat",
 ]);
+
+/** Programs whose whole point is to run code the caller supplies. They are off
+ * ALLOWED, so the generic refusal already covers them — this exists only so the
+ * reason names the replacement instead of leaving the model to guess and retry.
+ * (`node`/`python`/… are handled by AGENT_SPAWNERS with their own reason.) */
+const INTERPRETER_REASONS: Readonly<Record<string, string>> = {
+  awk: "exec policy: 'awk' is a programming language that can run commands (system(), `print | cmd`, `cmd | getline`) and write files, including through a variable no guard can read — use rg/grep/jq/cut/sort/sed -n for text",
+  gawk: "exec policy: 'gawk' is awk — see the awk rule; use rg/grep/jq/cut/sort/sed -n for text",
+  mawk: "exec policy: 'mawk' is awk — see the awk rule; use rg/grep/jq/cut/sort/sed -n for text",
+  nawk: "exec policy: 'nawk' is awk — see the awk rule; use rg/grep/jq/cut/sort/sed -n for text",
+  perl: "exec policy: 'perl' runs arbitrary code — use rg/grep/jq/cut/sort/sed -n for text",
+  ruby: "exec policy: 'ruby' runs arbitrary code — use rg/grep/jq/cut/sort/sed -n for text",
+  php: "exec policy: 'php' runs arbitrary code — use rg/grep/jq/cut/sort/sed -n for text",
+};
 
 /** Sanctioned sandbox scripts — the controlled surface for routine GitHub
  * reads and gate-mirrored posting. mint-token.sh is sanctioned because the
@@ -478,6 +527,9 @@ function checkProgram(prog: string, args: string[], rawArgs?: string[]): BashChe
   // Checked before the allowlist so the reason is the directive one, and
   // before `sh`/`bash`, which have their own narrower rules below.
   if (AGENT_SPAWNERS.has(base)) return block(`${AGENT_SPAWN_REASON} — '${base}' is blocked`);
+  // Off ALLOWED already; this only makes the refusal say what to use instead.
+  const interpreter = INTERPRETER_REASONS[base];
+  if (interpreter !== undefined) return block(interpreter);
   if (base === "sh") {
     // Only the `sh -n <file>` syntax check is sanctioned.
     return args[0] === "-n" ? { allowed: true } : block("exec policy: 'sh' is only allowed as 'sh -n' (syntax check)");
@@ -827,24 +879,10 @@ const READER_MODE_RULES: Readonly<Record<string, ReaderModeRule>> = {
     ],
     what: "writes a file or runs a command",
   },
-  // system() and command pipes execute; `print … > "file"` writes. The `>`
-  // pattern requires a `print`/`printf` BEFORE it and stops at `;`/`}`, so
-  // numeric comparisons (`awk '$3 > 100'`, `awk '{if ($2 > 5) print $1}'`) and
-  // an ordinary shell redirect after the program (`awk '{print $1}' f > out`)
-  // stay allowed.
-  awk: {
-    flags: /^(?:--(?:file|source|exec|include)(?:=|$)|-(?!-)[a-zA-Z]*f)/,
-    body: [
-      { re: /\bsystem\s*\(/, what: "system()" },
-      // `cmd | getline` is awk's ONLY piped getline form — the file form uses
-      // `<` — so the pipe alone decides it. `||` is excluded on both sides so
-      // `awk '{print (a=="x") || (b=="y")}'` stays allowed.
-      { re: /(?<!\|)\|(?!\|)\s*&?\s*getline\b/, what: "a command piped into getline" },
-      { re: /(?<!\|)\|(?!\|)\s*&?\s*["'$(]/, what: "a pipe to a command" },
-      { re: /\b(?:print|printf)\b[^;}\n]*>>?\s*["'$(]/, what: "print redirected to a file" },
-    ],
-    what: "runs a command or writes a file",
-  },
+  // NOTE — there is no `awk` entry any more, and adding one back would be a
+  // mistake. Four rules lived here and all four were defeated by a bare
+  // identifier (`print "cmd" | c`), because awk's exec and write forms take
+  // arbitrary EXPRESSIONS. awk is off ALLOWED instead; see the comment there.
 };
 
 /**
@@ -872,7 +910,18 @@ export function checkReaderModes(prog: string, args: readonly string[], rawArgs?
   //   · `checkProgram` strips a leading/trailing quote from every token, which
   //     turns `BEGIN{"id" | getline}` into `BEGIN{"id | getline}` and destroys
   //     the very quoting the rules key on. Hence `rawArgs`.
-  const candidates = [(rawArgs ?? args).join(" "), ...args];
+  //
+  // The third form is a script GLUED TO ITS FLAG. `sed -e 'w f'` is caught
+  // because `w` arrives as its own token, but `sed --expression='w f'` and
+  // `sed -e'w f'` do not — the flag and the script share a token, so neither
+  // the joined string (where `w` follows a quote, not a command position) nor
+  // the per-arg pass sees a script. Stripping the flag prefix yields the same
+  // script text either spelling produced.
+  const unglued = args
+    .map((a) => /^(?:--expression=|-e)(.+)$/.exec(a)?.[1])
+    .filter((s): s is string => s !== undefined)
+    .map((s) => s.replace(/^['"]+|['"]+$/g, ""));
+  const candidates = [(rawArgs ?? args).join(" "), ...args, ...unglued];
   for (const { re, what } of rule.body ?? []) {
     if (candidates.some((c) => re.test(c))) {
       return block(
