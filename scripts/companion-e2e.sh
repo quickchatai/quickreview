@@ -11,8 +11,9 @@
 #      inject (both side effects captured into log files, nothing is sent
 #      anywhere — the real notify-send and the real ssh inject are replaced by
 #      fakes, so this script can never message the VM);
-#   5. a canned feed change produces a `wake` marker, and the extension's own
-#      gate (shouldWake) fires on it exactly once and is throttled after;
+#   5. a canned feed change is classified meaningful, an unchanged board is
+#      not, and the ambient feed never mints a `wake` marker (the
+#      /feed/wake → pi.sendUserMessage path was retired 2026-08-21);
 #   6. the daily rollover, driven by QCR_FAKE_TODAY, archives + queues the
 #      day-open message inside that container.
 #
@@ -119,7 +120,6 @@ const check = (ok, what) => out.push(`${ok ? "PASS" : "FAIL"}|${what}`);
 
 const { AlertConsumer, AlertPolicy, filePolicyStore } = await import(join(root, "dist/src/tui/alerts.js"));
 const { FeedWriter } = await import(join(root, "dist/src/tui/feed.js"));
-const { shouldWake, WAKE_THROTTLE_MS } = await import(join(root, "dist/extensions/companion-wake.js"));
 const { CompanionRollover } = await import(join(root, "dist/src/tui/rollover.js"));
 const { COMPANION_DEFAULTS } = await import(join(root, "dist/src/config.js"));
 
@@ -141,7 +141,7 @@ check(existsSync(notifyLog) && readFileSync(notifyLog, "utf8").includes("overdue
 check(existsSync(injectLog) && readFileSync(injectLog, "utf8").startsWith("[companion alert]"), "tier alert → overseer inject payload");
 check(readdirSync(join(alerts, ".done")).length === 1, "consumed alert archived to .done/");
 
-// ---- 5. feed change → wake marker → extension gate --------------------------
+// ---- 5. a feed change is classified, and the ambient feed never wakes pi ----
 const writer = new FeedWriter(feed);
 const snap = (round) => ({
   written_at: new Date().toISOString(),
@@ -154,12 +154,14 @@ const snap = (round) => ({
 });
 writer.write(snap(1), [], "ok");
 const first = writer.write(snap(2), [{ ts: "2026-08-14T09:05:00Z", kind: "round_started", pr: 5012, payload: null }], "ok");
-check(first.meaningful, "a real board change is wake-worthy");
-check(existsSync(join(feed, "wake")), "wake marker written");
-const raw = readFileSync(join(feed, "wake"), "utf8");
-check(shouldWake(WAKE_THROTTLE_MS, 0, raw, ""), "extension gate fires on a new marker");
-check(!shouldWake(WAKE_THROTTLE_MS, 0, raw, raw), "same marker never wakes twice");
-check(!shouldWake(1000, 0, raw + " ", ""), "a burst inside the throttle window is suppressed");
+check(first.meaningful, "a real board change is meaningful");
+// The `/feed/wake` → pi.sendUserMessage path was retired on 2026-08-21 (it
+// interrupted an active turn), and `FeedWriter.start` now DELETES the marker.
+// This step used to assert the marker existed and to import the wake-gate
+// extension deleted the same day — it survived only because `dist/` is never
+// cleaned (see tests/clean-clone.test.ts). Both are gone; what
+// remains is the live contract: the ambient feed never wakes pi.
+check(!existsSync(join(feed, "wake")), "the ambient feed never mints a wake marker");
 const quiet = writer.write(snap(2), [], "ok");
 check(!quiet.meaningful, "an unchanged board wakes nobody");
 

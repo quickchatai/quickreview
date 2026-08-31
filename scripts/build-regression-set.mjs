@@ -9,7 +9,7 @@
 // rebuild the set, and re-read the expectation labels when you do — they are a
 // human judgment this script only PROPOSES.
 //
-// The selection itself is `selectCases` out of dist/regression.js, so the
+// The selection itself is `selectCases` out of dist/src/regression.js, so the
 // fixture is built by exactly the instrument the tests use. Nothing here talks
 // to GitHub, to the daemon, or to a gate: it reads one file and writes another.
 //
@@ -35,9 +35,9 @@ if (!corpusPath) {
 
 let sel;
 try {
-  sel = await import(resolve("dist/regression.js"));
+  sel = await import(resolve("dist/src/regression.js"));
 } catch {
-  console.error("dist/regression.js missing — run `npm run build` first (the fixture must be built by the same instrument the tests use).");
+  console.error("dist/src/regression.js missing — run `npm run build` first (the fixture must be built by the same instrument the tests use).");
   process.exit(2);
 }
 
