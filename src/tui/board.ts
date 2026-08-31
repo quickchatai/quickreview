@@ -14,6 +14,7 @@ import { Frame, displayWidth, fit, rule, sanitizeText, stripAnsi, truncate, wrap
 import type { PiPaneView } from "./pipane.js";
 import type { Health } from "./poll.js";
 import type { LiveAgentProgress, RoundProgressSnapshot } from "../round-progress.js";
+import type { ConnectionDiagnosis } from "./sshtriage.js";
 import { FG, RESET, fmtAge, legendLine, osc8, prUrl, stateColor, verdictChip } from "./theme.js";
 
 /** Every clickable thing the board declares. */
@@ -28,8 +29,14 @@ export type BoardAction =
 
 export interface BoardView {
   health: Health;
-  dryRun: boolean;
+  /** `undefined` = NOT YET KNOWN. Only a heartbeat sets it: a
+   * rendering default here is what put a DRY-RUN badge on a live install. */
+  dryRun: boolean | undefined;
   snapshot?: StatusSnapshot;
+  /**: the triaged reason the daemon cannot be reached, with the exact
+   * remedy. Painted where the PR list would be, because that is where the
+   * operator is looking when the list is empty. */
+  connection?: ConnectionDiagnosis;
   events: EventLine[]; // newest first
   selected: number;
   detail?: WhyPayload;
@@ -142,6 +149,52 @@ export function alertSegment(badge: AlertBadge, focused: boolean): string {
   return focused ? selectedLine(`${color}${label}${RESET}`) : `${color}${label}${RESET}`;
 }
 
+/** Short top-bar label per triage class — the long form lives in the list. */
+const CONNECTION_LABEL: Record<ConnectionDiagnosis["kind"], string> = {
+  ok: "ssh ok",
+  local: "local",
+  "no-agent-key": "no ssh key loaded",
+  "wedged-master": "ssh master wedged",
+  "host-unreachable": "host down",
+  unknown: "cause unknown",
+};
+
+/**
+ * What the board says where the PR list would be, when it has NEVER had a
+ * snapshot.
+ *
+ * `PRS (0)` was a count of an empty list where the truth was "I could not ask",
+ * and it read as "the data is gone". The count is `?`, the reason is named, and
+ * the remedy is a command the operator can paste into their own shell.
+ */
+export function unknownSourceLines(conn: ConnectionDiagnosis | undefined, width: number): string[] {
+  const lines = [`${FG.anomaly}the daemon has not answered yet${RESET}`, `${FG.dim}nothing below is a measurement — it is not known${RESET}`, ""];
+  if (conn && conn.kind !== "ok" && conn.kind !== "local") {
+    for (const l of wrap(stripAnsi(conn.cause), width)) lines.push(`${FG.dim}${l}${RESET}`);
+    if (conn.remedy !== "") {
+      lines.push("");
+      lines.push(`${STRONG}run this:${RESET}`);
+      for (const l of wrap(conn.remedy, width)) lines.push(`${FG.accent}  ${l}${RESET}`);
+    }
+  } else if (!conn) {
+    lines.push(`${FG.dim}checking the connection…${RESET}`);
+  }
+  lines.push("");
+  lines.push(`${FG.dim}s re-checks the connection · r refreshes${RESET}`);
+  return lines.map((l) => truncate(l, width));
+}
+
+/** The detail pane's twin of the above: never "no PR selected" (which implies
+ * there were PRs to select from) when the list itself is unknown. */
+export function unknownDetailLines(conn: ConnectionDiagnosis | undefined, width: number): string[] {
+  const lines = [`${STRONG}no data${RESET}`, `${FG.dim}the TUI has not been able to read status.json${RESET}`];
+  if (conn?.detail) {
+    lines.push("");
+    for (const l of wrap(`ssh said: ${stripAnsi(conn.detail)}`, width)) lines.push(`${FG.dim}${l}${RESET}`);
+  }
+  return lines.map((l) => truncate(l, width));
+}
+
 /** Top-bar segments, left to right — shared by the renderer and the hit-test
  * geometry so the alert click zone can never drift from the text. */
 function barSegments(view: BoardView, alerts: boolean): string[] {
@@ -158,7 +211,7 @@ function barSegments(view: BoardView, alerts: boolean): string[] {
       health = `${WARN}▲ DATA STALE (${view.health.dataAgeS}s)${DRESET}`;
       break;
     case "unreachable":
-      health = `${FG.anomaly}✖ unreachable${RESET}`;
+      health = `${FG.anomaly}✖ unreachable${view.connection ? ` · ${CONNECTION_LABEL[view.connection.kind]}` : ""}${RESET}`;
       break;
   }
   const s = view.snapshot;
@@ -528,7 +581,10 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
   }
 
   if (view.detailFull) {
-    const lines = detailLines(view.detail, selectedPr, cols - 4, now, view.progress?.pr === selectedPr?.number ? view.progress : undefined);
+    const lines =
+      view.snapshot === undefined
+        ? unknownDetailLines(view.connection, cols - 4)
+        : detailLines(view.detail, selectedPr, cols - 4, now, view.progress?.pr === selectedPr?.number ? view.progress : undefined);
     for (let r = 0; r < rows - 4; r++) {
       frame.boxRow(1 + r, [{ text: ` ${lines[r] ?? ""}`, width: cols - 2 }]);
     }
@@ -538,8 +594,15 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
   }
 
   // Board body: list | detail.
+  //
+  // A snapshot that never arrived is UNKNOWN, not empty. The count
+  // reads `?`, the rows are replaced by the reason and the remedy, and the
+  // detail pane says "no data" rather than "no PR selected".
+  const known = view.snapshot !== undefined;
   const flabel = filterLabel(view.boardFilter);
-  const listLines: string[] = [section(`PRS (${sorted.length})`, flabel !== "" ? flabel : "the daemon's live set")];
+  const listLines: string[] = known
+    ? [section(`PRS (${sorted.length})`, flabel !== "" ? flabel : "the daemon's live set")]
+    : [section("PRS (?)", "unknown — the daemon has not answered"), ...unknownSourceLines(view.connection, listW - 1)];
   sorted.forEach((pr, i) => {
     listLines.push(styledRow(pr, i === view.selected, listW - 1, now, view.repo));
     const y = 1 + listLines.length - 1 + 1; // frame row of this PR line (below top bar)
@@ -551,7 +614,9 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
     frame.zones.push({ x1: 2, y1: y, x2: listW, y2: y, action: { t: "select-pr", pr: pr.number } satisfies BoardAction });
     frame.zones.push({ x1: 4, y1: y, x2: 4 + String(pr.number).length + 1, y2: y, action: { t: "open-github", pr: pr.number } satisfies BoardAction });
   });
-  const dLines = detailLines(view.detail, selectedPr, detailW - 2, now, view.progress?.pr === selectedPr?.number ? view.progress : undefined);
+  const dLines = known
+    ? detailLines(view.detail, selectedPr, detailW - 2, now, view.progress?.pr === selectedPr?.number ? view.progress : undefined)
+    : unknownDetailLines(view.connection, detailW - 2);
   for (let r = 0; r < bodyRows; r++) {
     const isLegendRow = r === bodyRows - 1;
     frame.boxRow(1 + r, [

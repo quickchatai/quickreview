@@ -103,10 +103,18 @@ export interface SidebarView {
   offset: number;
   /** Newest alerts, newest last; rendered inline under the mirror. */
   alerts: Array<{ tier: "notice" | "alert"; title: string; ts: string }>;
+  /**: bring-up progress, painted in the mirror's space while the mirror
+   * is still empty. The column is on screen from the first frame (its width is
+   * config-derived), so this is where startup reports — never the normal
+   * screen, whose lines the alt screen then erased. Optional so a bare test
+   * harness (and any legacy caller) still paints a plain mirror. */
+  startup?: string[];
 }
 
 export const SIDEBAR_PLACEHOLDER = "ask the companion — ⏎ sends";
 export const SIDEBAR_OFF = "companion off";
+/** Shown while the bring-up is still running. */
+export const SIDEBAR_STARTING = "starting up — progress above";
 
 /** Draft text is ONE line: CR/LF/tab from a paste would break the row
  * discipline (and tmux send-keys would submit mid-paste). */
@@ -152,7 +160,11 @@ function dividerRow(label: string, inner: number): string {
  * so taking focus cannot shift the layout.
  */
 function hintContent(view: SidebarView): string {
-  if (!view.available) return ` ${MUTED}${SIDEBAR_OFF}${RESET}`;
+  // Starting is not "off": while the bring-up is still running the column is on
+  // screen at its real width with the progress in it, and saying "companion
+  // off" there would be the same class of lie as a DRY-RUN badge with no
+  // heartbeat behind it.
+  if (!view.available) return ` ${MUTED}${(view.startup ?? []).length > 0 ? SIDEBAR_STARTING : SIDEBAR_OFF}${RESET}`;
   if (view.focused) return ` ${ACCENT}▶${RESET} ${MUTED}keys go to pi · Ctrl-q releases${RESET}`;
   return ` ${MUTED}❯ ${SIDEBAR_PLACEHOLDER} · drag left edge${RESET}`;
 }
@@ -248,20 +260,38 @@ export function paintSidebar(view: SidebarView, width: number, rows: number): st
   const out: string[] = [`┬${"─".repeat(inner)}┐`];
   const hdr = headerRows(view.header);
   for (let i = 0; i < head; i++) out.push(bodyRow(hdr[i] ?? "", inner));
+  // No mirror yet and a bring-up in flight: the space belongs to the progress.
+  // The moment pi's capture arrives the mirror takes it back, with no layout
+  // change — the region is the same rectangle either way.
+  const startup = view.startup ?? [];
+  const showStartup = view.lines.length === 0 && startup.length > 0;
   if (divider === 1) {
-    const label = view.offset > 0 ? `${ACCENT}↑${view.offset}${RESET}` : `${view.focused ? ACCENT : MUTED}session${RESET}`;
+    const label = showStartup
+      ? `${MUTED}starting${RESET}`
+      : view.offset > 0
+        ? `${ACCENT}↑${view.offset}${RESET}`
+        : `${view.focused ? ACCENT : MUTED}session${RESET}`;
     out.push(dividerRow(label, inner));
   }
 
-  // Scrollback: `offset` lines above the live tail, then the last `mirrorRows`.
-  const end = Math.max(0, view.lines.length - view.offset);
-  const tail = view.lines.slice(Math.max(0, end - mirrorRows), end);
-  const pad = mirrorRows - tail.length;
-  for (let i = 0; i < mirrorRows; i++) {
-    const line = i < pad ? "" : (tail[i - pad] ?? "");
-    // `fit` (via truncate) is ANSI-aware: escapes are zero-width and never cut
-    // mid-sequence, so a styled mirror line keeps its exact cell count.
-    out.push(bodyRow(line.length > 0 ? ` ${line}` : "", inner));
+  if (showStartup) {
+    // TOP-anchored, unlike the mirror: this is a checklist read downwards, not
+    // a terminal tail.
+    for (let i = 0; i < mirrorRows; i++) {
+      const line = startup[i];
+      out.push(bodyRow(line !== undefined ? ` ${line}` : "", inner));
+    }
+  } else {
+    // Scrollback: `offset` lines above the live tail, then the last `mirrorRows`.
+    const end = Math.max(0, view.lines.length - view.offset);
+    const tail = view.lines.slice(Math.max(0, end - mirrorRows), end);
+    const pad = mirrorRows - tail.length;
+    for (let i = 0; i < mirrorRows; i++) {
+      const line = i < pad ? "" : (tail[i - pad] ?? "");
+      // `fit` (via truncate) is ANSI-aware: escapes are zero-width and never cut
+      // mid-sequence, so a styled mirror line keeps its exact cell count.
+      out.push(bodyRow(line.length > 0 ? ` ${line}` : "", inner));
+    }
   }
 
   if (alertN > 0) {
@@ -325,6 +355,8 @@ export class CompanionSidebar {
   preferredWidth: number | undefined;
   offset = 0;
   alerts: SidebarView["alerts"] = [];
+  /**: bring-up progress lines, shown until the mirror has content. */
+  startup: string[] = [];
 
   private captureOk = false;
   private patch: Partial<SidebarHeader> = {};
@@ -337,11 +369,32 @@ export class CompanionSidebar {
   constructor(
     private readonly cfg: Pick<CompanionConfig, "container_name" | "session">,
     private readonly docker: DockerRunner,
-    private readonly opts: { available?: () => boolean; onUpdate?: () => void; now?: () => number } = {},
+    private readonly opts: { available?: () => boolean; enabled?: () => boolean; onUpdate?: () => void; now?: () => number } = {},
   ) {}
 
+  /** The companion is up and can take keystrokes. */
   available(): boolean {
     return this.opts.available?.() ?? true;
+  }
+
+  /**
+   * The column is part of the layout — a CONFIG fact, known before any docker
+   * call (ruling 2).
+   *
+   * This is the split that answers the layout-jump objection properly:
+   * the geometry comes from `[companion] enabled` + `--no-companion`, so the
+   * first frame is already the right shape and the container merely fills a
+   * column that was the correct width all along. Asking docker for it — the
+   * only layout-affecting work left — would reproduce the exact bug whenever
+   * docker is slow or stopped.
+   */
+  shown(): boolean {
+    return this.opts.enabled?.() ?? this.available();
+  }
+
+  /** Replace the bring-up progress lines (pure state; the App repaints). */
+  setStartup(lines: string[]): void {
+    this.startup = lines;
   }
 
   /** Push the header facts only the orchestrator knows (day, memory, wake). */
@@ -370,6 +423,7 @@ export class CompanionSidebar {
       available,
       offset: this.offset,
       alerts: this.alerts,
+      startup: this.startup,
     };
   }
 

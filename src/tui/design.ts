@@ -97,8 +97,17 @@ export function badge(kind: BadgeKind, text: string): string {
   return `${BADGE_BG[kind]}${SGR.bold} ${stripAnsi(text)} ${RESET}`;
 }
 
-/** The one top-bar mode chip: LIVE is red truth, DRY-RUN rides the accent. */
-export function modeBadge(dryRun: boolean): string {
+/**
+ * The one top-bar mode chip: LIVE is red truth, DRY-RUN rides the accent.
+ *
+ * `undefined` means NOT YET KNOWN and must never render as either (,
+ * ruling 1). On 2026-08-31 a missing ssh agent key made a LIVE installation
+ * paint `DRY-RUN` — purely because the view field initialised to `true` — and
+ * the operator reasonably read it as "someone flipped the flag on my live
+ * reviewer". The badge is only ever asserted from a heartbeat.
+ */
+export function modeBadge(dryRun: boolean | undefined): string {
+  if (dryRun === undefined) return badge("warn", "MODE UNKNOWN");
   return dryRun ? badge("accent", "DRY-RUN") : badge("live", "LIVE");
 }
 

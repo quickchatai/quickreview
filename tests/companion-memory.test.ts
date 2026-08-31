@@ -312,6 +312,89 @@ describe("the memory forward", () => {
     expect(fwd.liveRelays()).toBe(0);
     client.destroy();
   });
+
+  // ----: the flood, collapsed ---------------------------------------
+  //
+  // A missing agent key used to fill the journal with thousands of
+  // `relay #N exited 255` lines — a symptom, repeated, naming neither a cause
+  // nor a remedy, because every HTTP connection spawns its own relay.
+
+  it("names the likely cause and the exact command for each failure shape", () => {
+    const cause = (text: string) => forward.relayFailureCause({ ...cfg, identity: "/home/x/.ssh/gce" }, text) as { key: string; cause: string; remedy: string };
+    expect(cause("my-vm: Permission denied (publickey).")).toMatchObject({ key: "auth", remedy: "ssh-add /home/x/.ssh/gce" });
+    expect(cause("ssh: Could not resolve hostname my-vm")).toMatchObject({ key: "host", remedy: "ssh -v my-vm true" });
+    expect(cause("Control socket connect(/home/x/.ssh/cm): Connection refused")).toMatchObject({ key: "mux", remedy: "ssh -O exit my-vm" });
+    // The docker daemon's own refusal also says "permission denied" — it must
+    // not be mistaken for an ssh key problem and send the operator to ssh-add.
+    expect(cause("permission denied while trying to connect to the Docker daemon socket")).toMatchObject({ key: "docker" });
+    expect(cause("").key).toBe("unknown");
+  });
+
+  it("collapses a repeating failure into ONE line, rate-limited, and says when it recovers", () => {
+    const lines: string[] = [];
+    let now = 0;
+    const c = forward.createFailureCollapser({ log: (l: string) => lines.push(l), now: () => now, windowMs: 60_000 });
+    const auth = { key: "auth", cause: "no usable key", remedy: "ssh-add k" };
+    for (let i = 0; i < 500; i++) {
+      now += 10;
+      c.fail(auth);
+    }
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("no usable key");
+    expect(lines[0]).toContain("fix: ssh-add k");
+    // Past the window it is worth saying again — with how many it swallowed.
+    now += 61_000;
+    c.fail(auth);
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toContain("more like it");
+    // A different cause is never suppressed behind the first one.
+    c.fail({ key: "host", cause: "my-vm did not answer", remedy: "ssh -v my-vm true" });
+    expect(lines).toHaveLength(3);
+    // …and recovery is its own line, with no restart involved.
+    c.ok();
+    expect(lines[3]).toContain("relay recovered");
+    c.ok();
+    expect(lines).toHaveLength(4); // nothing to say the second time
+  });
+
+  it("recovers on its own once the key is back — the next working relay clears it", async () => {
+    const lines: string[] = [];
+    let mode: "fail" | "ok" = "fail";
+    const spawnRelay = () => {
+      const child = {
+        stdin: new PassThrough(),
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+        kill(): void {},
+        on(event: string, cb: (arg: unknown) => void): void {
+          if (event === "exit" && mode === "fail") setTimeout(() => cb(255), 5);
+        },
+      };
+      if (mode === "fail") setTimeout(() => child.stderr.write("Permission denied (publickey).\n"), 1);
+      else setTimeout(() => child.stdout.write("HTTP/1.1 200 OK\n"), 5);
+      return child;
+    };
+    const fwd = forward.createForwarder({ ...cfg, binds: ["127.0.0.1"], port: 0 }, { spawnRelay, log: (l: string) => lines.push(l) });
+    await fwd.listen();
+    const port = (fwd.addresses() as Array<{ port: number }>)[0]!.port;
+    const hit = async (): Promise<void> => {
+      const client: Socket = connect(port, "127.0.0.1");
+      await new Promise((r) => client.once("connect", r));
+      await new Promise((r) => setTimeout(r, 30));
+      client.destroy();
+    };
+    await hit();
+    await hit();
+    await hit();
+    const failures = lines.filter((l) => l.startsWith("relay failing:"));
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toContain("ssh-add");
+    // The key is added; nothing restarts, and the next relay proves it works.
+    mode = "ok";
+    await hit();
+    expect(lines.some((l) => l.startsWith("relay recovered"))).toBe(true);
+    fwd.close();
+  });
 });
 
 // ---- the two-key confinement proof -----------------------------------------

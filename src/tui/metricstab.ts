@@ -268,7 +268,7 @@ export interface MetricsView {
   /** Local git's answer for the deploy-needed line; absent without a probe. */
   local?: LocalHeadState;
   scroll: number;
-  dryRun: boolean;
+  dryRun: boolean | undefined;
   now?: Date;
 }
 

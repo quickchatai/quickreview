@@ -62,6 +62,12 @@ export interface MemTabState {
   propSel: number;
   /** Read-only fleet tickets from the review-feedback-loop effort. */
   tickets?: TrackerTicket[];
+  /** False until the tracker has actually been read once: the scan
+   * is a filesystem walk and runs behind the first frame, so an empty
+   * `tickets` before it is UNKNOWN, not "no tickets". */
+  ticketsLoaded?: boolean;
+  /** Run that scan. Called by the TUI's bring-up, never on the paint path. */
+  reloadTickets?: () => void;
   ticketSel?: number;
   ticketScroll?: number;
   ticketShowClosed?: boolean;
@@ -334,7 +340,7 @@ export function forwardRows(fwd: ForwardStatus | undefined, width: number): RowC
 
 export function renderMemoryView(
   st: MemTabState,
-  dryRun: boolean,
+  dryRun: boolean | undefined,
   highlightDay: string | undefined,
   cols: number,
   rows: number,
@@ -417,7 +423,12 @@ export function renderMemoryView(
       { text: button(st.ticketShowClosed ? "c actionable" : "c show all"), action: { t: "key", key: "c" } },
       { text: button("t next pane"), action: { t: "key", key: "t" } },
     ]);
-    if (tickets.length === 0) row([{ text: "none — adjudication files a ticket only when something changes", dim: true }]);
+    if (tickets.length === 0) {
+      // "not read yet" and "none" are different facts. The tracker
+      // scan is a filesystem walk and therefore runs AFTER the first frame, so
+      // the empty list must say which of the two it is.
+      row([{ text: st.ticketsLoaded === false ? "reading the tracker…" : "none — adjudication files a ticket only when something changes", dim: true }]);
+    }
     const ticketStart = Math.max(0, Math.min(ticketSel - 5, Math.max(0, tickets.length - 6)));
     for (const [offset, ticket] of tickets.slice(ticketStart, ticketStart + 6).entries()) {
       const i = ticketStart + offset;
@@ -604,11 +615,17 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
     } catch {
       st.tickets = [];
     }
+    st.ticketsLoaded = true;
     const visible = st.ticketShowClosed ? st.tickets : st.tickets.filter(isActionableTicket);
     st.ticketSel = Math.min(st.ticketSel ?? 0, Math.max(0, visible.length - 1));
     st.ticketScroll = 0;
   };
-  loadTickets();
+  // NOT called here: reading the tracker is a filesystem walk, and
+  // nothing external may run before the first frame is painted. The TUI's
+  // bring-up calls `reloadTickets` behind that frame; a harness that wants the
+  // old eager behaviour calls it itself.
+  st.ticketsLoaded = false;
+  st.reloadTickets = loadTickets;
 
   const loadDigest = async (): Promise<void> => {
     st.digest.files = await digestFetcher.list();

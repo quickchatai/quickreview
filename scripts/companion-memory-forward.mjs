@@ -129,6 +129,86 @@ export function relayArgv(cfg) {
   ];
 }
 
+// ---- repeat-failure collapse --------------------------------------
+
+/**
+ * The likely CAUSE of a relay failure, in the operator's terms, with the exact
+ * command that fixes it. `ssh` exiting 255 with nothing else to say is the
+ * symptom the journal used to be full of; this is the sentence that was
+ * missing beside it.
+ */
+export function relayFailureCause(cfg, text) {
+  const s = String(text ?? "");
+  if (/permission denied while trying to connect to the docker daemon|cannot connect to the docker daemon/i.test(s)) {
+    return { key: "docker", cause: "the docker daemon refused the exec", remedy: "systemctl status docker" };
+  }
+  if (/permission denied|publickey|too many authentication failures|agent refused/i.test(s)) {
+    return {
+      key: "auth",
+      cause: `ssh to ${cfg.sshHost} has no usable key — the agent is empty or does not hold this host's key`,
+      remedy: `ssh-add ${cfg.identity ?? "~/.ssh/google_compute_engine"}`,
+    };
+  }
+  if (/could not resolve|name or service not known|no route to host|network is unreachable|connection timed out|operation timed out/i.test(s)) {
+    return { key: "host", cause: `${cfg.sshHost} did not answer`, remedy: `ssh -v ${cfg.sshHost} true` };
+  }
+  if (/control socket|mux_client|multiplexing/i.test(s)) {
+    return { key: "mux", cause: `the shared ssh ControlMaster for ${cfg.sshHost} is wedged`, remedy: `ssh -O exit ${cfg.sshHost}` };
+  }
+  return {
+    key: "unknown",
+    cause: `the relay to ${cfg.container} on ${cfg.sshHost} exited without connecting`,
+    remedy: `ssh -v ${cfg.sshHost} true`,
+  };
+}
+
+/** How long one cause stays collapsed before it is worth saying again. */
+export const FAILURE_REPEAT_MS = 60_000;
+
+/**
+ * Collapses a repeating relay failure into ONE actionable line, rate-limited,
+ * and says so out loud when it recovers.
+ *
+ * Every HTTP connection the companion or the TUI makes spawns its own relay, so
+ * a missing agent key produced thousands of `relay #N exited 255` lines — a
+ * symptom, repeated, with no cause and no remedy. One line per cause per
+ * window, a count of what was suppressed, and a `recovered` line that proves
+ * the self-healing actually happened: nothing here needs a restart, the next
+ * successful relay clears the state on its own.
+ */
+export function createFailureCollapser({ log, now = () => Date.now(), windowMs = FAILURE_REPEAT_MS } = {}) {
+  let key = null;
+  let lastAt = 0;
+  let suppressed = 0;
+  let total = 0;
+  return {
+    fail(cause) {
+      total += 1;
+      const t = now();
+      if (cause.key === key && t - lastAt < windowMs) {
+        suppressed += 1;
+        return;
+      }
+      const repeat = cause.key === key && suppressed > 0 ? ` (${suppressed} more like it in the last ${Math.round((t - lastAt) / 1000)}s)` : "";
+      key = cause.key;
+      lastAt = t;
+      suppressed = 0;
+      log(`relay failing: ${cause.cause} — fix: ${cause.remedy}${repeat}`);
+    },
+    ok() {
+      if (key === null) return;
+      const hidden = suppressed;
+      const seen = total;
+      key = null;
+      suppressed = 0;
+      total = 0;
+      log(`relay recovered — the forward is working again (${seen} failure${seen === 1 ? "" : "s"}, ${hidden} suppressed)`);
+    },
+    /** Test handle: what is currently collapsed. */
+    state: () => ({ key, suppressed, total }),
+  };
+}
+
 // ---- the forwarder ----------------------------------------------------------
 
 /**
@@ -174,16 +254,23 @@ export function createForwarder(cfg, opts = {}) {
   // before only systemd did, and a process exiting cleaned up for free.
   const pairs = new Set();
 
+  // one actionable line per cause, not one symptom line per relay.
+  const collapser = opts.collapser ?? createFailureCollapser({ log, ...(opts.now ? { now: opts.now } : {}) });
+
   const onConnection = (socket) => {
-    const id = ++live;
+    live += 1;
     let child;
     try {
       child = spawnRelay();
     } catch (err) {
-      log(`relay spawn failed: ${errText(err)}`);
+      collapser.fail(relayFailureCause(cfg, errText(err)));
       socket.destroy();
       return;
     }
+    // Evidence for the cause: ssh writes the reason to stderr and then exits
+    // 255, so the exit code alone can never name it.
+    let stderrText = "";
+    let moved = false;
     const pair = { socket, child };
     pairs.add(pair);
     const done = () => {
@@ -198,16 +285,28 @@ export function createForwarder(cfg, opts = {}) {
     socket.on("error", done);
     socket.on("close", done);
     child.on?.("error", (err) => {
-      log(`relay #${id} error: ${errText(err)}`);
+      collapser.fail(relayFailureCause(cfg, errText(err)));
       done();
     });
     child.on?.("exit", (code) => {
-      if (code) log(`relay #${id} exited ${code}`);
+      // A relay that carried bytes and then exited is a closed connection, not
+      // a failure — only one that never moved anything is worth a cause.
+      if (code && !moved) collapser.fail(relayFailureCause(cfg, stderrText));
       socket.destroy();
     });
-    child.stderr?.on?.("data", (d) => log(`relay #${id}: ${String(d).trim()}`));
+    child.stderr?.on?.("data", (d) => {
+      stderrText = `${stderrText}${String(d)}`.slice(-2000);
+    });
     socket.pipe(child.stdin);
     child.stdout.pipe(socket);
+    // The first byte back from the container IS the proof that the whole chain
+    // works, so it is what clears a collapsed failure — self-recovery with no
+    // restart, which is the half asked for beyond the rate limit.
+    child.stdout.on?.("data", () => {
+      if (moved) return;
+      moved = true;
+      collapser.ok();
+    });
   };
 
   return {

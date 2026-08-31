@@ -13,6 +13,14 @@
 #   2. A blocking build runs FIRST. `tsc --watch` emits its initial build a
 #      second or two in, which the dist-watcher would see as a change and
 #      re-exec the TUI the moment it finished starting.
+#
+# That blocking build STAYS (ruling 5) — it is the only thing stopping
+# the re-exec above — but it is INCREMENTAL now (`incremental` +
+# `tsBuildInfoFile` in tsconfig.json): the from-scratch typecheck it used to
+# run measured 3.6s of blank terminal on every `npm run dev`, and a warm one is
+# well under a second. Nothing about what is checked changed, and an up-to-date
+# tree makes the watcher's first pass emit nothing at all, so it cannot trigger
+# a reload either.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"

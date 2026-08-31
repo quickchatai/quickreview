@@ -81,7 +81,7 @@ export function currentFile(st: DigestState): string | undefined {
 export function renderDigestTab(
   st: DigestState,
   snapshotPrs: SnapshotPr[],
-  dryRun: boolean,
+  dryRun: boolean | undefined,
   today: string,
   cols: number,
   rows: number,

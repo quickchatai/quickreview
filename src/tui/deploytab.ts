@@ -244,7 +244,7 @@ export function deployLines(st: DeployState, width: number): string[] {
   return lines;
 }
 
-export function renderDeployTab(st: DeployState, dryRun: boolean, cols: number, rows: number): Frame {
+export function renderDeployTab(st: DeployState, dryRun: boolean | undefined, cols: number, rows: number): Frame {
   const frame = new Frame(cols, rows);
   frame.set(0, rule(cols, "┌", "┐", [`${HEADING}quickreview${DRESET}`, modeBadge(dryRun), "deploy"]));
 

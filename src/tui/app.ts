@@ -104,7 +104,10 @@ const END_KEYS = new Set(["\x1b[F", "\x1bOF", "\x1b[4~", "\x1b[8~"]);
 export class App {
   readonly view: BoardView = {
     health: { kind: "unreachable", sinceS: Number.POSITIVE_INFINITY },
-    dryRun: true,
+    // UNKNOWN until a heartbeat proves one (ruling 1). This field used
+    // to initialise to `true`, which is how a LIVE installation painted a
+    // DRY-RUN badge on 2026-08-31 while the daemon was healthy the whole time.
+    dryRun: undefined,
     events: [],
     selected: 0,
     detailFull: false,
@@ -258,11 +261,18 @@ export class App {
 
   async run(initialSelection?: number): Promise<void> {
     if (initialSelection !== undefined) this.selectedPr = initialSelection;
-    // From here the TUI owns the screen, and only from here may it paint
-    //. Before this point the layout is still being assembled —
-    // app.sidebar is wired after the companion starts — so any frame painted
-    // during startup shows a DIFFERENT layout, on the normal screen, and the
-    // real one then lands on top of it as a visible jump.
+    // From here the TUI owns the screen, and this is now the FIRST thing that
+    // happens (ruling 2): nothing external — no docker call, no
+    // network call, no filesystem walk — runs before this paint.
+    //
+    //'s objection is answered rather than side-stepped. Painting used
+    // to be pushed to the end because `app.sidebar` was wired after the
+    // companion container started, so an early frame showed a different layout
+    // that then jumped. But the objection was about GEOMETRY, not data: the
+    // column's width comes from config (`CompanionSidebar.shown()`), the
+    // sidebar is wired before this call, and the container merely fills a
+    // column that is already the right size. Everything slow streams in behind
+    // this frame and reports into that column (src/tui/startup.ts).
     this.started = true;
     this.out.write(ALT_SCREEN_ON + CLEAR + MOUSE_ON);
     if (this.input.isTTY) this.input.setRawMode(true);
@@ -1190,19 +1200,26 @@ export class App {
    */
   private wheelBelongsToSidebar(x: number, cols: number): boolean {
     const sb = this.sidebar;
-    if (!sb || !sb.available() || sb.collapsed) return false;
+    if (!sb || !sb.shown() || sb.collapsed) return false;
     const width = this.sidebarWidth(cols);
     if (width <= SIDEBAR_SPINE) return false;
     if (x > cols - width && x <= cols) return true;
     return sb.focused;
   }
 
-  /** Width the companion column takes on THIS paint (0 = not shown). */
+  /**
+   * Width the companion column takes on THIS paint (0 = not shown).
+   *
+   * Keyed on `shown()` — a CONFIG fact — not on `available()`, which is only
+   * true after docker has answered. That is what lets the first frame be the
+   * real layout (ruling 2): the container fills a column that was
+   * already the right width, so nothing jumps when it arrives.
+   */
   sidebarWidth(cols: number): number {
     if (!this.sidebar) return 0;
     return sidebarWidth(cols, {
       collapsed: this.sidebar.collapsed,
-      available: this.sidebar.available(),
+      available: this.sidebar.shown(),
       preferredWidth: this.sidebar.preferredWidth,
     });
   }

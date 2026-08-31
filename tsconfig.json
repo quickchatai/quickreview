@@ -13,6 +13,15 @@
     "declaration": false,
     "sourceMap": true,
     "outDir": "dist",
+    // `scripts/dev-tui.sh` blocks on a full build before the
+    // TUI starts (so the watcher's first emit cannot re-exec it the moment it
+    // opens) — and that build was a from-scratch typecheck on EVERY
+    // `npm run dev`, measured at 3.6s of blank terminal. Incremental keeps the
+    // check identical and pays it once. The build info rides `dist/` because
+    // that is the artefact directory the reload watcher already tracks and
+    // `.gitignore` already covers; `rm -rf dist` correctly forces a cold build.
+    "incremental": true,
+    "tsBuildInfoFile": "dist/.tsbuildinfo",
     "types": ["node"]
   },
   "include": ["src/**/*.ts", "extensions/**/*.ts"],

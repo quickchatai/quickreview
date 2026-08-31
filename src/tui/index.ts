@@ -1,8 +1,7 @@
 // `qcr tui [pr|overseer]` entry point. Wires the real ssh runner; the
 // optional target becomes the deep link.
-import { spawn, spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { loadConfig, sandboxRoot } from "../config.js";
+import { loadConfig, sandboxRoot, type Config } from "../config.js";
 import type { TuiDriver } from "./actions.js";
 import { App } from "./app.js";
 import type { DeployState } from "./deploytab.js";
@@ -16,6 +15,7 @@ import { reselect } from "./model.js";
 import { HotReloader, parseResumeArg, readResumeState, realReexec } from "./reload.js";
 import { killInFlightSsh, runnerFor, transportOf } from "./remote.js";
 import { chainOnPoll } from "./poll-hooks.js";
+import type { ConnectionDiagnosis } from "./sshtriage.js";
 
 export { chainOnPoll } from "./poll-hooks.js";
 
@@ -56,9 +56,13 @@ keys: 1/2/3/4/5 tabs (2 = memory & learning — v toggles digest/memory view,
       ? full key map · q quit
 
 troubleshooting:
-  ✖ unreachable      ssh to the VM failed — press s to re-establish the
-                     master (prompts for the GCP key passphrase once); after a
-                     reboot the 4h shared connection is gone until you do
+  ✖ unreachable      ssh to the VM failed. The board names WHICH of the
+                     three usual causes it is and prints the exact command to
+                     run — a key missing from the agent (ssh-add …), a wedged
+                     shared master (ssh -O exit …), or a host that is simply
+                     not answering. Nothing is run for you; s re-checks and
+                     reports, and offers the one GCP passphrase prompt when a
+                     key is what is missing
   ▲ DATA STALE       ssh works but status.json stopped updating — the
                      container is down or the daemon hung (qcr-side:
                      ssh <host> sudo docker ps / docker logs)
@@ -207,7 +211,35 @@ export function buildTuiDriver(app: App, memState: MemTabState, metricsView: Met
   return driver;
 }
 
-export async function runTui(argv: string | string[] = []): Promise<void> {
+/**
+ * Injectable ends of the TUI process. Production passes none of them; the
+ * startup-contract test passes all four, so it can drive a real `runTui`
+ * against fake terminal streams without depending on the operator's
+ * `config.toml` and without the process exiting under vitest.
+ */
+export interface RunTuiDeps {
+  out?: NodeJS.WriteStream;
+  input?: NodeJS.ReadStream;
+  config?: Config;
+  exit?: (code: number) => void;
+}
+
+/**
+ * `qcr tui` — the whole startup, in two phases (contract).
+ *
+ * PHASE 0 is local only: parse, config, wire, and PAINT. Nothing external —
+ * no ssh, no docker, no network, no directory scan — may run before the first
+ * frame, and the frame it paints is the REAL layout with every unfetched value
+ * marked unknown. The companion column's width comes from config, which is the
+ * only layout-affecting fact there was, so nothing jumps when the container
+ * later arrives (that is's objection, answered rather than dodged).
+ *
+ * PHASE 1 is the bring-up, streaming in behind that frame and reporting into
+ * the companion column: connection triage, memory forward, namespaces,
+ * container, day rollover, pi. It never blocks the board, and a step that
+ * fails is a degraded mode, never a reason the TUI does not open.
+ */
+export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}): Promise<void> {
   const args = parseTuiArgs(typeof argv === "string" ? [argv] : argv);
   if (args.help) {
     console.log(TUI_HELP);
@@ -219,68 +251,67 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
     process.exitCode = 2;
     return;
   }
-  if (!process.stdout.isTTY || !process.stdin.isTTY) {
+  const out = deps.out ?? process.stdout;
+  const input = deps.input ?? process.stdin;
+  const exit = deps.exit ?? ((code: number) => process.exit(code));
+  if (!out.isTTY || !input.isTTY) {
     console.error("qcr tui needs an interactive terminal");
     process.exitCode = 2;
     return;
   }
-  const full = loadConfig();
+
+  // ---- phase 0: local only, ending in the first frame -----------------------
+
+  const full = deps.config ?? loadConfig();
   const cfg = full.tui;
   // ONE transport decision for every remote op — ssh to the VM, or
   // the same commands against local docker on the laptop topology.
   const runner = runnerFor(cfg);
 
-  // The GCP key passphrase, once, natively — before the alt screen, so the
-  // OpenSSH prompt is a plain terminal prompt. Failure degrades to the
-  // unreachable banner (retry from the board with s). In local mode this is
-  // a guarded no-op — no ssh process is ever spawned.
-  ensureSshMaster(cfg);
-
-  const app = new App(cfg, runner);
+  const app = new App(cfg, runner, out, input);
 
   // The terminal must come back whatever kills us — raw mode + alt screen
   // surviving a crash is exactly the "only closing the terminal works" trap.
   const restoreTerminal = (): void => {
     try {
-      if (process.stdin.isTTY) process.stdin.setRawMode(false);
+      if (input.isTTY) input.setRawMode(false);
     } catch {
       /* stdin already gone */
     }
-    process.stdout.write(MOUSE_OFF + ALT_SCREEN_OFF);
+    out.write(MOUSE_OFF + ALT_SCREEN_OFF);
   };
   process.on("exit", restoreTerminal);
   process.on("SIGINT", () => {
     restoreTerminal();
-    process.exit(130);
+    exit(130);
   });
   process.on("SIGTERM", () => {
     restoreTerminal();
-    process.exit(143);
+    exit(143);
   });
   process.on("uncaughtException", (err) => {
     restoreTerminal();
     console.error("qcr tui crashed:", err);
-    process.exit(1);
+    exit(1);
   });
 
   /** Suspend the TUI, run something on the real terminal, come back. */
   const onRealTerminal = (fn: () => void): void => {
     app.suspend();
     try {
-      if (process.stdin.isTTY) process.stdin.setRawMode(false);
+      if (input.isTTY) input.setRawMode(false);
     } catch {
       /* keep going — fn may still work */
     }
-    process.stdout.write(MOUSE_OFF + ALT_SCREEN_OFF);
+    out.write(MOUSE_OFF + ALT_SCREEN_OFF);
     try {
       fn();
     } finally {
-      if (process.stdin.isTTY) process.stdin.setRawMode(true);
-      process.stdout.write(ALT_SCREEN_ON + CLEAR + MOUSE_ON);
+      if (input.isTTY) input.setRawMode(true);
+      out.write(ALT_SCREEN_ON + CLEAR + MOUSE_ON);
       app.resume();
     }
   };
-  app.hooks.reconnect = () => onRealTerminal(() => ensureSshMaster(cfg));
   const { DurableDeployProcess } = await import("./deploy-process.js");
   const durableDeploy = new DurableDeployProcess(sandboxRoot());
   app.hooks.deployRun = (_theApp, runId, onData, onExit) =>
@@ -299,6 +330,37 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
       writeFileSync(marker, new Date().toISOString());
     },
   };
+
+  // The companion column is LAYOUT, and its width is a CONFIG fact (,
+  // ruling 2). Wiring it here — before anything asks docker whether the
+  // container is running — is what makes the first frame the real one: the
+  // sidebar is `shown()` from config and only `available()` once the container
+  // answers, so the container fills a column that was already the right size.
+  const { CompanionSidebar, restorePreferredSidebarWidth } = await import("./sidebar.js");
+  const { CompanionLifecycle, realDockerRunner } = await import("./companion.js");
+  const companion = new CompanionLifecycle(full.companion, realDockerRunner);
+  const companionOn = args.companion && full.companion.enabled;
+  let companionUp = false;
+  let companionError: string | undefined;
+  app.sidebar = new CompanionSidebar(full.companion, realDockerRunner, {
+    enabled: () => companionOn,
+    available: () => companionUp,
+    onUpdate: () => app.repaint(),
+  });
+
+  // Bring-up progress goes IN that column (ruling 3): it is empty at this
+  // moment and already the right shape, so it costs no new surface — and the
+  // lines are never written to the normal screen, where the alt screen's clear
+  // used to erase them (that erasure was the flicker).
+  const { StartupProgress } = await import("./startup.js");
+  const progress = new StartupProgress(undefined, {
+    onUpdate: (p) => {
+      app.sidebar?.setStartup(p.lines());
+      app.repaint();
+    },
+  });
+  app.sidebar.setStartup(progress.lines());
+
   const { installAttachHooks } = await import("./attach.js");
   await installAttachHooks(app);
   const { installMessageHooks } = await import("./msg.js");
@@ -312,9 +374,9 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
   // channel, or none) and which effort the ticket projection reads.
   const { installMemoryLearningHooks } = await import("./memtab.js");
   const { execFile } = await import("node:child_process");
-  const gitRun = (cmd: string, args: string[], stdin?: string): Promise<string> =>
+  const gitRun = (cmd: string, args2: string[], stdin?: string): Promise<string> =>
     new Promise((res, rej) => {
-      const child = execFile(cmd, args, { cwd: sandboxRoot() }, (err, stdout, stderr) => {
+      const child = execFile(cmd, args2, { cwd: sandboxRoot() }, (err, stdout, stderr) => {
         if (err) rej(new Error(stderr.trim() || err.message));
         else res(stdout);
       });
@@ -331,6 +393,7 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
   // works without the operator installing the systemd unit first. It ADOPTS a
   // forward that is already listening (the unit, or another qcr tui) and stops
   // only one it started — see memforward.ts for why that split matters.
+  // Constructed here, STARTED in the bring-up: `ensure()` probes over HTTP.
   const { MemoryForward } = await import("./memforward.js");
   const memForward = new MemoryForward({
     baseUrl: tuiMemoryBaseUrl(),
@@ -341,10 +404,6 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
     sudoDocker: cfg.sudo_docker,
     log: (line) => app.notice(line),
   });
-  // Eagerly, not on first visit to the tab: the companion container reaches
-  // memory over the same forward's docker-bridge bind, and it starts below
-  // regardless of which tab the operator is looking at.
-  void memForward.ensure();
   const { buildIssueSink, ticketProjection } = await import("./issuesink.js");
   const { readEffortTickets } = await import("./trackertickets.js");
   const projection = ticketProjection(full);
@@ -406,98 +465,22 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
   installChangesHooks(app, new ChangeLog(new ChangeRegisterStore(join(sandboxRoot(), "state", "changes")), localRunner));
 
   // finished-round evidence, copied down from the VM into a local
-  // store the companion reads read-only. Created BEFORE the container starts —
-  // the mount source must exist first, or docker invents it root-owned and the
-  // copier can never write into it.
+  // store the companion reads read-only. Its dir is CREATED in the bring-up,
+  // before the container starts — the mount source must exist first, or docker
+  // invents it root-owned and the copier can never write into it.
   const { EvidenceCopier, EvidenceStore } = await import("./evidence.js");
   const evidence = new EvidenceStore(full.companion.evidence_dir);
-  try {
-    evidence.ensure();
-  } catch (err) {
-    app.notice(`✖ evidence store ${evidence.dir}: ${String(err instanceof Error ? err.message : err)}`);
-  }
-
-  // Companion container: adopt-or-start before the board comes up. A failure
-  // here is a degraded mode, never a reason not to open the TUI.
-  const { CompanionLifecycle, realDockerRunner } = await import("./companion.js");
-  const companion = new CompanionLifecycle(full.companion, realDockerRunner);
-  const companionOn = args.companion && full.companion.enabled;
-  let companionUp = false;
-  let companionError: string | undefined;
-  const companionStateDir = join(sandboxRoot(), "state", "companion");
-  const policyStatePath = join(companionStateDir, "alert-policy.json");
-  const startCompanion = async (): Promise<void> => {
-    try {
-      // BEFORE the container, never after: the companion's pi extension picks
-      // the user namespace it writes into by listing `viking://user/`, and
-      // caches that choice for the life of the process. A namespace whose
-      // directory does not exist yet is invisible to it, so it falls back to
-      // `user/default` and every write is refused — the whole of 2026-08-21,
-      // reported only as "access denied". Needs the forward up, so await it
-      // rather than riding the eager `ensure()` above.
-      const fwd = await memForward.ensure();
-      if (fwd.state === "adopted" || fwd.state === "owned") {
-        for (const note of await memStore.ensureNamespaces()) app.notice(`memory: ${note}`);
-      }
-      await companion.ensureUp((line) => app.notice(`companion: ${line}`));
-      // daily rollover — strictly between "container is up" and
-      // "pi is spawned": on the first start of a new ops day it archives
-      // yesterday, kills the session and queues the opening context, so the
-      // spawnPi below births the fresh conversation that reads it.
-      const { CompanionRollover } = await import("./rollover.js");
-      const { latestDigestHeadline } = await import("../digest.js");
-      const rollover = new CompanionRollover(full.companion, realDockerRunner, {
-        statePath: join(companionStateDir, "rollover.json"),
-        policyStatePath,
-        templatePath: join(sandboxRoot(), "prompts", "companion-day-open.md"),
-        injectDir: companion.hostInjectDir(),
-        localDigestHeadline: () => latestDigestHeadline(),
-        ownerName: full.owner.name,
-        timeZone: full.ops.timezone,
-        // the first-run interview — the marker path is the
-        // wizard's contract; the template makes it work without the wizard too.
-        firstRunTemplatePath: join(sandboxRoot(), "prompts", "companion-first-run.md"),
-        firstRunMarkerPath: join(companionStateDir, "first-run.json"),
-      });
-      const report = await rollover.run();
-      if (report.verdict.kind === "rollover") {
-        app.notice(`companion: new day ${report.verdict.today} — fresh conversation (${report.steps.length} steps)`);
-      }
-      if (report.interviewFile) {
-        app.notice("companion: first start on this installation — greeting + calibration interview queued");
-      }
-      await companion.spawnPi();
-      companionUp = true;
-      companionError = undefined;
-    } catch (err) {
-      companionError = String(err instanceof Error ? err.message : err);
-      app.notice(`companion unavailable: ${companionError}`);
-    }
-  };
-  if (companionOn) await startCompanion();
 
   // ambient feed + alert pipeline + companion tab. All of it hangs off
   // companionOn, so --no-companion really means "none of this runs".
   // no pty spawner here any more — the companion is never opened
   // full-screen, so the only thing left to install is the startup healing.
   const { installCompanionTabHooks } = await import("./companiontab.js");
-  installCompanionTabHooks(app, {
-    lifecycle: companion,
-    available: () => companionUp,
-    failure: () => companionError,
-    retry: companionOn ? startCompanion : undefined,
-  });
 
-  // the companion sidebar — a permanent right-hand column on every
-  // tab, and the ONLY companion surface (the strip and the full-screen attach
-  // it opened are both retired). Mirror + send go through the same local
-  // docker seam the lifecycle uses; refresh piggybacks the app poll (the
-  // sidebar's own 500ms timer only runs focused/after-send).
-  const { CompanionSidebar, restorePreferredSidebarWidth } = await import("./sidebar.js");
-  app.sidebar = new CompanionSidebar(full.companion, realDockerRunner, {
-    available: () => companionUp,
-    onUpdate: () => app.repaint(),
-  });
+  // the companion sidebar is the ONLY companion surface (the strip and
+  // the full-screen attach it opened are both retired). Mirror + send go
+  // through the same local docker seam the lifecycle uses; refresh piggybacks
+  // the app poll (the sidebar's own 500ms timer only runs focused/after-send).
   chainOnPoll(app, (a) => void a.sidebar?.refresh());
   // The header carries what the sidebar cannot know for itself: whose day it
   // is (the companion rolls over on the ops-timezone boundary, so a stale day
@@ -565,8 +548,127 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
     });
   });
 
-  let alerts: { stop(): void } | undefined;
-  if (companionUp) {
+  // ---- the connection triage (ruling 4) ----------------------------
+  //
+  // The TUI does the three-way ssh triage the operator used to do by hand, and
+  // it does it BEHIND the first frame: the old startup ran `ensureSshMaster`
+  // synchronously before the alt screen, which is both a network call gating
+  // the first paint and, on a bad day, an interactive prompt. Nothing here is
+  // self-healing — the owner declined that explicitly; the TUI reports the
+  // cause and the exact command, and `s` re-runs the check.
+  const { diagnosisLine, triageConnection } = await import("./sshtriage.js");
+  const applyDiagnosis = (d: ConnectionDiagnosis): void => {
+    app.view.connection = d;
+    if (d.kind === "ok" || d.kind === "local") progress.done("ssh", d.cause);
+    else progress.fail("ssh", diagnosisLine(d));
+    app.notice(d.kind === "ok" || d.kind === "local" ? `✓ ${d.cause}` : `✖ ${diagnosisLine(d)}`);
+    app.repaint();
+  };
+  app.hooks.reconnect = () => {
+    progress.begin("ssh", "re-checking");
+    app.notice("checking the connection to the VM…");
+    void (async () => {
+      let d = await triageConnection(cfg);
+      // A missing key is the one class the operator can clear from here: `s`
+      // is them asking for the single native passphrase prompt. A wedged
+      // master or a dead host is reported with its command instead — prompting
+      // against either would just hang.
+      if (d.kind === "no-agent-key" || d.kind === "unknown") {
+        onRealTerminal(() => {
+          ensureSshMaster(cfg);
+        });
+        d = await triageConnection(cfg);
+      }
+      applyDiagnosis(d);
+      void app.poller.tick();
+    })().catch((err: unknown) => app.notice(`✖ ssh check failed: ${String(err instanceof Error ? err.message : err)}`));
+  };
+
+  // ---- the bring-up: everything external, behind the first frame ------------
+
+  const startCompanion = async (): Promise<void> => {
+    try {
+      // BEFORE the container, never after: the companion's pi extension picks
+      // the user namespace it writes into by listing `viking://user/`, and
+      // caches that choice for the life of the process. A namespace whose
+      // directory does not exist yet is invisible to it, so it falls back to
+      // `user/default` and every write is refused — the whole of 2026-08-21,
+      // reported only as "access denied". Needs the forward up, so await it
+      // rather than riding the eager `ensure()` above.
+      progress.begin("memory-forward");
+      const fwd = await memForward.ensure();
+      if (fwd.state === "failed") progress.fail("memory-forward", fwd.detail);
+      else progress.done("memory-forward", fwd.state);
+      if (fwd.state === "adopted" || fwd.state === "owned") {
+        progress.begin("memory-namespaces");
+        const notes = await memStore.ensureNamespaces();
+        for (const note of notes) app.notice(`memory: ${note}`);
+        progress.done("memory-namespaces", notes.length > 0 ? `${notes.length} note${notes.length === 1 ? "" : "s"}` : "ready");
+      } else {
+        progress.skip("memory-namespaces", "forward down");
+      }
+      progress.begin("container");
+      await companion.ensureUp((line) => {
+        progress.begin("container", line);
+        app.notice(`companion: ${line}`);
+      });
+      progress.done("container");
+      // daily rollover — strictly between "container is up" and
+      // "pi is spawned": on the first start of a new ops day it archives
+      // yesterday, kills the session and queues the opening context, so the
+      // spawnPi below births the fresh conversation that reads it.
+      progress.begin("rollover");
+      const { CompanionRollover } = await import("./rollover.js");
+      const { latestDigestHeadline } = await import("../digest.js");
+      const rollover = new CompanionRollover(full.companion, realDockerRunner, {
+        statePath: join(companionStateDir, "rollover.json"),
+        policyStatePath,
+        templatePath: join(sandboxRoot(), "prompts", "companion-day-open.md"),
+        injectDir: companion.hostInjectDir(),
+        localDigestHeadline: () => latestDigestHeadline(),
+        ownerName: full.owner.name,
+        timeZone: full.ops.timezone,
+        // the first-run interview — the marker path is the
+        // wizard's contract; the template makes it work without the wizard too.
+        firstRunTemplatePath: join(sandboxRoot(), "prompts", "companion-first-run.md"),
+        firstRunMarkerPath: join(companionStateDir, "first-run.json"),
+      });
+      const report = await rollover.run();
+      if (report.verdict.kind === "rollover") {
+        app.notice(`companion: new day ${report.verdict.today} — fresh conversation (${report.steps.length} steps)`);
+      }
+      if (report.interviewFile) {
+        app.notice("companion: first start on this installation — greeting + calibration interview queued");
+      }
+      progress.done("rollover", report.verdict.kind === "rollover" ? `new day ${report.verdict.today}` : "same day");
+      progress.begin("companion-pi");
+      await companion.spawnPi();
+      progress.done("companion-pi");
+      companionUp = true;
+      companionError = undefined;
+      app.repaint();
+    } catch (err) {
+      companionError = String(err instanceof Error ? err.message : err);
+      for (const key of ["memory-forward", "memory-namespaces", "container", "rollover", "companion-pi"]) {
+        const step = progress.steps().find((s) => s.key === key);
+        if (step?.state === "running") progress.fail(key, companionError);
+        else if (step?.state === "pending") progress.skip(key, "companion unavailable");
+      }
+      app.notice(`companion unavailable: ${companionError}`);
+    }
+  };
+  const companionStateDir = join(sandboxRoot(), "state", "companion");
+  const policyStatePath = join(companionStateDir, "alert-policy.json");
+
+  installCompanionTabHooks(app, {
+    lifecycle: companion,
+    available: () => companionUp,
+    failure: () => companionError,
+    retry: companionOn ? startCompanion : undefined,
+  });
+
+  /** Everything the companion feed / alert pipeline needs, once it is up. */
+  const wireCompanionChannels = async (): Promise<void> => {
     const { FeedWriter, buildTuiView } = await import("./feed.js");
     const feed = new FeedWriter(full.companion.feed_dir);
 
@@ -668,7 +770,66 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
           tuiActBusy = false;
         });
     });
-  }
+  };
+
+  let alerts: { stop(): void } | undefined;
+
+  /**
+   * PHASE 1. Every external thing the TUI does at startup, in one place,
+   * behind the first frame and reported into the companion column.
+   */
+  const bringUp = async (): Promise<void> => {
+    // The tracker scan is a filesystem walk, so it waits for the frame too.
+    try {
+      memState.reloadTickets?.();
+      app.repaint();
+    } catch {
+      /* an unreadable tracker is an empty ticket pane, never a failed start */
+    }
+    // The triage runs CONCURRENTLY with the companion: a wedged ssh master can
+    // cost its probe seconds, and the companion has nothing to do with ssh.
+    const triaged = triageConnection(cfg)
+      .then(applyDiagnosis)
+      .catch((err: unknown) => progress.fail("ssh", `probe failed: ${String(err instanceof Error ? err.message : err)}`));
+
+    // the evidence store's dir must exist before the container mounts
+    // it (docker would invent it root-owned), and the copier writes into it
+    // whether or not the companion is up.
+    try {
+      evidence.ensure();
+    } catch (err) {
+      app.notice(`✖ evidence store ${evidence.dir}: ${String(err instanceof Error ? err.message : err)}`);
+    }
+    if (companionOn) {
+      await startCompanion();
+      if (companionUp) await wireCompanionChannels();
+    } else {
+      for (const key of ["memory-namespaces", "container", "rollover", "companion-pi"]) {
+        progress.skip(key, "--no-companion");
+      }
+      // The Memory tab still needs the forward even with the companion off.
+      progress.begin("memory-forward");
+      const fwd = await memForward.ensure();
+      if (fwd.state === "failed") progress.fail("memory-forward", fwd.detail);
+      else progress.done("memory-forward", fwd.state);
+    }
+    await triaged;
+  };
+
+  // The first poll is a step like any other: it begins when the poller does
+  // (inside `run()` below) and completes on the first snapshot. Until then the
+  // board says PRS (?) — an honest unknown, never a count of zero.
+  progress.begin("poll");
+  chainOnPoll(app, (a) => {
+    const step = progress.steps().find((s) => s.key === "poll");
+    if (a.view.snapshot) {
+      if (step?.state !== "done") progress.done("poll", `${a.view.snapshot.prs.length} PRs`);
+      return;
+    }
+    if (step?.state === "running" && a.poller.state.consecutiveFailures >= 2) {
+      progress.fail("poll", app.view.connection ? diagnosisLine(app.view.connection) : "status.json unreadable");
+    }
+  });
 
   // Restore a hot-reload snapshot before run(), so the first paint is already
   // on the right tab with the right selection.
@@ -726,13 +887,18 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
           }),
       })
     : undefined;
-  reloader?.start();
 
+  // ---- the first frame ------------------------------------------------------
+  //
   // Deep link: run() completes its synchronous setup (terminal modes, poller)
   // before awaiting quit, so the attach can start right after — the board
   // loads behind it and is one Ctrl-q away.
   const initial = target.kind === "pr" ? target.pr : resumed?.pr;
   const running = app.run(initial);
+  // Only now: a recursive dist watcher walks the tree, and the bring-up talks
+  // to ssh, docker and OpenViking. Neither may precede the frame above.
+  reloader?.start();
+  void bringUp();
   if (target.kind === "pr") void app.hooks.attach?.(`pr-${target.pr}`, app);
   else if (target.kind === "session") void app.hooks.attach?.(target.session, app);
   await running;
@@ -752,7 +918,7 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
   // entrypoint). Say what is happening regardless: a slow docker, or a
   // container built before that fix, must not look like a hang.
   if (companionUp) {
-    process.stdout.write("qcr tui: stopping the companion container…\n");
+    out.write("qcr tui: stopping the companion container…\n");
     try {
       await companion.gracefulStop();
     } catch {
@@ -763,5 +929,5 @@ export async function runTui(argv: string | string[] = []): Promise<void> {
   // that never returned, an ssh master, a socket — would otherwise keep the
   // process alive with the terminal already restored, which is exactly the
   // "TUI is gone but the shell never comes back" state.
-  process.exit(0);
+  exit(0);
 }

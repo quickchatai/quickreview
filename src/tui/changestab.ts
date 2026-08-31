@@ -38,7 +38,7 @@ export interface ChangesView {
   /** Result of the last revert (or refusal), shown until the next action. */
   result?: string;
   loading: boolean;
-  dryRun: boolean;
+  dryRun: boolean | undefined;
   now?: Date;
 }
 
