@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import activate, { checkBashCommand, checkWritePath } from "../extensions/bash-guard.js";
+import activate, { checkBashCommand, checkReaderModes, checkWritePath } from "../extensions/bash-guard.js";
 
 const allow = (cmd: string): void => {
   const res = checkBashCommand(cmd);
@@ -580,5 +580,63 @@ describe("checkWritePath / git's configuration surface", () => {
     allow("git show HEAD:.gitattributes");
     allow("rg -n gitconfig docs/");
     allow("git config --get remote.origin.url");
+  });
+});
+
+// ---- round 2: allowlisted for READING is not allowlisted outright ---
+//
+// awk, sed, sort and find are on ALLOWED because a reviewer slices text all
+// day. Each also has a write or exec mode, and until the first adversarial
+// review of every one was permitted. All VERIFIED on this host: the
+// four write forms each wrote `<clone>/.git/config` and made a subsequent plain
+// `git diff <base> <head>` execute, and the three exec forms ran a command
+// outright — arbitrary execution straight through the program allowlist, with
+// no git config involved at all.
+describe("read-only programs with write/exec modes", () => {
+  it("refuses the write modes — each one wrote .git/config in a live probe", () => {
+    block("sed -n 'w .git/config' payload", "reads code");
+    block("sed -i 's/a/b/' src/a.ts", "writes a file or runs a command");
+    block("sed -ni 'p' src/a.ts", "reads code");          // clustered short form
+    block("sort -o out.txt in.txt", "writes a file");
+    block("find . -maxdepth 0 -fprintf out.txt '%p'", "writes a file");
+    block(`awk 'BEGIN{print "x" >>".git/config"}'`, "configuration surface");
+    block(`awk 'BEGIN { print "x" > "/tmp/out" }'`, "redirected to a file");
+  });
+
+  it("refuses the EXEC modes — these ran a command with no config involved", () => {
+    block(`awk 'BEGIN{system("/tmp/pwn.sh")}'`, "system()");
+    block(`awk 'BEGIN{"/tmp/pwn.sh" | getline x}'`, "getline");
+    block(`awk 'BEGIN{print "x" | "sh"}'`, "pipe to a command");
+    block("find . -maxdepth 0 -exec /tmp/pwn.sh ;", "runs a command");
+    block("find . -name '*.ts' -delete", "runs a command or writes");
+    block("find . -maxdepth 1 -ok rm {} ;", "runs a command");
+    block("sort --compress-program=/tmp/pwn.sh big.txt", "names a program");
+  });
+
+  it("still allows every read-only form — a false veto here wedges real work", () => {
+    allow("sed -n '10,20p' src/a.ts");
+    allow("sed 's/foo/bar/' src/a.ts");
+    allow("sed -ne '/start/,/end/p' src/a.ts");
+    allow("sed -E 's/[0-9]+//g' data.txt");
+    allow("sort -u names.txt");
+    allow("sort -n -k2 data.tsv | head -5");
+    allow("find src -name '*.ts' -maxdepth 3");
+    allow("find . -type f -newer package.json");
+    allow("awk -F: '{print $1}' /etc/passwd");
+    allow("awk '$3 > 100 {print $1}' data.tsv");          // numeric compare, not a redirect
+    allow("awk '{if ($2 > 5) print $1}' data.tsv");
+    allow(`awk '{print ($1=="a") || ($2=="b")}' data.tsv`); // `||` is not a command pipe
+    allow("awk '{print $1}' data.tsv | sort | uniq -c");
+    allow("git diff --name-only | xargs grep -n TODO");
+  });
+
+  it("is asked the same question through xargs", () => {
+    block("echo x | xargs sed -i 's/a/b/'", "writes a file or runs a command");
+    allow("git diff --name-only | xargs sed -n '1p'");
+  });
+
+  it("checkReaderModes is inert for every other program", () => {
+    expect(checkReaderModes("rg", ["-n", "foo"]).allowed).toBe(true);
+    expect(checkReaderModes("cat", ["-o", "x"]).allowed).toBe(true);
   });
 });

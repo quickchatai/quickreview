@@ -15,6 +15,9 @@
 // Everything here is pure logic over injectable fs reads: malformed lines,
 // missing dirs and unreadable files are skipped, never thrown.
 import { readFileSync, readdirSync, statSync } from "node:fs";
+// The guard's TOKENISER — not its policy. The rules below stay an
+// independent implementation on purpose (see execViolationKind).
+import { splitShellSegments } from "../extensions/bash-guard.js";
 import { join } from "node:path";
 
 export interface UsageFs {
@@ -313,7 +316,11 @@ export type ExecViolationKind =
   | "github_write"
   | "git_write"
   | "git_config_injection"
-  | "git_config_surface_write";
+  | "git_config_surface_write"
+  /** A read-only-allowlisted program (awk/sed/sort/find) used in a write or
+   * exec mode — the four primitives the first review found this audit
+   * blind to. */
+  | "reader_write_or_exec";
 
 /** Interpreters — the original rule, unchanged. */
 const EXEC_VIOLATION_RE = /\b(?:python3?|pytest|uv|npm|npx|node|make|pip3?|poetry|cargo|go (?:run|test))\b/;
@@ -370,20 +377,107 @@ const GIT_CONFIG_SURFACE_PATH_RE = /(?:^|\/)(?:\.git\/|\.gitconfig$|git\/config$
 const GIT_CONFIG_SURFACE_WRITE_RE =
   /(?:>>?\s*\S*(?:\.git\/\S*|\.gitconfig|git\/config|\.gitattributes)|\bsed\s+(?:-\S+\s+)*-[a-zA-Z]*i\S*(?:\s+\S+)*?\s+\S*(?:\.git\/\S*|\.gitconfig|git\/config|\.gitattributes))/;
 
-/** Which rule, if any, this command trips. First match wins; the order is
- * severity, not confidence. */
-export function execViolationKind(cmd: string): ExecViolationKind | null {
-  if (GH_API_WRITE_RE.test(cmd) || GITHUB_DIRECT_WRITE_RE.test(cmd)) return "github_write";
-  const gh = GH_SUBCOMMAND_RE.exec(cmd);
+/**
+ * Programs whose ARGUMENTS are search patterns and paths, never commands.
+ *
+ * Without this the audit read every grep pattern as if it were a command, and
+ * fired on the reads that ARE the job here: `rg -n PATH= Dockerfile`,
+ * `grep -n ENV= .env.example`, `rg -n 'gh pr create' .github/workflows/ci.yml`,
+ * `grep -n 'git push' scripts/deploy.sh`. Reviewing a PR that touches a
+ * Dockerfile, a workflow or a deploy script means grepping for exactly those
+ * tokens. A routine false line teaches the operator to skip the event, which is
+ * worse than silence — so the content rules do not run against a reader's
+ * arguments at all.
+ *
+ * This does NOT make a reader invisible: its own write/exec modes are checked
+ * first (below), and every OTHER segment of the pipeline is classified
+ * normally, so `python3 evil.py | grep x` is still caught on its first segment.
+ */
+const AUDIT_READERS: ReadonlySet<string> = new Set([
+  "rg", "grep", "egrep", "fgrep", "ag", "ack", "cat", "head", "tail", "nl", "wc",
+  "jq", "cut", "tr", "uniq", "sort", "ls", "echo", "printf", "diff", "comm",
+  "column", "find", "basename", "dirname", "stat", "awk", "sed", "xargs", "test",
+]);
+
+/**
+ * The write/exec MODES of the four programs that are allowlisted for reading
+ * (round 2). The first review found the audit blind to four of the five
+ * write primitives that reach `<clone>/.git/config`, so layers 2 and 3 failed
+ * in exactly the same place — which undercuts the point of having both.
+ *
+ * Honest about what this is: the same SHAPE as `checkReaderModes` in the guard,
+ * as a separate coarse implementation over whole segments. Independence buys
+ * less here than it does elsewhere in this file, and claiming otherwise would
+ * be the kind of overstatement this ticket exists to stop.
+ *
+ * The fifth primitive — `T=.git/config; cat p >> $T` — is deliberately NOT
+ * here. Its target is a variable, so no reader of command strings can ever see
+ * it; that one is caught by the round-boundary integrity check in
+ * `execboundary.ts`, which is why that check exists.
+ */
+const READER_MODE_AUDIT: Readonly<Record<string, RegExp>> = {
+  find: /(?:^|\s)-(?:exec|execdir|ok|okdir|delete|fprintf|fprint|fprint0|fls)(?:\s|$)/,
+  sort: /(?:^|\s)(?:--(?:output|compress-program)(?:=|\s)|-(?!-)[a-zA-Z]*o(?:\s|$))/,
+  sed: /(?:^|\s)(?:--(?:in-place|file)|-(?!-)[a-zA-Z]*[if])|['"\s](?:[0-9$,]|\/[^/]*\/)*\s*[wWe]\s/,
+  awk: /\bsystem\s*\(|\|\s*&?\s*getline|\b(?:print|printf)\b[^;}\n]*>>?\s*["'$(]/,
+};
+
+/** The first real program token in a segment: `VAR=val` prefixes, `env` and its
+ * flags, and redirection remnants skipped — the same shape the bash guard's
+ * `checkSegment` uses to find what a segment actually runs. */
+function segmentProgram(segment: string): string | null {
+  for (const raw of segment.trim().split(/\s+/)) {
+    const t = raw.replace(/^['"(]+|['")]+$/g, "");
+    if (t.length === 0) continue;
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t)) continue;
+    if (t === "env" || (t.startsWith("-") && t.length <= 3)) continue;
+    if (/^\d*[<>]/.test(t)) continue;
+    return t.slice(t.lastIndexOf("/") + 1);
+  }
+  return null;
+}
+
+/** Which rule, if any, this ONE segment trips. */
+function segmentViolationKind(segment: string): ExecViolationKind | null {
+  // The redirection/`sed -i` surface rule runs on every segment, reader or not:
+  // its subject is the segment's own write target, not a quoted pattern.
+  if (GIT_CONFIG_SURFACE_WRITE_RE.test(segment)) return "git_config_surface_write";
+  const prog = segmentProgram(segment);
+  if (prog !== null) {
+    // Checked BEFORE the reader skip below: these programs are readers by
+    // default and writers on a flag, and the flag is the whole point.
+    if (READER_MODE_AUDIT[prog]?.test(segment)) return "reader_write_or_exec";
+    if (AUDIT_READERS.has(prog)) return null;
+  }
+  if (GH_API_WRITE_RE.test(segment) || GITHUB_DIRECT_WRITE_RE.test(segment)) return "github_write";
+  const gh = GH_SUBCOMMAND_RE.exec(segment);
   if (gh) {
     const ns = gh[1]!;
     const verb = gh[2];
     if (!GH_AUDIT_READ_NAMESPACES.has(ns) && verb !== undefined && !GH_AUDIT_READ_VERBS.has(verb)) return "github_write";
   }
-  if (GIT_WRITE_RE.test(cmd)) return "git_write";
-  if (GIT_CONFIG_INJECTION_RE.test(cmd)) return "git_config_injection";
-  if (GIT_CONFIG_SURFACE_WRITE_RE.test(cmd)) return "git_config_surface_write";
-  if (EXEC_VIOLATION_RE.test(cmd)) return "interpreter";
+  if (GIT_WRITE_RE.test(segment)) return "git_write";
+  if (GIT_CONFIG_INJECTION_RE.test(segment)) return "git_config_injection";
+  if (EXEC_VIOLATION_RE.test(segment)) return "interpreter";
+  return null;
+}
+
+/**
+ * Which rule, if any, this command trips — decided PER SHELL SEGMENT.
+ *
+ * Whole-command matching was the bug: a pattern in an argument to `rg` is not a
+ * command, and treating it as one produced eight false positives on ordinary
+ * review reads. Segmenting reuses the guard's splitter — the TOKENISER, not its
+ * policy; the rules above stay an independent implementation on purpose, so
+ * this reader and the guard do not fail in the same places.
+ */
+export function execViolationKind(cmd: string): ExecViolationKind | null {
+  const normalized = cmd.replace(/\d*>&\d*/g, " ");
+  for (const segment of splitShellSegments(normalized)) {
+    if (segment.trim().length === 0) continue;
+    const kind = segmentViolationKind(segment);
+    if (kind !== null) return kind;
+  }
   return null;
 }
 

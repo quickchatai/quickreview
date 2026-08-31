@@ -12,12 +12,21 @@
 //     ungated-review audit below is never given a command string at all; it is
 //     shown the OUTCOME each chain was reaching for and asked whether the
 //     daemon has a record of it. That is the property this ticket exists for.
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { checkBashCommand, checkWritePath } from "../extensions/bash-guard.js";
-import { auditUngatedReviews, hasUngatedApproval, type AuditedReview } from "../src/execboundary.js";
+import {
+  auditUngatedReviews,
+  fingerprintRoundGitConfig,
+  gitConfigChangeMessage,
+  gitConfigChanges,
+  gitConfigWatchPaths,
+  hasUngatedApproval,
+  type AuditedReview,
+} from "../src/execboundary.js";
 import { auditExecViolationDetails } from "../src/usage.js";
 import { sessionGitConfigPins } from "../src/sessions.js";
 
@@ -84,7 +93,34 @@ const CORPUS = [
     outcome: null,
     note: "write diff.external into the repo's own config, then run a PLAIN `git diff` — no suspicious token in any command",
   },
+  // Round 6 — the first adversarial review. Five write primitives,
+  // every one already on the guard's own read-only ALLOWLIST, each verified to
+  // write `<clone>/.git/config` AND to make a subsequent plain
+  // `git diff <base> <head>` execute, with the config-scope pin in force.
+  { round: 6, via: "bash", chain: `awk 'BEGIN{print "[diff]" >>".git/config"}'`, outcome: null, note: "awk's no-space redirect form; the SPACED form blocked only by accident" },
+  { round: 6, via: "bash", chain: "sed -n 'w .git/config' payload", outcome: null, note: "sed's `w` command writes without -i, so an in-place check never saw it" },
+  { round: 6, via: "bash", chain: `find . -maxdepth 0 -fprintf .git/config "x"`, outcome: null, note: "find writes an arbitrary path" },
+  { round: 6, via: "bash", chain: "sort -o .git/config payload", outcome: null, note: "sort writes an arbitrary path" },
+  // …and the direct-exec half found alongside them, which is not a git-config
+  // bypass at all: arbitrary execution straight through the program allowlist,
+  // making the no-exec policy false on its own terms.
+  { round: 6, via: "bash", chain: `awk 'BEGIN{system("/tmp/pwn.sh")}'`, outcome: null, note: "awk system() — ran the command, no config involved" },
+  { round: 6, via: "bash", chain: `awk 'BEGIN{"/tmp/pwn.sh" | getline x}'`, outcome: null, note: "awk command-pipe into getline — ran the command" },
+  { round: 6, via: "bash", chain: "find . -maxdepth 0 -exec /tmp/pwn.sh ;", outcome: null, note: "find -exec — ran the command" },
 ] as const;
+
+/**
+ * The SIXTH primitive, kept out of CORPUS on purpose and asserted separately.
+ *
+ * `T=.git/config; cat payload >> $T` writes the config exactly like the four
+ * above, and NO scan over a command string can ever see it: `T=` is not a
+ * config-injecting variable and the redirection target is `$T`. It is the case
+ * that settles the design argument — a write veto that reads command strings
+ * inherits the blindness of the command guard it was built to compensate for.
+ * It is caught by the round-boundary integrity check instead, which is why that
+ * check exists and why it is not another list.
+ */
+const INDIRECTION_CHAIN = "T=.git/config; cat payload >> $T";
 
 describe("— the four proven bypasses, replayed against the COMPILED guard", () => {
   // The container runs `dist/`, not `extensions/*.ts`. Rounds two and three
@@ -265,6 +301,127 @@ describe("— the post-hoc audit is no longer blind to the corpus", () => {
     ]) {
       expect(auditExecViolationDetails([bashLine(cmd)]), `false line on: ${cmd}`).toEqual([]);
     }
+  });
+});
+
+describe("— the write class that no command string can show (round 2)", () => {
+  const sha = (s: string): string => createHash("sha256").update(s).digest("hex");
+
+  it("the guard cannot see the indirection chain, and that is not a bug to patch", () => {
+    // Asserted as a PROPERTY, not tolerated as a gap: if someone later makes
+    // this block by adding a spelling, this test fails and they have to read
+    // the comment on INDIRECTION_CHAIN before deciding that was the fix.
+    expect(checkBashCommand(INDIRECTION_CHAIN).allowed).toBe(true);
+  });
+
+  it("…and the integrity check catches it, without being told anything about it", () => {
+    // A fake filesystem: the write happens between the two fingerprints, and
+    // the check never sees a command at all.
+    const disk = new Map<string, string>([
+      ["/clone/.git/config", "[core]\n\tbare = false\n"],
+      ["/home/review/.gitconfig", "[credential]\n\thelper = !f\n"],
+    ]);
+    const fs = {
+      readFile: (p: string) => {
+        const v = disk.get(p);
+        if (v === undefined) throw new Error("ENOENT");
+        return v;
+      },
+      readDir: (p: string) => {
+        if (p.endsWith("/hooks")) return ["pre-commit.sample"];
+        throw new Error("ENOTDIR");
+      },
+      sha256: sha,
+    };
+    const opts = { clonePath: "/clone", worktreePath: "/wt/pr-42", piHome: "/home/review" };
+    const before = fingerprintRoundGitConfig(opts, fs);
+
+    // `T=.git/config; cat payload >> $T`, in effect.
+    disk.set("/clone/.git/config", "[core]\n\tbare = false\n[diff]\n\texternal = /tmp/pwn.sh\n");
+
+    const after = fingerprintRoundGitConfig(opts, fs);
+    const changes = gitConfigChanges(before, after);
+    expect(changes.map((c) => c.path)).toEqual(["/clone/.git/config"]);
+    expect(gitConfigChangeMessage(42, changes)).toContain("/clone/.git/config");
+  });
+
+  it("watches the PINNED global file too — the pin concentrates the target", () => {
+    // `sessionGitConfigPins` relocates the global scope onto ONE named file.
+    // That is only a hardening if that file is watched; otherwise the pin has
+    // traded a search path for a single unguarded door.
+    const paths = gitConfigWatchPaths({ clonePath: "/clone", worktreePath: "/wt/pr-42", piHome: "/home/review" });
+    expect(paths).toContain("/home/review/.gitconfig");
+    expect(paths).toContain("/clone/.git/config");
+    expect(paths).toContain("/clone/.git/hooks");
+    expect(paths).toContain("/wt/pr-42/.git");                            // the gitdir POINTER
+    expect(paths).toContain("/clone/.git/worktrees/pr-42/config.worktree");
+    // Deliberately NOT the whole worktrees dir: other PRs' rounds add and
+    // prune siblings concurrently, and every one would be a false alarm.
+    expect(paths).not.toContain("/clone/.git/worktrees");
+  });
+
+  it("an identical tree is clean, and absent ≠ unreadable", () => {
+    const fs = {
+      readFile: (p: string) => {
+        if (p === "/clone/.git/config") return "x";
+        throw new Error("ENOENT");
+      },
+      readDir: () => {
+        throw new Error("ENOTDIR");
+      },
+      sha256: sha,
+    };
+    const opts = { clonePath: "/clone" };
+    expect(gitConfigChanges(fingerprintRoundGitConfig(opts, fs), fingerprintRoundGitConfig(opts, fs))).toEqual([]);
+    const fp = fingerprintRoundGitConfig(opts, fs);
+    expect(fp.files["/clone/.git/config"]).toMatch(/^sha256:/);
+    expect(fp.files["/clone/.git/config.worktree"]).toBe("absent");
+  });
+});
+
+describe("— the audit no longer fires on the reads that ARE the job", () => {
+  const bashLine = (command: string): string =>
+    JSON.stringify({ type: "message", timestamp: "2026-08-31T10:00:00Z", message: { role: "assistant", content: [{ type: "toolCall", name: "bash", arguments: { command } }] } });
+
+  it("a pattern in an argument to a reader is not a command", () => {
+    // Every one of these fired before the audit became per-segment and
+    // program-aware. Reviewing a PR that touches a Dockerfile, a workflow or a
+    // deploy script means grepping for exactly these tokens, so this is the
+    // normal case, not an edge case.
+    for (const cmd of [
+      "rg -n PATH= Dockerfile",
+      "grep -n ENV= .env.example",
+      "rg -n 'gh pr create' .github/workflows/ci.yml",
+      "grep -n 'git push' scripts/deploy.sh",
+      "rg -n 'HOME=' docker/entrypoint.sh",
+      "rg -n 'git -c' docs/",
+      "grep -rn 'npm run build' .github/",
+      "rg -n 'GIT_CONFIG_GLOBAL' deploy/",
+      "grep -c 'git commit' CONTRIBUTING.md",
+      "cat scripts/deploy.sh | head -40",
+    ]) {
+      expect(auditExecViolationDetails([bashLine(cmd)]), `false line on: ${cmd}`).toEqual([]);
+    }
+  });
+
+  it("but a real violation in ANOTHER segment of the same pipeline still lands", () => {
+    expect(auditExecViolationDetails([bashLine("python3 evil.py | grep -n 'git push'")])[0]?.kind).toBe("interpreter");
+    expect(auditExecViolationDetails([bashLine("cat body.json | gh api repos/o/n/pulls/5/reviews --input -")])[0]?.kind).toBe("github_write");
+  });
+
+  it("sees the reader WRITE/EXEC modes it was blind to — layers 2 and 3 no longer fail identically", () => {
+    const kindOf = (c: string): string | undefined => auditExecViolationDetails([bashLine(c)])[0]?.kind;
+    expect(kindOf("sed -n 'w .git/config' payload")).toBe("reader_write_or_exec");
+    expect(kindOf("sort -o .git/config payload")).toBe("reader_write_or_exec");
+    expect(kindOf(`find . -maxdepth 0 -fprintf .git/config "x"`)).toBe("reader_write_or_exec");
+    expect(kindOf(`awk 'BEGIN{system("/tmp/pwn.sh")}'`)).toBe("reader_write_or_exec");
+    expect(kindOf("find . -maxdepth 0 -exec /tmp/pwn.sh ;")).toBe("reader_write_or_exec");
+    // …and their read-only forms stay silent.
+    expect(kindOf("sed -n '10,20p' src/a.ts")).toBeUndefined();
+    expect(kindOf("sort -u names.txt | uniq -c")).toBeUndefined();
+    expect(kindOf("find src -name '*.ts' -maxdepth 3")).toBeUndefined();
+    expect(kindOf(`awk -F: '{print $1}' /etc/passwd`)).toBeUndefined();
+    expect(kindOf(`awk '$3 > 100 {print $1}' data.tsv`)).toBeUndefined();
   });
 });
 

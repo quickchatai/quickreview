@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
 import type { GateResult } from "../src/gate.js";
 import { StateStore } from "../src/state.js";
+import { fingerprintRoundGitConfig } from "../src/execboundary.js";
+import { githubCloneDir } from "../src/config.js";
 import { postingMarker, roundPostingKey } from "../src/posting-receipt.js";
 import type { SessionHooks, VerdictFile } from "../src/types.js";
 import { AnomalyWakePolicy } from "../src/anomalies.js";
@@ -337,6 +339,61 @@ describe("measured round usage", () => {
     const round = store.db.prepare("SELECT * FROM rounds WHERE id = ?").get(roundId) as any;
     expect(round.tokens_in).toBe(1000);
     expect(round.est_usd).toBeNull();
+  });
+
+  // round 2 — the git-config integrity check, WIRED.
+  //
+  // The pure logic is proven in tests/exec-boundary.test.ts. What matters here
+  // is that a round actually runs it: five write primitives on the guard's own
+  // allowlist reach `<clone>/.git/config` past every command-string rule, and
+  // one of them (`T=.git/config; cat p >> $T`) can never be seen by any of
+  // them. This check is what covers that, so a check nobody calls is the whole
+  // defence missing.
+  it("raises a WAKE anomaly when git's config changed during the round", async () => {
+    const roundId = reviewingRound(108);
+    writeSessionJsonl(108, [modelLine(), jsonlLine(10, 1)]);
+    // The baseline dispatch would have taken. Nothing on disk matches it, so
+    // the re-check at round end sees a change — exactly as a session write does.
+    store.recordRoundGitConfig(roundId, {
+      digest: "baseline-that-no-longer-holds",
+      files: { [join(dir, "pihome", ".gitconfig")]: "sha256:deadbeef" },
+    });
+    const rec = recordingHooks();
+    await watcher({}, rec.hooks).handleFile(write(108, 1, verdictFile({ pr: 108 })));
+
+    const ev = store.db.prepare("SELECT payload FROM events WHERE kind = 'git_config_modified'").get() as
+      | { payload: string }
+      | undefined;
+    expect(ev, "the durable record").toBeTruthy();
+    expect(JSON.parse(ev!.payload).changes.length).toBeGreaterThan(0);
+    expect(rec.overseer.join("\n")).toContain("git's configuration changed DURING a round");
+  });
+
+  it("a round with NO baseline is never judged — unknown is not evidence of a change", async () => {
+    // The same rule the receipt scan had to learn the hard way. A round that
+    // predates the check, or whose fingerprint could not be taken, must be
+    // silent rather than alarming on every single round.
+    const roundId = reviewingRound(109);
+    writeSessionJsonl(109, [modelLine(), jsonlLine(10, 1)]);
+    expect(store.roundGitConfig(roundId)).toBeUndefined();
+    await watcher({}).handleFile(write(109, 1, verdictFile({ pr: 109 })));
+    expect(store.db.prepare("SELECT COUNT(*) c FROM events WHERE kind = 'git_config_modified'").get()).toMatchObject({ c: 0 });
+  });
+
+  it("an UNCHANGED tree is silent — the check must not fire on every round", async () => {
+    const roundId = reviewingRound(110);
+    writeSessionJsonl(110, [modelLine(), jsonlLine(10, 1)]);
+    // The baseline the daemon itself would compute over this very tree.
+    store.recordRoundGitConfig(
+      roundId,
+      fingerprintRoundGitConfig({
+        clonePath: githubCloneDir(cfg.github),
+        worktreePath: resolve(dir, "wt/pr-110"),
+        piHome: join(dir, "pihome"),
+      }),
+    );
+    await watcher({}).handleFile(write(110, 1, verdictFile({ pr: 110 })));
+    expect(store.db.prepare("SELECT COUNT(*) c FROM events WHERE kind = 'git_config_modified'").get()).toMatchObject({ c: 0 });
   });
 
   it("logs exec-policy violations without inject spam, then piggybacks on an anomaly inject", async () => {

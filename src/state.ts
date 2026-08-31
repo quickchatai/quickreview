@@ -1027,6 +1027,11 @@ export class StateStore {
       "ALTER TABLE rounds ADD COLUMN posted_event TEXT",
       "ALTER TABLE rounds ADD COLUMN posted_at TEXT",
       "ALTER TABLE rounds ADD COLUMN trigger_ts TEXT",
+      // the git-config fingerprint taken when this round's worktree
+      // was prepared, re-checked when the round is measured. JSON
+      // {digest, files} — the files map is kept so the anomaly can name WHICH
+      // path moved rather than only that something did.
+      "ALTER TABLE rounds ADD COLUMN git_config_fingerprint TEXT",
       "ALTER TABLE bot_comments ADD COLUMN round_no INTEGER",
       // Measured usage — nullable, additive.
       "ALTER TABLE rounds ADD COLUMN tokens_in INTEGER",
@@ -2253,6 +2258,27 @@ export class StateStore {
   importedReviewIds(): Set<number> {
     const rows = this.db.prepare("SELECT gh_review_id AS id FROM rounds WHERE gh_review_id IS NOT NULL").all() as Array<{ id: number }>;
     return new Set(rows.map((r) => r.id));
+  }
+
+  /**: stash the round-start git-config fingerprint. Best-effort by
+   * design — a store that cannot record it yields a round with no check, which
+   * is the legacy behaviour, never a failed round. */
+  recordRoundGitConfig(roundId: number, fingerprint: unknown): void {
+    this.db.prepare("UPDATE rounds SET git_config_fingerprint = ? WHERE id = ?").run(JSON.stringify(fingerprint), roundId);
+  }
+
+  /** The stashed fingerprint, or undefined when the round predates the check
+   * (or never got one). Absent is never read as "changed". */
+  roundGitConfig(roundId: number): unknown | undefined {
+    const row = this.db.prepare("SELECT git_config_fingerprint AS f FROM rounds WHERE id = ?").get(roundId) as
+      | { f: string | null }
+      | undefined;
+    if (!row?.f) return undefined;
+    try {
+      return JSON.parse(row.f);
+    } catch {
+      return undefined;
+    }
   }
 
   /** The review ids this daemon recorded posting for ONE pr — the

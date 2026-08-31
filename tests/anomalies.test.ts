@@ -275,3 +275,27 @@ describe("startHeartbeat — daily fire", () => {
     expect(h.injected).toEqual([]);
   });
 });
+
+// the exec boundary's two wake tiers, PINNED.
+//
+// The first review of this ticket found that reverting `src/anomalies.ts` alone
+// left the full suite green: the tier was a judgement call with nothing holding
+// it. In a diff whose thesis is "a green suite proves only the assertions that
+// exist", that gap had to close. Both directions are asserted, because the
+// quiet tier is as deliberate as the loud one — an unaccounted non-APPROVE
+// review is a durable row, and alarming on it would train the reader to skip
+// the kind that matters.
+describe("exec-boundary anomaly tiers", () => {
+  it("wakes on the outcomes that defeat rule 1 and the CI hard-gate", () => {
+    // An APPROVE the daemon has no record of posting bypasses the mutation
+    // gate, the CI gate and every posting guard at once.
+    expect(anomalySeverity("ungated_approval")).toBe("wake");
+    // Git config rewritten mid-round makes that round's output untrusted:
+    // config-supplied shell turns a plain `git diff` into arbitrary execution.
+    expect(anomalySeverity("git_config_modified")).toBe("wake");
+  });
+
+  it("stays quiet on the sibling that is a record, not an alarm", () => {
+    expect(anomalySeverity("ungated_review")).toBe("quiet");
+  });
+});

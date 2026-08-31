@@ -73,6 +73,13 @@ const WAKE_KINDS: ReadonlySet<string> = new Set([
   // The quieter sibling `ungated_review` (non-APPROVE) stays unlisted: it is a
   // durable row and a report line, not a wake.
   "ungated_approval",
+  // git's configuration changed DURING a round. Nothing the daemon
+  // does rewrites those files mid-round, so this is a session write, and
+  // config-supplied shell turns a plain `git diff` into arbitrary execution —
+  // which makes this round's entire output untrusted. Human-attention grade,
+  // and it cannot fire routinely: the baseline is taken from the same paths by
+  // the same helper that re-checks them.
+  "git_config_modified",
   // a round that blew its deadline and is being buried rather than
   // rescued — nothing will ever come back for it, and the PR it belonged to
   // may never have been reviewed at all. Fires at most once per round, by

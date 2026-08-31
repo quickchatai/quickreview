@@ -12,7 +12,10 @@
 // The round order (types.ts `RoundOrder`) is the daemon↔session contract; the
 // prompt renderer is injected (B4 owns src/templates.ts) so this module has no
 // content dependency.
+import { join, resolve } from "node:path";
 import type { Config } from "./config.js";
+import { githubCloneDir, sandboxRoot } from "./config.js";
+import { fingerprintRoundGitConfig } from "./execboundary.js";
 import type { GateResult } from "./gate.js";
 import type { PrFileEntry } from "./github.js";
 import { DJANGO_ECOSYSTEM, type Ecosystem } from "./ecosystem.js";
@@ -877,6 +880,26 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           actual: tree.head_sha,
           source: "worktree_prepare",
         });
+      }
+
+      // the git-config fingerprint, taken HERE — after the worktree is
+      // materialised (so the tree is the one the round will read) and before
+      // the session hears about the round (so nothing it does is inside the
+      // baseline). `verdicts.measureUsage` re-checks it when the round ends.
+      // Best-effort in both directions: a fingerprint that cannot be taken
+      // leaves the round unchecked, which is the legacy behaviour — it
+      // never fails a round.
+      try {
+        store.recordRoundGitConfig(
+          roundId,
+          fingerprintRoundGitConfig({
+            clonePath: githubCloneDir(cfg.github),
+            worktreePath: resolve(sandboxRoot(), worktreeFor(row.number)),
+            piHome: join(sandboxRoot(), "pihome"),
+          }),
+        );
+      } catch (err) {
+        log(`dispatch: #${row.number} git-config fingerprint unavailable`, err);
       }
 
       // The ecosystem pre-check, before the session hears about the round

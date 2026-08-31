@@ -460,13 +460,14 @@ function checkSegment(tokens: string[]): BashCheck {
     if (afterEnv && raw.startsWith("-")) continue; // env -i etc.
     if (/^\d*[<>]/.test(raw)) continue; // redirection remnant
     // Program token found.
-    const args = tokens.slice(i + 1).map((t) => t.replace(/^['"]+|['"]+$/g, ""));
-    return checkProgram(raw, args);
+    const rawArgs = tokens.slice(i + 1);
+    const args = rawArgs.map((t) => t.replace(/^['"]+|['"]+$/g, ""));
+    return checkProgram(raw, args, rawArgs);
   }
   return { allowed: true }; // empty segment
 }
 
-function checkProgram(prog: string, args: string[]): BashCheck {
+function checkProgram(prog: string, args: string[], rawArgs?: string[]): BashCheck {
   // Sanctioned scripts, invoked directly.
   const direct = sanctionedScript(prog);
   if (direct.name !== undefined || /(^|\/)scripts\//.test(prog)) {
@@ -497,9 +498,14 @@ function checkProgram(prog: string, args: string[]): BashCheck {
     // xargs runs another program — vet the target too.
     const target = args.find((a) => !a.startsWith("-") && a !== "{}");
     if (target === undefined) return { allowed: true };
-    return checkProgram(target, args.slice(args.indexOf(target) + 1));
+    const from = args.indexOf(target) + 1;
+    return checkProgram(target, args.slice(from), rawArgs?.slice(from));
   }
-  if (ALLOWED.has(base)) return { allowed: true };
+  if (ALLOWED.has(base)) {
+    // Allowlisted for READING is not allowlisted outright: awk/sed/sort/find
+    // each carry a write or exec mode (round 2, all VERIFIED).
+    return checkReaderModes(base, args, rawArgs);
+  }
   return block(`exec policy: '${base}' is not an allowed read-only command`);
 }
 
@@ -745,6 +751,134 @@ export function checkBashCommand(cmd: string): BashCheck {
     if (tokens.length === 0) continue;
     const res = checkSegment(tokens);
     if (!res.allowed) return res;
+  }
+  return { allowed: true };
+}
+
+/**
+ * The read-only programs that are not read-only (round 2).
+ *
+ * `awk`, `sed`, `sort` and `find` are on ALLOWED because a reviewer greps and
+ * slices text all day. Each also has a mode that WRITES A FILE or RUNS A
+ * COMMAND, and a review session needs none of them. Until this existed, all of
+ * these were permitted and all are VERIFIED on this host:
+ *
+ *   sed -n 'w .git/config' payload            → wrote it; plain `git diff` then ran <cmd>
+ *   sort -o .git/config payload               → same
+ *   find . -maxdepth 0 -fprintf .git/config … → same
+ *   awk 'BEGIN{print x >>".git/config"}'      → same
+ *   awk 'BEGIN{system("<cmd>")}'              → ran <cmd> DIRECTLY, no config involved
+ *   awk 'BEGIN{"<cmd>" | getline}'            → ran <cmd> directly
+ *   find . -maxdepth 0 -exec <cmd> \;         → ran <cmd> directly
+ *
+ * The last three are worth separating out: they are not git-config bypasses at
+ * all. They are arbitrary execution straight through the program allowlist,
+ * which makes the no-exec policy's central claim false on its own terms. The
+ * exec-mode half of this rule is therefore not a hardening of's write
+ * story; it closes a hole that was always there.
+ *
+ * This is the NARROW form of "reduce what the boundary must permit" — gating
+ * four programs' write/exec modes, not redesigning how sessions get context.
+ * A blocked mode is a loud refusal on something a reviewer never legitimately
+ * does; the failure modes are not symmetric.
+ *
+ * What it is NOT: the defence against the write class. A command-string rule
+ * cannot see `T=.git/config; cat p >> $T`, and adding spellings here would be
+ * the same mistake made four times. The class is closed by the
+ * round-boundary config-integrity check (`src/execboundary.ts`), which needs no
+ * enumeration at all. This narrows the surface; that catches what gets through.
+ */
+interface ReaderModeRule {
+  /** Flags that write or execute, matched whole or as `--flag=value`. */
+  flags?: RegExp;
+  /** Patterns in a program body that write or execute. */
+  body?: Array<{ re: RegExp; what: string }>;
+  what: string;
+}
+
+const READER_MODE_RULES: Readonly<Record<string, ReaderModeRule>> = {
+  // -exec/-ok run a command; -delete removes files; the -fprint family writes
+  // an arbitrary path (the `-fprintf` bypass above). find's primaries do not
+  // cluster, so exact names are the right shape here.
+  find: {
+    flags: /^-(?:exec|execdir|ok|okdir|delete|fprintf|fprint|fprint0|fls)$/,
+    what: "runs a command or writes a file",
+  },
+  // -o/--output writes; --compress-program names a program sort execs when it
+  // spills to temp files (NOT reproduced here — sort did not spill on a small
+  // input — so it is refused on documented behaviour, not on a probe; said
+  // plainly so nobody later cites this line as evidence it was demonstrated).
+  // `o` is unambiguous in sort's short-option set, so a cluster carrying it is
+  // an output redirect.
+  sort: {
+    flags: /^(?:--(?:output|compress-program)(?:=|$)|-(?!-)[a-zA-Z]*o)/,
+    what: "writes a file or names a program to run",
+  },
+  // -i rewrites in place, -f/--file is a script we cannot inspect, and the
+  // script's own w/W (write), r/R (read a file into the stream) and e (execute)
+  // commands are file/exec verbs at a COMMAND position. `i` and `f` are
+  // unambiguous in sed's short-option set (n e f i r E s u z), so a cluster
+  // carrying either is one of those modes — `sed -ni 'w f'` included.
+  sed: {
+    flags: /^(?:--(?:in-place|file)(?:[=.]|$)|-(?!-)[a-zA-Z]*[if])/,
+    body: [
+      { re: /(?:^|[;{}\n])[ \t]*(?:\/(?:\\.|[^/\\])*\/|[0-9]+|\$|,)*[ \t]*[wWrRe](?:[ \t]|$)/, what: "a w/r/e command" },
+      { re: /\/[gpiImMnN0-9]*[we](?:[ \t]|$)/, what: "a w/e flag on s///" },
+    ],
+    what: "writes a file or runs a command",
+  },
+  // system() and command pipes execute; `print … > "file"` writes. The `>`
+  // pattern requires a `print`/`printf` BEFORE it and stops at `;`/`}`, so
+  // numeric comparisons (`awk '$3 > 100'`, `awk '{if ($2 > 5) print $1}'`) and
+  // an ordinary shell redirect after the program (`awk '{print $1}' f > out`)
+  // stay allowed.
+  awk: {
+    flags: /^(?:--(?:file|source|exec|include)(?:=|$)|-(?!-)[a-zA-Z]*f)/,
+    body: [
+      { re: /\bsystem\s*\(/, what: "system()" },
+      // `cmd | getline` is awk's ONLY piped getline form — the file form uses
+      // `<` — so the pipe alone decides it. `||` is excluded on both sides so
+      // `awk '{print (a=="x") || (b=="y")}'` stays allowed.
+      { re: /(?<!\|)\|(?!\|)\s*&?\s*getline\b/, what: "a command piped into getline" },
+      { re: /(?<!\|)\|(?!\|)\s*&?\s*["'$(]/, what: "a pipe to a command" },
+      { re: /\b(?:print|printf)\b[^;}\n]*>>?\s*["'$(]/, what: "print redirected to a file" },
+    ],
+    what: "runs a command or writes a file",
+  },
+};
+
+/**
+ * Does this invocation of an allowlisted reader use one of its write/exec
+ * modes? Exported so the reason is testable on its own.
+ */
+export function checkReaderModes(prog: string, args: readonly string[], rawArgs?: readonly string[]): BashCheck {
+  const rule = READER_MODE_RULES[prog];
+  if (rule === undefined) return { allowed: true };
+  for (const raw of args) {
+    const a = raw.replace(/^['"]+|['"]+$/g, "");
+    if (a.length > 0 && a.startsWith("-") && rule.flags?.test(a)) {
+      return block(
+        `exec policy: '${prog} ${a}' ${rule.what} — the reviewer reads code and never writes or runs anything. Use the read-only form.`,
+      );
+    }
+  }
+  // The body rules run over the args JOINED **with their quotes intact**, and
+  // over each argument on its own. Two separate mistakes made that necessary:
+  //   · the splitter tokenises on whitespace, so a quoted program is already
+  //     shredded here — `awk 'BEGIN { print x > "f" }'` arrives as five tokens
+  //     and no per-token rule can see `print … >` as one thing (the reviewer's
+  //     probe recorded exactly this: the no-space form passed while the spaced
+  //     form blocked *by accident* on the redirection scan);
+  //   · `checkProgram` strips a leading/trailing quote from every token, which
+  //     turns `BEGIN{"id" | getline}` into `BEGIN{"id | getline}` and destroys
+  //     the very quoting the rules key on. Hence `rawArgs`.
+  const candidates = [(rawArgs ?? args).join(" "), ...args];
+  for (const { re, what } of rule.body ?? []) {
+    if (candidates.some((c) => re.test(c))) {
+      return block(
+        `exec policy: this '${prog}' program contains ${what}, which ${rule.what} — the reviewer reads code and never writes or runs anything.`,
+      );
+    }
   }
   return { allowed: true };
 }
