@@ -911,7 +911,18 @@ export class VerdictWatcher {
   private async handleAnomaly(pr: number, roundNo: number | null, message: string, kind: "malformed" | "overdue"): Promise<void> {
     const { cfg, store, adapter } = this.deps;
     const round = this.runningRound(pr, roundNo ?? undefined);
-    if (round && round.status === "running") store.markRoundOverdue(round.id);
+    if (round && round.status === "running") {
+      store.markRoundOverdue(round.id);
+      // measure the round's tokens HERE, not only on the verdict path.
+      // `measureUsage` had exactly one call site, so an overdue or malformed
+      // round carried NULL cost forever and contributed exactly zero to every
+      // aggregate that faithfully includes it — `markRoundOverdue` deliberately
+      // keeps the row in spend ("hiding tokens this round really burned") and
+      // the stranded-round operator message says "Its spend still counts."
+      // Neither was true until this call existed. The window ends now, which is
+      // the `finished_at` markRoundOverdue just stamped.
+      this.measureUsage(pr, round.id, round.started_at, this.now().toISOString());
+    }
 
     // The in-progress label must not stick, but the "Automatic Review" label is
     // deliberately NOT applied — no review was soundly produced.
@@ -1271,6 +1282,7 @@ export class VerdictWatcher {
         `infrastructure recovery exhausted after ${cap} self-requeue(s) — ${reason}`,
         "infrastructure_failure",
       );
+      this.measureUsage(round.pr, round.id, round.started_at, this.now().toISOString());
       store.logEvent("round_infrastructure_recovery_exhausted", round.pr, {
         round_id: round.id,
         round_no: round.round_no,
@@ -1281,6 +1293,11 @@ export class VerdictWatcher {
       return false;
     }
     store.markRoundCancelled(round.id, `self-requeue ${attempt}/${cap} — ${reason}`, cause);
+    // a cancelled round burned real tokens and stays in every spend
+    // aggregate (`SUM(est_usd) FROM rounds` has no status filter), so it must be
+    // measured before its successor starts. The window ends here and the
+    // successor's begins later, so the two never overlap.
+    this.measureUsage(round.pr, round.id, round.started_at, this.now().toISOString());
     if (isLoudCancelCause(cause)) {
       // the durable twin of the inject below. A round that stopped
       // dead inside its deadline window is the residual real defect

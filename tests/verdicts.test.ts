@@ -367,6 +367,54 @@ describe("measured round usage", () => {
     expect(round.tokens_in).toBe(0);
     expect(round.tokens_out).toBe(0);
   });
+
+  /**
+   * / MC-03. `measureUsage` had exactly ONE call site — the verdict
+   * path — so a round that ended any other way carried NULL cost forever.
+   * `markRoundOverdue` deliberately does NOT set status `expired`, with the
+   * comment "that would drop the round from spend and every other aggregate,
+   * hiding tokens this round really burned"; `totalSpend` is `SUM(est_usd) FROM
+   * rounds` with no status filter; and the stranded-round operator message says
+   * "Its spend still counts." All three were structurally true and empirically
+   * zero, because nothing ever put a number in the column.
+   */
+  describe("a round that never produced a verdict is measured too", () => {
+    const priced = { globalStoreDir: null, pricing: { "gpt-5.6-sol": { input_per_mtok: 2, output_per_mtok: 8 } } };
+
+    it("measures a MALFORMED round's tokens onto the round row", async () => {
+      const roundId = reviewingRound(400);
+      writeSessionJsonl(400, [modelLine(), jsonlLine(1_000_000, 500_000)]);
+
+      await watcher({ usage: priced }).handleFile(write(400, 1, verdictFile({ pr: 400, verdict: "APPROVED" as any })));
+
+      const round = store.db.prepare("SELECT * FROM rounds WHERE id = ?").get(roundId) as any;
+      expect(round.status).toBe("overdue"); // handleAnomaly terminalized it
+      expect(round.tokens_in).toBe(1_000_000);
+      expect(round.tokens_out).toBe(500_000);
+      expect(round.est_usd).toBeCloseTo(1 * 2 + 0.5 * 8, 6);
+      // …and therefore it reaches the aggregate the manifesto's belief 8 claims.
+      expect(store.totalSpend()).toBeGreaterThan(0);
+    });
+
+    it("measures an OVERDUE round's tokens when the deadline sweep buries it", async () => {
+      const roundId = reviewingRound(401);
+      writeSessionJsonl(401, [modelLine(), jsonlLine(300_000, 100_000)]);
+      const later = new Date(Date.now() + (cfg.daemon.round_deadline_min + 10) * 60_000);
+      const { hooks } = recordingHooks();
+      wireWake(store, hooks);
+      const w = new VerdictWatcher({
+        cfg, store, adapter, hooks, verdictDir: dir, now: () => later,
+        root: dir, usage: priced,
+      });
+
+      expect(await w.checkDeadlines()).toEqual([401]);
+
+      const round = store.db.prepare("SELECT * FROM rounds WHERE id = ?").get(roundId) as any;
+      expect(round.status).toBe("overdue");
+      expect(round.tokens_in).toBe(300_000);
+      expect(round.est_usd).toBeCloseTo(0.3 * 2 + 0.1 * 8, 6);
+    });
+  });
 });
 
 describe("confirmed round posting receipts", () => {
@@ -502,7 +550,7 @@ describe("anomaly paths", () => {
     clock = later;
     const { hooks, overseer } = recordingHooks();
     wireWake(overdueStore, hooks);
-    const w = new VerdictWatcher({ cfg, store: overdueStore, adapter, hooks, verdictDir: dir, now: () => clock });
+    const w = new VerdictWatcher({ cfg, store: overdueStore, adapter, hooks, verdictDir: dir, now: () => clock, root: dir, usage: { globalStoreDir: null } });
 
     expect(await w.checkDeadlines()).toEqual([300]);
     expect(overseer[0]).toContain("ANOMALY (overdue)");
@@ -547,7 +595,7 @@ describe("anomaly paths", () => {
     clock = new Date("2026-08-14T14:03:00Z"); // old round overdue, new one inside its deadline
     const { hooks, overseer } = recordingHooks();
     wireWake(s, hooks);
-    const w = new VerdictWatcher({ cfg, store: s, adapter, hooks, verdictDir: dir, now: () => clock });
+    const w = new VerdictWatcher({ cfg, store: s, adapter, hooks, verdictDir: dir, now: () => clock, root: dir, usage: { globalStoreDir: null } });
 
     expect(await w.checkDeadlines()).toEqual([]);
     expect((s.db.prepare("SELECT status, summary FROM rounds WHERE id = ?").get(oldId) as any).status).toBe("cancelled");
@@ -585,7 +633,7 @@ describe("held wakes are flushed at round end", () => {
     store.holdWake(101, "author says: ping", "author_reply");
     const { hooks, injects } = recordingHooks();
     wireWake(store, hooks);
-    const w = new VerdictWatcher({ cfg, store, adapter, hooks, verdictDir: dir, now: () => later });
+    const w = new VerdictWatcher({ cfg, store, adapter, hooks, verdictDir: dir, now: () => later, root: dir, usage: { globalStoreDir: null } });
 
     expect(await w.checkDeadlines()).toEqual([101]);
     expect(injects).toEqual([]);
