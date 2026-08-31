@@ -323,8 +323,11 @@ export function buildWakeMessage(
         '"human_requested":false}.',
       "  Use `resolve` only when the code addresses the finding or the rationale is satisfactory.",
       "  The daemon posts the reply and, for `resolve`, resolves this bot-owned thread.",
-      "- If they ask for a human, set `human_requested: true` in that response file",
-      "  and tell them the owner will be requested.",
+      "- If they ask for a human, set `human_requested: true` in that response file.",
+      "  The daemon records the request for the operator; it is NOT a handover, so",
+      "  do not promise one. Say that this review is not held for a person, and put",
+      "  the residual doubt where a human will see it: a `[check this]` item and the",
+      "  review body's `### For a human to double-check` section next round.",
     );
     if (discipline.final) {
       lines.push(

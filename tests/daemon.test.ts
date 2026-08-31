@@ -10,6 +10,7 @@ import { loadConfig } from "../src/config.js";
 import { createDaemon, type DaemonAdapter } from "../src/daemon.js";
 import type { GateResult } from "../src/gate.js";
 import type { PrRef } from "../src/github.js";
+import { PingPongLedger } from "../src/pingpong.js";
 import { StateStore } from "../src/state.js";
 import { postingMarker } from "../src/posting-receipt.js";
 
@@ -157,6 +158,58 @@ describe("daemon wiring", () => {
       // status.json exists and reports dry-run.
       const status = JSON.parse(readFileSync(join(root, "state", "status.json"), "utf8"));
       expect(status.dry_run).toBe(true);
+    } finally {
+      await daemon.stop();
+    }
+  });
+
+  /**
+   * the author's "I want a human" is recorded, not dropped.
+   *
+   * `human_requested` reached `applyEvent`, whose transition returns `current`;
+   * because `applyEvent` only logs a `pr_transition` on a change, NOTHING was
+   * written at all. The only trace was one boolean inside a
+   * `pingpong_decision_applied` payload that no surface reads — while the
+   * comment beside the wiring said "Park the PR locally", a park
+   * retired. Silently dropping an author-facing request was the one option
+   * ruled out; recording it durably (quiet tier — DB + heartbeat, no wake) is
+   * the shape chosen. It is still never a handover.
+   */
+  it("records an author's request for a human as a durable anomaly, and still never parks", async () => {
+    const recorded: string[] = [];
+    const daemon = createDaemon({
+      cfg: { ...loadConfig(join(process.cwd(), "tests/fixtures/config.toml")), dry_run: true },
+      root,
+      store,
+      adapter: fakeAdapter(recorded, join(root, "state", "dryrun")),
+      listen: false,
+      log: () => {},
+    });
+    await daemon.start();
+    try {
+      const stateBefore = store.getPr(PR)!.state;
+      // The watcher only accepts a decision for a CLAIMED author message.
+      new PingPongLedger(store.db).claimAuthorMessage({ pr: PR, comment_id: 5001, in_reply_to_id: 4000, path: "src/app.ts" });
+      // `keep_open` with an empty reply, so nothing but the human-request
+      // branch runs: no GitHub reply, no thread resolve.
+      writeFileSync(
+        join(root, "verdict", `pr-${PR}-thread-4000-comment-5001.json`),
+        JSON.stringify({ pr: PR, thread_id: 4000, comment_id: 5001, resolution: "keep_open", reply: "", reason: "author asked for a person", human_requested: true }),
+      );
+      daemon.wakeThreadDecisions();
+
+      const deadline = Date.now() + 5_000;
+      while (store.anomalies().length === 0 && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 20));
+      }
+
+      expect(store.anomalies()).toMatchObject([{ kind: "human_requested", pr: PR }]);
+      expect(store.anomalies()[0]!.detail).toContain("No handover exists");
+      expect(store.anomalies()[0]!.detail).toContain("author asked for a person");
+      // …and no handover happened: no park state, no reviewer nomination.
+      expect(store.getPr(PR)!.state).toBe(stateBefore);
+      expect(store.getPr(PR)!.state).not.toBe("awaiting_human");
+      expect(recorded).not.toContain("request_reviewer");
     } finally {
       await daemon.stop();
     }

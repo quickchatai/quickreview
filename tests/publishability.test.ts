@@ -145,7 +145,9 @@ const ALLOWLIST: AllowlistEntry[] = [
   //    (its config.toml deliberately leaves these unset). Lifting them into
   //    the private profile/config is charted follow-up, not droppable here.
   { path: "src/config.ts", tokens: ["quickchat", "issue-tracker"], reason: "shipped [companion] defaults the LIVE deployment boots from (live config leaves them unset); lifted with the private-profile split" },
-  { path: "src/pingpong.ts", tokens: ["owner_legacy"], reason: "session guidance string mirrors the FROZEN conversation-system seed's wording — changes with the reseed" },
+  // src/pingpong.ts held the last one ("tell them <owner> will be requested").
+  // removed the sentence outright: it promised a handover had
+  // retired, so the private name went with the false promise.
   { path: "prompts/companion.md", tokens: ["quickchat"], reason: "container mount path literal /example-app — mirrors CONTAINER.reviewedRepo (live-deployment carrier; genericized with the private-profile split)" },
   { path: "tests/posting.test.ts", tokens: ["owner_legacy"], reason: "negative assertion that the assembled review body stays scrubbed of the personal name" },
   { path: "tests/github-app-manifest.test.ts", tokens: ["quickchat"], reason: "negative assertion that the shipped App manifest carries no private-org hostname" },

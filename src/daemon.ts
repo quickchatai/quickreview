@@ -221,13 +221,35 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     log,
     isDraining: () => store.drainState().draining,
     ownerActorAlias: cfg.github.bot_login === `${cfg.github.app_slug}[bot]` ? cfg.github.app_slug : undefined,
-    // The author asked for a person. Park the PR locally — no reviewer is
-    // requested on GitHub (escalation mechanics scrapped 2026-08-18).
+    // The author asked for a person on a review thread.
+    //
+    // There is no park to put them in: retired it, so the state event
+    // is a deliberate no-op (`statemachine.ts`: "noted, never a handover — AI
+    // keeps working") and no reviewer is ever nominated on GitHub (rule 10).
+    // But before that was ALL that happened — `transition` returned
+    // `current`, so not even a `pr_transition` row was written, and the only
+    // trace of an author-facing request was one boolean inside a
+    // `pingpong_decision_applied` payload that nothing reads. The comment here
+    // said "Park the PR locally", which had not been true.
+    //
+    // Decision: the signal is RECORDED, durably and visibly, and it
+    // is never a handover. `logAnomaly` is the one durable funnel; the kind is
+    // deliberately unlisted in `anomalies.ts` WAKE_KINDS, so it is quiet-tier —
+    // it lands in the DB, surfaces in the operator views and in the overseer's
+    // daily heartbeat, and never injects. An author asking for a person is
+    // worth a human's eyes; it is not a review that ran unsoundly NOW.
     onHumanRequested: async (decision) => {
       applyEvent(store, decision.pr, { type: "human_requested" }, {}, {
         botLogin: cfg.github.bot_login,
         reason: "pingpong:human-requested",
       });
+      store.logAnomaly(
+        "human_requested",
+        decision.pr,
+        null,
+        `the author asked for a person on thread ${decision.thread_id} (comment ${decision.comment_id})` +
+          `${decision.reason ? ` — ${decision.reason}` : ""}. No handover exists: the reviewer keeps driving.`,
+      );
     },
   });
 
