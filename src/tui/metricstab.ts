@@ -365,7 +365,9 @@ export function opsLines(
   lines.push("");
   lines.push(sectionTitle("EVENTS"));
   const kinds = win.events_by_kind ?? [];
-  if (kinds.length === 0) {
+  if (win.events_by_kind === undefined) {
+    lines.push(dim("events are not reported by the daemon build on the VM"));
+  } else if (kinds.length === 0) {
     lines.push(dim("no events in this window"));
   } else {
     const max = kinds.reduce((m, k) => Math.max(m, k.count), 0);
@@ -388,7 +390,9 @@ export function opsLines(
  */
 export function cancellationLines(win: MetricsWindow, width: number): string[] {
   const c = win.cancellations;
-  if (!c || c.total === 0) return [dim("no cancelled rounds in this window")];
+  // Not reported ≠ none: an older daemon build simply omits it.
+  if (!c) return [dim("cancellations are not reported by the daemon build on the VM")];
+  if (c.total === 0) return [dim("no cancelled rounds in this window")];
   const max = c.by_cause.reduce((m, b) => Math.max(m, b.count), 0);
   const lines = c.by_cause.map((b) =>
     hbar(b.label, b.count, max, width, String(b.count), b.loud ? BAD : ACCENTS.yellow),
@@ -616,7 +620,11 @@ export function statStrip(win: MetricsWindow, width: number): string {
     // the loud cancellations only — a round that stopped dead. The
     // benign redeploy orphan sweep is in the card below, never in the strip:
     // a tile that lights up after every deploy is a tile nobody reads.
-    `${(win.cancellations?.loud ?? 0) > 0 ? WARN : FG.dim}stopped ${win.cancellations?.loud ?? 0}${RESET}`,
+    // `undefined` means an older daemon does not report the field at all —
+    // "?" not "0": a zero here reads as "nothing stopped dead".
+    win.cancellations === undefined
+      ? `${FG.dim}stopped ?${RESET}`
+      : `${win.cancellations.loud > 0 ? WARN : FG.dim}stopped ${win.cancellations.loud}${RESET}`,
     `${FG.awaiting_human}⚑ ${h.awaiting_you} awaiting you${RESET}`,
   ];
   return truncate(bits.join(SEP), width);

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -202,5 +202,35 @@ describe("argv plumbing", () => {
       "--resume-state",
       "/s2.json",
     ]);
+  });
+});
+
+// ---- what makes the unfiltered watch safe --------------------------
+//
+// `HotReloader` watches dist/ RECURSIVELY AND UNFILTERED, and the header of
+// reload.ts rests the whole design on one sentence: "a failed `tsc` emits
+// nothing, so the running TUI is untouched". Two tsconfig settings are what
+// make that sentence true, and both are invisible from this file — so they are
+// pinned here, beside the guarantee they support.
+
+describe("the compiler settings the unfiltered dist watch depends on", () => {
+  const tsconfig = JSON.parse(
+    readFileSync(join(process.cwd(), "tsconfig.json"), "utf8").replace(/^\s*\/\/.*$/gm, ""),
+  ) as { compilerOptions: Record<string, unknown> };
+
+  it("keeps the incremental buildinfo OUT of dist/", () => {
+    // tsc writes the buildinfo even when the compile failed. Inside dist/ that
+    // is a watched file changing on a broken edit — a re-exec of the TUI in the
+    // middle of typing, i.e. the exact opposite of the stated guarantee.
+    const info = tsconfig.compilerOptions.tsBuildInfoFile;
+    expect(typeof info).toBe("string");
+    expect(String(info).startsWith("dist/")).toBe(false);
+  });
+
+  it("does not emit JavaScript from a failing build", () => {
+    // Without this tsc emits on error by default: one type error re-emitted 40
+    // files into dist/ when measured it, so the "failed build touches
+    // nothing" guarantee was never actually true.
+    expect(tsconfig.compilerOptions.noEmitOnError).toBe(true);
   });
 });

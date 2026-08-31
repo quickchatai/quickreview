@@ -13,10 +13,11 @@
 // completes looks different from one that is still working.
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+import { stripAnsi } from "../src/tui/paint.js";
 
 // ---- the instrumentation -----------------------------------------------------
 //
@@ -152,14 +153,26 @@ interface Harness {
   stop: () => Promise<void>;
 }
 
-async function startTui(tmp: string, argv: string[] = ["--no-reload"]): Promise<Harness> {
+async function startTui(tmp: string, argv: string[] = ["--no-reload"], companionEnabled = true): Promise<Harness> {
   const { loadConfig } = await import("../src/config.js");
   const base = loadConfig(join(process.cwd(), "tests/fixtures/config.toml"));
+  // A REAL ticket projection, so `readEffortTickets` actually walks a
+  // directory: without it `ticketProjection` returns undefined, no readdir ever
+  // runs, and the "no filesystem walk before the first frame" assertion is
+  // vacuous for the one walk this diff deliberately moved (review).
+  const trackerRoot = join(tmp, "tracker");
+  mkdirSync(join(trackerRoot, "efforts", "probe", "tickets"), { recursive: true });
+  writeFileSync(
+    join(trackerRoot, "efforts", "probe", "tickets", "-probe.md"),
+    "# probe\n\nId: \nEffort: probe\nType: impl\nStatus: open\nRole: ready-for-agent\n",
+  );
   const config = {
     ...base,
+    sink: { ...base.sink, kind: "wayfinder" as const, root: trackerRoot, effort: "probe", tickets_effort: "probe" },
     companion: {
       ...base.companion,
-      enabled: true,
+      enabled: companionEnabled,
+      tracker_dir: trackerRoot,
       evidence_dir: join(tmp, "evidence"),
       feed_dir: join(tmp, "feed"),
       alerts_dir: join(tmp, "alerts"),
@@ -265,6 +278,48 @@ describe("the first frame (ruling 6 — structural, not timed)", () => {
     await h.stop();
   }, 40_000);
 
+  it("holds with the hot reload ON — the recursive dist watch comes after the frame too", async () => {
+    // The default harness runs `--no-reload`, which makes `reloader` undefined
+    // and never exercises `fs.watch` — the ONE filesystem walk this diff
+    // reordered (review). This is the configuration `npm run dev`
+    // actually uses.
+    const h = await startTui(tmp, []);
+    expect(h.log.paintedAt, "the TUI never painted a first frame").not.toBeUndefined();
+    const before = h.log.entries.slice(0, h.log.paintedAt);
+    expect(before, `these ran before the first frame: ${before.join(", ")}`).toEqual([]);
+    // …and the watcher really did start, so the assertion above is about a
+    // watch that exists rather than one that was skipped.
+    expect(h.log.entries).toContain("fs.watch");
+    await h.stop();
+  }, 40_000);
+
+  it("with NO companion column, the bring-up still reports — in the board's unknown block", async () => {
+    // Ruling 3 puts progress in the companion column; `--no-companion` (and
+    // `[companion] enabled = false`) means there is no column, and the
+    // bring-up would otherwise run entirely unreported (review). It
+    // goes where the operator is already looking: the block that stands in for
+    // the PR rows while there is no data.
+    const h = await startTui(tmp, ["--no-reload", "--no-companion"], false);
+    await board(h);
+    // Wait for a step to actually TRANSITION: the initial checklist is painted
+    // once at wiring time, so only a non-`waiting` step proves the live
+    // updates reach this surface.
+    let frame = "";
+    for (let i = 0; i < 150; i++) {
+      h.written.length = 0;
+      await h.press("\x00"); // a byte nothing is bound to — forces a repaint pass
+      frame = h.frame();
+      if (/[✗✓–] VM ssh/.test(frame)) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(frame).toContain("PRS (?)");
+    expect(frame).toContain("starting up");
+    expect(frame, "the bring-up's live state never reached the board").toMatch(/[✗✓–] VM ssh/);
+    // …and no column was painted, so nothing about the layout moved.
+    expect(frame).not.toContain("starting up — progress above");
+    await h.stop();
+  }, 40_000);
+
   it("triages the connection behind that frame, and `s` re-runs the check", async () => {
     const h = await startTui(tmp);
     await board(h);
@@ -366,6 +421,157 @@ describe("connection triage", () => {
     expect(d.kind).toBe("no-agent-key");
   });
 
+  it("does not answer an interactive/2FA refusal with an ssh-add that cannot help", async () => {
+    const { classifyConnection } = await import("../src/tui/sshtriage.js");
+    // BatchMode turns a second factor into a bare "Permission denied", and the
+    // method list is the only thing that says a key was never the issue.
+    const d = classifyConnection({
+      ...base,
+      connect: { ok: false, stderr: "example-vm: Permission denied (keyboard-interactive).", timedOut: false },
+    });
+    expect(d.kind).not.toBe("no-agent-key");
+    expect(d.remedy).not.toContain("ssh-add");
+    expect(d.cause).toContain("a key cannot fix");
+    // publickey among the offered methods keeps the key diagnosis, even beside
+    // an interactive method.
+    const withKey = classifyConnection({
+      ...base,
+      agent: { reachable: true, identities: [] },
+      connect: { ok: false, stderr: "Permission denied (publickey,keyboard-interactive,password).", timedOut: false },
+    });
+    expect(withKey.kind).toBe("no-agent-key");
+    expect(withKey.remedy).toContain("ssh-add");
+  });
+
+  it("never claims the agent holds the right key on the strength of a different one", async () => {
+    const { agentHoldsIdentity, classifyConnection } = await import("../src/tui/sshtriage.js");
+    // An agent with one UNRELATED key, and no readable .pub to fingerprint
+    // against: the honest answer is "cannot tell", not "yes".
+    const probes = {
+      ...base,
+      agent: { reachable: true, identities: ["256 SHA256:zzz /home/x/.ssh/github (ED25519)"] },
+      connect: { ok: false, stderr: "Permission denied (publickey).", timedOut: false },
+    };
+    expect(agentHoldsIdentity(probes)).toBe("unknown");
+    expect(classifyConnection(probes).cause).toContain("cannot tell");
+    // With a fingerprint it is a fact either way.
+    expect(agentHoldsIdentity({ ...probes, identityFingerprint: "SHA256:abc" })).toBe("no");
+    expect(agentHoldsIdentity({ ...probes, identityFingerprint: "SHA256:zzz" })).toBe("yes");
+  });
+
+  it("keeps the diagnostic probe read-only — it must never write known_hosts", async () => {
+    const { batchProbeArgv } = await import("../src/tui/sshtriage.js");
+    const argv = batchProbeArgv("example-vm").join(" ");
+    // `accept-new` PERSISTS a host key as a side effect of asking a question.
+    // Ruling 4 declined self-healing: the TUI reports, the operator acts.
+    expect(argv).not.toContain("accept-new");
+    expect(argv).toContain("StrictHostKeyChecking=no");
+    expect(argv).toContain("UserKnownHostsFile=/dev/null");
+    expect(argv).toContain("BatchMode=yes");
+  });
+
+  it("still classifies a wedged master when ControlPath carries a %C it cannot expand", async () => {
+    const { classifyConnection, controlSocketPresent, expandControlPath } = await import("../src/tui/sshtriage.js");
+    const raw = "~/.ssh/cm-%C";
+    const path = expandControlPath(raw, {}, "/home/x");
+    expect(path).toBe("/home/x/.ssh/cm-%C");
+    // The socket itself cannot be stat'd, but its DIRECTORY answers the only
+    // question that matters — is multiplexing configured here at all. Bailing
+    // to "" used to demote a wedged master to `unknown` and lose the remedy.
+    expect(controlSocketPresent(path, (p) => p === "/home/x/.ssh")).toBe(true);
+    const d = classifyConnection({
+      ...base,
+      controlPath: path,
+      controlSocketExists: true,
+      connect: { ok: false, stderr: "mux_client_hello_exchange: read from master failed", timedOut: false },
+    });
+    expect(d.kind).toBe("wedged-master");
+    expect(d.remedy).toBe("ssh -O exit example-vm");
+  });
+
+  it("shares ONE spelling of the master check with connect.ts", async () => {
+    const { TUI_DEFAULTS } = await import("../src/config.js");
+    const { masterCheckArgv } = await import("../src/tui/connect.js");
+    const { triageConnection } = await import("../src/tui/sshtriage.js");
+    const seen: string[][] = [];
+    await triageConnection(TUI_DEFAULTS, {
+      home: "/home/x",
+      exists: () => false,
+      run: async (cmd, argv) => {
+        seen.push([cmd, ...argv]);
+        return { status: 0, stdout: "", stderr: "", timedOut: false };
+      },
+    });
+    expect(seen.some((a) => a[0] === "ssh" && a.slice(1).join(" ") === masterCheckArgv(TUI_DEFAULTS).join(" "))).toBe(true);
+  });
+
+  // The `.mjs` forward cannot import this module (it is dependency-free ESM
+  // that systemd runs from a bare checkout), so the two classifiers are pinned
+  // to AGREE instead. Drift between them is what produced the remote-failure /
+  // local-remedy bug the review found.
+  it("agrees with the memory forward's classifier on the same stderr", async () => {
+    const { classifyConnection } = await import("../src/tui/sshtriage.js");
+    const forward = (await import("../scripts/companion-memory-forward.mjs")) as unknown as {
+      relayFailureCause(cfg: Record<string, unknown>, text: string, deps?: Record<string, unknown>): { key: string; remedy: string };
+    };
+    const cfg = { sshHost: "example-vm", container: "c", sudo: true, identity: "/home/x/.ssh/k" };
+    const corpus: Array<[string, string]> = [
+      ["Permission denied (publickey).", "auth"],
+      ["ssh: Could not resolve hostname example-vm: Name or service not known", "host"],
+      ["ssh: connect to host example-vm port 22: Connection timed out", "host"],
+      ["Control socket connect(/home/x/.ssh/cm): Connection refused", "mux"],
+      ["mux_client_hello_exchange: read from master failed", "mux"],
+    ];
+    const toForwardKey: Record<string, string> = {
+      "no-agent-key": "auth",
+      "host-unreachable": "host",
+      "wedged-master": "mux",
+      unknown: "unknown",
+    };
+    for (const [stderr, expected] of corpus) {
+      const fwd = forward.relayFailureCause(cfg, stderr, { run: () => ({ stdout: "" }) });
+      expect(fwd.key, `forward classed ${JSON.stringify(stderr)} as ${fwd.key}`).toBe(expected);
+      const tui = classifyConnection({
+        ...base,
+        agent: { reachable: true, identities: [] },
+        controlPath: "/home/x/.ssh/cm",
+        controlSocketExists: true,
+        connect: { ok: false, stderr, timedOut: false },
+      });
+      expect(toForwardKey[tui.kind], `TUI classed ${JSON.stringify(stderr)} as ${tui.kind}`).toBe(expected);
+    }
+  });
+
+  it("sends a REMOTE docker refusal to the remote docker, and derives the key from ssh -G", async () => {
+    const forward = (await import("../scripts/companion-memory-forward.mjs")) as unknown as {
+      relayFailureCause(cfg: Record<string, unknown>, text: string, deps?: Record<string, unknown>): { key: string; remedy: string; cause: string };
+      sshIdentityFor(cfg: Record<string, unknown>, deps?: Record<string, unknown>): string;
+    };
+    const cfg = { sshHost: "example-vm", container: "qc", sudo: true, local: false };
+    // The relay is `ssh <host> sudo docker exec …`, so a docker refusal is the
+    // VM's. `systemctl status docker` pointed the operator at their laptop.
+    const d = forward.relayFailureCause(cfg, "permission denied while trying to connect to the Docker daemon socket", {
+      run: () => ({ stdout: "" }),
+    });
+    expect(d.key).toBe("docker");
+    expect(d.cause).toContain("example-vm");
+    expect(d.remedy).toBe("ssh example-vm sudo docker ps");
+    expect(d.remedy).not.toContain("systemctl");
+    // …and the ssh-add path is DERIVED, exactly as sshtriage derives it.
+    const key = forward.sshIdentityFor(cfg, {
+      home: "/home/x",
+      exists: (p: string) => p === "/home/x/.ssh/derived_key",
+      run: () => ({ stdout: "identityfile ~/.ssh/other\nidentityfile ~/.ssh/derived_key\n" }),
+    });
+    expect(key).toBe("/home/x/.ssh/derived_key");
+    const auth = forward.relayFailureCause({ ...cfg, identity: undefined }, "Permission denied (publickey).", {
+      home: "/home/x",
+      exists: (p: string) => p === "/home/x/.ssh/derived_key",
+      run: () => ({ stdout: "identityfile ~/.ssh/derived_key\n" }),
+    });
+    expect(auth.remedy).toBe("ssh-add /home/x/.ssh/derived_key");
+  });
+
   it("is silent when the master is alive, and never spawns anything in local mode", async () => {
     const { TUI_DEFAULTS } = await import("../src/config.js");
     const { classifyConnection, triageConnection } = await import("../src/tui/sshtriage.js");
@@ -420,6 +626,29 @@ describe("connection triage", () => {
 // ---- ruling 3: progress in the column, and a stalled step that says so -------
 
 describe("startup progress", () => {
+  it("the memory tab's ticket panes read UNKNOWN until the tracker is scanned", async () => {
+    const { installMemoryLearningHooks, renderMemoryView } = await import("../src/tui/memtab.js");
+    const { TUI_DEFAULTS } = await import("../src/config.js");
+    const app = { cfg: TUI_DEFAULTS, hooks: {}, view: {}, notice: () => {}, repaint: () => {} } as never;
+    const st = installMemoryLearningHooks(app, {
+      memory: { read: async () => [], apply: async () => ({ ok: true }) } as never,
+      readTickets: () => [],
+    });
+    // The scan is a filesystem walk and now runs BEHIND the first frame, so
+    // there is a window in which an empty list is "not read", not "none".
+    expect(st.ticketsLoaded).toBe(false);
+    const before = stripAnsi(renderMemoryView(st, undefined, undefined, 160, 30).lines.join("\n"));
+    expect(before).toContain("FEEDBACK TICKETS (?)");
+    expect(before).not.toContain("FEEDBACK TICKETS (0)");
+    st.reloadTickets?.();
+    expect(st.ticketsLoaded).toBe(true);
+    const after = stripAnsi(renderMemoryView(st, undefined, undefined, 160, 30).lines.join("\n"));
+    expect(after).toContain("FEEDBACK TICKETS (0)");
+    // A gh read that was skipped for want of a repo is not "no bot PRs".
+    expect(st.improvements).toBeUndefined();
+    expect(after).toContain("not read");
+  });
+
   it("shows pending, running, done, failed and skipped as different things", async () => {
     const { StartupProgress, startupLines } = await import("../src/tui/startup.js");
     let now = 1_000;
@@ -481,11 +710,68 @@ describe("startup progress", () => {
 
   it("never lets a reporting failure break the bring-up it reports on", async () => {
     const { StartupProgress } = await import("../src/tui/startup.js");
-    const p = new StartupProgress([{ key: "a", label: "alpha" }]);
+    const p = new StartupProgress([{ key: "a", label: "alpha" }], { tickMs: 0 });
     expect(() => p.done("does-not-exist")).not.toThrow();
-    await expect(p.step("a", () => Promise.reject(new Error("boom")))).resolves.toBeUndefined();
+    expect(() => p.fail("does-not-exist", "boom")).not.toThrow();
+    p.fail("a", "boom");
     expect(p.steps()[0]).toMatchObject({ state: "failed", detail: "boom" });
     expect(p.settled()).toBe(true);
+  });
+
+  // THE ONE THAT MATTERS. The stall warning is computed from elapsed time, and
+  // a step that hangs emits no transition — so without a ticker nothing calls
+  // `onUpdate`, the column keeps painting the elapsed time from the last
+  // transition, and the warning is unreachable on screen however correct the
+  // pure function is. This drives the REAL sidebar render off the REAL timer.
+  it("re-renders a hung step on its own, so the overdue warning reaches the screen", async () => {
+    vi.useFakeTimers();
+    try {
+      const { DEFAULT_TICK_MS, STALL_AFTER_MS, StartupProgress } = await import("../src/tui/startup.js");
+      const { paintSidebar } = await import("../src/tui/sidebar.js");
+      let now = 0;
+      const frames: string[] = [];
+      const p = new StartupProgress([{ key: "container", label: "companion container" }], {
+        now: () => now,
+        onUpdate: (prog) =>
+          frames.push(
+            paintSidebar(
+              {
+                header: { up: false, piUp: false, day: "2026-08-31", lastWake: "—", memory: "off" },
+                lines: [],
+                focused: false,
+                collapsed: false,
+                available: false,
+                offset: 0,
+                alerts: [],
+                startup: prog.lines(),
+              },
+              80,
+              14,
+            ).join("\n"),
+          ),
+      });
+      p.begin("container");
+      const afterBegin = frames.length;
+      expect(frames[afterBegin - 1]).toContain("⟳");
+
+      // docker never answers: from here there is NO further state change.
+      now = STALL_AFTER_MS + 25_000;
+      vi.advanceTimersByTime(DEFAULT_TICK_MS * 2);
+      expect(frames.length, "nothing re-rendered — the warning can never appear").toBeGreaterThan(afterBegin);
+      const painted = frames[frames.length - 1]!.replace(/\x1b\[[0-9;]*m/g, "");
+      expect(painted).toContain("⚠");
+      expect(painted).toContain("still running, no result yet");
+      expect(painted).toContain("45s");
+
+      // …and it stops itself the moment nothing is running any more, so it
+      // cannot spin behind a finished bring-up or hold the loop at quit.
+      p.fail("container", "docker is not running");
+      const settledAt = frames.length;
+      vi.advanceTimersByTime(DEFAULT_TICK_MS * 10);
+      expect(frames.length).toBe(settledAt);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -513,6 +799,29 @@ describe("the companion column during startup", () => {
     expect(mirroring).not.toContain("memory forward");
   });
 
+  it("never rewinds to a stale checklist when the mirror blanks (the day-rollover case)", async () => {
+    const { CompanionSidebar, paintSidebar } = await import("../src/tui/sidebar.js");
+    const { COMPANION_DEFAULTS } = await import("../src/config.js");
+    let capture = "";
+    const docker = async () => ({ ok: true, stdout: capture, stderr: "", code: 0 });
+    const sb = new CompanionSidebar(COMPANION_DEFAULTS, docker, { enabled: () => true, available: () => true });
+    sb.setStartup(["✓ memory forward · adopted", "✓ companion container"]);
+    expect(paintSidebar(sb.view(), 60, 14).join("\n")).toContain("memory forward");
+
+    capture = "pi> hello";
+    await sb.refresh();
+    expect(paintSidebar(sb.view(), 60, 14).join("\n")).toContain("pi> hello");
+
+    // The day-rollover kills and respawns pi ON PURPOSE, so an empty capture is
+    // a NORMAL mid-session event. Before the latch it flipped the column back
+    // to a checklist from boot, hint row reading "starting up", hours later.
+    capture = "";
+    await sb.refresh();
+    const blank = paintSidebar(sb.view(), 60, 14).join("\n");
+    expect(blank).not.toContain("memory forward");
+    expect(blank).not.toContain("starting up — progress above");
+  });
+
   it("takes its width from config, not from docker (the answer)", async () => {
     const { CompanionSidebar, sidebarWidth } = await import("../src/tui/sidebar.js");
     const { COMPANION_DEFAULTS } = await import("../src/config.js");
@@ -529,5 +838,66 @@ describe("the companion column during startup", () => {
     // --no-companion: no column at all, exactly as before.
     const off = new CompanionSidebar(COMPANION_DEFAULTS, docker, { enabled: () => false, available: () => false });
     expect(sidebarWidth(160, { collapsed: false, available: off.shown() })).toBe(0);
+  });
+});
+
+// ---- ruling 1 beyond the board ----------------------------------------------
+//
+// "Any surface that can lose its source follows the same rule." Each of these
+// was a confident value standing in for an answer nobody had.
+
+describe("honest unknowns on the other surfaces", () => {
+  it("a failed `git status` is UNKNOWN on the deploy tab, never a green clean tree", async () => {
+    const { RealDeployFetcher, deployLines } = await import("../src/tui/deploytab.js");
+    const { TUI_DEFAULTS } = await import("../src/config.js");
+    const fail = async () => ({ ok: false, stdout: "", stderr: "fatal: not a git repository", code: 128 });
+    const st = await new RealDeployFetcher(TUI_DEFAULTS, fail, fail).load();
+    expect(st.dirty, "an unreadable working tree must not read as clean").toBeUndefined();
+    const text = stripAnsi(deployLines({ ...st, loaded: true, loading: false, scroll: 0 }, 120).join("\n"));
+    expect(text).toContain("unknown — git status could not be read");
+    expect(text).not.toContain("clean");
+    // …and "up to date, nothing to deploy" is a claim that needs all three
+    // facts, so it must not fire off an unread tree.
+    expect(text).not.toContain("up to date");
+  });
+
+  it("an unfetched container state does not offer STOP as if the VM were up", async () => {
+    const { renderDeployTab } = await import("../src/tui/deploytab.js");
+    const base = { loaded: true, loading: false, dirty: [], plan: [], scroll: 0 };
+    const unknown = stripAnsi(renderDeployTab({ ...base }, false, 120, 20).lines.join("\n"));
+    expect(unknown).toContain("VM APP STATE UNKNOWN");
+    expect(unknown).toContain("VM: state unknown");
+    expect(unknown).not.toContain("STOP VM APP");
+    const up = stripAnsi(renderDeployTab({ ...base, containerStatus: "Up 3 hours" }, false, 120, 20).lines.join("\n"));
+    expect(up).toContain("STOP VM APP");
+  });
+
+  it("the ambient feed reports an unread working tree as null, not 0 files", async () => {
+    const { buildTuiView } = await import("../src/tui/feed.js");
+    const view = buildTuiView({
+      now: new Date("2026-08-31T10:00:00Z"),
+      tab: "deploy",
+      deploy: { loaded: true, dirty: undefined, plan: [], scroll: 0 } as never,
+    } as never);
+    expect(view.deploy?.dirty_files).toBeNull();
+  });
+
+  it("AWAITING YOU is (?) until a snapshot has arrived", async () => {
+    const { renderDigestTab } = await import("../src/tui/digesttab.js");
+    const st = { files: [], back: 0, scroll: 0, awaitingSelected: 0, loaded: true };
+    const blind = stripAnsi(renderDigestTab(st, undefined, undefined, "2026-08-31", 120, 20).lines.join("\n"));
+    expect(blind).toContain("AWAITING YOU (?)");
+    expect(blind).not.toContain("AWAITING YOU (0)");
+    const known = stripAnsi(renderDigestTab(st, [], undefined, "2026-08-31", 120, 20).lines.join("\n"));
+    expect(known).toContain("AWAITING YOU (0)");
+  });
+
+  it("metrics say a field an older daemon omits is UNKNOWN, not zero", async () => {
+    const { cancellationLines, statStrip } = await import("../src/tui/metricstab.js");
+    const win = {
+      header: { prs_triggered: 1, prs_reviewed: 1, approvals: 1, request_changes: 0, rounds: 1, spend_usd: 1, overruns: 0, awaiting_you: 0 },
+    } as never;
+    expect(stripAnsi(statStrip(win, 200))).toContain("stopped ?");
+    expect(stripAnsi(cancellationLines(win, 60).join("\n"))).toContain("not reported by the daemon build");
   });
 });

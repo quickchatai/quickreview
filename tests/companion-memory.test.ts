@@ -346,15 +346,37 @@ describe("the memory forward", () => {
     now += 61_000;
     c.fail(auth);
     expect(lines).toHaveLength(2);
-    expect(lines[1]).toContain("more like it");
+    expect(lines[1]).toContain("499 similar failures suppressed");
     // A different cause is never suppressed behind the first one.
     c.fail({ key: "host", cause: "my-vm did not answer", remedy: "ssh -v my-vm true" });
     expect(lines).toHaveLength(3);
     // …and recovery is its own line, with no restart involved.
     c.ok();
     expect(lines[3]).toContain("relay recovered");
+    expect(lines[3]).toContain("502 failures"); // 500 auth + 1 auth after the window + 1 host
+    expect(lines[3]).toContain("499 suppressed");
     c.ok();
     expect(lines).toHaveLength(4); // nothing to say the second time
+  });
+
+  it("counts what it hid ACROSS a change of cause — the honest-repeat feature must not itself lie", () => {
+    // The exact shape the review found: five auth failures (four
+    // suppressed), then one host failure. The old counter reset on the cause
+    // change, so the recovery line claimed "0 suppressed" after hiding four.
+    const lines: string[] = [];
+    let now = 0;
+    const c = forward.createFailureCollapser({ log: (l: string) => lines.push(l), now: () => now, windowMs: 60_000 });
+    const auth = { key: "auth", cause: "no usable key", remedy: "ssh-add k" };
+    for (let i = 0; i < 5; i++) {
+      now += 10;
+      c.fail(auth);
+    }
+    c.fail({ key: "host", cause: "host did not answer", remedy: "ssh -v h true" });
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toContain("4 similar failures suppressed");
+    c.ok();
+    expect(lines[2]).toContain("6 failures");
+    expect(lines[2]).toContain("4 suppressed");
   });
 
   it("recovers on its own once the key is back — the next working relay clears it", async () => {

@@ -37,6 +37,12 @@ export interface BoardView {
    * remedy. Painted where the PR list would be, because that is where the
    * operator is looking when the list is empty. */
   connection?: ConnectionDiagnosis;
+  /**: bring-up progress, for the configuration with NO companion
+   * column to put it in (`--no-companion`). Rendered in the same unknown block
+   * as `connection` — the region that stands in for the PR rows while there is
+   * nothing to show — and cleared once the bring-up settles. With a column,
+   * this stays undefined and the column carries it (ruling 3). */
+  startup?: string[];
   events: EventLine[]; // newest first
   selected: number;
   detail?: WhyPayload;
@@ -167,7 +173,7 @@ const CONNECTION_LABEL: Record<ConnectionDiagnosis["kind"], string> = {
  * and it read as "the data is gone". The count is `?`, the reason is named, and
  * the remedy is a command the operator can paste into their own shell.
  */
-export function unknownSourceLines(conn: ConnectionDiagnosis | undefined, width: number): string[] {
+export function unknownSourceLines(conn: ConnectionDiagnosis | undefined, width: number, startup?: string[]): string[] {
   const lines = [`${FG.anomaly}the daemon has not answered yet${RESET}`, `${FG.dim}nothing below is a measurement — it is not known${RESET}`, ""];
   if (conn && conn.kind !== "ok" && conn.kind !== "local") {
     for (const l of wrap(stripAnsi(conn.cause), width)) lines.push(`${FG.dim}${l}${RESET}`);
@@ -175,9 +181,21 @@ export function unknownSourceLines(conn: ConnectionDiagnosis | undefined, width:
       lines.push("");
       lines.push(`${STRONG}run this:${RESET}`);
       for (const l of wrap(conn.remedy, width)) lines.push(`${FG.accent}  ${l}${RESET}`);
+      // The remedy is a shell command, and the operator is inside the alt
+      // screen looking at it. For the one class `s` can clear in place — a key
+      // that is simply not loaded — say so here rather than leaving it to the
+      // `?` key map: otherwise the honest answer reads as "quit the TUI first".
+      if (conn.kind === "no-agent-key") {
+        for (const l of wrap("…or press s to be prompted for the key passphrase here", width)) lines.push(`${FG.dim}${l}${RESET}`);
+      }
     }
   } else if (!conn) {
     lines.push(`${FG.dim}checking the connection…${RESET}`);
+  }
+  if (startup && startup.length > 0) {
+    lines.push("");
+    lines.push(`${MUTED}starting up${RESET}`);
+    for (const l of startup) lines.push(l);
   }
   lines.push("");
   lines.push(`${FG.dim}s re-checks the connection · r refreshes${RESET}`);
@@ -602,7 +620,7 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
   const flabel = filterLabel(view.boardFilter);
   const listLines: string[] = known
     ? [section(`PRS (${sorted.length})`, flabel !== "" ? flabel : "the daemon's live set")]
-    : [section("PRS (?)", "unknown — the daemon has not answered"), ...unknownSourceLines(view.connection, listW - 1)];
+    : [section("PRS (?)", "unknown — the daemon has not answered"), ...unknownSourceLines(view.connection, listW - 1, view.startup)];
   sorted.forEach((pr, i) => {
     listLines.push(styledRow(pr, i === view.selected, listW - 1, now, view.repo));
     const y = 1 + listLines.length - 1 + 1; // frame row of this PR line (below top bar)

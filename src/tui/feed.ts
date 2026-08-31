@@ -76,7 +76,8 @@ export interface ViewDeploy {
   deployed_mode?: string;
   /** Local HEAD in the sandbox checkout. */
   head?: string;
-  dirty_files: number;
+  /** `null` when the working tree could not be read — never 0. */
+  dirty_files: number | null;
   /** `git log --oneline deployed..HEAD`, bounded. */
   pending_commits: string[];
   pending_commit_count: number;
@@ -153,7 +154,8 @@ export interface ViewSource {
     loading?: boolean;
     deployed?: { sha: string; at?: string; mode?: string };
     head?: string;
-    dirty: string[];
+    /** undefined = git status could not be read, not "clean". */
+    dirty: string[] | undefined;
     commits?: string[];
     diffstat?: string[];
     containerStatus?: string;
@@ -192,7 +194,7 @@ export function buildTuiView(src: ViewSource): TuiView {
       ...(d?.loading === true ? { loading: true } : {}),
       ...(d?.deployed ? { deployed_sha: d.deployed.sha, deployed_at: d.deployed.at, deployed_mode: d.deployed.mode } : {}),
       ...(d?.head ? { head: d.head } : {}),
-      dirty_files: d?.dirty.length ?? 0,
+      dirty_files: d?.dirty?.length ?? null,
       pending_commits: commits.slice(0, PENDING_COMMITS_MAX),
       pending_commit_count: commits.length,
       ...(diffstat.length > 0 ? { diffstat_summary: diffstat[diffstat.length - 1] } : {}),

@@ -137,16 +137,33 @@ export function relayArgv(cfg) {
  * symptom the journal used to be full of; this is the sentence that was
  * missing beside it.
  */
-export function relayFailureCause(cfg, text) {
+export function relayFailureCause(cfg, text, deps = {}) {
   const s = String(text ?? "");
-  if (/permission denied while trying to connect to the docker daemon|cannot connect to the docker daemon/i.test(s)) {
-    return { key: "docker", cause: "the docker daemon refused the exec", remedy: "systemctl status docker" };
+  // The docker check comes FIRST and is not interchangeable with the ssh one:
+  // "permission denied while trying to connect to the Docker daemon" also
+  // matches /permission denied/, and answering it with `ssh-add` would send the
+  // operator hunting for a key problem that does not exist.
+  if (/permission denied while trying to connect to the docker daemon|cannot connect to the docker daemon|docker: command not found/i.test(s)) {
+    // …and the docker in question is the VM's, not this laptop's: the relay is
+    // `ssh <host> sudo docker exec …`. A local `systemctl status docker` was a
+    // remedy pointed at the wrong machine (review). With `sudo docker`
+    // the usual fault is the sudo/group grant, not the unit being down.
+    const where = cfg.local ? "the local docker daemon" : `docker ON ${cfg.sshHost}`;
+    return {
+      key: "docker",
+      cause: `${where} refused the exec`,
+      remedy: cfg.local ? "docker ps" : `ssh ${cfg.sshHost} ${cfg.sudo ? "sudo " : ""}docker ps`,
+    };
   }
   if (/permission denied|publickey|too many authentication failures|agent refused/i.test(s)) {
+    // The KEY, derived the same way `src/tui/sshtriage.ts` derives it — from
+    // `ssh -G <host>`, never guessed. A hard-coded path is precisely the
+    // "confidently wrong exact command" ruling 4 exists to prevent.
+    const key = cfg.identity ?? sshIdentityFor(cfg, deps);
     return {
       key: "auth",
       cause: `ssh to ${cfg.sshHost} has no usable key — the agent is empty or does not hold this host's key`,
-      remedy: `ssh-add ${cfg.identity ?? "~/.ssh/google_compute_engine"}`,
+      remedy: `ssh-add ${key}`,
     };
   }
   if (/could not resolve|name or service not known|no route to host|network is unreachable|connection timed out|operation timed out/i.test(s)) {
@@ -160,6 +177,40 @@ export function relayFailureCause(cfg, text) {
     cause: `the relay to ${cfg.container} on ${cfg.sshHost} exited without connecting`,
     remedy: `ssh -v ${cfg.sshHost} true`,
   };
+}
+
+/** Cache: `ssh -G` is local and cheap, but this runs on a failure path that can
+ * fire once per connection. */
+let identityCache;
+
+/**
+ * The key ssh would actually offer for this host, from `ssh -G` — the same
+ * source `src/tui/sshtriage.ts` uses. Local only (no network). Falls back to
+ * the conventional GCP metadata key when ssh tells us nothing, and is never
+ * consulted in `--local` mode, where there is no ssh at all.
+ */
+export function sshIdentityFor(cfg, deps = {}) {
+  if (cfg.local) return "~/.ssh/id_ed25519";
+  if (identityCache !== undefined && deps.run === undefined) return identityCache;
+  const runner = deps.run ?? ((bin, args) => run(bin, args));
+  const home = deps.home ?? homedir();
+  const fileExists = deps.exists ?? existsSync;
+  let picked = "";
+  try {
+    const res = runner("ssh", ["-G", cfg.sshHost]);
+    const files = String(res.stdout ?? "")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => /^identityfile /i.test(l))
+      .map((l) => l.slice("identityfile ".length).trim())
+      .map((f) => (f.startsWith("~/") ? join(home, f.slice(2)) : f));
+    picked = files.find((f) => fileExists(f)) ?? files[0] ?? "";
+  } catch {
+    picked = "";
+  }
+  const answer = picked || join(home, ".ssh", "google_compute_engine");
+  if (deps.run === undefined) identityCache = answer;
+  return answer;
 }
 
 /** How long one cause stays collapsed before it is worth saying again. */
@@ -179,33 +230,46 @@ export const FAILURE_REPEAT_MS = 60_000;
 export function createFailureCollapser({ log, now = () => Date.now(), windowMs = FAILURE_REPEAT_MS } = {}) {
   let key = null;
   let lastAt = 0;
-  let suppressed = 0;
+  // Suppressed since the LAST PRINTED line, and suppressed since the last
+  // recovery. Two counters because they answer different questions, and
+  // collapsing them into one is how the old version came to say "0 suppressed"
+  // after hiding six failures: a cause change reset the only counter it had.
+  let suppressedSincePrint = 0;
+  let suppressedTotal = 0;
   let total = 0;
+  const emit = (cause, t) => {
+    const hidden = suppressedSincePrint;
+    const sameCause = cause.key === key;
+    const ago = Math.round((t - lastAt) / 1000);
+    const repeat = hidden > 0 ? ` (${hidden} similar failure${hidden === 1 ? "" : "s"} suppressed${sameCause ? ` in the last ${ago}s` : ""})` : "";
+    key = cause.key;
+    lastAt = t;
+    suppressedSincePrint = 0;
+    log(`relay failing: ${cause.cause} — fix: ${cause.remedy}${repeat}`);
+  };
   return {
     fail(cause) {
       total += 1;
       const t = now();
       if (cause.key === key && t - lastAt < windowMs) {
-        suppressed += 1;
+        suppressedSincePrint += 1;
+        suppressedTotal += 1;
         return;
       }
-      const repeat = cause.key === key && suppressed > 0 ? ` (${suppressed} more like it in the last ${Math.round((t - lastAt) / 1000)}s)` : "";
-      key = cause.key;
-      lastAt = t;
-      suppressed = 0;
-      log(`relay failing: ${cause.cause} — fix: ${cause.remedy}${repeat}`);
+      emit(cause, t);
     },
     ok() {
       if (key === null) return;
-      const hidden = suppressed;
+      const hidden = suppressedTotal;
       const seen = total;
       key = null;
-      suppressed = 0;
+      suppressedSincePrint = 0;
+      suppressedTotal = 0;
       total = 0;
       log(`relay recovered — the forward is working again (${seen} failure${seen === 1 ? "" : "s"}, ${hidden} suppressed)`);
     },
     /** Test handle: what is currently collapsed. */
-    state: () => ({ key, suppressed, total }),
+    state: () => ({ key, suppressed: suppressedSincePrint, hidden: suppressedTotal, total }),
   };
 }
 

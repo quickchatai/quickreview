@@ -335,11 +335,17 @@ describe("metrics dashboard", () => {
       expect(card(none).body(50).map(stripAnsi)).toEqual(["no cancelled rounds in this window"]);
     });
 
-    it("degrades on an older daemon's payload rather than throwing", () => {
+    it("degrades on an older daemon's payload rather than throwing — and says UNKNOWN, not zero", () => {
       const legacy = { ...fullWindow } as Record<string, unknown>;
       delete legacy.cancellations;
       expect(() => card(legacy).body(50)).not.toThrow();
-      expect(stripAnsi(statStrip(legacy as never, 200))).toContain("stopped 0");
+      // this used to assert `stopped 0`, which is the honest-unknown
+      // bug in miniature — a field an older daemon does not report at all,
+      // rendered as a measured zero ("nothing stopped dead").
+      const strip = stripAnsi(statStrip(legacy as never, 200));
+      expect(strip).toContain("stopped ?");
+      expect(strip).not.toContain("stopped 0");
+      expect(stripAnsi(card(legacy).body(50).join("\n"))).toContain("not reported by the daemon build");
     });
   });
 

@@ -73,7 +73,9 @@ export interface MemTabState {
   ticketShowClosed?: boolean;
   scroll: number;
   proposals: RubricProposal[];
-  improvements: ImprovementItem[];
+  /** `undefined` = the gh read was skipped or failed, NOT "no bot PRs"
+   *: the fetch needs `view.repo`, which is not always set. */
+  improvements: ImprovementItem[] | undefined;
   propLoaded: boolean;
   /** Two-keystroke retire confirmation: the entry key armed by the first x. */
   confirmRetire?: string;
@@ -417,9 +419,10 @@ export function renderMemoryView(
   const selectedTicket = tickets[ticketSel];
 
   if (st.focus === "tickets") {
+    const read = st.ticketsLoaded !== false;
     const actionable = allTickets.filter(isActionableTicket).length;
     row([
-      { text: sectionTitle(`FEEDBACK TICKETS (${actionable} actionable / ${allTickets.length} total)`) },
+      { text: sectionTitle(read ? `FEEDBACK TICKETS (${actionable} actionable / ${allTickets.length} total)` : "FEEDBACK TICKETS (?)") },
       { text: button(st.ticketShowClosed ? "c actionable" : "c show all"), action: { t: "key", key: "c" } },
       { text: button("t next pane"), action: { t: "key", key: "t" } },
     ]);
@@ -460,7 +463,7 @@ export function renderMemoryView(
       ]);
       // Reserve the foot plus the feedback-ticket invitation; this keeps the
       // actionable queue visible instead of letting a long raw entry bury it.
-      const detailCap = Math.max(5, bodyRows - 18 - st.proposals.length * 2 - Math.min(4, st.improvements.length));
+      const detailCap = Math.max(5, bodyRows - 18 - st.proposals.length * 2 - Math.min(4, st.improvements?.length ?? 0));
       const feedback = feedbackPresentation(selected, st.entries);
       const feedbackState =
         feedback?.status === "settled"
@@ -488,12 +491,17 @@ export function renderMemoryView(
       if (wrapped.length > detailCap) row([{ text: `… ${wrapped.length - detailCap} more lines`, dim: true }]);
     }
     row([{ text: "" }]);
+    // Same rule as the focused pane below: the tracker scan runs
+    // BEHIND the first frame, so an empty list before it has run is UNKNOWN.
+    // `(0)` inside that window is a count of something nobody has read.
+    const ticketsRead = st.ticketsLoaded !== false;
     const actionable = allTickets.filter(isActionableTicket).length;
     row([
-      { text: sectionTitle(`FEEDBACK TICKETS (${actionable})`) },
+      { text: sectionTitle(`FEEDBACK TICKETS (${ticketsRead ? actionable : "?"})`) },
       { text: button("t inspect"), action: { t: "key", key: "t" } },
     ]);
-    if (actionable === 0) row([{ text: "none actionable — changed adjudications file here", dim: true }]);
+    if (!ticketsRead) row([{ text: "reading the tracker…", dim: true }]);
+    else if (actionable === 0) row([{ text: "none actionable — changed adjudications file here", dim: true }]);
     for (const [i, ticket] of allTickets.filter(isActionableTicket).slice(0, 3).entries()) {
       row([{ text: truncate(`${ticket.id} [${ticket.status}] ${ticket.title}`, rightW - 3), action: { t: "ticket", i } }]);
     }
@@ -512,8 +520,9 @@ export function renderMemoryView(
     });
     row([{ text: "" }]);
     row([{ text: sectionTitle("BOT PRs / ISSUES") }]);
-    if (st.improvements.length === 0) row([{ text: "none yet — the overseer files them", dim: true }]);
-    for (const it of st.improvements.slice(0, 6)) {
+    if (st.improvements === undefined) row([{ text: "not read — the gh query was skipped or failed · r retries", dim: true }]);
+    else if (st.improvements.length === 0) row([{ text: "none yet — the overseer files them", dim: true }]);
+    for (const it of (st.improvements ?? []).slice(0, 6)) {
       const url = repo ? `https://github.com/${repo}/${it.kind === "pr" ? "pull" : "issues"}/${it.number}` : undefined;
       row([
         {
@@ -557,7 +566,7 @@ export interface MemTabDeps {
   memory?: MemoryStore;
   digestFetcher?: DigestFetcher;
   /** Fetch rubric slugs + heads and gh improvements; injectable for tests. */
-  fetchProposals?: (app: App) => Promise<{ proposals: RubricProposal[]; improvements: ImprovementItem[] }>;
+  fetchProposals?: (app: App) => Promise<{ proposals: RubricProposal[]; improvements: ImprovementItem[] | undefined }>;
   accept?: (app: App, slug: string) => Promise<{ ok: boolean; message: string }>;
   reject?: (app: App, slug: string, reason: string) => Promise<{ ok: boolean; message: string }>;
   /**: the configured issue sink the defect auto-filer writes through
@@ -594,7 +603,7 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
     propSel: 0,
     scroll: 0,
     proposals: [],
-    improvements: [],
+    improvements: undefined,
     propLoaded: false,
     tickets: [],
     ticketSel: 0,
@@ -671,7 +680,7 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
     app.repaint();
   };
 
-  const defaultFetchProposals = async (theApp: App): Promise<{ proposals: RubricProposal[]; improvements: ImprovementItem[] }> => {
+  const defaultFetchProposals = async (theApp: App): Promise<{ proposals: RubricProposal[]; improvements: ImprovementItem[] | undefined }> => {
     // Proposals are LOCAL (producer change: the companion's `land`
     // skill writes state/rubric/ in this repo — no ssh, no VM path).
     const root = deps.repoRoot ?? process.cwd();
@@ -682,8 +691,11 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
         .filter((l) => l.trim().length > 0)
         .slice(0, 3),
     }));
+    // A skipped or failed gh read stays UNDEFINED — "we did not ask" and
+    // "there are none" are different answers, and the old `[]` made the second
+    // one up while latching `propLoaded` so it never asked again.
     const repo = theApp.view.repo ?? "";
-    let improvements: ImprovementItem[] = [];
+    let improvements: ImprovementItem[] | undefined;
     if (repo) {
       const res = await theApp.ssh(theApp.cfg.ssh_host, improvementsArgv(theApp.cfg, repo), { timeoutMs: 20_000 });
       if (res.ok) improvements = parseImprovements(res.stdout);
@@ -779,7 +791,7 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
     if (!st.propLoaded) guard("proposals", loadProposals);
     const today = now().toISOString().slice(0, 10);
     if (st.view === "digest") {
-      const prs = theApp.view.snapshot ? sortPrs(theApp.view.snapshot.prs) : [];
+      const prs = theApp.view.snapshot ? sortPrs(theApp.view.snapshot.prs) : undefined;
       const frame = renderDigestTab(st.digest, prs, theApp.view.dryRun, today, cols, rows);
       lastZones = frame.zones;
       // The Frame, not its rendering: the app composes the companion column

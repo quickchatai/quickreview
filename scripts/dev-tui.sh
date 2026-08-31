@@ -16,11 +16,15 @@
 #
 # That blocking build STAYS (ruling 5) — it is the only thing stopping
 # the re-exec above — but it is INCREMENTAL now (`incremental` +
-# `tsBuildInfoFile` in tsconfig.json): the from-scratch typecheck it used to
-# run measured 3.6s of blank terminal on every `npm run dev`, and a warm one is
-# well under a second. Nothing about what is checked changed, and an up-to-date
-# tree makes the watcher's first pass emit nothing at all, so it cannot trigger
-# a reload either.
+# `tsBuildInfoFile` in tsconfig.json). Measured on this repo: cold 3.6-5.6s of
+# blank terminal on every `npm run dev`, warm 1.2-1.6s. Nothing about what is
+# checked changed, and an up-to-date tree makes the watcher's first pass emit
+# nothing at all, so it cannot trigger a reload either.
+#
+# The buildinfo lives OUTSIDE dist/ (node_modules/.cache/) on purpose: tsc
+# writes it even when the compile fails, and dist/ is watched recursively and
+# unfiltered — inside it, a FAILING build would re-exec the TUI, which is the
+# opposite of what reload.ts guarantees.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"

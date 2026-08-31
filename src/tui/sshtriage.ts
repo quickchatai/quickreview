@@ -16,6 +16,7 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import type { TuiConfig } from "../config.js";
+import { masterCheckArgv } from "./connect.js";
 import { transportOf } from "./remote.js";
 
 export type ConnectionClass =
@@ -69,14 +70,32 @@ export interface ConnectionProbes {
   connect?: { ok: boolean; stderr: string; timedOut: boolean };
 }
 
-const AUTH_PATTERNS = [
-  /permission denied/i,
-  /publickey/i,
-  /too many authentication failures/i,
-  /no more authentication methods/i,
-  /agent refused operation/i,
-  /sign_and_send_pubkey/i,
-];
+/**
+ * The methods OpenSSH says it offered: `Permission denied (publickey,password)`
+ * → `["publickey", "password"]`. This is the only reliable way to tell "a key
+ * would have worked" from "a key is irrelevant here", and BatchMode collapses
+ * both into the same "Permission denied" sentence.
+ */
+export function offeredAuthMethods(stderr: string): string[] {
+  const m = /permission denied \(([^)]*)\)/i.exec(stderr);
+  return m
+    ? m[1]!
+        .split(",")
+        .map((x) => x.trim().toLowerCase())
+        .filter((x) => x.length > 0)
+    : [];
+}
+
+/** Refusals that a key in the agent would have fixed, outside a method list. */
+const AUTH_PATTERNS = [/publickey/i, /too many authentication failures/i, /agent refused operation/i, /sign_and_send_pubkey/i];
+
+/**
+ * Refusals a key CANNOT fix: an interactive second factor, an account
+ * restriction. Answering one of these with `ssh-add` is a confidently wrong
+ * remedy, which is the exact failure mode ruling 4 exists to remove — so this
+ * is checked FIRST, and it reports rather than guessing.
+ */
+const INTERACTIVE_AUTH_PATTERNS = [/keyboard-interactive/i, /two-factor|2fa|verification code|one-time password/i, /account is locked|account is disabled/i];
 
 const MUX_PATTERNS = [/control socket connect/i, /mux_client/i, /multiplexing/i, /controlpath/i];
 
@@ -102,17 +121,19 @@ function firstLine(text: string): string {
 }
 
 /** Does the agent hold the key ssh would offer for this host? */
-export function agentHoldsIdentity(p: ConnectionProbes): boolean {
-  if (!p.agent.reachable || p.agent.identities.length === 0) return false;
-  if (p.identityFingerprint) return p.agent.identities.some((l) => l.includes(p.identityFingerprint!));
-  // No fingerprint to match on (no readable .pub): fall back to the file name,
-  // which ssh-add prints as the comment for most keys, and then to "it holds
-  // something" — a weaker claim, and the cause text says only what it knows.
+export function agentHoldsIdentity(p: ConnectionProbes): "yes" | "no" | "unknown" {
+  if (!p.agent.reachable || p.agent.identities.length === 0) return "no";
+  if (p.identityFingerprint) return p.agent.identities.some((l) => l.includes(p.identityFingerprint!)) ? "yes" : "no";
+  // No fingerprint to match on (no readable `.pub`): ssh-add prints the key's
+  // path as the comment for most keys, so a name match is still evidence.
+  // Anything else is UNKNOWN, never "yes" — an agent holding somebody else's
+  // key used to be reported as holding this one, which turns a diagnosis into
+  // a guess and hands the operator a remedy that cannot work.
   if (p.identity) {
     const base = p.identity.split("/").pop() ?? p.identity;
-    if (p.agent.identities.some((l) => l.includes(base))) return true;
+    if (p.agent.identities.some((l) => l.includes(base))) return "yes";
   }
-  return p.agent.identities.length > 0;
+  return "unknown";
 }
 
 /** The `ssh-add` line for this host's key, or the generic one when ssh named
@@ -143,7 +164,25 @@ export function classifyConnection(p: ConnectionProbes): ConnectionDiagnosis {
   const evidence = firstLine(stderr);
   const holdsKey = agentHoldsIdentity(p);
 
-  if (AUTH_PATTERNS.some((re) => re.test(stderr))) {
+  // A method list is authoritative when ssh printed one: publickey among the
+  // offered methods means a loaded key really is the missing piece; its absence
+  // means nothing in the agent could ever have helped.
+  const methods = offeredAuthMethods(stderr);
+  const keyIsRelevant = methods.length > 0 ? methods.includes("publickey") : AUTH_PATTERNS.some((re) => re.test(stderr));
+  const interactiveOnly = methods.length > 0 ? !methods.includes("publickey") : INTERACTIVE_AUTH_PATTERNS.some((re) => re.test(stderr));
+
+  if (interactiveOnly) {
+    // Says exactly what it knows and no more: an `ssh-add` here would be a
+    // confidently wrong remedy, which is the failure mode this ticket exists
+    // to remove.
+    return {
+      kind: "unknown",
+      cause: `${p.host} refused the non-interactive probe with something a key cannot fix — ${evidence || "an interactive authentication step"}`,
+      remedy: `ssh -v ${p.host} true`,
+      ...(evidence ? { detail: evidence } : {}),
+    };
+  }
+  if (keyIsRelevant) {
     return {
       kind: "no-agent-key",
       cause: agentCause(p, holdsKey, `ssh to ${p.host} was refused for lack of a usable key`),
@@ -167,7 +206,7 @@ export function classifyConnection(p: ConnectionProbes): ConnectionDiagnosis {
       ...(evidence ? { detail: evidence } : {}),
     };
   }
-  if (!holdsKey) {
+  if (holdsKey === "no") {
     return {
       kind: "no-agent-key",
       cause: agentCause(p, holdsKey, `ssh to ${p.host} failed and no usable key is loaded`),
@@ -183,11 +222,17 @@ export function classifyConnection(p: ConnectionProbes): ConnectionDiagnosis {
   };
 }
 
-function agentCause(p: ConnectionProbes, holdsKey: boolean, lead: string): string {
+function agentCause(p: ConnectionProbes, holdsKey: "yes" | "no" | "unknown", lead: string): string {
   const key = p.identity ?? p.identityFiles[0];
+  const n = p.agent.identities.length;
   if (!p.agent.reachable) return `${lead}: no ssh agent is reachable (SSH_AUTH_SOCK is unset or the agent is not running)`;
-  if (p.agent.identities.length === 0) return `${lead}: the agent holds no identities${key ? ` — ${key} is not loaded` : ""}`;
-  if (!holdsKey) return `${lead}: the agent holds ${p.agent.identities.length} identit${p.agent.identities.length === 1 ? "y" : "ies"}${key ? `, and ${key} is not one of them` : ""}`;
+  if (n === 0) return `${lead}: the agent holds no identities${key ? ` — ${key} is not loaded` : ""}`;
+  if (holdsKey === "no") return `${lead}: the agent holds ${n} identit${n === 1 ? "y" : "ies"}${key ? `, and ${key} is not one of them` : ""}`;
+  // UNKNOWN: no readable `.pub` to fingerprint against, so we cannot tell one
+  // of those keys from another. Say that, rather than asserting either way.
+  if (holdsKey === "unknown") {
+    return `${lead}: the agent holds ${n} identit${n === 1 ? "y" : "ies"}, and without a readable ${key ?? "key"}.pub the TUI cannot tell whether ${key ?? "the right key"} is among them`;
+  }
   return `${lead}: the agent holds ${key ?? "a key"} but ${p.host} would not take it`;
 }
 
@@ -220,7 +265,18 @@ export const realProbeRunner: ProbeRunner = (cmd, argv, timeoutMs) =>
     child.stdin?.end();
   });
 
-/** Expand `~` and the ssh tokens we can resolve; "" when one is left over. */
+/**
+ * Expand `~` and the ssh tokens we can resolve.
+ *
+ * Modern OpenSSH already expands ControlPath in `ssh -G` output, so on most
+ * configs this is a pass-through; the token handling earns its keep on older
+ * ssh and on a config read some other way. `%C` (a hash of the connection
+ * parameters) is NOT reproducible here — but returning "" for it used to
+ * DEMOTE a wedged master to `unknown`, because `controlSocketExists` then went
+ * false. It now falls back to the socket's DIRECTORY: if that exists we still
+ * know multiplexing is configured, `mux` stderr still classifies, and the
+ * remedy (`ssh -O exit <host>`, which needs no path) is unchanged.
+ */
 export function expandControlPath(raw: string, tokens: { host?: string; user?: string; port?: string }, home: string): string {
   if (raw === "" || raw.toLowerCase() === "none") return "";
   let out = raw.startsWith("~/") ? `${home}/${raw.slice(2)}` : raw;
@@ -229,7 +285,17 @@ export function expandControlPath(raw: string, tokens: { host?: string; user?: s
     .replace(/%n/g, tokens.host ?? "%n")
     .replace(/%r/g, tokens.user ?? "%r")
     .replace(/%p/g, tokens.port ?? "%p");
-  return /%[a-zA-Z]/.test(out) ? "" : out; // an unexpandable token: do not guess
+  return out;
+}
+
+/** True when SOMETHING is multiplexing at that path. An unexpandable token
+ * (`%C`) leaves a path we cannot stat, so fall back to its directory rather
+ * than reporting "no control socket", which is a different claim. */
+export function controlSocketPresent(path: string, exists: (p: string) => boolean): boolean {
+  if (path === "") return false;
+  if (!/%[a-zA-Z]/.test(path)) return exists(path);
+  const dir = path.slice(0, path.lastIndexOf("/"));
+  return dir !== "" && exists(dir);
 }
 
 /** `ssh -G <host>` output → the fields the triage uses. */
@@ -277,6 +343,33 @@ const CONFIG_TIMEOUT_MS = 5_000;
 const CONNECT_TIMEOUT_MS = 12_000;
 
 /**
+ * The ONE probe that touches the network. Non-interactive (`BatchMode`) so it
+ * can never stop on a prompt behind the alt screen, and — this is the part
+ * that matters — it must not CHANGE anything.
+ *
+ * It used to carry `StrictHostKeyChecking=accept-new`, which writes a new host
+ * key into the operator's `~/.ssh/known_hosts` as a side effect of asking a
+ * diagnostic question. Ruling 4 declined self-healing outright: the TUI
+ * reports, the operator acts. `no` + `UserKnownHostsFile=/dev/null` keeps the
+ * probe read-only; an unknown host still fails with a message the classifier
+ * reads, which is the honest outcome.
+ */
+export function batchProbeArgv(host: string): string[] {
+  return [
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    "ConnectTimeout=8",
+    "-o",
+    "StrictHostKeyChecking=no",
+    "-o",
+    "UserKnownHostsFile=/dev/null",
+    host,
+    "true",
+  ];
+}
+
+/**
  * Collect the probes and classify. One probe per class, as accepted:
  * `ssh -G` (what key and socket ssh would use — no network), `ssh -O check`
  * (is the master alive), `ssh-add -l` (what the agent holds), and, only when
@@ -296,7 +389,9 @@ export async function triageConnection(cfg: TuiConfig, deps: TriageDeps = {}): P
   const identity = identityFiles.find((p) => exists(p)) ?? identityFiles[0];
   const controlPath = expandControlPath(dump.controlPath, dump, home);
 
-  const master = await run("ssh", ["-O", "check", host], CONFIG_TIMEOUT_MS);
+  // `connect.ts` already owns this argv — one spelling of "is the master
+  // alive", shared with the `s` path, so the two can never drift.
+  const master = await run("ssh", masterCheckArgv(cfg), CONFIG_TIMEOUT_MS);
   const masterAlive = master.status === 0;
 
   const agent = parseAgentList(await run("ssh-add", ["-l"], CONFIG_TIMEOUT_MS));
@@ -310,18 +405,14 @@ export async function triageConnection(cfg: TuiConfig, deps: TriageDeps = {}): P
     host,
     masterAlive,
     ...(controlPath ? { controlPath } : {}),
-    controlSocketExists: controlPath !== "" && exists(controlPath),
+    controlSocketExists: controlSocketPresent(controlPath, exists),
     identityFiles,
     ...(identity ? { identity } : {}),
     ...(identityFingerprint ? { identityFingerprint } : {}),
     agent,
   };
   if (!masterAlive) {
-    const res = await run(
-      "ssh",
-      ["-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "StrictHostKeyChecking=accept-new", host, "true"],
-      CONNECT_TIMEOUT_MS,
-    );
+    const res = await run("ssh", batchProbeArgv(host), CONNECT_TIMEOUT_MS);
     probes.connect = { ok: res.status === 0, stderr: res.stderr, timedOut: res.timedOut };
   }
   return classifyConnection(probes);

@@ -17,11 +17,32 @@
     // TUI starts (so the watcher's first emit cannot re-exec it the moment it
     // opens) — and that build was a from-scratch typecheck on EVERY
     // `npm run dev`, measured at 3.6s of blank terminal. Incremental keeps the
-    // check identical and pays it once. The build info rides `dist/` because
-    // that is the artefact directory the reload watcher already tracks and
-    // `.gitignore` already covers; `rm -rf dist` correctly forces a cold build.
+    // check identical and pays it once.
+    //
+    // The build info must NOT live in `dist/`. `HotReloader` watches that tree
+    // recursively and unfiltered, and tsc writes the buildinfo even when the
+    // compile FAILED — so a broken edit would touch a watched file and re-exec
+    // the TUI, which is the exact opposite of the guarantee `reload.ts` states
+    // ("a failed tsc emits nothing, so the running TUI is untouched").
+    // `node_modules/.cache/` is outside the watch, already gitignored, and
+    // wiped by `npm ci` — which is the right time for a cold build anyway.
+    //
+    // Staleness, stated because `incremental` has exactly one: deleting an
+    // emitted file by hand (`rm dist/src/tui/startup.js`) does not make tsc
+    // re-emit it, and the build still exits 0. `rm -rf dist` is safe — it
+    // takes the buildinfo's own directory out of the picture only if you also
+    // clear the cache, so the reliable cold build is
+    // `rm -rf dist node_modules/.cache && npm run build`.
     "incremental": true,
-    "tsBuildInfoFile": "dist/.tsbuildinfo",
+    "tsBuildInfoFile": "node_modules/.cache/qcr-tsbuildinfo",
+    // `reload.ts` states — as the reason the hot reload is safe — that "a
+    // failed `tsc` emits nothing, so the running TUI is untouched". That was
+    // NOT true: tsc emits on error by default, so a half-typed edit rewrote
+    // dist/ and re-exec'd the TUI mid-keystroke. Measured while fixing
+    // one type error re-emitted 40 files. This makes the sentence
+    // true, and with the buildinfo out of dist/ nothing else in that tree
+    // moves on a failing build either.
+    "noEmitOnError": true,
     "types": ["node"]
   },
   "include": ["src/**/*.ts", "extensions/**/*.ts"],

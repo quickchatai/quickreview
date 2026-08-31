@@ -11,7 +11,7 @@ import type { TuiConfig } from "../config.js";
 import type { App } from "./app.js";
 import type { BoardKey } from "./keys.js";
 import { paintCmdBar } from "./cmdbar.js";
-import { ACCENT, ACCENT_BG, BAD, HEADING, MUTED, OK, RESET as DRESET, STRONG, WARN_BG, badge, modeBadge, sectionTitle } from "./design.js";
+import { ACCENT, ACCENT_BG, BAD, HEADING, MUTED, OK, RESET as DRESET, STRONG, WARN, WARN_BG, badge, modeBadge, sectionTitle } from "./design.js";
 import { Frame, displayWidth, rule, stripAnsi, truncate } from "./paint.js";
 import { transportOf, type RemoteResult, type SshRunner } from "./remote.js";
 import { CommandDrainSender, type DeployDrainSender } from "./deploy-drain.js";
@@ -95,7 +95,11 @@ export interface DeployState {
   loading: boolean;
   deployed?: DeployedMarker;
   head?: string;
-  dirty: string[];
+  /** Uncommitted paths, or `undefined` when `git status` could not be read.
+   * NOT an empty array in that case: an unread tree rendered as a
+   * green "clean" is the DRY-RUN-on-a-live-install bug wearing a deploy hat —
+   * it says "nothing to ship" when it does not know. */
+  dirty: string[] | undefined;
   /** `git log --oneline deployed..HEAD`; undefined when the range is unknown. */
   commits?: string[];
   diffstat?: string[];
@@ -181,7 +185,7 @@ export class RealDeployFetcher implements DeployFetcher {
       deployed,
       containerStatus: status.ok ? status.stdout.trim() : undefined,
       head: head.ok ? head.stdout.trim() : undefined,
-      dirty: dirty.ok ? dirty.stdout.split("\n").filter((l) => l.trim() !== "") : [],
+      dirty: dirty.ok ? dirty.stdout.split("\n").filter((l) => l.trim() !== "") : undefined,
       // A refusal exits non-zero with the reason on stderr — that IS the plan.
       plan: (plan.ok ? plan.stdout : `${plan.stdout}${plan.stderr}`).split("\n"),
     };
@@ -211,13 +215,20 @@ export function deployLines(st: DeployState, width: number): string[] {
     ? `${STRONG}${dep.sha}${DRESET}${dep.at ? ` ${FG.dim}${dep.at}${RESET}` : ""}${dep.mode ? ` ${FG.dim}(${dep.mode})${RESET}` : ""}`
     : `${FG.dim}unknown — no BUILD_SHA on the VM yet (the next deploy writes it)${RESET}`;
   lines.push(truncate(`${section("DEPLOYED", "what the VM runs")}  ${depText}`, width));
-  const cleanliness = st.dirty.length === 0 ? `${OK}clean${DRESET}` : `${BAD}dirty — ${st.dirty.length} uncommitted (deploy.sh will refuse)${DRESET}`;
+  const cleanliness =
+    st.dirty === undefined
+      ? `${WARN}unknown — git status could not be read${DRESET}`
+      : st.dirty.length === 0
+        ? `${OK}clean${DRESET}`
+        : `${BAD}dirty — ${st.dirty.length} uncommitted (deploy.sh will refuse)${DRESET}`;
   lines.push(truncate(`${section("LOCAL", "this working copy")}     ${STRONG}${st.head ?? "?"}${DRESET}  ${cleanliness}`, width));
-  for (const d of st.dirty.slice(0, 8)) lines.push(truncate(`    ${FG.dim}${d}${RESET}`, width));
-  if (st.dirty.length > 8) lines.push(`    ${FG.dim}… ${st.dirty.length - 8} more${RESET}`);
+  for (const d of (st.dirty ?? []).slice(0, 8)) lines.push(truncate(`    ${FG.dim}${d}${RESET}`, width));
+  if ((st.dirty?.length ?? 0) > 8) lines.push(`    ${FG.dim}… ${st.dirty!.length - 8} more${RESET}`);
   lines.push("");
 
-  if (dep && st.head && dep.sha === st.head && st.dirty.length === 0) {
+  // "Up to date, nothing to deploy" is a CLAIM, so it needs all three facts —
+  // an unreadable working tree is not the same as a clean one.
+  if (dep && st.head && dep.sha === st.head && st.dirty?.length === 0) {
     lines.push(`${OK}✓ the VM already runs this commit — nothing to deploy${DRESET}`);
   } else if (dep) {
     if (st.commits === undefined) {
@@ -292,18 +303,23 @@ export function renderDeployTab(st: DeployState, dryRun: boolean | undefined, co
     const powerKind: RunKind = running === false ? "start" : "stop";
     const powerArmed = st.armedKind === powerKind;
     const dLabel = deployArmed ? " ⚠ CLICK AGAIN TO DEPLOY NOW " : " ▶ DEPLOY TO VM ";
+    // An UNFETCHED (or failed) container status used to fall through to
+    // "■ STOP VM APP", which asserts the container is up. Say what is true —
+    // the state is unknown — and let `r` fetch it.
     const pLabel = powerArmed
       ? powerKind === "stop"
         ? " ⚠ CLICK AGAIN TO STOP NOW "
         : " ⚠ CLICK AGAIN TO START NOW "
-      : powerKind === "stop"
-        ? " ■ STOP VM APP "
-        : " ▶ START VM APP ";
+      : running === undefined
+        ? " ▮ VM APP STATE UNKNOWN "
+        : powerKind === "stop"
+          ? " ■ STOP VM APP "
+          : " ▶ START VM APP ";
     const dBtn = deployArmed ? `${WARN_BG}${STRONG}${dLabel}${DRESET}` : `${ACCENT_BG}${STRONG}${dLabel}${DRESET}`;
     const pBtn = powerArmed ? `${WARN_BG}${STRONG}${pLabel}${DRESET}` : `${ACCENT_BG}${STRONG}${pLabel}${DRESET}`;
     const vm =
       st.containerStatus === undefined
-        ? `${FG.dim}VM: …${RESET}`
+        ? `${WARN}VM: state unknown — r refreshes${DRESET}`
         : st.containerStatus === ""
           ? `${FG.dim}VM: no container${RESET}`
           : running
@@ -352,7 +368,7 @@ export function installDeployHooks(
   const f = fetcher ?? new RealDeployFetcher(app.cfg, app.ssh, realLocalRunner(process.cwd()));
   const drain = drainSender ?? new CommandDrainSender(app.cfg, app.ssh);
   const ceremony = ceremonyStore ?? new MemoryDeployCeremonyStore();
-  const st: DeployState = { loaded: false, loading: false, dirty: [], plan: [], scroll: 0 };
+  const st: DeployState = { loaded: false, loading: false, dirty: undefined, plan: [], scroll: 0 };
 
   const load = async (): Promise<void> => {
     if (st.loading) return;

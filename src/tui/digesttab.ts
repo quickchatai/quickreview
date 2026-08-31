@@ -80,7 +80,8 @@ export function currentFile(st: DigestState): string | undefined {
 
 export function renderDigestTab(
   st: DigestState,
-  snapshotPrs: SnapshotPr[],
+  /** `undefined` = no snapshot has arrived; the count reads `?`. */
+  snapshotPrs: SnapshotPr[] | undefined,
   dryRun: boolean | undefined,
   today: string,
   cols: number,
@@ -102,8 +103,13 @@ export function renderDigestTab(
   else if (st.content === undefined) left.push(`${MUTED}loading ${file}…${RESET}`);
   else for (const line of st.content.split("\n")) left.push(styleDigestLine(line));
 
-  const awaiting = awaitingRows(snapshotPrs, new Date(`${today}T12:00:00Z`));
-  const right: string[] = [sectionTitle(`AWAITING YOU (${awaiting.length})`, "oldest first")];
+  // `(0)` is a COUNT, and there is nothing to count until a snapshot
+  // has arrived — `PRS (0)` one file over is the same bug. (This panel is
+  // slated for deletion by's hard cut; making it honest is two lines,
+  // which is cheaper than reasoning about how long it stays wrong.)
+  const known = snapshotPrs !== undefined;
+  const awaiting = awaitingRows(snapshotPrs ?? [], new Date(`${today}T12:00:00Z`));
+  const right: string[] = [sectionTitle(`AWAITING YOU (${known ? awaiting.length : "?"})`, known ? "oldest first" : "unknown — the daemon has not answered")];
   awaiting.forEach((row, i) => {
     const label = `${String(row.ageDays).padStart(3)}d ⚑ #${row.pr.number} ${row.pr.title}`;
     right.push(i === st.awaitingSelected ? selected(truncate(label, rightW - 2)) : truncate(label, rightW - 2));
@@ -139,7 +145,7 @@ export function installDigestHooks(app: App, fetcher?: DigestFetcher): DigestSta
 
   app.hooks.digestScreen = (theApp, cols, rows) => {
     if (!st.loaded) void load();
-    const prs = theApp.view.snapshot ? sortPrs(theApp.view.snapshot.prs) : [];
+    const prs = theApp.view.snapshot ? sortPrs(theApp.view.snapshot.prs) : undefined;
     const today = new Date().toISOString().slice(0, 10);
     // The Frame, not its rendering: the app composes the companion column
     // beside it and only then paints.

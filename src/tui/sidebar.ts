@@ -109,6 +109,14 @@ export interface SidebarView {
    * screen, whose lines the alt screen then erased. Optional so a bare test
    * harness (and any legacy caller) still paints a plain mirror. */
   startup?: string[];
+  /** The mirror has carried content at least once in this session. Once true
+   * the bring-up checklist NEVER comes back, however empty a capture is.
+   *
+   * Without this the column silently rewinds: `showStartup` keys on an empty
+   * mirror, and an empty capture is a NORMAL event — the day-rollover kills
+   * and respawns pi on purpose — so hours later the column would flip back to
+   * a frozen checklist from boot, with the hint row reading "starting up". */
+  mirrored?: boolean;
 }
 
 export const SIDEBAR_PLACEHOLDER = "ask the companion — ⏎ sends";
@@ -164,7 +172,10 @@ function hintContent(view: SidebarView): string {
   // screen at its real width with the progress in it, and saying "companion
   // off" there would be the same class of lie as a DRY-RUN badge with no
   // heartbeat behind it.
-  if (!view.available) return ` ${MUTED}${(view.startup ?? []).length > 0 ? SIDEBAR_STARTING : SIDEBAR_OFF}${RESET}`;
+  if (!view.available) {
+    const starting = (view.startup ?? []).length > 0 && view.mirrored !== true;
+    return ` ${MUTED}${starting ? SIDEBAR_STARTING : SIDEBAR_OFF}${RESET}`;
+  }
   if (view.focused) return ` ${ACCENT}▶${RESET} ${MUTED}keys go to pi · Ctrl-q releases${RESET}`;
   return ` ${MUTED}❯ ${SIDEBAR_PLACEHOLDER} · drag left edge${RESET}`;
 }
@@ -264,7 +275,7 @@ export function paintSidebar(view: SidebarView, width: number, rows: number): st
   // The moment pi's capture arrives the mirror takes it back, with no layout
   // change — the region is the same rectangle either way.
   const startup = view.startup ?? [];
-  const showStartup = view.lines.length === 0 && startup.length > 0;
+  const showStartup = view.lines.length === 0 && startup.length > 0 && view.mirrored !== true;
   if (divider === 1) {
     const label = showStartup
       ? `${MUTED}starting${RESET}`
@@ -359,6 +370,8 @@ export class CompanionSidebar {
   startup: string[] = [];
 
   private captureOk = false;
+  /** The mirror has held content at least once — see SidebarView.mirrored. */
+  private mirrored = false;
   private patch: Partial<SidebarHeader> = {};
   private timer: NodeJS.Timeout | undefined;
   private fastUntil = 0;
@@ -424,6 +437,7 @@ export class CompanionSidebar {
       offset: this.offset,
       alerts: this.alerts,
       startup: this.startup,
+      mirrored: this.mirrored,
     };
   }
 
@@ -467,6 +481,9 @@ export class CompanionSidebar {
     }
     this.captureOk = true;
     this.lines = splitCapture(res.stdout);
+    // One-way latch: from the first capture that actually said something, this
+    // column is the companion's mirror and never the bring-up checklist again.
+    if (!this.mirrored && this.lines.some((l) => l.trim() !== "")) this.mirrored = true;
     this.opts.onUpdate?.();
   }
 

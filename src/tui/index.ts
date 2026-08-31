@@ -352,14 +352,33 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   // moment and already the right shape, so it costs no new surface — and the
   // lines are never written to the normal screen, where the alt screen's clear
   // used to erase them (that erasure was the flicker).
+  //
+  // WITH NO COLUMN (`--no-companion`, or `[companion] enabled = false`) ruling
+  // 3's surface does not exist, so the progress goes to the two places the
+  // operator is already looking, and NEVER to a panel that would appear and
+  // then vanish (that reflow is the jump ruling 2 forbids):
+  //   * the board's unknown block — the same "I could not ask" region that
+  //     replaces the PR rows, carrying the full checklist while there is no
+  //     data, which is exactly when the bring-up matters;
+  //   * the notice line, for each transition.
+  // The two steps that outlive a first snapshot in that configuration are the
+  // memory forward (whose own state is first-class on the Memory tab and loud
+  // on failure) and ssh (the health badge). Nothing is left unreported.
   const { StartupProgress } = await import("./startup.js");
   const progress = new StartupProgress(undefined, {
     onUpdate: (p) => {
-      app.sidebar?.setStartup(p.lines());
+      // Kept after the bring-up settles ON PURPOSE: a `✗ companion container ·
+      // docker is not running` is the most useful thing the column can show,
+      // and clearing it would delete the diagnosis a second after it appeared.
+      // The hand-off is the sidebar's `mirrored` latch — the checklist yields
+      // to pi's first real capture and never comes back.
+      if (companionOn) app.sidebar?.setStartup(p.lines());
+      else app.view.startup = p.lines();
       app.repaint();
     },
   });
-  app.sidebar.setStartup(progress.lines());
+  if (companionOn) app.sidebar.setStartup(progress.lines());
+  else app.view.startup = progress.lines();
 
   const { installAttachHooks } = await import("./attach.js");
   await installAttachHooks(app);
@@ -649,7 +668,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
       app.repaint();
     } catch (err) {
       companionError = String(err instanceof Error ? err.message : err);
-      for (const key of ["memory-forward", "memory-namespaces", "container", "rollover", "companion-pi"]) {
+      for (const key of ["memory-forward", "memory-namespaces", "container", "rollover", "companion-pi"] as const) {
         const step = progress.steps().find((s) => s.key === key);
         if (step?.state === "running") progress.fail(key, companionError);
         else if (step?.state === "pending") progress.skip(key, "companion unavailable");
@@ -788,6 +807,13 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     }
     // The triage runs CONCURRENTLY with the companion: a wedged ssh master can
     // cost its probe seconds, and the companion has nothing to do with ssh.
+    //
+    // `begin` FIRST, and it is not decoration: the probe chain is the slowest
+    // thing here (a blackholed host costs its ConnectTimeout), so this is the
+    // step most likely to need the overdue warning — and a step left `pending`
+    // says "nobody has reached this yet", which would be a lie the moment the
+    // probes start.
+    progress.begin("ssh");
     const triaged = triageConnection(cfg)
       .then(applyDiagnosis)
       .catch((err: unknown) => progress.fail("ssh", `probe failed: ${String(err instanceof Error ? err.message : err)}`));
@@ -804,7 +830,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
       await startCompanion();
       if (companionUp) await wireCompanionChannels();
     } else {
-      for (const key of ["memory-namespaces", "container", "rollover", "companion-pi"]) {
+      for (const key of ["memory-namespaces", "container", "rollover", "companion-pi"] as const) {
         progress.skip(key, "--no-companion");
       }
       // The Memory tab still needs the forward even with the companion off.
@@ -903,6 +929,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   else if (target.kind === "session") void app.hooks.attach?.(target.session, app);
   await running;
   reloader?.stop();
+  progress.stop();
   alerts?.stop();
   // Closes only a forward THIS process bound; an adopted one (systemd unit,
   // another qcr tui) is left running on purpose — see memforward.ts.
