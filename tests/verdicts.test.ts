@@ -389,6 +389,11 @@ describe("measured round usage", () => {
     // watched path as changed.
     const roundId = reviewingRound(111);
     writeSessionJsonl(111, [modelLine(), jsonlLine(10, 1)]);
+    // A watched file must actually EXIST, or the round-end fingerprint is
+    // all-"absent" and matches an empty baseline by accident — which is how
+    // this test passed for the wrong reason on its first cut.
+    mkdirSync(join(dir, "pihome"), { recursive: true });
+    writeFileSync(join(dir, "pihome", ".gitconfig"), "[user]\n\tname = qcr\n");
     store.recordRoundGitConfig(roundId, { not: "a fingerprint" });
     await watcher({}).handleFile(write(111, 1, verdictFile({ pr: 111 })));
     expect(store.db.prepare("SELECT COUNT(*) c FROM events WHERE kind = 'git_config_modified'").get()).toMatchObject({ c: 0 });
