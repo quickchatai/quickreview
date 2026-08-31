@@ -141,9 +141,44 @@ describe("checkBashCommand — gh is read-only", () => {
   });
 
   it("catches the attached -X form the exact compare missed", () => {
-    block("gh api -XPOST repos/o/n/issues", "-XPOST");
-    block("gh api -XDELETE repos/o/n/labels/x");
+    block("gh api -XPOST repos/o/n/issues", "sends POST");
+    block("gh api -XDELETE repos/o/n/labels/x", "sends DELETE");
     allow("gh api -XGET repos/o/n/pulls/5");
+  });
+
+  /**
+   * F1, the blocker adversarial review found: `gh api --input <file>` promotes
+   * gh's default GET to POST, and the flag blocklist did not name it. This is
+   * the recipe the PREDECESSOR system actually used for every review it posted
+   * — "a JSON file written with `Write` then `POST`ed via
+   * `gh api .../pulls/<n>/reviews --input`"
+   * (docs/retro/sources/12-review-content.md:5). Closing `gh pr review` while
+   * leaving this open would have shut the documented door and left the
+   * historical one wide.
+   *
+   * Verified empirically against gh 2.93.0 on a loopback server, not from
+   * docs: `--input` → POST, `--input=` → POST, bare → GET,
+   * `--method GET --input` → GET.
+   */
+  it("blocks gh api --input, which POSTs — the predecessor's actual approval channel", () => {
+    block("gh api repos/o/n/pulls/5/reviews --input /tmp/rev.json", "sends POST");
+    block("gh api repos/o/n/pulls/5/reviews --input=/tmp/rev.json", "sends POST");
+    block("gh api repos/o/n/pulls/5/reviews --input -", "sends POST");
+    // The whole chain, exactly as a session would write it: write the body
+    // with the ordinary write tool, mint the token from the sanctioned script,
+    // POST an APPROVE with no gate, no CI gate and no dry_run.
+    block('GH_TOKEN="$(bash scripts/mint-token.sh)" gh api repos/o/n/pulls/5/reviews --input /tmp/rev.json', "sends POST");
+  });
+
+  it("still allows the read forms, including the -i that is --include, not --input", () => {
+    // `-i` is `--include` (print response status line and headers) — a pure
+    // READ flag, and `--input` has no short form. Blocking it would break
+    // legitimate reads and buy nothing.
+    allow("gh api -i repos/o/n/pulls/5");
+    allow("gh api --include repos/o/n/pulls/5");
+    // An explicit GET wins over the body flag's promotion (verified).
+    allow("gh api repos/o/n/search --method GET --input /tmp/q.json");
+    allow("gh api repos/o/n/pulls/5/files --paginate --jq '.[].filename'");
   });
 
   it("still allows every read the round templates actually use", () => {
@@ -200,6 +235,85 @@ describe("checkBashCommand — git is read-only", () => {
   it("blocks the write form of a namespace whose read form is allowed", () => {
     block("git worktree add /tmp/wt HEAD", "read-only form");
     block("git config user.email evil@example.com", "read-only form");
+    block("git branch -D master", "read-only form");
+    block("git tag -d v1", "read-only form");
+    allow("git branch --contains HEAD");
+    allow("git tag --list 'v*'");
+  });
+
+  /**
+   * F2, the second blocker: `git -c` hands git a command to run, and the verb
+   * blocklist could not see it because the payload rides an ALLOWED read verb
+   * — or, in the alias form, mints a brand-new verb in one token. The no-exec
+   * policy is this extension's entire purpose.
+   *
+   * VERIFIED executing on this host, not inferred:
+   *   git -c "alias.probe=!<cmd>" probe   → ran <cmd>
+   * (`core.pager` did not fire only because a tool call's stdout is not a TTY.)
+   */
+  it("blocks git -c and its kin — config-supplied shell is still shell", () => {
+    block("git -c core.pager='sh -c \"npm test\"' log -1", "command to run");
+    block("git -c alias.x='!npm test' x", "command to run");
+    block("git -c core.sshCommand='npm test' fetch origin", "command to run");
+    block("git -c alias.p=push p origin HEAD", "command to run");
+    block("git --config-env=core.pager=EVIL log", "command to run");
+    block("git -c protocol.ext.allow=always log", "command to run");
+    // …and after the verb, where it is equally effective.
+    block("git log -1 --exec=/tmp/x", "command to run");
+    block("git fetch origin --upload-pack=/tmp/x", "command to run");
+  });
+
+  it("blocks the ENV twin of git -c — VAR=val prefixes are skipped by the splitter", () => {
+    // VERIFIED executing on this host:
+    //   GIT_EXTERNAL_DIFF="<cmd>" git diff --ext-diff -- <file>  → ran <cmd>
+    block("GIT_EXTERNAL_DIFF='sh -c \"npm test\"' git diff --ext-diff", "names a program");
+    block("GIT_PAGER='sh -c \"npm test\"' git log", "names a program");
+    block("GIT_SSH_COMMAND=/tmp/x git fetch origin", "names a program");
+    block("GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.x GIT_CONFIG_VALUE_0='!npm test' git x", "names a program");
+    block("LD_PRELOAD=/tmp/x.so git log", "names a program");
+    block("PATH=/tmp/evil git log", "names a program");
+    block("BASH_ENV=/tmp/x rg foo", "names a program");
+    // An ordinary env prefix is still fine — the rule is the variable, not the shape.
+    allow("FOO=1 git status");
+    allow("GIT_TERMINAL_PROMPT=0 git fetch origin");
+  });
+
+  /**
+   * F3: the verb blocklist was asserted to be "a closed, well-known set" and
+   * demonstrably was not — `send-pack` is the documented plumbing for the
+   * `push` it blocked three lines above. Inverting to an allowlist is what
+   * actually closes it, so an unknown verb is refused by construction rather
+   * than by enumeration.
+   */
+  it("refuses write verbs nobody enumerated, because the allowlist closes by construction", () => {
+    for (const cmd of [
+      "git send-pack origin HEAD",
+      "git bundle create /tmp/b.bundle HEAD",
+      "git archive --output=/tmp/a.tar HEAD",
+      "git svn dcommit",
+      "git p4 submit",
+      "git daemon --export-all",
+      "git fast-export --all",
+      "git symbolic-ref HEAD refs/heads/evil",
+      "git reflog expire --all",
+      "git difftool -y",
+      "git update-server-info",
+      "git repack -a",
+      "git gc --prune=now",
+      "git request-pull origin HEAD",
+      "git format-patch -1 --stdout",
+    ]) {
+      block(cmd);
+    }
+    // …and a verb that simply does not exist, which is what an alias would be.
+    block("git totally-made-up-verb", "not a sanctioned read-only git command");
+  });
+
+  it("the alias-from-another-repo trick dies with the allowlist too", () => {
+    // `git -C /evil <alias>` used to pass a blocklist: the alias name is not a
+    // blocked verb. Under the allowlist it is simply not a sanctioned read.
+    block("git -C /tmp/evil-repo x", "not a sanctioned read-only git command");
+    allow("git -C /opt/quickreview/wt/pr-5249 log --oneline -3");
   });
 });
 

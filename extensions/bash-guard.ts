@@ -95,6 +95,59 @@ const GH_READONLY_VERBS: Readonly<Record<string, ReadonlySet<string>>> = {
 /** `gh` namespaces that are read-only whatever the verb. */
 const GH_READONLY_NAMESPACES: ReadonlySet<string> = new Set(["search", "status", "version", "help"]);
 
+/**
+ * `gh api` flags that carry a REQUEST BODY, and so promote gh's default GET to
+ * POST. Enumerated against `gh api --help` on gh 2.93.0 and confirmed
+ * empirically against a loopback server (follow-up):
+ *
+ *     gh api <path> --input f        → POST      gh api <path>                → GET
+ *     gh api <path> --input=f        → POST      gh api <path> --method GET … → GET
+ *
+ * `--input` is the one that mattered and the one a flag blocklist missed: it is
+ * the recipe the PREDECESSOR system actually used to post every one of its
+ * reviews — "a JSON file written with `Write` then `POST`ed via
+ * `gh api .../pulls/<n>/reviews --input`" (docs/retro/sources/12-review-content.md).
+ * A session can write `{"event":"APPROVE"}` with its ordinary write tool and
+ * mint the token from the sanctioned `scripts/mint-token.sh`, so leaving this
+ * open left the historical approval channel open while closing the documented
+ * one.
+ *
+ * NOTE — `-i` is deliberately NOT here. In gh it is `--include` (print response
+ * status line and headers), a pure READ flag; `--input` has no short form.
+ * Blocking `-i` would break legitimate reads and buy nothing. Verified in
+ * `gh api --help`.
+ */
+const GH_API_BODY_FLAGS: ReadonlySet<string> = new Set(["--input", "-f", "-F", "--field", "--raw-field"]);
+const GH_API_BODY_FLAG_ATTACHED = /^(--input|--field|--raw-field)=/;
+
+/**
+ * What method will this `gh api` invocation actually send?
+ *
+ * The old check asked "does any flag look mutating?", which is a blocklist and
+ * missed `--input`. This asks the question that decides the outcome: an
+ * explicit `-X`/`--method` wins, otherwise a body flag promotes GET to POST,
+ * otherwise it is gh's default GET. Only GET is allowed.
+ */
+function ghApiEffectiveMethod(args: string[]): string {
+  let explicit: string | null = null;
+  let body = false;
+  for (let j = 0; j < args.length; j++) {
+    const a = args[j]!;
+    if (a === "-X" || a === "--method") {
+      explicit = (args[j + 1] ?? "").toUpperCase();
+      continue;
+    }
+    const attached = /^(?:-X|--method=)(.+)$/.exec(a);
+    if (attached) {
+      explicit = attached[1]!.toUpperCase();
+      continue;
+    }
+    if (GH_API_BODY_FLAGS.has(a) || GH_API_BODY_FLAG_ATTACHED.test(a)) body = true;
+  }
+  if (explicit !== null) return explicit || "GET";
+  return body ? "POST" : "GET";
+}
+
 function checkGh(args: string[]): BashCheck {
   // Skip leading global flags so `gh --repo o/n pr view` is judged on `pr`.
   let i = 0;
@@ -102,17 +155,11 @@ function checkGh(args: string[]): BashCheck {
   const ns = args[i];
   if (ns === undefined) return { allowed: true }; // bare `gh` prints help
   if (ns === "api") {
-    for (let j = i + 1; j < args.length; j++) {
-      const a = args[j]!;
-      if ((a === "-X" || a === "--method") && /^(POST|PUT|PATCH|DELETE)$/i.test(args[j + 1] ?? "")) {
-        return block(`exec policy: 'gh api ${a} ${args[j + 1]}' mutates`);
-      }
-      // `-XPOST` — the attached form. The old exact `-X` compare missed it.
-      if (/^-X(POST|PUT|PATCH|DELETE)$/i.test(a)) return block(`exec policy: '${a}' mutates`);
-      if (/^--method=(POST|PUT|PATCH|DELETE)$/i.test(a)) return block(`exec policy: '${a}' mutates`);
-      if (a === "-f" || a === "-F" || a.startsWith("--field") || a.startsWith("--raw-field")) {
-        return block("exec policy: 'gh api' with field flags mutates");
-      }
+    const method = ghApiEffectiveMethod(args.slice(i + 1));
+    if (method !== "GET" && method !== "HEAD") {
+      return block(
+        `exec policy: this 'gh api' sends ${method}, not GET — every GitHub write goes through the ONE mutation gate (scripts/*.sh), never raw gh`,
+      );
     }
     return { allowed: true };
   }
@@ -133,58 +180,141 @@ function checkGh(args: string[]): BashCheck {
 }
 
 /**
- * `git` is READ-ONLY too. It sat unconditionally on ALLOWED, three
- * lines from `gh`'s filter: `git push` (a GitHub write around the one gate) and
- * the discard family (`reset --hard`, `checkout --`, `clean -fdx`, `stash` —
- * which destroy work in a worktree the daemon owns) were all permitted.
+ * `git` is READ-ONLY too, and — like `gh` — by ALLOWLIST.
  *
- * A blocklist rather than an allowlist, deliberately, and for the same reason
- * `gh`'s went the other way: reading is what a review session does all day with
- * `git`, and a missed read verb wedges a live review, whereas the write verbs
- * are a closed, well-known set. `worktree`, `remote` and `config` carry a
- * read-only sub-form and are judged on it.
+ * It first sat unconditionally on ALLOWED, three lines from `gh`'s filter, so
+ * `git push` (a GitHub write around the one gate) and the discard family
+ * (`reset --hard`, `checkout --`, `clean -fdx`, `stash`) were all permitted.
+ * The first fix used a blocklist of write verbs, on the reasoning that reading
+ * is what a session does all day with git and a missed read verb would wedge a
+ * live review. That reasoning was wrong, and adversarial review proved it in
+ * three ways:
+ *
+ *   1. The blocklist was not closed. `send-pack` — the documented plumbing for
+ *      `push`, the very mutation blocked three lines above — was absent, as
+ *      were `bundle`, `archive`, `svn`, `p4`, `daemon`, `fast-export`,
+ *      `symbolic-ref`, `reflog`, `difftool`, `update-server-info`, and
+ *      `branch -D` / `tag -d`.
+ *   2. A blocklist keys on the verb, and `-c alias.x='!<shell>' x` supplies a
+ *      NEW verb in one token. VERIFIED executing on this host.
+ *   3. `git -C /some/repo <alias>` runs an alias out of that repo's own
+ *      config. Under an allowlist the alias name is simply not a sanctioned
+ *      read verb, so the whole class dies without enumerating it.
+ *
+ * A blocked read verb is a loud, recoverable refusal naming what to do; an
+ * unblocked write verb is an ungated mutation. The failure modes are not
+ * symmetric, which is what the first shape got wrong.
  */
-const GIT_MUTATING: ReadonlySet<string> = new Set([
-  "push", "pull", "commit", "merge", "rebase", "cherry-pick", "revert", "am",
-  "apply", "reset", "checkout", "switch", "restore", "clean", "stash", "mv",
-  "rm", "init", "clone", "submodule", "update-ref", "update-index",
-  "filter-branch", "fast-import", "gc", "prune", "repack", "notes", "replace",
-  "sparse-checkout", "commit-tree", "hash-object", "write-tree",
+const GIT_READONLY_VERBS: ReadonlySet<string> = new Set([
+  "log", "show", "diff", "diff-tree", "diff-files", "diff-index", "status",
+  "blame", "annotate", "cat-file", "rev-parse", "rev-list", "ls-files",
+  "ls-tree", "ls-remote", "grep", "describe", "shortlog", "merge-base",
+  "name-rev", "whatchanged", "show-ref", "show-branch", "check-ignore",
+  "check-attr", "count-objects", "verify-commit", "verify-tag", "version",
+  // A read of the remote. It cannot mutate GitHub, and the daemon fetches the
+  // base into every worktree already — but a session occasionally needs a ref
+  // the round did not anticipate, and refusing it would wedge that review.
+  "fetch",
 ]);
 
-/** Sub-verbs that make an otherwise-mutating git namespace a plain read. */
+/**
+ * Namespaces whose read-only sub-form is allowed and whose write forms are not.
+ * `branch` and `tag` list by default but delete with a flag; `worktree`,
+ * `remote` and `config` all carry both.
+ */
 const GIT_READONLY_SUBVERBS: Readonly<Record<string, ReadonlySet<string>>> = {
   worktree: new Set(["list"]),
   remote: new Set(["-v", "--verbose", "show", "get-url"]),
   config: new Set(["--get", "--get-all", "--get-regexp", "--list", "-l"]),
+  branch: new Set(["--list", "-l", "--contains", "--merged", "--no-merged", "--show-current", "-a", "-r", "-v", "-vv", "--all", "--remotes"]),
+  tag: new Set(["--list", "-l", "--contains", "--points-at", "--merged"]),
 };
 
+/**
+ * Options that let git run a command of the caller's choosing. `-c` and
+ * `--config-env` set config for one invocation, and git executes config-
+ * supplied shell from `alias.*` (`!cmd`), `core.pager`, `credential.helper`
+ * (`!cmd`), `core.sshCommand`, `diff.*.textconv` and `filter.*.clean`.
+ *
+ * VERIFIED on this host, not inferred:
+ *   git -c "alias.probe=!<cmd>" probe        → ran <cmd>
+ * (`core.pager` did not fire because a tool call's stdout is not a TTY; it
+ * fires whenever one is, so it is refused all the same.)
+ *
+ * `--upload-pack` / `--receive-pack` / `--exec` name a program too. `-C <dir>`
+ * is deliberately NOT here: it only changes directory and can neither inject
+ * config nor name a command — and the alias-from-another-repo trick it used to
+ * enable is dead under the verb allowlist above.
+ */
+const GIT_COMMAND_INJECTING_OPTS = /^(?:-c|--config-env|--upload-pack|--receive-pack|--exec)(?:=|$)/;
+
 function checkGit(args: string[]): BashCheck {
-  // Skip `-C <dir>` and other leading global options so the verb is found.
+  // Leading global options, before the verb.
   let i = 0;
   while (i < args.length && args[i]!.startsWith("-")) {
-    if (args[i] === "-C" || args[i] === "-c") i++; // its value is not a verb
+    if (GIT_COMMAND_INJECTING_OPTS.test(args[i]!)) {
+      return block(
+        `exec policy: 'git ${args[i]}' can hand git a command to run (alias/pager/sshCommand/textconv) — the reviewer never executes anything`,
+      );
+    }
+    if (args[i] === "-C") i++; // a directory, not a verb — skip its value
     i++;
   }
   const verb = args[i];
   if (verb === undefined) return { allowed: true }; // bare `git` prints usage
+  // …and after it, where they are equally effective.
+  for (const a of args.slice(i + 1)) {
+    if (GIT_COMMAND_INJECTING_OPTS.test(a)) {
+      return block(`exec policy: 'git ${verb} ${a}' can hand git a command to run — the reviewer never executes anything`);
+    }
+  }
   const sub = GIT_READONLY_SUBVERBS[verb];
   if (sub !== undefined) {
     return args.slice(i + 1).some((a) => sub.has(a))
       ? { allowed: true }
       : block(`exec policy: 'git ${verb}' is only allowed in its read-only form (${[...sub].join(", ")})`);
   }
-  if (verb === "push") {
+  if (verb === "push" || verb === "send-pack") {
     return block(
-      "exec policy: 'git push' is a GitHub mutation — every write goes through the ONE mutation gate, never a session's shell",
+      `exec policy: 'git ${verb}' is a GitHub mutation — every write goes through the ONE mutation gate, never a session's shell`,
     );
   }
-  if (GIT_MUTATING.has(verb)) {
-    return block(
-      `exec policy: 'git ${verb}' writes — this worktree is the daemon's, and the reviewer only reads it (use 'git show <rev>:<path>' to read another revision)`,
-    );
-  }
-  return { allowed: true };
+  if (GIT_READONLY_VERBS.has(verb)) return { allowed: true };
+  return block(
+    `exec policy: 'git ${verb}' is not a sanctioned read-only git command — this worktree is the daemon's and the reviewer only reads it (use 'git show <rev>:<path>' to read another revision)`,
+  );
+}
+
+/**
+ * Environment variables that name a PROGRAM for an otherwise-allowed command to
+ * run — the env twin of `git -c` (follow-up). `VAR=val` prefixes are
+ * skipped by the splitter below, so without this a read verb carries the
+ * payload instead of the verb doing it.
+ *
+ * VERIFIED on this host, not inferred:
+ *   GIT_EXTERNAL_DIFF="<cmd>" git diff --ext-diff -- <file>   → ran <cmd>
+ *
+ * The git family (pager, external diff, ssh, editor, askpass, and the
+ * `GIT_CONFIG_*` set, which reproduces `-c` exactly) plus the generic loader
+ * and shell hooks that would subvert ANY allowed program.
+ */
+const COMMAND_INJECTING_ENV = new Set([
+  "GIT_PAGER", "PAGER", "GIT_EXTERNAL_DIFF", "GIT_DIFF_OPTS", "GIT_SSH",
+  "GIT_SSH_COMMAND", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "GIT_ASKPASS",
+  "GIT_PROXY_COMMAND", "GIT_CONFIG", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM",
+  "GIT_CONFIG_COUNT", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_TEMPLATE_DIR",
+  "EDITOR", "VISUAL", "SSH_ASKPASS",
+  "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES", "BASH_ENV", "ENV",
+  "PATH", "SHELL", "IFS", "PYTHONSTARTUP", "NODE_OPTIONS", "PERL5OPT",
+]);
+/** `GIT_CONFIG_KEY_0=alias.x GIT_CONFIG_VALUE_0=!cmd` is `-c` by another name. */
+const COMMAND_INJECTING_ENV_RE = /^GIT_CONFIG_(KEY|VALUE)_\d+$/;
+
+function envInjectionBlock(name: string): BashCheck | null {
+  if (!COMMAND_INJECTING_ENV.has(name) && !COMMAND_INJECTING_ENV_RE.test(name)) return null;
+  return block(
+    `exec policy: '${name}=' names a program for another command to run — the reviewer never executes anything`,
+  );
 }
 
 /** One segment's program + args, env prefixes and subshell parens skipped. */
@@ -194,7 +324,12 @@ function checkSegment(tokens: string[]): BashCheck {
   for (; i < tokens.length; i++) {
     const raw = tokens[i]!.replace(/^['"(]+|['")]+$/g, "");
     if (raw.length === 0) continue;
-    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(raw)) continue; // VAR=val prefix
+    const assign = /^([A-Za-z_][A-Za-z0-9_]*)=/.exec(raw);
+    if (assign) {
+      const refused = envInjectionBlock(assign[1]!);
+      if (refused) return refused;
+      continue; // VAR=val prefix
+    }
     if (raw === "env") {
       afterEnv = true;
       continue;
