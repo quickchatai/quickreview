@@ -329,6 +329,21 @@ export function validateEscalationRequest(
   raw: unknown,
   cfg: EscalationConfig,
   /**
+   * WHERE THIS CANDIDATE CAME FROM — an argument, never a field on `raw`.
+   *
+   * This is a trust boundary, and it was briefly marked in a field the
+   * untrusted side writes (re-review): `origin` was read off the
+   * candidate, and for a session candidate `raw` IS the verdict file's
+   * `escalations` entry, which the model writes. A session could set
+   * `"origin": "rule"` and buy the rule-origin belt exemption on all three
+   * free-text slots — and forge the audit trail besides, since the ledger row
+   * and the rendered comment both name the rule it claimed.
+   *
+   * `verdicts.ts` already builds the two groups separately, so origin is a
+   * property of the CALL SITE. That is what it always meant.
+   */
+  origin: EscalationOrigin,
+  /**
    * The PR's changed files. A `code`/`migration` scope must name one of them:
    * without this check `path: "the entire diff"` and `path: "**"` both passed,
    * which is how a whole-PR escalation was still spellable (review).
@@ -353,7 +368,8 @@ export function validateEscalationRequest(
   // of the model, never negotiable by the text of a verdict file.
   if (!cfg.targets.includes(target)) return { ok: false, refusal: "target-not-configured" };
 
-  const origin: EscalationOrigin = str(r.origin) === "rule" ? "rule" : "session";
+  // NB `r.origin` is deliberately NOT read. The caller says where this came
+  // from; a candidate that labels itself is labelling its own trust level.
   if (origin === "session" && !cfg.session_judgement) return { ok: false, refusal: "session-judgement-off" };
 
   const scope = normalizeScope(r.scope);
@@ -389,10 +405,15 @@ export function validateEscalationRequest(
   //     a false positive is a silent drop, and this feature's worst failure
   //     is a configured rule that quietly does nothing.
   //
-  // The one piece of untrusted text that can reach a RULE scope is a finding's
-  // reason, and that is filtered where it enters — `scopeForRule` — rather
-  // than here, so the filtering happens once, at the boundary, and cannot
-  // silently drop the whole rule.
+  // Model-written text CAN reach a rule-built scope — a finding's reason and
+  // its path both come from the reasoning record. Neither is handled here:
+  // the reason is filtered where it enters (`scopeForRule`), so a trip costs
+  // that candidate its scope rather than dropping the operator's whole rule,
+  // and the path is caught by the path-in-diff check above, which sits OUTSIDE
+  // this origin gate on purpose.
+  //
+  // `origin` is an ARGUMENT. A candidate cannot elect itself into the exempt
+  // group by writing `"origin": "rule"` — see the parameter's docstring.
   if (origin === "session") {
     if (asksForWholeReview(question)) return { ok: false, refusal: "asks-for-whole-review" };
     if (scope.kind === "decision" && asksForWholeReview(scope.decision)) {
@@ -400,7 +421,12 @@ export function validateEscalationRequest(
     }
     if (asksForWholeReview(why)) return { ok: false, refusal: "asks-for-whole-review" };
   }
-  const rule = str(r.rule);
+  // Likewise the rule NAME: only a rule-origin candidate may carry one, and
+  // that one was written by `evaluateEscalationRules` from the operator's own
+  // config. A session naming a rule would forge the ledger row and the
+  // "_Escalated by the configured rule `x`._" line for a rule that need not
+  // even exist.
+  const rule = origin === "rule" ? str(r.rule) : "";
   return {
     ok: true,
     request: {
@@ -499,12 +525,18 @@ export function scopeForRule(rule: EscalationRule, facts: EscalationFacts): Esca
   if (rule.min_severity) {
     const hit = facts.findings.find((f) => severityAtLeast(String(f.severity ?? ""), rule.min_severity as EscalationSeverityFloor));
     if (hit?.path) return { kind: "code", path: hit.path };
-    // The finding's reason is the ONE piece of MODEL-written text that can
-    // reach a rule-built scope, so it is belted HERE, at the boundary it
-    // enters — not in `validateEscalationRequest`, where a trip would drop the
-    // operator's whole rule instead of just this candidate name. A reason that
-    // asks for a whole review simply yields no scope, and the caller reports
+    // The finding's reason is model-written text reaching a rule-built scope,
+    // so it is belted HERE, at the boundary it enters — not in
+    // `validateEscalationRequest`, where a trip would drop the operator's whole
+    // rule instead of just this candidate name. A reason that asks for a whole
+    // review simply yields no scope, and the caller reports
     // `no-scope-derivable`.
+    //
+    // It is not the only model-written field that gets here: `hit.path` above
+    // comes from the same findings record. That one needs no belt because the
+    // unconditional path-in-diff check in `validateEscalationRequest` sits
+    // OUTSIDE the origin gate and catches it — deliberately, since a path is
+    // checkable against a fact and prose is not.
     if (hit?.title) {
       const decision = hit.title.replace(/\s+/g, " ").slice(0, MAX_ESCALATION_DECISION);
       if (!asksForWholeReview(decision)) return { kind: "decision", decision };
@@ -572,13 +604,13 @@ export function evaluateEscalationRules(
       scope,
       question: questionForRule(rule, scope),
       why: rule.why,
-      origin: "rule" as const,
       rule: rule.name,
     };
     // Validated against the SAME facts the scope came from — so a rule firing
     // on a finding anchored outside the diff is refused here rather than
-    // pointing a person at a file this PR does not touch.
-    const v = validateEscalationRequest(candidate, cfg, facts.changed_paths);
+    // pointing a person at a file this PR does not touch. Origin is passed,
+    // not embedded: this call site IS the operator's half.
+    const v = validateEscalationRequest(candidate, cfg, "rule", facts.changed_paths);
     if (v.ok) out.push(v.request);
     else onRefused?.(rule, v.refusal);
   }
@@ -616,9 +648,17 @@ export interface EscalationRenderContext {
 }
 
 /**
- * The escalation body. Composed from the scope — the only free-text slots are
- * `question` and `why`, both validated and capped. There is no code path by
- * which this renders "please review this PR".
+ * The escalation body. Everything structural is composed from the scope, which
+ * is exact: it names one file, migration or decision, and a path in it is a
+ * file this PR touches.
+ *
+ * The free-text slots are `question`, a `decision` name and `why`. On a
+ * SESSION escalation all three are belted by `asksForWholeReview` (a heuristic
+ * — see its docstring). On a RULE escalation `why` is the operator's own text
+ * and is rendered VERBATIM by design, so this function can and will render
+ * whatever they wrote there, "please review this PR" included. That is their
+ * call to make about their own reviewers; what it cannot do is change the
+ * scope the note points at.
  */
 export function renderEscalationComment(req: EscalationRequest, ctx: EscalationRenderContext): string {
   const round = ctx.round_no ? ` (round ${ctx.round_no})` : "";
@@ -790,8 +830,17 @@ export async function deliverEscalations(
     /** Did the round's own review reach GitHub (receipt)? Rendered
      * into the note; see `EscalationRenderContext.review_posted`. */
     review_posted?: boolean;
-    /** Candidates: fired rules and/or session-declared entries, unvalidated. */
-    candidates: readonly unknown[];
+    /**
+     * The OPERATOR's half: candidates `evaluateEscalationRules` built from
+     * configured rules. Trusted as operator text.
+     */
+    ruleRequests?: readonly EscalationRequest[];
+    /**
+     * The MODEL's half: raw `escalations` entries out of the verdict file.
+     * Never trusted, and — the point of keeping the two apart — never able to
+     * relabel itself into the group above (re-review).
+     */
+    sessionCandidates?: readonly unknown[];
   },
 ): Promise<EscalationOutcome[]> {
   const log = deps.log ?? (() => {});
@@ -799,12 +848,21 @@ export async function deliverEscalations(
   const outcomes: EscalationOutcome[] = [];
   if (!cfg.enabled || !args.head_sha) return outcomes;
 
-  for (const raw of args.candidates) {
-    const v = validateEscalationRequest(raw, cfg, args.changed_paths ?? []);
+  // The two groups stay separate all the way to validation, and each carries
+  // its origin as a property of WHERE IT CAME FROM rather than of what it
+  // says about itself. Rules first: they are the deterministic half, and on a
+  // capped PR the operator's own rules should win the budget.
+  const queued: Array<{ raw: unknown; origin: EscalationOrigin }> = [
+    ...(args.ruleRequests ?? []).map((raw) => ({ raw: raw as unknown, origin: "rule" as const })),
+    ...(args.sessionCandidates ?? []).map((raw) => ({ raw, origin: "session" as const })),
+  ];
+
+  for (const { raw, origin } of queued) {
+    const v = validateEscalationRequest(raw, cfg, origin, args.changed_paths ?? []);
     if (!v.ok) {
-      store.logEvent("escalation_refused", args.pr, { reason: v.refusal, round_no: args.round_no ?? null, candidate: raw });
-      log(`escalation: #${args.pr} refused — ${v.refusal}`);
-      outcomes.push({ target: "", scope_key: "", origin: "session", refused: v.refusal, comment_executed: false });
+      store.logEvent("escalation_refused", args.pr, { reason: v.refusal, origin, round_no: args.round_no ?? null, candidate: raw });
+      log(`escalation: #${args.pr} refused (${origin}) — ${v.refusal}`);
+      outcomes.push({ target: "", scope_key: "", origin, refused: v.refusal, comment_executed: false });
       continue;
     }
     const req = v.request;

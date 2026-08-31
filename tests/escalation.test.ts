@@ -145,7 +145,7 @@ describe("INVARIANT 1 — the reviewer still decides; escalation rides beside th
     const adapter = fakeAdapter();
     const outcomes = await deliverEscalations(
       { cfg: on(), store, adapter },
-      { pr: 7, verdict: "APPROVE", head_sha: HEAD, round_no: 1, changed_paths: CHANGED, candidates: [request({ origin: "rule", rule: "migrations" })] },
+      { pr: 7, verdict: "APPROVE", head_sha: HEAD, round_no: 1, changed_paths: CHANGED, ruleRequests: [request({ rule: "migrations" })] },
     );
     expect(outcomes).toHaveLength(1);
     // Every key on the outcome, enumerated: nothing here could be read as
@@ -256,7 +256,7 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
   it("refuses an escalation that names nothing to look at", () => {
     const c = on();
     for (const scope of [undefined, null, {}, { kind: "code" }, { kind: "code", path: "" }, { kind: "decision" }, { kind: "decision", decision: "  " }, { kind: "migration", path: "" }]) {
-      const v = validateEscalationRequest({ target: "teammate-one", scope, question: "look at this bit", origin: "rule" }, c);
+      const v = validateEscalationRequest({ target: "teammate-one", scope, question: "look at this bit" }, c, "rule");
       expect(v.ok, `scope ${JSON.stringify(scope)} must be refused`).toBe(false);
       if (!v.ok) expect(v.refusal).toBe("no-scope");
     }
@@ -291,7 +291,7 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
       // Session origin: this is the text a MODEL wrote, and it is the text the
       // belt guards. (A rule's question is our own template over the
       // operator's config and is exempt — see the test below.)
-      const v = validateEscalationRequest({ ...request(), question: q }, on({ session_judgement: true }), CHANGED);
+      const v = validateEscalationRequest({ ...request(), question: q }, on({ session_judgement: true }), "session", CHANGED);
       expect(v.ok, q).toBe(false);
       if (!v.ok) expect(v.refusal).toBe("asks-for-whole-review");
     }
@@ -305,7 +305,7 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
       "We reviewed the code and think this decision is yours: keep the flag or drop it?",
     ]) {
       expect(asksForWholeReview(q), q).toBe(false);
-      expect(validateEscalationRequest({ ...request(), question: q }, on({ session_judgement: true })).ok).toBe(true);
+      expect(validateEscalationRequest({ ...request(), question: q }, on({ session_judgement: true }), "session").ok).toBe(true);
     }
   });
 
@@ -373,16 +373,16 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
     const diff = ["billing/charge.py", "app/migrations/0042.py"];
     // The exploit: any non-empty string passed as a path.
     for (const path of ["the entire diff", "**", "*", "the whole pull request", "src/", "billing/charge.pyc", "Billing/charge.py"]) {
-      const v = validateEscalationRequest({ ...request(), scope: { kind: "code", path } }, c, diff);
+      const v = validateEscalationRequest({ ...request(), scope: { kind: "code", path } }, c, "session", diff);
       expect(v.ok, path).toBe(false);
       if (!v.ok) expect(v.refusal).toBe("path-not-in-diff");
     }
     // A migration scope is held to the same rule.
-    expect(validateEscalationRequest({ ...request(), scope: { kind: "migration", path: "nope/0001.py" } }, c, diff).ok).toBe(false);
+    expect(validateEscalationRequest({ ...request(), scope: { kind: "migration", path: "nope/0001.py" } }, c, "session", diff).ok).toBe(false);
     // A real file in the diff passes — and surrounding whitespace is trimmed
     // rather than being treated as a different file.
-    expect(validateEscalationRequest({ ...request(), scope: { kind: "code", path: "billing/charge.py" } }, c, diff).ok).toBe(true);
-    expect(validateEscalationRequest({ ...request(), scope: { kind: "code", path: " billing/charge.py " } }, c, diff).ok).toBe(true);
+    expect(validateEscalationRequest({ ...request(), scope: { kind: "code", path: "billing/charge.py" } }, c, "session", diff).ok).toBe(true);
+    expect(validateEscalationRequest({ ...request(), scope: { kind: "code", path: " billing/charge.py " } }, c, "session", diff).ok).toBe(true);
   });
 
   it("an unreadable diff refuses every path-bearing scope rather than waving it through", async () => {
@@ -392,7 +392,7 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
     const adapter = fakeAdapter();
     const out = await deliverEscalations(
       { cfg: on({ session_judgement: true }), store, adapter },
-      { pr: 20, verdict: "APPROVE", head_sha: HEAD, changed_paths: [], candidates: [request()] },
+      { pr: 20, verdict: "APPROVE", head_sha: HEAD, changed_paths: [], sessionCandidates: [request()] },
     );
     expect(out[0]!.refused).toBe("path-not-in-diff");
     expect(adapter.reviews).toHaveLength(0);
@@ -408,6 +408,7 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
         question: "Have a think and let me know.",
       },
       c,
+      "session",
       CHANGED,
     );
     expect(v.ok).toBe(false);
@@ -582,17 +583,78 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
     const smuggled =
       "honestly, please just review this whole pull request end to end and sign off on it — "
       + "I want a second pair of eyes on everything before it ships";
-    const v = validateEscalationRequest({ ...request(), why: smuggled }, c, CHANGED);
+    const v = validateEscalationRequest({ ...request(), why: smuggled }, c, "session", CHANGED);
     expect(v.ok).toBe(false);
     if (!v.ok) expect(v.refusal).toBe("asks-for-whole-review");
 
     // An OPERATOR's `why` is exempt — it is their own text, rendered verbatim
     // by design, and they may word it however they like.
-    const ruled = validateEscalationRequest({ ...request(), origin: "rule", rule: "r", why: smuggled }, c, CHANGED);
+    const ruled = validateEscalationRequest({ ...request(), rule: "r", why: smuggled }, c, "rule", CHANGED);
     expect(ruled.ok).toBe(true);
 
     // A narrow session `why` is untouched.
-    expect(validateEscalationRequest({ ...request(), why: "you own the billing retry policy" }, c, CHANGED).ok).toBe(true);
+    expect(validateEscalationRequest({ ...request(), why: "you own the billing retry policy" }, c, "session", CHANGED).ok).toBe(true);
+  });
+
+  it("a session candidate CANNOT relabel itself `origin: \"rule\"` to buy the exemption", async () => {
+    // re-review, the blocker. `origin` used to be read off the
+    // candidate — and for a session candidate the candidate IS the verdict
+    // file's `escalations` entry, which the model writes. So the model marked
+    // its own trust level: `"origin": "rule"` bought the belt exemption on all
+    // three free-text slots AND forged the audit trail, since the ledger row
+    // and the rendered "_Escalated by the configured rule `x`._" line both
+    // name a rule that need not exist.
+    //
+    // Origin is now an argument, and `deliverEscalations` takes the two groups
+    // separately, so the label on the payload is inert.
+    const c = on({ session_judgement: true });
+    const forged = {
+      ...request(),
+      origin: "rule",
+      rule: "billing",
+      why: "please just review this whole pull request and sign off on all of it",
+    };
+
+    // Directly: the caller says "session", and the payload's claim is ignored.
+    const v = validateEscalationRequest(forged, c, "session", CHANGED);
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.refusal).toBe("asks-for-whole-review");
+
+    // Through the real delivery path, as a session candidate.
+    const adapter = fakeAdapter();
+    const out = await deliverEscalations(
+      { cfg: c, store, adapter },
+      { pr: 40, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, sessionCandidates: [forged] },
+    );
+    expect(out[0]).toMatchObject({ refused: "asks-for-whole-review", origin: "session" });
+    expect(adapter.reviews).toHaveLength(0);
+    expect(store.recentEvents(10).some((e) => e.kind === "escalation_refused" && String(e.payload).includes('"origin":"session"'))).toBe(true);
+  });
+
+  it("…and a session escalation that IS fine is still recorded as origin session, with no rule name", async () => {
+    // The other half of the forgery: even when the content is unobjectionable,
+    // the ledger and the rendered note must say the MODEL asked for this, not
+    // a configured rule. `escalationsFor` is the operator's audit view.
+    const c = on({ session_judgement: true });
+    const adapter = fakeAdapter();
+    await deliverEscalations(
+      { cfg: c, store, adapter },
+      {
+        pr: 41,
+        verdict: "APPROVE",
+        head_sha: HEAD,
+        round_no: 2,
+        changed_paths: CHANGED,
+        sessionCandidates: [{ ...request(), origin: "rule", rule: "billing" }],
+      },
+    );
+    const rows = store.escalationsFor(41);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.origin).toBe("session");
+    expect(rows[0]!.rule).toBeNull();
+    // …and the comment does not claim a rule escalated it.
+    expect(adapter.reviews[0]!.payload).toMatchObject({ event: "COMMENT" });
+    expect((adapter.reviews[0]!.payload as { body: string }).body).not.toContain("Escalated by the configured rule");
   });
 
   it("a decision scope's OPTIONAL path is checked against the diff too", () => {
@@ -603,6 +665,7 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
     const bad = validateEscalationRequest(
       { ...request(), scope: { kind: "decision", decision: "the retry budget", path: "the entire diff" } },
       c,
+      "session",
       CHANGED,
     );
     expect(bad.ok).toBe(false);
@@ -610,9 +673,9 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
 
     // A real file is fine, and a decision with NO path is fine.
     expect(
-      validateEscalationRequest({ ...request(), scope: { kind: "decision", decision: "the retry budget", path: "billing/charge.py" } }, c, CHANGED).ok,
+      validateEscalationRequest({ ...request(), scope: { kind: "decision", decision: "the retry budget", path: "billing/charge.py" } }, c, "session", CHANGED).ok,
     ).toBe(true);
-    expect(validateEscalationRequest({ ...request(), scope: { kind: "decision", decision: "the retry budget" } }, c, CHANGED).ok).toBe(true);
+    expect(validateEscalationRequest({ ...request(), scope: { kind: "decision", decision: "the retry budget" } }, c, "session", CHANGED).ok).toBe(true);
   });
 
   it("a rule whose matched fact yields nothing concrete escalates NOTHING", () => {
@@ -646,7 +709,7 @@ describe("off by default — a stock install is unchanged", () => {
     expect(promptTargetsFor(draft)).toBeUndefined();
     expect(renderEscalationPromptNote(promptTargetsFor(draft))).toBe("");
     const adapter = fakeAdapter();
-    expect(await deliverEscalations({ cfg: draft, store, adapter }, { pr: 1, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, candidates: [request()] })).toEqual([]);
+    expect(await deliverEscalations({ cfg: draft, store, adapter }, { pr: 1, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, sessionCandidates: [request()] })).toEqual([]);
     expect(adapter.reviews).toHaveLength(0);
     expect(adapter.requests).toHaveLength(0);
   });
@@ -775,14 +838,14 @@ describe("deterministic triggers", () => {
 describe("session-judgement escalation is bounded, daemon-side", () => {
   it("cannot reach a login the operator did not configure", async () => {
     const c = on({ session_judgement: true });
-    const v = validateEscalationRequest({ ...request(), target: "someone-else" }, c);
+    const v = validateEscalationRequest({ ...request(), target: "someone-else" }, c, "session");
     expect(v.ok).toBe(false);
     if (!v.ok) expect(v.refusal).toBe("target-not-configured");
 
     const adapter = fakeAdapter();
     const outcomes = await deliverEscalations(
       { cfg: c, store, adapter },
-      { pr: 9, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, candidates: [{ ...request(), target: "someone-else" }] },
+      { pr: 9, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, sessionCandidates: [{ ...request(), target: "someone-else" }] },
     );
     expect(adapter.reviews).toHaveLength(0);
     expect(adapter.requests).toHaveLength(0);
@@ -794,7 +857,7 @@ describe("session-judgement escalation is bounded, daemon-side", () => {
     const adapter = fakeAdapter();
     const outcomes = await deliverEscalations(
       { cfg: on(), store, adapter },
-      { pr: 9, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, candidates: [request()] },
+      { pr: 9, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, sessionCandidates: [request()] },
     );
     expect(outcomes[0]!.refused).toBe("session-judgement-off");
     expect(adapter.reviews).toHaveLength(0);
@@ -811,7 +874,7 @@ describe("session-judgement escalation is bounded, daemon-side", () => {
     const adapter = fakeAdapter();
     await deliverEscalations(
       { cfg: on(), store, adapter },
-      { pr: 9, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, candidates: evaluateEscalationRules(on(), facts({ changed_paths: ["app/migrations/0042.py"] })) },
+      { pr: 9, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, ruleRequests: evaluateEscalationRules(on(), facts({ changed_paths: ["app/migrations/0042.py"] })) },
     );
     expect(adapter.reviews).toHaveLength(1);
   });
@@ -826,7 +889,7 @@ describe("delivery", () => {
     const adapter = fakeAdapter();
     await deliverEscalations(
       { cfg: on(), store, adapter },
-      { pr: 11, verdict: "APPROVE", head_sha: HEAD, round_no: 2, changed_paths: CHANGED, review_posted: true, candidates: evaluateEscalationRules(on(), facts({ changed_paths: ["app/migrations/0042.py"] })) },
+      { pr: 11, verdict: "APPROVE", head_sha: HEAD, round_no: 2, changed_paths: CHANGED, review_posted: true, ruleRequests: evaluateEscalationRules(on(), facts({ changed_paths: ["app/migrations/0042.py"] })) },
     );
     expect(adapter.reviews).toHaveLength(1);
     expect(adapter.reviews[0]!.purpose).toBe("escalation");
@@ -843,7 +906,7 @@ describe("delivery", () => {
     const c = on({ shape: "review_request" });
     await deliverEscalations(
       { cfg: c, store, adapter },
-      { pr: 12, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, candidates: evaluateEscalationRules(c, facts({ changed_paths: ["app/migrations/0042.py"] })) },
+      { pr: 12, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, ruleRequests: evaluateEscalationRules(c, facts({ changed_paths: ["app/migrations/0042.py"] })) },
     );
     // The order is the invariant: GitHub's queue entry says "review this pull
     // request", so the narrow ask must already be on the PR when it lands.
@@ -855,12 +918,12 @@ describe("delivery", () => {
     const adapter = fakeAdapter({ blocked: "pr-merged" });
     const c = on({ shape: "review_request" });
     const candidates = evaluateEscalationRules(c, facts({ changed_paths: ["app/migrations/0042.py"] }));
-    await deliverEscalations({ cfg: c, store, adapter }, { pr: 13, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, candidates });
+    await deliverEscalations({ cfg: c, store, adapter }, { pr: 13, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, ruleRequests: candidates });
     expect(adapter.requests).toHaveLength(0);
     expect(store.escalationCount(13)).toBe(0);
     // Second attempt is not suppressed by the dedup ledger.
     const again = fakeAdapter();
-    await deliverEscalations({ cfg: c, store, adapter: again }, { pr: 13, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, candidates });
+    await deliverEscalations({ cfg: c, store, adapter: again }, { pr: 13, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, ruleRequests: candidates });
     expect(again.reviews).toHaveLength(1);
   });
 
@@ -868,10 +931,10 @@ describe("delivery", () => {
     const c = on();
     const candidates = evaluateEscalationRules(c, facts({ changed_paths: ["app/migrations/0042.py"] }));
     const first = fakeAdapter();
-    await deliverEscalations({ cfg: c, store, adapter: first }, { pr: 14, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, candidates });
+    await deliverEscalations({ cfg: c, store, adapter: first }, { pr: 14, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, ruleRequests: candidates });
     expect(first.reviews).toHaveLength(1);
     const second = fakeAdapter();
-    const out = await deliverEscalations({ cfg: c, store, adapter: second }, { pr: 14, verdict: "REQUEST_CHANGES", head_sha: "deadbeef", changed_paths: CHANGED, candidates });
+    const out = await deliverEscalations({ cfg: c, store, adapter: second }, { pr: 14, verdict: "REQUEST_CHANGES", head_sha: "deadbeef", changed_paths: CHANGED, ruleRequests: candidates });
     expect(second.reviews).toHaveLength(0);
     expect(out[0]!.refused).toBe("already-delivered");
   });
@@ -888,7 +951,7 @@ describe("delivery", () => {
     const adapter = fakeAdapter();
     const out = await deliverEscalations(
       { cfg: c, store, adapter },
-      { pr: 15, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, candidates: evaluateEscalationRules(c, facts({ changed_paths: ["a/x.py", "b/y.py"] })) },
+      { pr: 15, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, ruleRequests: evaluateEscalationRules(c, facts({ changed_paths: ["a/x.py", "b/y.py"] })) },
     );
     expect(adapter.reviews).toHaveLength(1);
     expect(out.filter((o) => o.refused === "capped")).toHaveLength(1);
@@ -899,7 +962,7 @@ describe("delivery", () => {
     const c = on();
     await deliverEscalations(
       { cfg: c, store, adapter: fakeAdapter() },
-      { pr: 16, verdict: "APPROVE", head_sha: HEAD, round_no: 4, changed_paths: CHANGED, candidates: evaluateEscalationRules(c, facts({ changed_paths: ["app/migrations/0042.py"] })) },
+      { pr: 16, verdict: "APPROVE", head_sha: HEAD, round_no: 4, changed_paths: CHANGED, ruleRequests: evaluateEscalationRules(c, facts({ changed_paths: ["app/migrations/0042.py"] })) },
     );
     const rows = store.escalationsFor(16);
     expect(rows).toHaveLength(1);
@@ -919,7 +982,7 @@ describe("delivery", () => {
     const c = on();
     const candidates = evaluateEscalationRules(c, facts({ changed_paths: ["app/migrations/0042.py"] }));
     const dry = fakeAdapter({ dryRun: true });
-    const out = await deliverEscalations({ cfg: c, store, adapter: dry }, { pr: 30, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, candidates });
+    const out = await deliverEscalations({ cfg: c, store, adapter: dry }, { pr: 30, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, ruleRequests: candidates });
 
     // The intent was built and handed to the gate — that is what dry-run is for…
     expect(dry.reviews).toHaveLength(1);
@@ -933,12 +996,12 @@ describe("delivery", () => {
 
     // A second dry-run round is not suppressed either.
     const dry2 = fakeAdapter({ dryRun: true });
-    await deliverEscalations({ cfg: c, store, adapter: dry2 }, { pr: 30, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, candidates });
+    await deliverEscalations({ cfg: c, store, adapter: dry2 }, { pr: 30, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, ruleRequests: candidates });
     expect(dry2.reviews).toHaveLength(1);
 
     // …and going LIVE still delivers, because nothing was ever claimed.
     const live = fakeAdapter();
-    const liveOut = await deliverEscalations({ cfg: c, store, adapter: live }, { pr: 30, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, candidates });
+    const liveOut = await deliverEscalations({ cfg: c, store, adapter: live }, { pr: 30, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, ruleRequests: candidates });
     expect(live.reviews).toHaveLength(1);
     expect(liveOut[0]!.refused).toBeNull();
     expect(liveOut[0]!.comment_executed).toBe(true);
@@ -950,7 +1013,7 @@ describe("delivery", () => {
     const candidates = evaluateEscalationRules(c, facts({ changed_paths: ["app/migrations/0042.py"] }));
     for (let i = 0; i < 5; i++) {
       const dry = fakeAdapter({ dryRun: true });
-      await deliverEscalations({ cfg: c, store, adapter: dry }, { pr: 31, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, candidates });
+      await deliverEscalations({ cfg: c, store, adapter: dry }, { pr: 31, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, ruleRequests: candidates });
       expect(dry.reviews, `round ${i}`).toHaveLength(1);
     }
     expect(store.escalationCount(31)).toBe(0);
@@ -958,7 +1021,7 @@ describe("delivery", () => {
 
   it("a round with nothing to escalate makes no call at all", async () => {
     const adapter = fakeAdapter();
-    await deliverEscalations({ cfg: on(), store, adapter }, { pr: 17, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, candidates: [] });
+    await deliverEscalations({ cfg: on(), store, adapter }, { pr: 17, verdict: "APPROVE", head_sha: HEAD, changed_paths: CHANGED, ruleRequests: [] });
     expect(adapter.reviews).toHaveLength(0);
   });
 });

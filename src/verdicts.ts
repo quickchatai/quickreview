@@ -776,19 +776,21 @@ export class VerdictWatcher {
       failing_checks: await this.escalationFailingChecks(v.pr, v.head_sha),
     };
 
-    // Deterministic rules first, then the session's own requests — which are
-    // filtered against `targets` inside deliverEscalations, daemon-side.
-    const candidates: unknown[] = [
-      // A rule that FIRED but produced nothing deliverable is logged, never
-      // silent: the operator configured it, it matched, and they would
-      // otherwise have no way to see why nobody was told (re-review).
-      ...evaluateEscalationRules(cfg, facts, (rule, refusal) => {
-        store.logEvent("escalation_rule_refused", v.pr, { rule: rule.name, to: rule.to, refusal, round_no: v.round_no });
-        this.log(`escalation: rule "${rule.name}" fired on #${v.pr} but produced nothing — ${refusal}`);
-      }),
-      ...(cfg.session_judgement ? (v.escalations ?? []) : []),
-    ];
-    if (candidates.length === 0) return;
+    // THE TWO GROUPS STAY SEPARATE. They are separate here because they have
+    // different trust: the first is the operator's configured rules, the
+    // second is whatever the model wrote in its verdict file. Flattening them
+    // into one list and re-deriving trust from a field INSIDE the payload is
+    // what let a session relabel itself `origin: "rule"` (re-review).
+    //
+    // A rule that FIRED but produced nothing deliverable is logged, never
+    // silent: the operator configured it, it matched, and they would otherwise
+    // have no way to see why nobody was told.
+    const ruleRequests = evaluateEscalationRules(cfg, facts, (rule, refusal) => {
+      store.logEvent("escalation_rule_refused", v.pr, { rule: rule.name, to: rule.to, refusal, round_no: v.round_no });
+      this.log(`escalation: rule "${rule.name}" fired on #${v.pr} but produced nothing — ${refusal}`);
+    });
+    const sessionCandidates = cfg.session_judgement ? (v.escalations ?? []) : [];
+    if (ruleRequests.length === 0 && sessionCandidates.length === 0) return;
     await deliverEscalations(
       {
         cfg,
@@ -813,7 +815,8 @@ export class VerdictWatcher {
         // refused — and the escalation note is precisely the one that still
         // goes out in that case.
         review_posted: this.roundReviewConfirmed(v.pr, v.round_no, v.head_sha),
-        candidates,
+        ruleRequests,
+        sessionCandidates,
       },
     );
   }
