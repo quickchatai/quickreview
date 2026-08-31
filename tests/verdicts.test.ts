@@ -396,6 +396,24 @@ describe("measured round usage", () => {
       expect(store.totalSpend()).toBeGreaterThan(0);
     });
 
+    it("measures a round buried by a POSTING-RECEIPT failure", async () => {
+      // Same class as the two above and in the same file — the round ran a
+      // full review and burned its tokens; the receipt is what failed, not the
+      // work. Missed by the first pass, found by adversarial review.
+      const roundId = reviewingRound(402);
+      stampPosting(402, 1);
+      writeSessionJsonl(402, [modelLine(), jsonlLine(750_000, 250_000)]);
+
+      expect(
+        await watcher({ postingReceiptGraceS: 0, usage: priced }).handleFile(write(402, 1, verdictFile({ pr: 402 }))),
+      ).toBe(true);
+
+      const round = store.db.prepare("SELECT * FROM rounds WHERE id = ?").get(roundId) as any;
+      expect(round.status).toBe("cancelled");
+      expect(round.tokens_in).toBe(750_000);
+      expect(round.est_usd).toBeCloseTo(0.75 * 2 + 0.25 * 8, 6);
+    });
+
     it("measures an OVERDUE round's tokens when the deadline sweep buries it", async () => {
       const roundId = reviewingRound(401);
       writeSessionJsonl(401, [modelLine(), jsonlLine(300_000, 100_000)]);

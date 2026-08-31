@@ -465,6 +465,11 @@ export class VerdictWatcher {
   private async failPostingProof(round: RoundRow, detail: string, stage = "posting_receipt"): Promise<void> {
     const { store, cfg, adapter } = this.deps;
     store.markRoundCancelled(round.id, `posting receipt failure — ${detail}`, "infrastructure_failure");
+    // this round ran a full review and burned its tokens — the
+    // receipt is what failed, not the work. It stays in `SUM(est_usd) FROM
+    // rounds` like every other row, so it must be measured here too. Its
+    // window closes now and no successor is running, so nothing double-counts.
+    this.measureUsage(round.pr, round.id, round.started_at, this.now().toISOString());
     await this.safe(() => adapter.removeLabel(round.pr, cfg.github.in_progress_label), `remove ${cfg.github.in_progress_label} on #${round.pr}`);
     const command = store.sessionCommandForRound(round.pr, round.round_no);
     const successor = store.successorFor(round.pr);

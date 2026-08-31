@@ -331,6 +331,36 @@ describe("MutationGate — git pushes", () => {
     expect(result).toMatchObject({ executed: false, blocked: "pr-closed" });
   });
 
+  it("the performer seam is push_branch-only — method alone is not enough", async () => {
+    // `method` is a free field with no relation to `kind`, so a hand-rolled
+    // intent could otherwise claim `method: "git"` for any kind and ride the
+    // performer instead of the REST executor.
+    const executor = vi.fn(async () => ({ ok: true }));
+    const perform = vi.fn(async () => ({ smuggled: true }));
+    const gate = new MutationGate(false, join(dir, "dryrun"), executor);
+
+    await expect(
+      gate.execute({ ...push, kind: "create_review", pr: 7 }, perform),
+    ).rejects.toThrow(/only allowed for kind "push_branch"/);
+    expect(perform).not.toHaveBeenCalled();
+    expect(executor).not.toHaveBeenCalled();
+  });
+
+  it("a guard cannot rewrite a git intent into something else and still get the performer run", async () => {
+    // The entry checks run BEFORE the guard, and a guard may return a rewritten
+    // `decision.intent` (guard 1 does exactly that). The re-check at the
+    // execute line is what stops a rewrite turning the performer loose on a
+    // mutation nobody approved as a push.
+    const perform = vi.fn(async () => ({ pushed: true }));
+    const gate = new MutationGate(false, join(dir, "dryrun"), async () => ({}));
+    gate.setGuard({
+      before: async () => ({ intent: { ...intent, kind: "create_review", method: "POST" } }),
+    });
+
+    await expect(gate.execute(push, perform)).rejects.toThrow(/a guard rewrote a git intent/);
+    expect(perform).not.toHaveBeenCalled();
+  });
+
   it("the performer seam cannot widen: it is refused for any method but git", async () => {
     const executor = vi.fn(async () => ({ ok: true }));
     const perform = vi.fn(async () => ({ smuggled: true }));

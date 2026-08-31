@@ -129,8 +129,11 @@ export type MutationExecutor = (intent: MutationIntent) => Promise<unknown>;
  * `forceLive` check, the guards and the dry-run branch all run first, exactly
  * as they do for a REST mutation.
  *
- * The seam cannot widen: `execute` throws if a performer accompanies any
- * method other than `"git"`, so it can never stand in for the REST executor.
+ * The seam cannot widen. `execute` throws if a performer accompanies any method
+ * other than `"git"` OR any kind other than `push_branch` — `method` is a free
+ * field with no relation to `kind`, so the method check alone would let any
+ * kind ride the performer — and it re-checks BOTH against the post-guard
+ * intent, because a guard may hand back a rewritten one.
  */
 export type GitPerformer = () => Promise<unknown>;
 
@@ -198,6 +201,13 @@ export class MutationGate {
     if (perform && intent.method !== "git") {
       throw new Error(`gate: a git performer is only allowed for method "git", not ${intent.method} (${intent.kind})`);
     }
+    // `method` is a free field with no relation to `kind`, so the method check
+    // alone would let any kind ride the performer. `push_branch` is the only
+    // kind this system ever performs with git — and rule 4 already says the
+    // only branches it pushes are `bot/improve-*`.
+    if (perform && intent.kind !== "push_branch") {
+      throw new Error(`gate: a git performer is only allowed for kind "push_branch", not ${intent.kind}`);
+    }
     if (intent.forceLive && intent.kind !== "supersede_own_review") {
       throw new Error(`forceLive is not allowed for kind ${intent.kind}`);
     }
@@ -237,6 +247,17 @@ export class MutationGate {
     // A `method: "git"` intent runs its performer; everything else runs the
     // REST executor (which still throws on "git", so a git intent that arrives
     // without a performer cannot execute).
+    //
+    // Re-checked against the POST-GUARD intent, not the one the caller passed:
+    // a guard may return a rewritten `decision.intent` (guard 1 does), and the
+    // entry check above ran before that rewrite. A rewrite that changed the
+    // method or kind out from under the performer must not silently execute a
+    // git push in place of the mutation the guard approved.
+    if (perform && (intent.method !== "git" || intent.kind !== "push_branch")) {
+      throw new Error(
+        `gate: a guard rewrote a git intent into ${intent.method} ${intent.kind} — refusing to run the performer against it`,
+      );
+    }
     const response = perform ? await perform() : await this.executor(intent);
     const executed: GateResult = { executed: true, response };
     await this.guard?.after?.(intent, executed);

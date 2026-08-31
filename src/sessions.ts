@@ -830,7 +830,15 @@ export class PiSessionManager implements SessionHooks {
     if (walk(root)) return true;
     // A file we could not read might have held the marker, so absence is not
     // established: report UNKNOWN rather than loss.
-    if (unreadable) return null;
+    if (unreadable) {
+      // …but say so. The flag is scan-GLOBAL, so ONE permanently unreadable
+      // stale `.jsonl` makes every receipt query for this PR answer `null`
+      // forever — which silently disables both the redelivery-vs-loss decision
+      // here and reconcile's claim-release sweep. Unknown is the correct
+      // answer and a durable row is how it stops being a silent one.
+      this.commandStore?.logEvent("receipt_scan_unreadable", pr, { marker, since_ms: sinceMs, root });
+      return null;
+    }
     // Nothing to read at all (a session that has not written since the round
     // started) is genuinely ambiguous on a slow first tool call — but the
     // caller only asks after the stall grace, by which point a session that
