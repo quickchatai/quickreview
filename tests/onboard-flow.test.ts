@@ -33,6 +33,7 @@ import { loadConfig } from "../src/config.js";
 import { CHOICE_KEYS } from "../src/onboard/choices.js";
 import { OnboardingEngine, type OnboardAdapters, type ProcessResult, type StepContext } from "../src/onboard/engine.js";
 import { QUESTIONS, questionAsked, type AnswerKey } from "../src/onboard/steps/configfill.js";
+import { ESCALATION_STEP_ID } from "../src/onboard/steps/escalation.js";
 import { GITHUB_APP_STEP_ID, SECRET_FILES } from "../src/onboard/steps/githubapp.js";
 import { optionFor, setTomlKey } from "../src/onboard/steps/ingress.js";
 import { defaultSteps } from "../src/onboard/steps/index.js";
@@ -228,6 +229,21 @@ function ctxOverChoices(engine: OnboardingEngine): StepContext {
 const LAPTOP_INPUTS: Inputs = {
   topology: { choice: "local" },
   ingress: { choice: "named", hostname: HOSTNAME },
+  // the escalation step ASKS, and refuses to guess — with no answer
+  // it returns its teach-and-offer refusal and the composed flow goes red.
+  // "no" is the answer most teams give and the shipped default.
+  escalation: { enable: "no" },
+};
+
+/** The same flow with escalation switched ON — the "and to whom" half. */
+const LAPTOP_INPUTS_ESCALATION: Inputs = {
+  ...LAPTOP_INPUTS,
+  escalation: {
+    enable: "yes",
+    targets: "example-teammate",
+    why: "you own this repo's migration policy",
+    paths: "**/migrations/*.py",
+  },
 };
 
 // The memory step needs a running OpenViking server; it carries no handoff this
@@ -240,6 +256,50 @@ describe("the registered steps hand their choices to each other", () => {
     const d = await drive(engine, LAPTOP_INPUTS, "app_slug_reconcile", SKIP);
     const failed = [...d.results].filter(([, r]) => !r.ok).map(([id, r]) => `${id}: ${r.failures.join("; ")}`);
     expect(failed, "a step in the composed flow went red").toEqual([]);
+  });
+
+  // ---, and it is the lesson applied: the escalation step
+  // reads `CHOICE_KEYS.configPath`, which only `config_fill` writes. A
+  // per-step suite with a seeded choice would pass either way; this drives the
+  // real registry with NOTHING seeded, so a key nobody writes is a red step.
+  it("HANDOFF 6 — the config path the interview records reaches the escalation step", async () => {
+    const engine = new OnboardingEngine(defaultSteps(), adapters());
+    const d = await drive(engine, LAPTOP_INPUTS_ESCALATION, ESCALATION_STEP_ID, SKIP);
+
+    expect(String(engine.choices()[CHOICE_KEYS.configPath])).toBe(join(root, "config.toml"));
+    const step = d.results.get(ESCALATION_STEP_ID)!;
+    expect(step.ok, step.failures.join("; ")).toBe(true);
+    // It patched THAT file, and the result loads.
+    const cfg = producedConfig();
+    expect(cfg.escalation.enabled).toBe(true);
+    expect(cfg.escalation.targets).toEqual(["example-teammate"]);
+    expect(cfg.escalation.shape).toBe("comment");
+    expect(cfg.escalation.rules.map((r) => r.name)).toEqual(["onboarding"]);
+    expect(cfg.escalation.rules[0]!.paths).toEqual(["**/migrations/*.py"]);
+    expect(cfg.escalation.rules[0]!.to).toBe("example-teammate");
+  });
+
+  it("HANDOFF 6b — declining leaves the feature off, and the config still loads", async () => {
+    const engine = new OnboardingEngine(defaultSteps(), adapters());
+    const d = await drive(engine, LAPTOP_INPUTS, ESCALATION_STEP_ID, SKIP);
+    expect(d.results.get(ESCALATION_STEP_ID)!.ok).toBe(true);
+    const cfg = producedConfig();
+    expect(cfg.escalation.enabled).toBe(false);
+    expect(cfg.escalation.targets).toEqual([]);
+    expect(cfg.escalation.rules).toEqual([]);
+  });
+
+  it("HANDOFF 6c — a half answer never reaches disk", async () => {
+    // On, but with nobody to escalate to: the step goes red, and the config it
+    // would have written is not written. The loader enforces the same rule, so
+    // there is no order of operations that produces a bootable half-config.
+    const engine = new OnboardingEngine(defaultSteps(), adapters());
+    const inputs: Inputs = { ...LAPTOP_INPUTS, escalation: { enable: "yes", paths: "src/**" } };
+    const d = await drive(engine, inputs, ESCALATION_STEP_ID, SKIP);
+    const step = d.results.get(ESCALATION_STEP_ID)!;
+    expect(step.ok).toBe(false);
+    expect(step.failures.join(" ")).toMatch(/targets/);
+    expect(producedConfig().escalation.enabled).toBe(false);
   });
 
   it("HANDOFF 1 — the repo the interview records reaches the App step", async () => {

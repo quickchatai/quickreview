@@ -30,10 +30,10 @@ repo = ""                                    # ← FILL (1): the repo to review,
 app_slug = ""                                # ← FILL (2): your GitHub App slug
 bot_login = ""                               # ← FILL (3): the App bot login, "<app_slug>[bot]"
 review_team = ""                            # ← FILL (4): "org/team" whose review request triggers
-# escalation_reviewer was removed on 2026-08-18 with the escalation mechanics:
-# the daemon never nominates a reviewer on GitHub. A PR it cannot decide is
-# parked on `awaiting_human` daemon-side (verdict NEEDS_HUMAN) and surfaced in
-# the TUI and Slack.
+# There is no reviewer knob here. The reviewer never hands a PR back: it always
+# decides on the merits and posts a verdict. If you want a named person told
+# about a particular KIND of change, that is the optional [escalation] section
+# further down — off by default.
 trigger_label = "AI review requested"
 in_progress_label = "AI review in progress"
 reviewed_label = "Automatic Review"
@@ -482,6 +482,65 @@ extra_dir_segments = []        # e.g. [".aider"] — whole subtree, any depth
 extra_root_dirs = []           # ROOT-only directive dirs, like prompts/
 extra_files = []               # exact repo-relative paths
 extra_vendored_segments = []   # extra third-party markers (case-insensitive)
+
+# ---------------------------------------------------------------------------
+# [escalation] — OPTIONAL, OFF BY DEFAULT.
+#
+# Two things this does NOT do, and cannot be configured to do:
+#
+#   * It never hands the review back. The reviewer always decides on the
+#     merits and posts the verdict; an escalation is a note that goes out
+#     BESIDE it. Nothing here can withhold, defer or replace a verdict.
+#   * It never asks anyone to "review this PR". Every escalation names ONE
+#     thing — a file and line range, a migration, a named decision — and why
+#     that person. Think of it as a `[check this]` item with a name on it.
+#
+# Leave `enabled = false` and nothing below is read: no rule is evaluated, no
+# extra API call is made, and the round prompts are byte-identical to a build
+# without the feature. `qcr onboard`'s escalation step writes this section.
+#
+# The configuration cannot be half-done: `enabled = true` with no `targets`,
+# or a rule pointing at a login that is not a target, or a rule that declares
+# no condition, all REFUSE TO LOAD. That is deliberate — escalation switched
+# on with nobody to escalate to is not a configuration.
+[escalation]
+enabled = false
+# "comment" (the default) posts a gated COMMENT review @-mentioning the person
+# with the narrow ask. "review_request" ALSO puts the PR in their
+# review-requested queue — GitHub words that entry "review this pull request",
+# which is exactly the framing this feature rules out, so the comment is still
+# posted and still carries the real ask. "comment" is the shape that matches
+# the intent; pick "review_request" only if your team lives in that queue.
+shape = "comment"
+# The CLOSED set of logins any escalation may reach. A session that names
+# anyone else is silently dropped by the daemon — it is not negotiable.
+targets = []
+# May the PR's session ALSO escalate on its own judgement, bounded to the
+# targets above? Off by default: the rules below stand on their own, and they
+# are the half with no model in the loop.
+session_judgement = false
+# Hard cap per PR, across every round.
+max_per_pr = 2
+
+# Deterministic triggers. Each rule is a pure predicate over facts the daemon
+# already has — no LLM judgement anywhere. A rule fires when EVERY condition it
+# declares holds; a rule that declares none refuses to load.
+#
+# Conditions: paths (glob: * within a segment, ** across), labels (PR labels),
+# min_severity (the round posted a finding at or above P0/P1/P2/P3), and
+# failing_checks (the LATEST run of a named check is not green).
+#
+# [[escalation.rules]]
+# name = "migrations"
+# to = "example-teammate"          # must appear in `targets` above
+# why = "you own this repo's migration policy"
+# paths = ["**/migrations/*.py"]
+# [[escalation.rules]]
+# name = "blockers-on-payments"
+# to = "example-teammate"
+# why = "payments changes go past you before they merge"
+# paths = ["billing/**"]
+# min_severity = "P1"
 
 [slack]
 # The Slack concierge — ONE channel, one thread per PR. Tokens are

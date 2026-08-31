@@ -73,6 +73,7 @@ topology chose.
 | 22 | ssh preflight | server |
 | 30 | LLM auth | both |
 | 35 | interview and `config.toml` | both |
+| 36 | escalation (optional, off by default) | both |
 | 40 | GitHub App: create, install, label | both |
 | 50 | webhook ingress | both |
 | 60 | memory keys, phase A | both |
@@ -219,6 +220,48 @@ Secrets are never collected here. The step reports which of `app_id`, `app.pem`,
 `webhook_secret` (and `tunnel_token`, when your deployment shape needs it) are
 present, and points at the GitHub App step or `deploy/collect-secrets.sh` for
 the rest.
+
+### 36 — Escalation (optional, off by default)
+
+One question, and **"no" is the right answer for most teams** — it is also the
+shipped default, so declining changes nothing at all.
+
+The thing to be clear about before answering, because the name misleads: this
+is **not** "send the hard ones to a human". The reviewer decides every pull
+request itself, on the merits, and posts a verdict — that never changes, and
+there is no setting here that makes a review wait for a person. What escalation
+adds is a **note beside that verdict**: an @-mention of one named person,
+pointing them at *one thing* — this file and these lines, this migration, this
+decision — with the question spelled out. It is a `[check this]` item with a
+name on it.
+
+If you turn it on, you must say two things, and the step will not finish
+without both:
+
+- **to whom** — `targets`, the closed list of GitHub logins escalation may
+  ever reach, and `why`, in your own words, which is rendered verbatim in the
+  note;
+- **what** — at least one trigger: paths touched (globs), a PR label, a
+  severity floor on what the round posted, or a named check failing. All four
+  together is fine; none of them is refused, because a rule that cannot fire is
+  not a configuration.
+
+Two optional answers:
+
+- `shape` — `comment` (the default) posts the note. `review_request` **also**
+  puts the pull request in that person's review-requested queue. Be aware of
+  what you are choosing: GitHub words that queue entry "review this pull
+  request", which is exactly what is *not* being asked, so the note is still
+  posted alongside it and says so explicitly. `comment` is the shape that
+  matches the intent.
+- `session_judgement` — may the reviewer *also* escalate on its own judgement?
+  Off by default. With it on it is still bounded to the same `targets`: a
+  session that names anyone else is dropped by the daemon, not argued with.
+
+You can re-run this step any time to change your mind, and you can write extra
+`[[escalation.rules]]` blocks by hand — a re-run rewrites only the rule the
+interview owns and leaves your own alone. The `[escalation]` block in
+`config.example.toml` documents the whole grammar in place.
 
 ### 40 — GitHub App: create, install, label
 
@@ -515,8 +558,10 @@ What it reads out:
 >
 > Going live sets that flag to false. From then on the reviewer posts for real:
 > reviews and inline comments on labelled pull requests, its own status labels,
-> and replies to the author. It still never dismisses anyone's review, never
-> nominates a human reviewer, and never touches your default branch.
+> and replies to the author. It still never dismisses anyone's review and
+> never touches your default branch. It nominates a human reviewer only if you
+> turned escalation on at step 36 — and then only the people you named, beside
+> a verdict it has already decided.
 >
 > Declining is a completely normal answer, and not a lesser one.
 

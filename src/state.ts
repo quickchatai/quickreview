@@ -765,6 +765,24 @@ CREATE TABLE IF NOT EXISTS filed_items (
   ref TEXT,
   filed_at TEXT NOT NULL
 );
+-- Escalation deliveries (the optional off-by-default feature). One
+-- row per escalation that actually went out, and the UNIQUE index is the
+-- never-twice guarantee: the same person is never pointed at the same thing
+-- on the same PR again, however many rounds run. Rows exist only when
+-- [escalation] enabled = true; on a default install the table stays empty
+-- forever, which is what makes "off is byte-identical" true of the ledger too.
+CREATE TABLE IF NOT EXISTS escalations (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  pr           INTEGER NOT NULL,
+  target       TEXT NOT NULL,
+  scope_key    TEXT NOT NULL,
+  shape        TEXT NOT NULL,   -- 'comment' | 'review_request'
+  origin       TEXT NOT NULL,   -- 'rule' | 'session'
+  rule         TEXT,
+  round_no     INTEGER,
+  delivered_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS escalations_once ON escalations(pr, target, scope_key);
 CREATE TABLE IF NOT EXISTS slack_threads (
   pr           INTEGER PRIMARY KEY,
   channel      TEXT NOT NULL,
@@ -3195,6 +3213,43 @@ export class StateStore {
     return (
       this.db.prepare("SELECT COUNT(*) AS c FROM filed_items WHERE kind = ? AND filed_at >= ?").get(kind, sinceIso) as { c: number }
     ).c;
+  }
+
+  // ---- escalations (empty unless the feature is switched on) -----
+
+  /** Has this exact person already been pointed at this exact thing on this
+   * PR? The dedup that makes an escalation a one-time notification rather
+   * than a per-round nag. `key` is `"<target>|<scopeKey>"`. */
+  escalationDelivered(pr: number, key: string): boolean {
+    const [target = "", scopeKey = ""] = key.split("|", 2);
+    const row = this.db
+      .prepare("SELECT 1 AS x FROM escalations WHERE pr = ? AND target = ? AND scope_key = ? LIMIT 1")
+      .get(pr, target, scopeKey) as { x: number } | undefined;
+    return row !== undefined;
+  }
+
+  /** How many escalations this PR has taken, across every round — the input
+   * to `[escalation] max_per_pr`. */
+  escalationCount(pr: number): number {
+    return (this.db.prepare("SELECT COUNT(*) AS c FROM escalations WHERE pr = ?").get(pr) as { c: number }).c;
+  }
+
+  recordEscalation(
+    pr: number,
+    row: { target: string; scope_key: string; shape: string; origin: string; rule: string | null; round_no: number | null },
+  ): void {
+    this.db
+      .prepare(
+        "INSERT OR IGNORE INTO escalations (pr, target, scope_key, shape, origin, rule, round_no, delivered_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(pr, row.target, row.scope_key, row.shape, row.origin, row.rule, row.round_no, this.ts());
+  }
+
+  /** Every escalation on a PR, oldest first — the operator's audit view. */
+  escalationsFor(pr: number): Array<{ target: string; scope_key: string; shape: string; origin: string; rule: string | null; round_no: number | null; delivered_at: string }> {
+    return this.db
+      .prepare("SELECT target, scope_key, shape, origin, rule, round_no, delivered_at FROM escalations WHERE pr = ? ORDER BY id")
+      .all(pr) as any;
   }
 
   // ---- Slack: PR ⇄ thread map -------------------------------------------

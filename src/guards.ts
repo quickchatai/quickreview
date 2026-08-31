@@ -254,7 +254,20 @@ export function makePostingGuard(deps: GuardDeps): MutationGuard {
       }
 
       // --- guard 2: has anything happened since the last review? ---
-      if (deps.guards.skip_unchanged_head && !hasNewEvidence(deps.store.reviewedHead(pr), head)) {
+      //
+      // The escalation note is exempt, and ONLY it. Guard 2 exists to
+      // stop the bot RE-REVIEWING a head it already reviewed (71 of 444 in the
+      // predecessor). An escalation note is not a review of the head: it
+      // carries no verdict, claims no head (see `after` below), and by design
+      // lands right after the round's own review — i.e. always at a head the
+      // mark has just been stamped on, so guard 2 would suppress every one of
+      // them. Its duplicate-suppression is strictly narrower than guard 2's:
+      // the `escalations` ledger refuses the same person + the same thing on
+      // the same PR forever, and `[escalation] max_per_pr` caps the rest.
+      // Every other guard still binds it — merged/closed (3) and head drift
+      // (5) both ran above, unconditionally.
+      const mechanical = intent.reviewPurpose === "escalation";
+      if (deps.guards.skip_unchanged_head && !mechanical && !hasNewEvidence(deps.store.reviewedHead(pr), head)) {
         return refuse(intent, pr, "no-new-evidence", { head_sha: head });
       }
 
@@ -311,15 +324,13 @@ export function makePostingGuard(deps: GuardDeps): MutationGuard {
 
     after(intent: MutationIntent, result: GateResult) {
       // The mark is stamped only for a substantive review that really reached
-      // GitHub. A migration pre-check COMMENT is deterministic mechanics, not
-      // the round's verdict; letting it claim the head makes guard 2 suppress
-      // the substantive review that follows.
-      if (
-        intent.kind !== "create_review"
-        || intent.reviewPurpose === "migration_precheck"
-        || !result.executed
-        || !intent.pr
-      ) return;
+      // GitHub. A mechanically-authored COMMENT — the migration pre-check
+      //, the escalation note — is deterministic mechanics,
+      // not the round's verdict; letting one claim the head makes guard 2
+      // suppress the substantive review that follows. Keyed on the PRESENCE of
+      // a `reviewPurpose` rather than on each spelling, so a future purpose
+      // cannot claim a head by being forgotten here.
+      if (intent.kind !== "create_review" || intent.reviewPurpose || !result.executed || !intent.pr) return;
       const body = (intent.body ?? {}) as ReviewBody;
       if (!body.commit_id) return;
       deps.store.recordReviewedHead(intent.pr, {

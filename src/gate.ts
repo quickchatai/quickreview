@@ -15,9 +15,17 @@ export type MutationKind =
   | "add_label"
   | "remove_label"
   | "delete_team_review_request"
-  // "request_reviewer" was retired on 2026-08-18 with the escalation
-  // mechanics. Its absence from this union is the enforcement: no call site
-  // can nominate a human reviewer on GitHub, because no such kind exists.
+  // Reviewer nomination, returned 2026-08-31 as the optional escalation
+  // feature's second delivery shape (ratified rule-10 amendment).
+  // It is an ORDINARY kind and nothing about it is special-cased: fully
+  // gated, suppressed in dry-run like everything else, never `forceLive`,
+  // never in APP_SELF_CONFIG_KINDS. It is reachable only from
+  // `src/escalation.ts`, only when `[escalation] enabled = true` (off by
+  // default) and only towards a login the operator listed in
+  // `[escalation] targets`. It never defers, replaces or withholds a verdict:
+  // the review is decided and posted on the merits first, and the request is
+  // additive notification beside it.
+  | "request_reviewer"
   | "create_review"
   | "create_review_comment_reply"
   // Resolve only a bot-owned inline thread after the adapter verifies both
@@ -41,13 +49,15 @@ export type MutationKind =
  * The same set at RUNTIME. The union above is erased at compile time, so on
  * its own it stops honest call sites and nothing else — a hand-rolled intent
  * (or one that crosses a JSON boundary) sailed straight through. Every intent
- * is now checked against this list, which makes a retired kind such as
- * `request_reviewer` unreachable in fact and not merely in the type system.
+ * is now checked against this list, which makes a kind that is not on it — a
+ * review dismissal, say — unreachable in fact and not merely in the type
+ * system.
  */
 export const MUTATION_KINDS: readonly MutationKind[] = [
   "add_label",
   "remove_label",
   "delete_team_review_request",
+  "request_reviewer",
   "create_review",
   "create_review_comment_reply",
   "resolve_own_review_thread",
@@ -80,7 +90,17 @@ export const APP_SELF_CONFIG_KINDS = ["update_own_webhook_url"] as const satisfi
  * need no installation permission at all) instead of forgetting it. */
 export type AppSelfConfigKind = (typeof APP_SELF_CONFIG_KINDS)[number];
 
-export type ReviewPurpose = "migration_precheck";
+/**
+ * Provenance of a MECHANICALLY-authored review — one the daemon composed
+ * itself, as opposed to the round's substantive review, which the session
+ * writes. Absent means substantive.
+ *
+ * Both members are COMMENT-event reviews that state a fact and ask for
+ * nothing: the migration-number collision remedy, and the
+ * escalation note pointing one named person at one named thing. Neither
+ * carries a verdict, so neither may claim the head (guards.ts `after`).
+ */
+export type ReviewPurpose = "migration_precheck" | "escalation";
 
 export interface MutationIntent {
   kind: MutationKind;

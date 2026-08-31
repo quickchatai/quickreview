@@ -225,7 +225,8 @@ its kills (they feed the EOD critic).
 ## 5. Decide
 
 > **This section is authoritative over steps 5 and 7 of your system prompt.**
-> There are no escalation criteria — only the three verdicts below.
+> There are no criteria for handing this review to a person — only the three
+> verdicts below.
 
 <!-- RATIFIED ci-gate — do not edit; owner only -->
 **CI gate — apply it BEFORE the mapping below. No green CI at this head makes
@@ -352,6 +353,8 @@ map and may block. Adjacent accessibility, validation, query-scope and prompt
 correctness defects remain reviewable under their actual kind.
 
 {{directive_note}}
+
+{{escalation_note}}
 
 <!-- RATIFIED merge-call — do not edit; owner only -->
 **The merge call is always yours** (the owner, 2026-08-19: the review is never

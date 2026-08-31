@@ -149,6 +149,19 @@ export interface RoundOrder {
    * existed.
    */
   first_party_directives?: { files: string[]; mention: string };
+  /**
+   * the logins this round's session may escalate to on its own
+   * judgement. Present ONLY when `[escalation] enabled = true` AND
+   * `session_judgement = true` — so on a default install (escalation off) the
+   * field is absent and `{{escalation_note}}` renders empty, leaving the round
+   * prompt byte-identical to a build without the feature.
+   *
+   * The list is advisory to the session and BINDING on the daemon: an
+   * escalation naming anything else is dropped in `escalation.ts`, not argued
+   * with. The deterministic rules do not appear here at all — the daemon
+   * evaluates and delivers those itself, with no model in the loop.
+   */
+  escalation_targets?: string[];
   /** The sha the worktree is ACTUALLY at — reconciled against the fetched
    * `refs/pull/<n>/head` before the order is built, not the webhook snapshot. */
   head_sha: string;
@@ -243,6 +256,19 @@ export interface VerdictFile {
    * pr/round_no digit-string coercion).
    */
   passes?: VerdictPassEntry[];
+  /**
+   * Session-judgement escalations — entries the session asks the
+   * daemon to deliver BESIDE this verdict. Only read when
+   * `[escalation] enabled = true` AND `session_judgement = true`; every entry
+   * is validated daemon-side (target must be a configured one, scope must
+   * name something concrete) and silently dropped otherwise.
+   *
+   * Deliberately typed `unknown[]`: this is model-written input, normalized by
+   * `escalation.ts normalizeSessionEscalations` and never trusted to be
+   * well-shaped. A malformed entry costs a log line — it can never fail, delay
+   * or alter the verdict this file carries.
+   */
+  escalations?: unknown[];
   finished_at: string;
 }
 

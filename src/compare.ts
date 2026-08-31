@@ -86,6 +86,12 @@ export const ALLOWED_MUTATION_KINDS = [
   "create_issue",
   "create_pull",
   "push_branch",
+  // an escalation's review request is a legitimate intent again when
+  // the operator switched the feature on (it is off by default, so on a stock
+  // install no such record can appear). Listing it keeps the scan an honest
+  // allowlist — a configured, gated mutation must not read as a structural
+  // violation.
+  "request_reviewer",
 ] as const satisfies readonly MutationKind[];
 
 const ALLOWED = new Set<string>(ALLOWED_MUTATION_KINDS);
@@ -260,16 +266,12 @@ export function invariantScan(records: DryrunRecord[], pr: number): InvariantVio
       violations.push({ rule: "no unsolicited scope", detail: `record ${r.file ?? "?"} (${r.kind}) targets #${r.pr}, not the PR under comparison (#${pr})` });
     }
   }
-  // Retired kinds: recognised so historical dry-run evidence reads clearly
-  // rather than tripping the generic allowlist rule, but still a violation if
-  // one shows up in a fresh run — nothing can emit them any more.
-  const retired = records.filter((r) => r.kind === "request_reviewer");
-  if (retired.length > 0) {
-    violations.push({
-      rule: "retired mutation kind",
-      detail: `${retired.length} request_reviewer record(s) for #${pr} — escalation was scrapped 2026-08-18; no code path may nominate a reviewer`,
-    });
-  }
+  // There is no "retired mutation kind" rule any more. It existed for exactly
+  // one kind — `request_reviewer` — and brought that back as an
+  // ordinary gated mutation, so the rule would now flag a legitimate,
+  // configured, off-by-default escalation. Under the hard-cut policy a
+  // rule with nothing left to say is deleted rather than kept as debt; the
+  // generic allowlist above still catches every kind the gate does not define.
   return violations;
 }
 

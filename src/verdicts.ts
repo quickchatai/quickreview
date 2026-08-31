@@ -12,7 +12,13 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, watch, type FSWatcher } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { classifyCi, type CheckSummary } from "./cigate.js";
+import { classifyCi, latestRunPerName, type CheckSummary } from "./cigate.js";
+import {
+  deliverEscalations,
+  evaluateEscalationRules,
+  normalizeSessionEscalations,
+  type EscalationFacts,
+} from "./escalation.js";
 import {
   DEFAULT_MAX_PROMPT_REDELIVERIES,
   DEFAULT_MAX_SELF_REQUEUES,
@@ -34,7 +40,7 @@ import { applyEvent } from "./statemachine.js";
 import type { VerdictAnnouncer } from "./slack/announce.js";
 import { isLoudCancelCause, type CancelCause, type RoundRow, type StateStore } from "./state.js";
 import { enforceLedgerFreshness } from "./ledgercheck.js";
-import { enforceFindingsRecord } from "./findingsrecord.js";
+import { enforceFindingsRecord, findingsRecordPath, readFindingsRecord } from "./findingsrecord.js";
 import { normalizeVerdict, type RoundRecoveryDisposition, type SessionHooks, type VerdictFile, type VerdictPassEntry } from "./types.js";
 import { postingMarker, readPostingReceipt, receiptMatchesVerdict, type PostingReceipt } from "./posting-receipt.js";
 import { flushHeldWakes } from "./wakes.js";
@@ -59,6 +65,21 @@ const SELF_REQUEUE_CAUSE: Record<SelfRequeueMode, CancelCause> = {
 export interface VerdictAdapter {
   addLabel(n: number, label: string): Promise<GateResult>;
   removeLabel(n: number, label: string): Promise<GateResult>;
+  /** PR metadata — the escalation feature's label facts. Optional
+   * in the same shape as everything else here: an adapter that cannot answer
+   * simply means label-keyed escalation rules do not fire. */
+  getPr?(n: number): Promise<{ labels: string[] }>;
+  /** Changed files — the escalation feature's path facts. Same discipline. */
+  listPrFiles?(n: number): Promise<Array<{ filename: string }>>;
+  /** The two gated escalation writes. Both optional: a daemon whose
+   * adapter has neither delivers no escalations at all, which is exactly what
+   * the default (feature off) already does. */
+  createReview?(
+    n: number,
+    payload: { commit_id: string; event: "COMMENT"; body: string },
+    options?: { purpose?: "escalation" | "migration_precheck" },
+  ): Promise<GateResult>;
+  requestEscalationReview?(n: number, logins: string[]): Promise<GateResult>;
   /** Checks at a head (read-only, cigate's classifier input). Optional: with
    * it, a session-route withheld approval records WHICH CI state caused the
    * withhold; without it the mark stores null, as it always did. */
@@ -237,7 +258,15 @@ export function validateVerdict(raw: unknown): ParsedVerdict {
   const norm = normalizePasses(v.passes);
   if (norm.passes) v.passes = norm.passes;
   else delete v.passes;
-  return { ok: true, verdict: raw as unknown as VerdictFile, ...(norm.note ? { passes_note: norm.note } : {}) };
+  // Session-judgement escalations: the SAME tolerant discipline, for
+  // the same reason and one stronger one — escalation is notification beside a
+  // verdict, so a malformed `escalations` array must never be able to reject
+  // the verdict it rides on. Unreadable ⇒ dropped with a note.
+  const esc = normalizeSessionEscalations(v.escalations);
+  if (esc.entries.length > 0) v.escalations = esc.entries;
+  else delete v.escalations;
+  const notes = [norm.note, esc.note].filter(Boolean).join("; ");
+  return { ok: true, verdict: raw as unknown as VerdictFile, ...(notes ? { passes_note: notes } : {}) };
 }
 
 function sleep(ms: number): Promise<void> {
@@ -669,6 +698,15 @@ export class VerdictWatcher {
       this.log(`verdicts: #${v.pr} preserved fresh-head successor after round ${v.round_no}`);
     }
     if (round) this.measureUsage(v.pr, round.id, round.started_at, this.now().toISOString());
+    // Escalation — OFF unless the operator switched it on, and it
+    // runs HERE, after the verdict has been applied, the label moved and the
+    // PR transitioned. That ordering is the invariant, not a convenience: an
+    // escalation is additive notification beside a decided review, so it can
+    // neither withhold, defer nor replace one. `deliverEscalations` returns a
+    // delivery record and nothing else — there is no channel back into the
+    // verdict — and the whole call is wrapped, so even a throw lands as a log
+    // line on an already-applied verdict.
+    await this.safe(() => this.deliverEscalations(v), `escalations pr-${v.pr}`);
     // Round is over: compact the sticky conversation. Cache re-reads of the
     // ever-growing prefix were 41% of measured cost; the continuity that
     // matters (SETTLED digest, ledger) survives compaction by design.
@@ -710,6 +748,100 @@ export class VerdictWatcher {
     if (!successorPromoted) await this.flushWakes(v.pr);
     this.log(`verdicts: #${v.pr} round ${v.round_no} → ${v.verdict}`);
     return "applied";
+  }
+
+  // ---- escalation (off by default) -----------------------------
+
+  /**
+   * Assemble the round's facts, evaluate the operator's deterministic rules,
+   * add whatever the session asked for, and hand the lot to the ONE delivery
+   * path.
+   *
+   * Everything here is a no-op when `[escalation] enabled = false`: the first
+   * line returns before a single fact is read, so a default install makes no
+   * extra API call, writes no row and logs no event.
+   */
+  private async deliverEscalations(v: VerdictFile): Promise<void> {
+    const cfg = this.deps.cfg.escalation;
+    if (!cfg.enabled) return;
+    const { store, adapter } = this.deps;
+    if (!adapter.createReview) return; // no gated posting route ⇒ nothing to deliver through
+
+    // --- the facts. Every read is best-effort: a fact we cannot see means
+    // the rules keyed on it do not fire, never that the round is disturbed.
+    const facts: EscalationFacts = {
+      changed_paths: await this.escalationPaths(v.pr),
+      labels: await this.escalationLabels(v.pr),
+      findings: this.escalationFindings(v.pr, v.round_no),
+      failing_checks: await this.escalationFailingChecks(v.pr, v.head_sha),
+    };
+
+    // Deterministic rules first, then the session's own requests — which are
+    // filtered against `targets` inside deliverEscalations, daemon-side.
+    const candidates: unknown[] = [
+      ...evaluateEscalationRules(cfg, facts),
+      ...(cfg.session_judgement ? (v.escalations ?? []) : []),
+    ];
+    if (candidates.length === 0) return;
+    await deliverEscalations(
+      {
+        cfg,
+        store,
+        adapter: {
+          createReview: adapter.createReview.bind(adapter),
+          ...(adapter.requestEscalationReview ? { requestEscalationReview: adapter.requestEscalationReview.bind(adapter) } : {}),
+        },
+        log: this.log.bind(this),
+      },
+      { pr: v.pr, verdict: v.verdict, head_sha: v.head_sha, round_no: v.round_no, candidates },
+    );
+  }
+
+  private async escalationPaths(pr: number): Promise<string[]> {
+    if (!this.deps.adapter.listPrFiles) return [];
+    try {
+      return (await this.deps.adapter.listPrFiles(pr)).map((f) => f.filename).filter(Boolean);
+    } catch (err) {
+      this.log(`escalation: file listing failed on #${pr}`, err);
+      return [];
+    }
+  }
+
+  private async escalationLabels(pr: number): Promise<string[]> {
+    if (!this.deps.adapter.getPr) return [];
+    try {
+      return (await this.deps.adapter.getPr(pr)).labels ?? [];
+    } catch (err) {
+      this.log(`escalation: PR read failed on #${pr}`, err);
+      return [];
+    }
+  }
+
+  /** The findings the round POSTED, from the reasoning record. Absent
+   * or unreadable ⇒ severity-keyed rules simply do not fire. */
+  private escalationFindings(pr: number, roundNo: number): Array<{ severity: string; path?: string | null; title?: string | null }> {
+    const dir = this.deps.findingsDir;
+    if (!dir) return [];
+    const parsed = readFindingsRecord(findingsRecordPath(dir, pr, roundNo), pr, roundNo);
+    if (!parsed.record) return [];
+    return parsed.record.findings
+      .filter((f) => f.disposition === "posted" && f.severity)
+      .map((f) => ({ severity: String(f.severity), path: f.path, title: f.reason }));
+  }
+
+  /** Check names whose LATEST run at the head is not a success — the same
+   * latest-run-per-name rule the CI gate uses, so an auto-cancelled
+   * superseded run cannot escalate to a person forever. */
+  private async escalationFailingChecks(pr: number, head: string): Promise<string[]> {
+    if (!this.deps.adapter.listChecks || !head) return [];
+    try {
+      return latestRunPerName(await this.deps.adapter.listChecks(head))
+        .filter((c) => c.status === "completed" && (c.conclusion ?? "") !== "success" && (c.conclusion ?? "") !== "skipped" && (c.conclusion ?? "") !== "neutral")
+        .map((c) => c.name);
+    } catch (err) {
+      this.log(`escalation: checks read failed on #${pr}`, err);
+      return [];
+    }
   }
 
   // ---- ledger freshness ---------------------------------------

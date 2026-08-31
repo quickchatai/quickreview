@@ -659,16 +659,44 @@ export class GitHubAdapter {
     return result;
   }
 
-  // requestEscalationReview() was removed on 2026-08-18 (the owner: scrap the
-  // escalation mechanics). The daemon no longer nominates a human on GitHub;
-  // a PR it cannot decide is parked on `awaiting_human` daemon-side and
-  // surfaced through the TUI and Slack. The `request_reviewer` gate kind is
-  // consequently unreachable — see gate.ts.
+  /**
+   * Put ONE named person in this PR's review-requested queue — the second
+   * delivery shape of the optional escalation feature (the ratified
+   * rule-10 amendment of 2026-08-31). Removed on 2026-08-18 with the old
+   * escalation mechanics; back as an ordinary gated mutation.
+   *
+   * Three things this is NOT, and none of them changed:
+   *   * It is not a way to hand the review back. `src/escalation.ts` calls it
+   *     only after the round's verdict has been decided and applied, and only
+   *     alongside a comment that names the ONE thing being asked about —
+   *     GitHub words the queue entry "review this pull request", which is
+   *     exactly the framing the comment exists to correct.
+   *   * It is not a dry-run exception. `request_reviewer` is an ordinary
+   *     `MutationKind`: suppressed to `state/dryrun/` like everything else,
+   *     `forceLive` throws on it, and it is not in `APP_SELF_CONFIG_KINDS`.
+   *   * It is not review-dismissing. Rule 2 is untouched; requesting a review
+   *     adds a reviewer and changes no existing review.
+   *
+   * Needs no new App permission: this is a POST on the same
+   * `/pulls/{n}/requested_reviewers` route the team-request DELETE already
+   * uses, and both are Pull requests: write, which the App manifest grants.
+   */
+  async requestEscalationReview(n: number, logins: string[]): Promise<GateResult> {
+    const reviewers = logins.map((l) => l.trim().replace(/^@/, "")).filter(Boolean);
+    return this.gate.execute({
+      kind: "request_reviewer",
+      method: "POST",
+      path: `/repos/${this.owner}/${this.repo}/pulls/${n}/requested_reviewers`,
+      body: { reviewers },
+      note: `escalation: request review from ${reviewers.map((r) => `@${r}`).join(", ")} on #${n}`,
+      pr: n,
+    });
+  }
 
   async createReview(
     n: number,
     payload: { commit_id: string; event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT"; body: string; comments?: unknown[] },
-    options?: { purpose?: "migration_precheck" },
+    options?: { purpose?: "migration_precheck" | "escalation" },
   ): Promise<GateResult> {
     return this.gate.execute({
       kind: "create_review",

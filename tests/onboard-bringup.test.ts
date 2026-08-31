@@ -109,6 +109,10 @@ describe("the registered sequence (tail)", () => {
       "ssh_preflight",
       "llm_auth",
       "config_fill",
+      // the escalation question sits right after the interview — it
+      // patches the config the interview just wrote, and "no" (the default,
+      // and the right answer for most teams) leaves everything unchanged.
+      "escalation",
       "github_app",
       "ingress",
       "memory",

@@ -171,19 +171,16 @@ describe("(b) invariant scan", () => {
 
   it("keeps the allowlist in step with the gate's kinds", () => {
     expect(ALLOWED_MUTATION_KINDS).toContain("create_review");
-    expect(ALLOWED_MUTATION_KINDS).not.toContain("request_reviewer"); // retired 2026-08-18
-    expect(ALLOWED_MUTATION_KINDS).toHaveLength(8);
+    // an escalation review request is a legitimate intent again.
+    expect(ALLOWED_MUTATION_KINDS).toContain("request_reviewer");
+    expect(ALLOWED_MUTATION_KINDS).toHaveLength(9);
   });
 
-  it("flags a request_reviewer record as a retired kind, with the reason", () => {
+  it("does NOT flag a request_reviewer record — it is an ordinary kind again", () => {
     const req: DryrunRecord = { kind: "request_reviewer", method: "POST", path: "/x", pr: 501, file: "r.json" };
     const v = invariantScan([...sandboxRecords, req], 501);
-    const retired = v.find((x) => x.rule === "retired mutation kind");
-    expect(retired).toBeDefined();
-    expect(retired!.detail).toContain("escalation was scrapped");
-    // …and it is reported ONCE, not once per record.
-    const twice = invariantScan([...sandboxRecords, req, { ...req, file: "r2.json" }], 501);
-    expect(twice.filter((x) => x.rule === "retired mutation kind")).toHaveLength(1);
+    expect(v.map((x) => x.rule)).not.toContain("retired mutation kind");
+    expect(v.map((x) => x.rule)).not.toContain("mutation-kind allowlist");
   });
 
   it("detects unsolicited scope (a record aimed at another PR)", () => {

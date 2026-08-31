@@ -19,6 +19,7 @@ import { fingerprintRoundGitConfig } from "./execboundary.js";
 import type { GateResult } from "./gate.js";
 import type { PrFileEntry } from "./github.js";
 import { DJANGO_ECOSYSTEM, type Ecosystem } from "./ecosystem.js";
+import { promptTargetsFor } from "./escalation.js";
 import { INTENT_PASS, passTier, selectLenses } from "./heuristics.js";
 import type { HeuristicsExtension } from "./heuristics.js";
 import type { MigrationCollision } from "./migrations.js";
@@ -639,6 +640,12 @@ export function buildRoundOrder(args: {
     migration_collisions: args.migrationCollisions ?? [],
     migration_precheck_degraded: args.migrationPrecheckDegraded ?? false,
     ...(args.firstPartyDirectives !== undefined ? { first_party_directives: args.firstPartyDirectives } : {}),
+    // absent unless escalation is enabled AND session judgement is
+    // on, so the default install's order (and prompt) is unchanged.
+    ...((): { escalation_targets?: string[] } => {
+      const targets = promptTargetsFor(args.cfg.escalation);
+      return targets ? { escalation_targets: targets } : {};
+    })(),
     head_sha: headSha,
     base_ref: args.tree?.base_ref ?? "",
     base_sha: args.tree?.base_sha ?? "",

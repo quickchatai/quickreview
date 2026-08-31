@@ -34,8 +34,11 @@ imports use the `.js` suffix), Node ≥ 22, minimal dependencies.
    rubric acceptance, the caps).
 2. **One mutation gate.** Every GitHub write flows through `src/gate.ts`
    (shell twin: `scripts/guards.sh`). Never add a write path around it, and
-   never add a review-dismissal or reviewer-nomination mutation — those are
-   structurally absent on purpose.
+   never add a review-dismissal mutation — that one is structurally absent on
+   purpose. `request_reviewer` exists (the optional, off-by-default escalation
+   feature) but is an ordinary kind with no special case: suppressed in
+   dry-run, never `forceLive`, reachable only from `src/escalation.ts` and
+   only towards a configured target.
 3. **Legacy folds are load-bearing.** Retired spellings (old tier strings,
    old command names, `ESCALATE`) stay accepted on input forever and are
    pinned by `tests/legacy-acceptance.test.ts`. Don't "clean them up".

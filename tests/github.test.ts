@@ -334,13 +334,35 @@ describe("resolveOwnReviewThread ownership gate", () => {
   });
 });
 
-describe("nominating a human reviewer is structurally impossible", () => {
-  it("the adapter has no requestEscalationReview method", () => {
-    const { adapter } = build(() => ({}));
-    expect((adapter as unknown as Record<string, unknown>).requestEscalationReview).toBeUndefined();
+// (2026-08-31): reviewer nomination came back as the optional
+// escalation feature's second delivery shape, and this describe changed with
+// it. What it pins now is that the return is ORDINARY — a gated mutation with
+// no special case anywhere — because "the gate rejects it" is no longer the
+// guarantee. It never was the interesting one: the interesting one is that
+// nothing here can dismiss a review (rule 2, unchanged and pinned elsewhere).
+describe("requesting a human reviewer is an ORDINARY gated mutation", () => {
+  it("goes through the gate as request_reviewer, POSTing to requested_reviewers", async () => {
+    const { adapter, calls } = build(() => ({}));
+    const result = await adapter.requestEscalationReview(8, ["@teammate-one"]);
+    // dry_run in this harness ⇒ suppressed to state/dryrun, like every other
+    // ordinary kind. Nothing reached GitHub.
+    expect(result.executed).toBe(false);
+    expect(calls.some((c) => c.url.includes("requested_reviewers"))).toBe(false);
+    const files = readdirSync(dryrunDir).filter((f) => f.endsWith("-request_reviewer.json"));
+    expect(files).toHaveLength(1);
+    const rec = JSON.parse(readFileSync(join(dryrunDir, files[0]!), "utf8"));
+    expect(rec).toMatchObject({
+      kind: "request_reviewer",
+      method: "POST",
+      path: "/repos/example-org/example-app/pulls/8/requested_reviewers",
+      // The leading "@" an operator or a session may write is stripped here,
+      // not at the API.
+      body: { reviewers: ["teammate-one"] },
+      pr: 8,
+    });
   });
 
-  it("the gate rejects a hand-rolled request_reviewer mutation", async () => {
+  it("forceLive still throws on it — the dry-run bypass did not widen", async () => {
     const { adapter } = build(() => ({}));
     const gate = (adapter as unknown as { gate: { execute: (i: unknown) => Promise<unknown> } }).gate;
     await expect(
@@ -348,12 +370,22 @@ describe("nominating a human reviewer is structurally impossible", () => {
         kind: "request_reviewer",
         method: "POST",
         path: "/repos/example-org/example-app/pulls/8/requested_reviewers",
-        body: { reviewers: ["mhale"] },
-        note: "smuggled",
+        body: { reviewers: ["teammate-one"] },
+        note: "forced",
         pr: 8,
+        forceLive: true,
       }),
-    ).rejects.toThrow();
-    expect(readdirSync(dryrunDir)).toHaveLength(0);
+    ).rejects.toThrow(/forceLive is not allowed/);
+  });
+
+  it("dismissing a review is STILL structurally impossible — that half never moved", async () => {
+    const { adapter } = build(() => ({}));
+    const gate = (adapter as unknown as { gate: { execute: (i: unknown) => Promise<unknown> } }).gate;
+    for (const kind of ["dismiss_review", "delete_review", "update_review"]) {
+      await expect(
+        gate.execute({ kind, method: "PUT", path: "/repos/o/r/pulls/8/reviews/1/dismissals", note: "smuggled", pr: 8 }),
+      ).rejects.toThrow(/unknown mutation kind/);
+    }
   });
 
   it("base_ref rides along on PR reads (the worktree needs it)", async () => {

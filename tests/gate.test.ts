@@ -102,6 +102,10 @@ describe("the closed mutation vocabulary", () => {
         "delete_team_review_request",
         "push_branch",
         "remove_label",
+        // Reviewer nomination, back on 2026-08-31 as the optional escalation
+        // feature's second delivery shape (ratified rule-10
+        // amendment). ORDINARY in every respect — see the describe below.
+        "request_reviewer",
         // Bot-owned inline threads may be resolved after a checked author
         // response; this does not alter or dismiss a review verdict.
         "resolve_own_review_thread",
@@ -114,8 +118,12 @@ describe("the closed mutation vocabulary", () => {
         "update_own_webhook_url",
       ].sort(),
     );
-    // request_reviewer was retired with the escalation mechanics (2026-08-18).
-    expect(MUTATION_KINDS).not.toContain("request_reviewer");
+    // Rule 2, untouched by and pinned here where it is easiest to
+    // read: no kind dismisses a review or an approval. `supersede_own_review`
+    // is the ONE review-verdict-mutating kind and the adapter owner-guards it.
+    for (const gone of ["dismiss_review", "delete_review", "update_review", "dismiss_approval"]) {
+      expect(MUTATION_KINDS).not.toContain(gone);
+    }
   });
 
   it("the runtime list matches the compile-time union, so neither can drift", () => {
@@ -130,13 +138,83 @@ describe("the closed mutation vocabulary", () => {
   });
 
   it("rejects an unknown kind at runtime, recording nothing", async () => {
+    // NB the constructor call: this test used to pass an OBJECT to a
+    // positional constructor (found it), so `dryrunDir` was
+    // `undefined` and the "recording nothing" assertion held because the
+    // gate could not have written anywhere in the first place. Positional and
+    // real now — the refusal is what stops the write.
     const dir = mkdtempSync(join(tmpdir(), "qcr-gate-kind-"));
-    const gate = new MutationGate({ dryRun: true, dryrunDir: dir, executor: async () => ({}) });
+    const executor = vi.fn(async () => ({}));
+    const gate = new MutationGate(true, dir, executor);
     await expect(
-      gate.execute({ kind: "request_reviewer" as never, method: "POST", path: "/x", note: "smuggled", pr: 1 }),
+      gate.execute({ kind: "dismiss_review" as never, method: "PUT", path: "/x", note: "smuggled", pr: 1 }),
     ).rejects.toThrow(/unknown mutation kind/);
-    expect(readdirSync(dir)).toHaveLength(0);
+    expect(executor).not.toHaveBeenCalled();
+    expect(existsSync(dir) ? readdirSync(dir) : []).toHaveLength(0);
     rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+/**
+ * reviewer nomination is back, and back as an ORDINARY kind.
+ *
+ * The whole point of these assertions is that there is nothing to say about
+ * `request_reviewer` beyond "it behaves like `add_label`". The two ratified
+ * dry-run exceptions did NOT widen to take it in, and the sweep in the
+ * app-self-config describe below (every kind but one is suppressed in dry-run)
+ * covers it automatically because it walks MUTATION_KINDS.
+ */
+describe("request_reviewer — the escalation feature's second delivery shape", () => {
+  const request: MutationIntent = {
+    kind: "request_reviewer",
+    method: "POST",
+    path: "/repos/o/r/pulls/7/requested_reviewers",
+    body: { reviewers: ["teammate-one"] },
+    note: "escalation: request review from @teammate-one on #7",
+    pr: 7,
+  };
+
+  it("is suppressed to state/dryrun in dry-run, like every ordinary kind", async () => {
+    const executor = vi.fn(async () => ({ ok: true }));
+    const gate = new MutationGate(true, join(dir, "dryrun"), executor);
+    const result = await gate.execute(request);
+    expect(executor).not.toHaveBeenCalled();
+    expect(result.executed).toBe(false);
+    expect(JSON.parse(readFileSync(result.dryRunFile!, "utf8"))).toMatchObject({ kind: "request_reviewer", pr: 7 });
+  });
+
+  it("executes through the ONE executor in live mode", async () => {
+    const executor = vi.fn(async () => ({ ok: true }));
+    const gate = new MutationGate(false, join(dir, "dryrun"), executor);
+    expect((await gate.execute(request)).executed).toBe(true);
+    expect(executor).toHaveBeenCalledOnce();
+  });
+
+  it("forceLive THROWS on it — the supersede_own_review bypass is still the only one", async () => {
+    const executor = vi.fn(async () => ({ ok: true }));
+    const gate = new MutationGate(true, join(dir, "dryrun"), executor);
+    await expect(gate.execute({ ...request, forceLive: true })).rejects.toThrow(/forceLive is not allowed/);
+    expect(executor).not.toHaveBeenCalled();
+  });
+
+  it("is NOT in the app-self-config class — that set is still exactly one kind", () => {
+    expect(APP_SELF_CONFIG_KINDS as readonly string[]).not.toContain("request_reviewer");
+    expect([...APP_SELF_CONFIG_KINDS]).toEqual(["update_own_webhook_url"]);
+  });
+
+  it("cannot ride the git performer seam", async () => {
+    const perform = vi.fn(async () => ({ smuggled: true }));
+    const gate = new MutationGate(false, join(dir, "dryrun"), async () => ({}));
+    await expect(gate.execute({ ...request, method: "git" }, perform)).rejects.toThrow(/only allowed for kind "push_branch"/);
+    expect(perform).not.toHaveBeenCalled();
+  });
+
+  it("a posting guard can refuse it, and then it never happens", async () => {
+    const executor = vi.fn(async () => ({ ok: true }));
+    const gate = new MutationGate(false, join(dir, "dryrun"), executor);
+    gate.setGuard({ before: async () => ({ block: "pr-merged" }) });
+    expect(await gate.execute(request)).toMatchObject({ executed: false, blocked: "pr-merged" });
+    expect(executor).not.toHaveBeenCalled();
   });
 });
 
@@ -262,15 +340,17 @@ describe("the app-self-config gate class (ratified rule-1 amendment, 2026-08-30)
     expect(executor).not.toHaveBeenCalled();
   });
 
-  it("unknown kinds are still rejected and request_reviewer is still not a kind", async () => {
+  it("unknown kinds are still rejected, and no NEW kind joined the class", async () => {
     const gate = new MutationGate(true, join(dir, "dryrun"), async () => ({}));
-    for (const kind of ["request_reviewer", "update_app_config", "dismiss_review"]) {
+    for (const kind of ["update_app_config", "dismiss_review", "set_app_permissions"]) {
       await expect(
         gate.execute({ kind: kind as never, method: "PATCH", path: "/app/hook/config", note: "smuggled" }),
       ).rejects.toThrow(/unknown mutation kind/);
     }
     expect(existsSync(join(dir, "dryrun"))).toBe(false);
-    expect(MUTATION_KINDS).not.toContain("request_reviewer");
+    // added `request_reviewer` as an ORDINARY kind: it is real, and it
+    // is not in the class that executes in dry-run.
+    expect(MUTATION_KINDS).toContain("request_reviewer");
     expect(APP_SELF_CONFIG_KINDS as readonly string[]).not.toContain("request_reviewer");
   });
 });

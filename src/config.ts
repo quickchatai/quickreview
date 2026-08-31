@@ -381,6 +381,180 @@ export const REVIEW_DEFAULTS: ReviewConfig = {
 };
 
 /**
+ * [escalation] — the optional, OFF-BY-DEFAULT escalation feature (,
+ * ratified 2026-08-31; rule-10 amendment).
+ *
+ * Two invariants bound everything this table can express, and neither is a
+ * knob:
+ *
+ *   1. The reviewer STILL DECIDES. An escalation is additive notification
+ *      posted BESIDE a finished verdict. Nothing here can withhold, defer or
+ *      replace one — `src/escalation.ts` has no verdict in its return type and
+ *      is called only after the verdict has been applied.
+ *   2. It escalates a QUESTION, never a review. Every escalation names one
+ *      thing to look at (a file and line range, a migration, a named
+ *      decision) and why that person. There is no way to configure "ask
+ *      someone to review this PR" — the comment body is rendered from the
+ *      scope, not written free-hand.
+ *
+ * With `enabled = false` (the default, and what every shipped config carries)
+ * nothing in this table is read and behaviour is byte-identical to a build
+ * without the feature.
+ */
+export type EscalationShape = "comment" | "review_request";
+
+/** A severity threshold a rule may key on. Matches `src/severity.ts Severity`
+ * minus "nit", which is never worth a person's attention by definition. */
+export type EscalationSeverityFloor = "P0" | "P1" | "P2" | "P3";
+
+/**
+ * One operator-defined DETERMINISTIC trigger. No LLM judgement takes part in
+ * evaluating one: given the round's facts, `evaluateEscalationRules` is a pure
+ * function and `tests/escalation.test.ts` drives it directly.
+ *
+ * A rule fires when EVERY condition it declares is met (conditions AND
+ * together) — a rule that declares none never fires, and configuration
+ * validation refuses it rather than shipping a rule that silently does
+ * nothing.
+ */
+export interface EscalationRule {
+  /** Stable name — it appears in the event log and in the posted note. */
+  name: string;
+  /** The GitHub login to escalate to. MUST be one of `targets`. */
+  to: string;
+  /** Why this person, in the operator's own words — rendered verbatim. */
+  why: string;
+  /** Glob-ish path patterns; fires when the PR touches a matching file. */
+  paths: string[];
+  /** PR labels; fires when the PR carries one of them. */
+  labels: string[];
+  /** Fires when the round posted a finding at or above this severity. */
+  min_severity: EscalationSeverityFloor | "";
+  /** Check-run names; fires when the LATEST run of one is not green. */
+  failing_checks: string[];
+}
+
+export const ESCALATION_RULE_DEFAULTS: EscalationRule = {
+  name: "",
+  to: "",
+  why: "",
+  paths: [],
+  labels: [],
+  min_severity: "",
+  failing_checks: [],
+};
+
+export interface EscalationConfig {
+  /** OFF by default. False ⇒ no rule is evaluated, no note is rendered into
+   * any prompt, and no escalation mutation is ever built. */
+  enabled: boolean;
+  /**
+   * How an escalation is delivered. `comment` (the default) posts a gated
+   * COMMENT review @-mentioning the person with the narrow ask.
+   * `review_request` ALSO puts the PR in that person's review-requested queue
+   * (the `request_reviewer` gate kind) — GitHub's own UI frames that as
+   * "review this pull request", which is exactly the framing this feature
+   * rules out, so the accompanying comment is still posted and still carries
+   * the narrow ask. `comment` is the shape that matches the intent.
+   */
+  shape: EscalationShape;
+  /** The CLOSED set of logins any escalation may reach. A session-judgement
+   * escalation naming anyone else is dropped and logged; it is not an error
+   * the session can talk its way past. */
+  targets: string[];
+  /** May the PR's session ALSO escalate on its own judgement, bounded to
+   * `targets`? Off by default — the deterministic rules stand alone. */
+  session_judgement: boolean;
+  /** Hard cap on escalations delivered per PR, across all rounds. */
+  max_per_pr: number;
+  /** The deterministic triggers. */
+  rules: EscalationRule[];
+}
+
+export const ESCALATION_DEFAULTS: EscalationConfig = {
+  enabled: false,
+  shape: "comment",
+  targets: [],
+  session_judgement: false,
+  max_per_pr: 2,
+  rules: [],
+};
+
+const ESCALATION_SEVERITY_FLOORS: readonly string[] = ["P0", "P1", "P2", "P3"];
+const ESCALATION_LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
+
+/**
+ * Parse and VALIDATE `[escalation]`.
+ *
+ * The half-configured state the ticket forbids is made unrepresentable here
+ * rather than only in the wizard: a config with the feature on and no target,
+ * or with a rule pointing at a login that is not a target, or with a rule that
+ * declares no condition, fails to LOAD. A hand-edited config gets the same
+ * refusal the interview does.
+ *
+ * With `enabled = false` every other field is inert, so a half-filled table
+ * that is switched off is not an error — it is a draft.
+ */
+export function parseEscalation(raw: Record<string, any>): EscalationConfig {
+  const rawRules = Array.isArray(raw.rules) ? (raw.rules as Record<string, any>[]) : [];
+  const cfg: EscalationConfig = {
+    ...ESCALATION_DEFAULTS,
+    ...(raw as Partial<EscalationConfig>),
+    targets: (Array.isArray(raw.targets) ? raw.targets : []).map((t: unknown) => String(t).trim().replace(/^@/, "")).filter(Boolean),
+    rules: rawRules.map((r) => ({
+      ...ESCALATION_RULE_DEFAULTS,
+      ...r,
+      to: String(r.to ?? "").trim().replace(/^@/, ""),
+      name: String(r.name ?? "").trim(),
+      why: String(r.why ?? "").trim(),
+      paths: (Array.isArray(r.paths) ? r.paths : []).map((p: unknown) => String(p).trim()).filter(Boolean),
+      labels: (Array.isArray(r.labels) ? r.labels : []).map((l: unknown) => String(l).trim()).filter(Boolean),
+      failing_checks: (Array.isArray(r.failing_checks) ? r.failing_checks : []).map((c: unknown) => String(c).trim()).filter(Boolean),
+      min_severity: String(r.min_severity ?? "").trim().toUpperCase() as EscalationRule["min_severity"],
+    })),
+  };
+  if (cfg.shape !== "comment" && cfg.shape !== "review_request") {
+    throw new Error(`config.toml [escalation]: shape must be "comment" or "review_request" (got ${JSON.stringify(cfg.shape)})`);
+  }
+  if (!Number.isFinite(cfg.max_per_pr) || cfg.max_per_pr < 1) {
+    throw new Error(`config.toml [escalation]: max_per_pr must be a positive integer (got ${JSON.stringify(cfg.max_per_pr)})`);
+  }
+  for (const t of cfg.targets) {
+    if (!ESCALATION_LOGIN_RE.test(t)) {
+      throw new Error(`config.toml [escalation]: targets entry ${JSON.stringify(t)} is not a GitHub login`);
+    }
+  }
+  const seenNames = new Set<string>();
+  for (const r of cfg.rules) {
+    if (!r.name) throw new Error("config.toml [[escalation.rules]]: every rule needs a `name`");
+    if (seenNames.has(r.name)) throw new Error(`config.toml [[escalation.rules]]: duplicate rule name ${JSON.stringify(r.name)}`);
+    seenNames.add(r.name);
+    if (r.min_severity && !ESCALATION_SEVERITY_FLOORS.includes(r.min_severity)) {
+      throw new Error(`config.toml [[escalation.rules]] ${r.name}: min_severity must be P0, P1, P2 or P3 (got ${JSON.stringify(r.min_severity)})`);
+    }
+    if (r.paths.length + r.labels.length + r.failing_checks.length === 0 && !r.min_severity) {
+      throw new Error(`config.toml [[escalation.rules]] ${r.name}: declares no condition — it could never fire`);
+    }
+    if (!r.why) throw new Error(`config.toml [[escalation.rules]] ${r.name}: needs a \`why\` saying why this person`);
+  }
+  if (!cfg.enabled) return cfg; // switched off: the rest of the table is a draft
+  if (cfg.targets.length === 0) {
+    throw new Error("config.toml [escalation]: enabled = true with no `targets` — escalation on with nobody to escalate to is not a configuration");
+  }
+  if (cfg.rules.length === 0 && !cfg.session_judgement) {
+    throw new Error("config.toml [escalation]: enabled = true with no rules and session_judgement = false — nothing could ever escalate");
+  }
+  for (const r of cfg.rules) {
+    if (!cfg.targets.includes(r.to)) {
+      throw new Error(
+        `config.toml [[escalation.rules]] ${r.name}: to = ${JSON.stringify(r.to)} is not in [escalation] targets — every escalation target is declared once, in one place`,
+      );
+    }
+  }
+  return cfg;
+}
+
+/**
  * [owner] — the system's ONE accountable human, as a configured role
  *. Every identity surface renders from here: Slack fallback prose,
  * the companion day-open role label, the pinned-memory head framing, and the
@@ -788,6 +962,7 @@ export interface Config {
   guards: GuardsConfig;
   recheck: RecheckConfig;
   review: ReviewConfig;
+  escalation: EscalationConfig;
   slack: SlackConfig;
   owner: OwnerConfig;
 }
@@ -1066,6 +1241,7 @@ export function parseConfig(toml: string): Config {
         ...(((raw.review as Record<string, any> | undefined)?.directives ?? {}) as Partial<ReviewDirectivesConfig>),
       },
     },
+    escalation: parseEscalation((raw.escalation ?? {}) as Record<string, any>),
     slack: parseSlack((raw.slack ?? {}) as Record<string, any>, ops.timezone),
     owner: { ...OWNER_DEFAULTS, ...((raw.owner ?? {}) as Partial<OwnerConfig>) },
   };

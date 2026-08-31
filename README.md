@@ -75,7 +75,15 @@ on and the non-goals it refuses to unrefuse — is in
 - **One mutation gate**: every GitHub write goes through a single gate with
   posting-time guards; in dry-run mode every would-be mutation is written to
   `state/dryrun/` instead of executed. There is structurally no code path
-  that dismisses reviews or nominates human reviewers.
+  that dismisses a review. Nominating a human reviewer is possible only
+  through the optional, off-by-default escalation feature, and only towards a
+  login you configured — see below.
+- **Escalation is optional and ships off** (`[escalation]` in
+  `config.example.toml`). The reviewer always decides every PR on the merits
+  and posts its verdict; escalation, if you turn it on, adds a note *beside*
+  that verdict @-mentioning one named person and pointing them at one thing —
+  a file and line range, a migration, a named decision. It never asks anyone
+  to review the pull request, and it never makes a review wait for a person.
 - **Sovereign by construction**: self-hosted daemon, your GitHub App, your
   memory store under your keys, rules as files in your repo. The only thing
   that leaves your infrastructure is the model call, to the provider you

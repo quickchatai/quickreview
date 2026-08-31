@@ -71,6 +71,11 @@ const KIND_WRITE_PERMISSION: Record<Exclude<MutationKind, AppSelfConfigKind>, st
   add_label: "issues", // POST /issues/{n}/labels
   remove_label: "issues", // DELETE /issues/{n}/labels/{label}
   delete_team_review_request: "pull_requests", // DELETE /pulls/{n}/requested_reviewers
+  //, and the answer to "does escalation need a wider App permission?":
+  // no. This is a POST on the SAME route the DELETE above already uses, and
+  // both are Pull requests: write — which the manifest grants for create_review
+  // anyway. Adding the feature widened no permission.
+  request_reviewer: "pull_requests", // POST /pulls/{n}/requested_reviewers
   create_review: "pull_requests", // POST /pulls/{n}/reviews
   create_review_comment_reply: "pull_requests", // POST /pulls/{n}/comments/{id}/replies
   resolve_own_review_thread: "pull_requests", // GraphQL resolveReviewThread
