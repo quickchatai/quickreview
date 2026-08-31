@@ -432,15 +432,31 @@ const READER_MODE_AUDIT: Readonly<Record<string, RegExp>> = {
  * flags, and redirection remnants skipped — the same shape the bash guard's
  * `checkSegment` uses to find what a segment actually runs. */
 function segmentProgram(segment: string): string | null {
+  // `xargs` RUNS the program named after it, so it is resolved through rather
+  // than treated as the program — the guard's `checkProgram` recurses for the
+  // same reason. Without this, `… | xargs awk '{print}'` classified as `xargs`,
+  // which is on AUDIT_READERS, and the whole segment was skipped: the guard
+  // blocked it and the audit stayed silent about it. Found by running the
+  // corpus against the build, not by reading this function.
+  let sawXargs = false;
   for (const raw of segment.trim().split(/\s+/)) {
     const t = raw.replace(/^['"(]+|['")]+$/g, "");
     if (t.length === 0) continue;
     if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t)) continue;
     if (t === "env" || (t.startsWith("-") && t.length <= 3)) continue;
     if (/^\d*[<>]/.test(t)) continue;
-    return t.slice(t.lastIndexOf("/") + 1);
+    const base = t.slice(t.lastIndexOf("/") + 1);
+    if (sawXargs) {
+      if (t.startsWith("-") || t === "{}") continue; // xargs' own flags
+      return base;
+    }
+    if (base === "xargs") {
+      sawXargs = true;
+      continue;
+    }
+    return base;
   }
-  return null;
+  return sawXargs ? "xargs" : null; // bare `xargs` runs echo
 }
 
 /** Which rule, if any, this ONE segment trips. */

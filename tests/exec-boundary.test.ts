@@ -444,6 +444,13 @@ describe("— the audit no longer fires on the reads that ARE the job", () => {
     expect(kindOf(`awk 'BEGIN{c="sh"; print "id" | c}'`)).toBe("interpreter");
     expect(kindOf("awk -F: '{print $1}' /etc/passwd")).toBe("interpreter");
     expect(kindOf("find . -maxdepth 0 -exec /tmp/pwn.sh ;")).toBe("reader_write_or_exec");
+    // `xargs` RUNS what follows it, so the audit resolves through it rather
+    // than classifying the segment as the reader `xargs` and skipping it. The
+    // guard already recursed; the audit did not, so this chain was blocked and
+    // silent. Found by running the corpus against the build.
+    expect(kindOf("git diff --name-only | xargs awk '{print}'")).toBe("interpreter");
+    expect(kindOf("echo f | xargs sed -i 's/a/b/'")).toBe("reader_write_or_exec");
+    expect(kindOf("git diff --name-only | xargs grep -n TODO")).toBeUndefined();
     // …and their read-only forms stay silent.
     expect(kindOf("sed -n '10,20p' src/a.ts")).toBeUndefined();
     expect(kindOf("sort -u names.txt | uniq -c")).toBeUndefined();
