@@ -85,6 +85,12 @@ export const DEFAULT_MAX_CONCURRENCY = 4;
  * so it is also the honest weight ceiling for one call. */
 export const NATIVE_IN_CALL_CONCURRENCY = 4;
 
+/** Native rejects a tasks array above this size before starting any child.
+ * VERIFY-ON-PIN (pi 0.84.4 examples/extensions/subagent/index.ts,
+ * MAX_PARALLEL_TASKS). The wrapper chunks at this boundary so selecting nine
+ * or ten legitimate lenses cannot become a deterministic zero-pass round. */
+export const NATIVE_MAX_PARALLEL_TASKS = 8;
+
 const VALID_SCOPES = new Set(["user", "project", "both"]);
 
 /** Resolve the pinned scope from the environment (invalid/absent → "user"). */
@@ -179,6 +185,36 @@ export class WeightedSemaphore {
 
 type ToolExecute = PiToolDefinition["execute"];
 
+interface ParallelNativeResult {
+  content: Array<{ type: string; text?: string; [key: string]: unknown }>;
+  details: { mode?: string; results: unknown[]; [key: string]: unknown };
+  isError?: boolean;
+  [key: string]: unknown;
+}
+
+function parallelResult(value: unknown): ParallelNativeResult {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("subagents: native parallel result contract changed (result is not an object)");
+  }
+  const result = value as Partial<ParallelNativeResult>;
+  if (!Array.isArray(result.content) || typeof result.details !== "object" || result.details === null || !Array.isArray(result.details.results)) {
+    throw new Error("subagents: native parallel result contract changed (content/details.results missing)");
+  }
+  return result as ParallelNativeResult;
+}
+
+function failedParallelChild(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return true;
+  const child = value as { exitCode?: unknown; stopReason?: unknown };
+  return child.exitCode !== 0 || child.stopReason === "error" || child.stopReason === "aborted";
+}
+
+function renderedParallelContent(results: unknown[], chunks: string[]): string {
+  const successCount = results.filter((result) => !failedParallelChild(result)).length;
+  const bodies = chunks.map((text) => text.replace(/^Parallel: \d+\/\d+ succeeded\n\n/, ""));
+  return `Parallel: ${successCount}/${results.length} succeeded\n\n${bodies.join("\n\n---\n\n")}`;
+}
+
 /** Wrap the native tool's execute with the sanitizer + the semaphore. */
 export function wrapExecute(
   execute: ToolExecute,
@@ -190,7 +226,75 @@ export function wrapExecute(
     const weight = callWeight(safe, semaphore.permits);
     await semaphore.acquire(weight);
     try {
-      return await execute.call(this, id, safe, signal, onUpdate, ctx);
+      // A call may have been aborted while parked behind another invocation.
+      // Never spend its newly-acquired permit on native children.
+      signal?.throwIfAborted();
+      const tasks = Array.isArray(safe.tasks) ? safe.tasks : [];
+      // Native can run four children inside one call. A configured process cap
+      // below four therefore also bounds the array size; otherwise native
+      // would exceed the cap before our outer semaphore could intervene.
+      const chunkSize = semaphore.permits < NATIVE_IN_CALL_CONCURRENCY
+        ? semaphore.permits
+        : NATIVE_MAX_PARALLEL_TASKS;
+      if (tasks.length <= chunkSize) {
+        return await execute.call(this, id, safe, signal, onUpdate, ctx);
+      }
+
+      // Pi rejects >8 tasks before starting a child. Keep one logical tool
+      // call and one semaphore lease, but feed native stable contiguous
+      // chunks sequentially. Sequential chunks preserve the process-wide cap:
+      // two native calls from one model call can never overlap behind the one
+      // weight reservation.
+      const allResults: unknown[] = [];
+      const rendered: string[] = [];
+      let last: ParallelNativeResult | undefined;
+      let anyError = false;
+      for (let offset = 0; offset < tasks.length; offset += chunkSize) {
+        signal?.throwIfAborted();
+        const chunk = tasks.slice(offset, offset + chunkSize);
+        const notify = typeof onUpdate === "function"
+          ? onUpdate as unknown as (update: ParallelNativeResult) => void
+          : undefined;
+        const chunkUpdate = notify
+          ? (update: unknown) => {
+              // Progress is advisory. Drop a malformed native update and let
+              // the final result produce the explicit pin-compatibility error.
+              let value: ParallelNativeResult;
+              try {
+                value = parallelResult(update);
+              } catch {
+                return;
+              }
+              notify({
+                ...value,
+                details: { ...value.details, mode: "parallel", results: [...allResults, ...value.details.results] },
+              });
+            }
+          : undefined;
+        const value = parallelResult(await execute.call(
+          this,
+          id,
+          { ...safe, tasks: chunk },
+          signal,
+          chunkUpdate,
+          ctx,
+        ));
+        last = value;
+        anyError ||= value.isError === true;
+        allResults.push(...value.details.results);
+        const text = value.content
+          .filter((part) => part.type === "text" && typeof part.text === "string")
+          .map((part) => part.text)
+          .join("\n");
+        if (text) rendered.push(text);
+      }
+
+      return {
+        ...last,
+        content: [{ type: "text" as const, text: renderedParallelContent(allResults, rendered) }],
+        details: { ...last?.details, mode: "parallel", results: allResults },
+        ...(anyError ? { isError: true } : {}),
+      };
     } finally {
       semaphore.release(weight);
     }

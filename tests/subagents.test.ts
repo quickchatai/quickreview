@@ -18,6 +18,7 @@ import {
   CONCURRENCY_ENV,
   DEFAULT_MAX_CONCURRENCY,
   NATIVE_IN_CALL_CONCURRENCY,
+  NATIVE_MAX_PARALLEL_TASKS,
   SCOPE_ENV,
   WeightedSemaphore,
   callWeight,
@@ -178,6 +179,121 @@ describe("wrapExecute", () => {
     expect(seen?.cwd).toBeUndefined();
     expect(seen?.agentScope).toBe("user");
     expect(seen?.confirmProjectAgents).toBe(false);
+  });
+
+  it("chunks an oversized parallel call at the native hard limit and preserves every ordered result", async () => {
+    const batchSizes: number[] = [];
+    const execute = asExecute(async (_id, params) => {
+      const tasks = (params as { tasks: Array<{ agent: string; task: string }> }).tasks;
+      batchSizes.push(tasks.length);
+      if (tasks.length > NATIVE_MAX_PARALLEL_TASKS) throw new Error("native task cap exceeded");
+      const results = tasks.map((task) => ({
+        ...task, agentSource: "user", exitCode: task.task === "task-3" ? 1 : 0, messages: [{ role: "assistant", content: task.task }],
+        stderr: "", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 2, turns: 1 },
+      }));
+      return {
+        content: [{ type: "text", text: tasks.map((task) => task.task).join(",") }],
+        details: { mode: "parallel", results },
+      };
+    });
+    const wrapped = wrapExecute(execute, new WeightedSemaphore(6), {});
+    const tasks = Array.from({ length: 10 }, (_, i) => ({ agent: `pass-${i}`, task: `task-${i}`, cwd: "/evil" }));
+
+    const result = await wrapped("round", { tasks }) as unknown as {
+      content: Array<{ text: string }>;
+      details: { results: Array<{ task: string }> };
+    };
+
+    expect(batchSizes).toEqual([8, 2]);
+    expect(result.details.results.map((row) => row.task)).toEqual(tasks.map((task) => task.task));
+    expect(result.content[0]?.text).toMatch(/^Parallel: 9\/10 succeeded/);
+    expect(result.content[0]?.text).toContain("task-0");
+    expect(result.content[0]?.text).toContain("task-9");
+  });
+
+  it("honours configured process caps below native's four-child concurrency", async () => {
+    const batchSizes: number[] = [];
+    const execute = asExecute(async (_id, params) => {
+      const tasks = (params as { tasks: Array<{ agent: string; task: string }> }).tasks;
+      batchSizes.push(tasks.length);
+      return {
+        content: [{ type: "text", text: `Parallel: ${tasks.length}/${tasks.length} succeeded\n\nok` }],
+        details: { mode: "parallel", results: tasks.map((task) => ({ ...task, exitCode: 0 })) },
+      };
+    });
+    const wrapped = wrapExecute(execute, new WeightedSemaphore(2), {});
+    const tasks = Array.from({ length: 5 }, (_, i) => ({ agent: `pass-${i}`, task: `task-${i}` }));
+
+    await wrapped("round", { tasks });
+
+    expect(batchSizes).toEqual([2, 2, 1]);
+  });
+
+  it("fails explicitly on native final-result contract drift and releases permits", async () => {
+    const sem = new WeightedSemaphore(6);
+    const wrapped = wrapExecute(asExecute(async () => ({ content: [] })), sem, {});
+    const tasks = Array.from({ length: 9 }, (_, i) => ({ agent: `pass-${i}`, task: `task-${i}` }));
+
+    await expect(wrapped("round", { tasks })).rejects.toThrow("native parallel result contract changed");
+    expect(sem.held).toBe(0);
+  });
+
+  it("streams cumulative ordered details across oversized-call chunks", async () => {
+    const execute = asExecute(async (_id, params, _signal, onUpdate) => {
+      const tasks = (params as { tasks: Array<{ agent: string; task: string }> }).tasks;
+      const results = tasks.map((task) => ({ ...task, exitCode: 0 }));
+      (onUpdate as ((value: unknown) => void) | undefined)?.({
+        content: [{ type: "text", text: "progress" }],
+        details: { mode: "parallel", results },
+      });
+      return { content: [{ type: "text", text: "done" }], details: { mode: "parallel", results } };
+    });
+    const wrapped = wrapExecute(execute, new WeightedSemaphore(6), {});
+    const counts: number[] = [];
+    const tasks = Array.from({ length: 9 }, (_, i) => ({ agent: `pass-${i}`, task: `task-${i}` }));
+
+    await wrapped("round", { tasks }, undefined, (update: unknown) => {
+      counts.push(((update as { details: { results: unknown[] } }).details.results).length);
+    });
+
+    expect(counts).toEqual([8, 9]);
+  });
+
+  it("does not start native work when cancelled while waiting for a permit", async () => {
+    const sem = new WeightedSemaphore(1);
+    await sem.acquire(1);
+    const controller = new AbortController();
+    let calls = 0;
+    const wrapped = wrapExecute(asExecute(async () => {
+      calls += 1;
+      return { content: [] };
+    }), sem, {});
+    const pending = wrapped("queued", { agent: "a", task: "t" }, controller.signal);
+    await tick();
+    controller.abort(new Error("cancelled in queue"));
+    sem.release(1);
+
+    await expect(pending).rejects.toThrow("cancelled in queue");
+    expect(calls).toBe(0);
+    expect(sem.held).toBe(0);
+  });
+
+  it("does not start a later oversized-call chunk after cancellation and releases permits", async () => {
+    const controller = new AbortController();
+    let calls = 0;
+    const sem = new WeightedSemaphore(6);
+    const execute = asExecute(async (_id, params) => {
+      calls += 1;
+      const tasks = (params as { tasks: Array<{ agent: string; task: string }> }).tasks;
+      controller.abort(new Error("stop after first batch"));
+      return { content: [], details: { mode: "parallel", results: tasks.map((task) => ({ ...task, exitCode: 0 })) } };
+    });
+    const wrapped = wrapExecute(execute, sem, {});
+    const tasks = Array.from({ length: 9 }, (_, i) => ({ agent: `pass-${i}`, task: `task-${i}` }));
+
+    await expect(wrapped("round", { tasks }, controller.signal)).rejects.toThrow("stop after first batch");
+    expect(calls).toBe(1);
+    expect(sem.held).toBe(0);
   });
 
   it("releases permits when the native execute throws", async () => {
