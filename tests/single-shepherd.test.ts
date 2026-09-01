@@ -4,7 +4,7 @@
 // first-party glue) launched by that one pi, and it is never given
 // two instructions at once.
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkBashCommand } from "../extensions/bash-guard.js";
@@ -166,6 +166,91 @@ describe("S4: every PR-session wake goes through wakes.ts", () => {
         return /\.inject\(\s*[a-zA-Z_][\w.]*\s*,/.test(text);
       });
     expect(offenders).toEqual([]);
+  });
+
+  /**
+   * / MC-10 — the assertion above greps for a CALL SHAPE, and the one
+   * module that actually reaches a `pr-<n>` session from outside the daemon
+   * does not use it: `src/tui/msg.ts` writes the inject FILE itself, over ssh,
+   * with `docker exec … mv … inject/<session>/<name>.md`. The regex above
+   * cannot see that, and never could — so the compliance audit was right that
+   * the invariant survived on a layer the tests did not cover.
+   *
+   * This is the fence for the OTHER spelling: constructing an inject path.
+   * It names the file rather than the call, so a future module that reaches a
+   * PR session by writing the drop-box directly fails here even if it never
+   * calls `.inject(pr, …)`.
+   *
+   * The allowlist is the point. `msg.ts` is a RATIFIED operator-initiated
+   * exception (rule: "the board is read-only over ssh with exactly two
+   * exceptions", the quick-message box being the first) — but it was
+   * *invisible* to the suite, and an invisible exception is indistinguishable
+   * from an oversight. Now it is written down, with what makes it legal.
+   */
+  it("only the sanctioned writers construct a session's inject drop-box path", () => {
+    /**
+     * An EXHAUSTIVE registry, checked by SET EQUALITY in both directions.
+     *
+     * A subset check would let the list rot: an entry whose module stopped
+     * touching the drop-box would sit here forever, and a reader could no
+     * longer tell which entries are load-bearing. Equality means adding a
+     * writer fails here AND removing one does, so every line is live.
+     */
+    const INJECT_PATH_WRITERS: ReadonlyArray<{ file: string; why: string }> = [
+      {
+        file: "src/sessions.ts",
+        why: "the daemon's own drop-box implementation — this IS the mailbox wakes.ts nudges through, and the bridge that drains it",
+      },
+      {
+        file: "src/tui/msg.ts",
+        why:
+          "RATIFIED operator exception: the quick-message box (`m`) addresses a session the operator is NOT focused on. "
+          + "Human-initiated, never automatic, carries no verdict, and reaches the same bridge the daemon uses. It "
+          + "deliberately does not go through wakeOrHold — an operator asking a question mid-round is the operator's call. "
+          + "This is the writer the `.inject(pr, …)` grep above structurally CANNOT see (MC-10), which is why this fence exists.",
+      },
+      {
+        file: "src/tui/companion.ts",
+        why: "the COMPANION session's dir (/workspace/inject/<companion session>) — a different container on the operator's PC, never a pr-<n> session (rule 8)",
+      },
+      {
+        file: "src/cliops.ts",
+        why:
+          "`qcr checklist`'s offline ping-pong plumbing probe. Operator-run, one-shot, and scoped to the fixture PR "
+          + "999902 — but it does write into the REAL inject/ tree, so it is a writer and is recorded as one.",
+      },
+    ];
+    for (const w of INJECT_PATH_WRITERS) {
+      expect(existsSync(join(src, "..", w.file)), `${w.file} is allowlisted but does not exist`).toBe(true);
+      expect(w.why.length, `${w.file} needs a reason a stranger can check`).toBeGreaterThan(40);
+    }
+
+    // Comments are stripped first: several modules DESCRIBE the drop-box
+    // without writing to it, and a fence that fires on prose gets muted.
+    // BOTH spellings are detected — the path-segment form `…/inject/<x>` that
+    // msg.ts and companion.ts use, and the `join(root, "inject", …)` form
+    // sessions.ts uses. The first version of this fence caught only the first
+    // spelling and passed a deliberately-planted rogue writer: a detector
+    // tuned to today's call sites is the same false all-clear as grepping for
+    // a name instead of a reader.
+    const writers = srcFiles(src)
+      .filter((f) => {
+        const code = readFileSync(f, "utf8")
+          .replace(/\/\*[\s\S]*?\*\//g, "")
+          .split("\n")
+          .filter((l) => !/^\s*(\/\/|\*)/.test(l))
+          .map((l) => l.replace(/\/\/.*$/, ""))
+          .join("\n");
+        return /inject\/|["']inject["']/.test(code);
+      })
+      .map((f) => f.slice(f.indexOf("/src/") + 1))
+      .sort();
+
+    expect(
+      writers,
+      "the set of modules that build a session inject path changed — route the new one through wakeOrHold, "
+        + "or add it to INJECT_PATH_WRITERS with what makes it legal; if one dropped off, delete its entry",
+    ).toEqual(INJECT_PATH_WRITERS.map((w) => w.file).sort());
   });
 });
 
