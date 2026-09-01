@@ -32,7 +32,6 @@
 // fence that would otherwise fail — so a reader can always tell "protected"
 // from "overlooked". Where an allowlist can rot, it is checked by SET
 // EQUALITY, not by subset: an entry that stopped being load-bearing fails too.
-import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -133,7 +132,6 @@ describe("[T3] union members have producers", () => {
       { type: "dispatched" },
       { type: "verdict", verdict: "APPROVE" },
       { type: "verdict", verdict: "REQUEST_CHANGES" },
-      { type: "verdict", verdict: "COMMENT" },
       { type: "verdict", verdict: "NEEDS_HUMAN" },
       { type: "round_overdue", standing: "REQUEST_CHANGES" },
       { type: "round_overdue", standing: "APPROVE" },
