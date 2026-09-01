@@ -306,15 +306,21 @@ export function renderDeployTab(st: DeployState, dryRun: boolean | undefined, co
     // An UNFETCHED (or failed) container status used to fall through to
     // "■ STOP VM APP", which asserts the container is up. Say what is true —
     // the state is unknown — and let `r` fetch it.
-    const pLabel = powerArmed
-      ? powerKind === "stop"
-        ? " ⚠ CLICK AGAIN TO STOP NOW "
-        : " ⚠ CLICK AGAIN TO START NOW "
-      : running === undefined
+    // UNKNOWN is checked FIRST, before armed. It cannot currently be both (an
+    // unknown state registers no zone and `pressPower` refuses, so nothing can
+    // arm it) — but reading the armed branch first invites the next editor to
+    // conclude the unknown case is merely a label, which is the mistake this
+    // whole guard exists to undo.
+    const pLabel =
+      running === undefined
         ? " ▮ VM APP STATE UNKNOWN "
-        : powerKind === "stop"
-          ? " ■ STOP VM APP "
-          : " ▶ START VM APP ";
+        : powerArmed
+          ? powerKind === "stop"
+            ? " ⚠ CLICK AGAIN TO STOP NOW "
+            : " ⚠ CLICK AGAIN TO START NOW "
+          : powerKind === "stop"
+            ? " ■ STOP VM APP "
+            : " ▶ START VM APP ";
     const dBtn = deployArmed ? `${WARN_BG}${STRONG}${dLabel}${DRESET}` : `${ACCENT_BG}${STRONG}${dLabel}${DRESET}`;
     // Unknown is not a button: painted in muted ink, and — below — it claims no
     // click zone at all, so it cannot be pressed into arming a stop.

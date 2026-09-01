@@ -503,6 +503,24 @@ describe("connection triage", () => {
     expect(d.cause).toContain("host key");
   });
 
+  it("quotes ssh's message, not the banner rule it draws around it", async () => {
+    const { classifyConnection } = await import("../src/tui/sshtriage.js");
+    // OpenSSH frames its loudest warnings in `@` rules, so the first non-empty
+    // line of a changed-host-key failure is decoration. The cause the operator
+    // reads must be the sentence.
+    const d = classifyConnection({
+      ...base,
+      connect: {
+        ok: false,
+        stderr: "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\nWARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!\n@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n",
+        timedOut: false,
+      },
+    });
+    expect(d.cause).toContain("REMOTE HOST IDENTIFICATION HAS CHANGED");
+    expect(d.cause).not.toContain("@@@");
+    expect(d.detail).not.toContain("@@@");
+  });
+
   it("still classifies a wedged master when ControlPath carries a %C it cannot expand", async () => {
     const { classifyConnection, controlSocketPresent, expandControlPath } = await import("../src/tui/sshtriage.js");
     const raw = "~/.ssh/cm-%C";

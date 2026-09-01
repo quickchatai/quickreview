@@ -36,6 +36,14 @@ if ! (cd "$ROOT" && npx tsc -p tsconfig.json); then
   echo "qcr dev: build failed — fix the errors above, then run again." >&2
   exit 1
 fi
+# "tsc exited 0" is not "dist/ is complete". `incremental` emits from the build
+# info, not from what is on disk, so a file deleted after the last successful
+# build is never re-emitted and the compiler still reports success — the TUI
+# would then die on ERR_MODULE_NOT_FOUND a second after this line.
+if ! (cd "$ROOT" && node scripts/verify-dist.mjs); then
+  echo "qcr dev: refusing to start the TUI from an incomplete dist/." >&2
+  exit 1
+fi
 
 # --preserveWatchOutput: without it tsc clears the screen on every rebuild,
 # and that clear lands on the TUI even with stdout redirected (it is an escape

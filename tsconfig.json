@@ -27,11 +27,17 @@
     // `node_modules/.cache/` is outside the watch, already gitignored, and
     // wiped by `npm ci` — which is the right time for a cold build anyway.
     //
-    // Staleness, stated because `incremental` has exactly one: deleting an
-    // emitted file by hand (`rm dist/src/tui/startup.js`) does not make tsc
-    // re-emit it, and the build still exits 0. `rm -rf dist` is safe — it
-    // takes the buildinfo's own directory out of the picture only if you also
-    // clear the cache, so the reliable cold build is
+    // THE ONE STALENESS `incremental` HAS, stated plainly because it is the
+    // case people actually hit: a TARGETED delete is unsafe. tsc decides what
+    // to emit from its build info, never from what is on disk, so
+    //     rm dist/src/tui/startup.js && npx tsc -p tsconfig.json
+    // emits nothing and exits 0 over a dist/ that is missing a module. An
+    // interrupted build and a half-copied tree land in the same state.
+    // `scripts/verify-dist.mjs` is the guard: `npm run build` chains it, and
+    // dev-tui.sh and deploy.sh call it before starting the TUI / rsyncing to
+    // the VM, so "the build succeeded" means the output is really there.
+    // Wiping the WHOLE tree is the safe move only when the cache goes too —
+    // the reliable cold build is
     // `rm -rf dist node_modules/.cache && npm run build`.
     "incremental": true,
     "tsBuildInfoFile": "node_modules/.cache/qcr-tsbuildinfo",

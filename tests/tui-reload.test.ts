@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -225,6 +225,41 @@ describe("the compiler settings the unfiltered dist watch depends on", () => {
     const info = tsconfig.compilerOptions.tsBuildInfoFile;
     expect(typeof info).toBe("string");
     expect(String(info).startsWith("dist/")).toBe(false);
+  });
+
+  it("is guarded by a post-build artefact check on every path that runs dist/", () => {
+    // `noEmitOnError` + `incremental` leave one hole between them: tsc emits
+    // from its BUILD INFO, so a file deleted after the last successful build is
+    // never re-emitted and the compiler still exits 0. `dev-tui.sh` would then
+    // start the TUI from an incomplete dist/, and `deploy.sh` would rsync it to
+    // the VM. Every path that consumes dist/ must assert the artefacts exist.
+    const build = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")) as { scripts: Record<string, string> };
+    expect(build.scripts.build).toContain("verify-dist.mjs");
+    for (const script of ["scripts/dev-tui.sh", "scripts/deploy.sh"]) {
+      expect(readFileSync(join(process.cwd(), script), "utf8"), `${script} runs dist/ without checking it is complete`).toContain(
+        "verify-dist.mjs",
+      );
+    }
+  });
+
+  it("that check reports a missing artefact rather than trusting tsc's exit code", async () => {
+    const { missingArtifacts } = (await import("../scripts/verify-dist.mjs")) as unknown as {
+      missingArtifacts(root: string): Array<{ source: string; emitted: string }>;
+    };
+    const root = mkdtempSync(join(tmpdir(), "qcr-dist-"));
+    mkdirSync(join(root, "src", "tui"), { recursive: true });
+    writeFileSync(join(root, "tsconfig.json"), JSON.stringify({ compilerOptions: { outDir: "dist" }, include: ["src/**/*.ts"], exclude: ["dist", "tests"] }));
+    writeFileSync(join(root, "src", "tui", "startup.ts"), "export const a = 1;");
+    writeFileSync(join(root, "src", "types.d.ts"), "export type T = 1;");
+    mkdirSync(join(root, "dist", "src", "tui"), { recursive: true });
+
+    // The exact shape of the hole: the source is there, the output is not.
+    expect(missingArtifacts(root).map((m) => m.emitted)).toEqual(["dist/src/tui/startup.js"]);
+    writeFileSync(join(root, "dist", "src", "tui", "startup.js"), "export const a = 1;");
+    // …and a complete tree is clean — a `.d.ts` emits nothing and must not be
+    // reported as missing, or the check would cry wolf on every build.
+    expect(missingArtifacts(root)).toEqual([]);
+    rmSync(root, { recursive: true, force: true });
   });
 
   it("does not emit JavaScript from a failing build", () => {

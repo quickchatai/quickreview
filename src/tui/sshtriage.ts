@@ -117,11 +117,20 @@ const NETWORK_PATTERNS = [
   /broken pipe/i,
 ];
 
+/**
+ * The first line of ssh's stderr that actually SAYS something.
+ *
+ * Not simply the first non-empty one: OpenSSH frames its loudest messages in
+ * banner rules, so a changed host key leads with
+ * `@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@` and the operator's "cause" would
+ * have been a row of at-signs. A line with no letters or digits in it is
+ * decoration, not evidence.
+ */
 function firstLine(text: string): string {
   const line = text
     .split("\n")
     .map((l) => l.trim())
-    .find((l) => l.length > 0);
+    .find((l) => l.length > 0 && /[a-z0-9]/i.test(l));
   return line ?? "";
 }
 

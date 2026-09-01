@@ -416,6 +416,13 @@ if [[ "$MODE" != "verify" ]]; then
   # this checkout), and the daemon kept spawning sessions with the old argv.
   note "building dist against $HEAD_SHA"
   (cd "$SANDBOX_DIR" && npm run build) || die "npm run build failed — refusing to ship a tree whose dist cannot be rebuilt"
+  # `npm run build` already chains this; run it again HERE, at the point where
+  # the tree becomes something the VM will run. `incremental` emits from the
+  # build info rather than from what is on disk, so a targeted delete, an
+  # interrupted build or a half-copied tree leaves a dist/ that tsc calls
+  # up-to-date and exits 0 over. The rsync would ship exactly that, and the
+  # daemon would crash on the VM instead of failing here.
+  (cd "$SANDBOX_DIR" && node scripts/verify-dist.mjs) || die "dist/ is incomplete — refusing to rsync a build that is missing compiled files"
   # BUILD_SHA rides the rsync so the VM can answer "what commit runs here?"
   # (the qcr tui deploy tab diffs local HEAD against it). Gitignored, so the
   # clean-tree guard above stays meaningful.
