@@ -30,9 +30,18 @@ import {
   renderSurvey,
   roundFactsFromEvidence,
   type Candidate,
+  type CandidateList,
   type PrFacts,
   type RoundFact,
 } from "../src/tui/candidates.js";
+
+/** Test-side read-back. Deliberately NOT a `load()` on the store: production
+ * has no collapsing accessor any more, and reviving one for convenience is
+ * how the merge-then-save reached for it in the first place. */
+function listIn(store: CandidateStore): CandidateList | undefined {
+  const r = store.read();
+  return r.state === "list" ? r.list : undefined;
+}
 
 function facts(over: Partial<PrFacts> & { pr: number }): PrFacts {
   return {
@@ -238,14 +247,14 @@ describe("durability — the list does not expire", () => {
       coverage: { prs_scanned: 1, rounds_with_local_record: 3, rounds_reported: 3 },
     });
     // A brand new store object over the same dir — the restart.
-    expect(new CandidateStore(dir).load()?.candidates[0]!.pr).toBe(42);
+    expect(listIn(new CandidateStore(dir))?.candidates[0]!.pr).toBe(42);
   });
 
   it("a corrupt list is undefined, never a crash and never 'no candidates'", () => {
     const dir = mkdtempSync(join(tmpdir(), "qcr-cand-"));
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "candidates.json"), "{ not json");
-    expect(new CandidateStore(dir).load()).toBeUndefined();
+    expect(listIn(new CandidateStore(dir))).toBeUndefined();
   });
 
   // `load()` collapses two facts into one `undefined`, which is why
@@ -379,7 +388,7 @@ describe("the sweep and the empty answer", () => {
 
     const first = await sweeper.sweep(snap);
     expect(first!.coverage.rounds_with_local_record).toBe(1);
-    expect(store.load()).toBeDefined();
+    expect(listIn(store)).toBeDefined();
 
     // Remove BOTH files from under it: an unchanged snapshot must re-read
     // neither — the round facts come from the signature-keyed cache and the
@@ -465,7 +474,7 @@ describe("the sweep and the empty answer", () => {
       // Repaired: the sweep resumes and saves normally.
       writeFileSync(store.path, JSON.stringify({ version: 1, updated_at: "", families: [], candidates: [], coverage: {} }));
       expect(await sweeper.sweep(snap)).toBeDefined();
-      expect(store.load()?.version).toBe(1);
+      expect(listIn(store)?.version).toBe(1);
     });
 
     it("a genuinely absent file is still an empty baseline, not a stand-down", async () => {
@@ -485,6 +494,6 @@ describe("the sweep and the empty answer", () => {
     expect(store.path).toBe(join(dir, "candidates.json"));
     const sweeper = new CandidateSweeper(store, { evidenceDir: dir });
     await sweeper.sweep(snapshot([]));
-    expect(store.load()?.version).toBe(1);
+    expect(listIn(store)?.version).toBe(1);
   });
 });

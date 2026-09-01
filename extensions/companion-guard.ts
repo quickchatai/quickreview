@@ -98,15 +98,33 @@ export const REGISTRY_FIXTURES = [
  * caller can decline to CACHE a degraded set. */
 export type ManifestRead = { state: "manifest"; files: string[] } | { state: "unreadable"; reason: string };
 
+/**
+ * Read the seed manifest, classifying a STRUCTURALLY USELESS payload as
+ * unreadable rather than as a good read of nothing.
+ *
+ * `{}`, `{"files":{}}`, or any JSON that lost the `files` key all name zero
+ * frozen paths — which disarms the rule-6 veto for every seed just as
+ * completely as an unparseable file does. Treating those as a good read
+ * printed no warning at all and cached the empty set for the session, which
+ * is strictly worse than the fail-open it replaced. Same call as
+ * `CandidateStore.read`'s "no candidates array" and
+ * `readRolloverStateFile`'s "no usable last_open_date": the file is there and
+ * we cannot use it, so it is unreadable.
+ */
 export function readSeedManifest(root: string): ManifestRead {
+  let manifest: { files?: unknown };
   try {
-    const manifest = JSON.parse(readFileSync(resolve(root, "tests/fixtures/seed-manifest.json"), "utf8")) as {
-      files?: Record<string, string>;
-    };
-    return { state: "manifest", files: Object.keys(manifest.files ?? {}) };
+    manifest = JSON.parse(readFileSync(resolve(root, "tests/fixtures/seed-manifest.json"), "utf8")) as { files?: unknown };
   } catch (err) {
     return { state: "unreadable", reason: err instanceof Error ? err.message : String(err) };
   }
+  const files = manifest.files;
+  if (typeof files !== "object" || files === null || Array.isArray(files)) {
+    return { state: "unreadable", reason: "no files object" };
+  }
+  const keys = Object.keys(files as Record<string, unknown>);
+  if (keys.length === 0) return { state: "unreadable", reason: "manifest lists no files" };
+  return { state: "manifest", files: keys };
 }
 
 /**
@@ -131,12 +149,16 @@ export function readSeedManifest(root: string): ManifestRead {
  *    normally fix ITSELF. The cost of the strict reading is total; the cost of
  *    the open one is bounded by the brace above.
  *
- * What DID change is that a degraded read is no longer cached for the
- * life of the session — see `activate`.
+ * What DID change is that this degradation is now (a) always LOUD —
+ * `readSeedManifest` classifies a manifest that names no files as unreadable,
+ * so the empty frozen set can no longer arrive silently — and (b) never cached
+ * for the life of the session; see `activate`.
+ *
+ * It takes the READ rather than a path so `activate` can use this one function
+ * for the set AND classify the degradation from the same single read.
  */
-export function frozenPaths(root: string): Set<string> {
+export function frozenPaths(read: ManifestRead): Set<string> {
   const frozen = new Set<string>(REGISTRY_FIXTURES);
-  const read = readSeedManifest(root);
   if (read.state === "manifest") for (const rel of read.files) frozen.add(rel);
   return frozen;
 }
@@ -185,9 +207,8 @@ export default function activate(pi: Pi): void {
     let set = frozen;
     if (set === undefined) {
       const read = readSeedManifest(root);
-      set = new Set<string>(REGISTRY_FIXTURES);
+      set = frozenPaths(read);
       if (read.state === "manifest") {
-        for (const rel of read.files) set.add(rel);
         frozen = set; // cached: the set changes only on a reseed, which restarts everything
         warnedDegraded = false; // recovered — a later degradation is loud again
       } else if (!warnedDegraded) {

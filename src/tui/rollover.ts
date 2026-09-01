@@ -42,6 +42,10 @@ function execReason(r: DockerResult): string {
   return (r.stderr.trim() || r.stdout.trim() || `exit ${r.code}`).split("\n").slice(-1)[0]!;
 }
 
+function errText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 /** Bounds for the compacted summary and the raw tail — the opening message is
  * a briefing, not a transcript. */
 export const SUMMARY_MAX_CHARS = 4000;
@@ -65,19 +69,62 @@ export interface RolloverState {
   first_run_interviewed?: string;
 }
 
-export function readRolloverState(path: string): RolloverState | undefined {
+/** What a read of the rollover state found. `absent` is a fresh installation;
+ * `unreadable` is one whose day we cannot know —. */
+export type RolloverStateRead =
+  | { state: "state"; value: RolloverState }
+  | { state: "absent" }
+  | { state: "unreadable"; reason: string };
+
+/**
+ * The rollover state, with "there is no state" and "the state is unreadable"
+ * kept APART.
+ *
+ * This is the read that GATES the two inside the rollover itself, so
+ * collapsing it defeats them: an unparseable `rollover.json` used to look
+ * exactly like a fresh installation, `decideRollover` said `first-run`, and
+ * the run recorded today's date and touched nothing — no docker call, no
+ * deferral, and the retry the other two fixes build is never reached. Worse,
+ * `interviewDue(marker, undefined)` is true, so a torn state file could
+ * re-fire the first-run interview at a months-old install.
+ *
+ * A structurally invalid payload (no usable `last_open_date`) is UNREADABLE,
+ * not absent — the file is there, we simply cannot understand it.
+ */
+export function readRolloverStateFile(path: string): RolloverStateRead {
+  let text: string;
   try {
-    const raw = JSON.parse(readFileSync(path, "utf8")) as Partial<RolloverState>;
-    if (typeof raw.last_open_date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(raw.last_open_date)) return undefined;
-    return {
+    text = readFileSync(path, "utf8");
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code === "ENOENT") return { state: "absent" };
+    return { state: "unreadable", reason: code ?? errText(err) };
+  }
+  let raw: Partial<RolloverState>;
+  try {
+    raw = JSON.parse(text) as Partial<RolloverState>;
+  } catch (err) {
+    return { state: "unreadable", reason: errText(err) };
+  }
+  if (typeof raw.last_open_date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(raw.last_open_date)) {
+    return { state: "unreadable", reason: "no usable last_open_date" };
+  }
+  return {
+    state: "state",
+    value: {
       last_open_date: raw.last_open_date,
       updated_at: String(raw.updated_at ?? ""),
       last_archive: raw.last_archive,
       ...(typeof raw.first_run_interviewed === "string" ? { first_run_interviewed: raw.first_run_interviewed } : {}),
-    };
-  } catch {
-    return undefined;
-  }
+    },
+  };
+}
+
+/** Absent OR unreadable ⇒ undefined. For read-back and display only: anything
+ * that DECIDES from the state must use `readRolloverStateFile` — see there. */
+export function readRolloverState(path: string): RolloverState | undefined {
+  const r = readRolloverStateFile(path);
+  return r.state === "state" ? r.value : undefined;
 }
 
 export function writeRolloverState(path: string, state: RolloverState): void {
@@ -104,14 +151,24 @@ export type RolloverVerdict =
   /** No recorded day yet — record today and leave the conversation alone. */
   | { kind: "first-run"; today: string }
   | { kind: "same-day"; today: string }
-  | { kind: "rollover"; today: string; previous: string };
+  | { kind: "rollover"; today: string; previous: string }
+  /** The state file exists and could not be read, so we do not KNOW which of
+   * the three this is. Nothing is decided, nothing is recorded. */
+  | { kind: "unknown"; today: string; reason: string };
 
-/** Pure decision: string compare is correct for ISO dates, and a clock that
- * went backwards (previous > today) is treated as same-day, never a rotate. */
-export function decideRollover(today: string, state: RolloverState | undefined): RolloverVerdict {
-  if (!state) return { kind: "first-run", today };
-  if (state.last_open_date >= today) return { kind: "same-day", today };
-  return { kind: "rollover", today, previous: state.last_open_date };
+/**
+ * Pure decision: string compare is correct for ISO dates, and a clock that
+ * went backwards (previous > today) is treated as same-day, never a rotate.
+ *
+ * It takes the READ, not a `RolloverState | undefined`, on purpose: handed the
+ * collapsed value it cannot tell a fresh installation from a torn state file,
+ * and those two want opposite behaviour (record today vs. touch nothing).
+ */
+export function decideRollover(today: string, read: RolloverStateRead): RolloverVerdict {
+  if (read.state === "unreadable") return { kind: "unknown", today, reason: read.reason };
+  if (read.state === "absent") return { kind: "first-run", today };
+  if (read.value.last_open_date >= today) return { kind: "same-day", today };
+  return { kind: "rollover", today, previous: read.value.last_open_date };
 }
 
 // ---- yesterday's conversation ----------------------------------------------
@@ -570,10 +627,13 @@ export class CompanionRollover {
     });
   }
 
-  private record(date: string, archive?: string): void {
+  /** `prior` is the state `run()` already read, PASSED IN rather than re-read
+   *: a second read could come back unreadable, and a collapsed
+   * `undefined` here silently drops `first_run_interviewed` — the exact
+   * re-arming the comment below exists to prevent. */
+  private record(date: string, archive: string | undefined, prior: RolloverState | undefined): void {
     // Preserve the interview mark across rewrites: dropping it on a later
     // rollover would re-arm a marker-keyed interview forever.
-    const prior = readRolloverState(this.opts.statePath);
     writeRolloverState(this.opts.statePath, {
       last_open_date: date,
       updated_at: this.now().toISOString(),
@@ -629,15 +689,28 @@ export class CompanionRollover {
    */
   async run(): Promise<RolloverReport> {
     const today = this.today();
-    const prior = readRolloverState(this.opts.statePath);
-    const verdict = decideRollover(today, prior);
+    const read = readRolloverStateFile(this.opts.statePath);
+    const prior = read.state === "state" ? read.value : undefined;
+    const verdict = decideRollover(today, read);
     const steps: string[] = [];
     let archivedTo: string | undefined;
     let dayOpenFile: string | undefined;
     let dayOpen: string | undefined;
 
+    // an unreadable state file gates everything below it. It used to
+    // read as `first-run`, which recorded today's date over it and made ALL of
+    // this unreachable — no docker call, no deferral, and the retry the two
+    // fixes below build never happens. We return BEFORE `maybeInterview` too:
+    // `interviewDue(marker, undefined)` is true, so continuing could re-fire
+    // the first-run interview at an install that had it months ago.
+    if (verdict.kind === "unknown") {
+      const deferred = `rollover state ${this.opts.statePath} exists but cannot be read (${verdict.reason}) — nothing rolled over, recorded or queued; retrying on the next start`;
+      steps.push(deferred);
+      return { verdict, steps, deferred };
+    }
+
     if (verdict.kind === "first-run") {
-      this.record(today);
+      this.record(today, undefined, prior);
       steps.push(`first run — companion day set to ${today}`);
     } else if (verdict.kind === "rollover") {
       const lookup = await this.newestSessionFile();
@@ -674,7 +747,7 @@ export class CompanionRollover {
       steps.push(`killed tmux session ${this.cfg.session}`);
       dayOpenFile = this.writeDayOpen(dayOpen, today);
       steps.push(`queued day-open message → ${dayOpenFile}`);
-      this.record(today, archivedTo);
+      this.record(today, archivedTo, prior);
     }
 
     const interview = this.maybeInterview(today, prior, steps);

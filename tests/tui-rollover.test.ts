@@ -22,12 +22,15 @@ import {
   parseConversation,
   readFirstRunMarker,
   readRolloverState,
+  readRolloverStateFile,
   renderDayOpen,
   renderFirstRun,
   snapshotSummary,
   todayDate,
   writeRolloverState,
   SUMMARY_MAX_CHARS,
+  type RolloverState,
+  type RolloverStateRead,
   type Turn,
 } from "../src/tui/rollover.js";
 
@@ -135,29 +138,50 @@ describe("ops-day derivation", () => {
 });
 
 describe("rollover decision", () => {
+  const stored = (value: RolloverState): RolloverStateRead => ({ state: "state", value });
+
   it("first run records the day without touching the conversation", () => {
-    expect(decideRollover("2026-08-14", undefined)).toEqual({ kind: "first-run", today: "2026-08-14" });
+    expect(decideRollover("2026-08-14", { state: "absent" })).toEqual({ kind: "first-run", today: "2026-08-14" });
   });
 
   it("same day is a no-op, and a backwards clock never rotates", () => {
-    expect(decideRollover("2026-08-14", { last_open_date: "2026-08-14", updated_at: "" }).kind).toBe("same-day");
-    expect(decideRollover("2026-08-13", { last_open_date: "2026-08-14", updated_at: "" }).kind).toBe("same-day");
+    expect(decideRollover("2026-08-14", stored({ last_open_date: "2026-08-14", updated_at: "" })).kind).toBe("same-day");
+    expect(decideRollover("2026-08-13", stored({ last_open_date: "2026-08-14", updated_at: "" })).kind).toBe("same-day");
   });
 
   it("an earlier recorded day rolls over and names the previous day", () => {
-    expect(decideRollover("2026-08-14", { last_open_date: "2026-08-13", updated_at: "" })).toEqual({
+    expect(decideRollover("2026-08-14", stored({ last_open_date: "2026-08-13", updated_at: "" }))).toEqual({
       kind: "rollover",
       today: "2026-08-14",
       previous: "2026-08-13",
     });
   });
 
-  it("round-trips its state file and rejects a corrupt one", () => {
+  // an UNREADABLE state file is not a fresh installation. It used to
+  // decide `first-run`, which recorded today over it — so nothing rolled over,
+  // nothing was deferred, and the retry could never happen.
+  it("an unreadable state file decides NOTHING — it is not a first run", () => {
+    expect(decideRollover("2026-08-14", { state: "unreadable", reason: "torn" })).toEqual({
+      kind: "unknown",
+      today: "2026-08-14",
+      reason: "torn",
+    });
+  });
+
+  it("round-trips its state file, and keeps absent apart from unreadable", () => {
     const p = join(dir, "state", "rollover.json");
+    expect(readRolloverStateFile(p)).toEqual({ state: "absent" }); // nothing written yet
     writeRolloverState(p, { last_open_date: "2026-08-13", updated_at: "x", last_archive: "/a" });
     expect(readRolloverState(p)?.last_open_date).toBe("2026-08-13");
+    expect(readRolloverStateFile(p).state).toBe("state");
+
     writeFileSync(p, "{not json");
-    expect(readRolloverState(p)).toBeUndefined();
+    expect(readRolloverState(p)).toBeUndefined(); // the display collapse still collapses
+    expect(readRolloverStateFile(p).state).toBe("unreadable");
+
+    // Valid JSON with no usable date is unreadable too, never absent.
+    writeFileSync(p, JSON.stringify({ updated_at: "x" }));
+    expect(readRolloverStateFile(p)).toEqual({ state: "unreadable", reason: "no usable last_open_date" });
   });
 });
 
@@ -437,6 +461,46 @@ describe("the rollover sequence", () => {
       expect(report.dayOpenFile).toBeUndefined();
       expect(calls.map((c) => c.join(" ")).some((s) => s.includes("kill-session"))).toBe(false);
       expect(readRolloverState(statePath())?.last_open_date).toBe("2026-08-13");
+    });
+
+    //, and it GATES the two above: a torn rollover.json used to read
+    // as a fresh installation, so `record()` stamped today over it and the
+    // whole sequence — docker calls, deferral, retry — never happened.
+    it("an unreadable state file defers everything, records nothing and never re-fires the interview", async () => {
+      const p = statePath();
+      mkdirSync(dirname(p), { recursive: true });
+      const TORN = '{\n  "last_open_date": "2026-08-13"';
+      writeFileSync(p, TORN);
+      const { runner, calls } = fakeDocker({ "ls -1t": "/x/abc.jsonl\n" });
+
+      const report = await rollover(runner, { firstRun: true }).run();
+
+      expect(report.verdict.kind).toBe("unknown");
+      expect(report.deferred).toMatch(/exists but cannot be read/);
+      expect(calls).toEqual([]); // nothing was asked of the container
+      expect(report.dayOpenFile).toBeUndefined();
+      // The state file is untouched — not stamped with today, so the next
+      // start still sees the problem instead of a silently "rolled over" day.
+      expect(readFileSync(p, "utf8")).toBe(TORN);
+      // And the first-run interview did NOT fire: interviewDue(marker,
+      // undefined) is true, so continuing past the deferral would re-greet an
+      // installation that was set up months ago.
+      expect(report.interviewFile).toBeUndefined();
+
+      // Repaired: the deferred rollover actually happens on the next start.
+      writeRolloverState(p, { last_open_date: "2026-08-13", updated_at: "" });
+      const retry = await rollover(fakeDocker({ "ls -1t": "" }).runner).run();
+      expect(retry.verdict.kind).toBe("rollover");
+      expect(retry.deferred).toBeUndefined();
+      expect(readRolloverState(p)?.last_open_date).toBe("2026-08-14");
+    });
+
+    it("record() keeps the interview mark from the state run() already read, not a second read", async () => {
+      const p = statePath();
+      writeRolloverState(p, { last_open_date: "2026-08-13", updated_at: "", first_run_interviewed: "2026-07-01" });
+      await rollover(fakeDocker({ "ls -1t": "" }).runner).run();
+      expect(readRolloverState(p)?.first_run_interviewed).toBe("2026-07-01");
+      expect(readRolloverState(p)?.last_open_date).toBe("2026-08-14");
     });
 
     it("an empty volume is still a real answer — it rolls over and says so", async () => {

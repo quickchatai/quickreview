@@ -401,16 +401,15 @@ export class CandidateStore {
     }
   }
 
-  /** Missing or unreadable ⇒ undefined. A corrupt list is never a crash, and it
-   * is never "no candidates": the caller reports it and rebuilds.
-   *
-   * This collapses two of `read()`'s three answers, so it is for callers that
-   * only ever DISPLAY the list. Anything that merges from it, and above all
-   * anything that then SAVES, must use `read()` —. */
-  load(): CandidateList | undefined {
-    const r = this.read();
-    return r.state === "list" ? r.list : undefined;
-  }
+  // There is deliberately NO `load(): CandidateList | undefined` here. It
+  // existed, it collapsed `absent` and `unreadable` into one `undefined`, it
+  // had exactly one caller — the sweep, whose merge-then-save turned that
+  // collapse into silent data loss — and once that caller was fixed it had
+  // none at all. The only other reader of this file is the
+  // companion, over the `/evidence:ro` mount, which parses the JSON itself.
+  // A convenient collapsing accessor sitting next to `read()` is precisely
+  // what the next merge-and-save reaches for, so it is gone rather than
+  // documented.
 
   save(list: CandidateList): void {
     this.ensure();
