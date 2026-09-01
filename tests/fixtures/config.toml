@@ -66,6 +66,7 @@ round_stall_grace_min = 10
 # maximum and below the 75m defense-in-depth round deadline. Unknown evidence
 # gets one minute once, never an open-ended extension.
 session_command_start_lease_s = 120
+session_bridge_ready_timeout_s = 30
 session_command_running_max_min = 45
 # Command-correlated execution milestones: no first pass, incomplete pass plan,
 # and all-passes-done/no-verdict. Absolute start-derived bounds; activity cannot

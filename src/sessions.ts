@@ -25,6 +25,7 @@ import {
 import { dirname, join } from "node:path";
 import type { Config } from "./config.js";
 import {
+  DEFAULT_SESSION_BRIDGE_READY_TIMEOUT_S,
   DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN,
   DEFAULT_SESSION_COMMAND_START_LEASE_S,
   githubCloneDir,
@@ -41,6 +42,11 @@ import {
   type OvSessionLifecycle,
   type OvcliWriteResult,
 } from "./memory/ovsession.js";
+import {
+  readSessionBridgeState,
+  waitForSessionBridgeReady,
+  writeSessionBridgeState,
+} from "./session-bridge.js";
 import { Tmux } from "./tmux.js";
 import type { ExecFn } from "./tmux.js";
 import type { SessionCommandKind, SessionCommandRow, StateStore } from "./state.js";
@@ -469,7 +475,9 @@ export class PiSessionManager implements SessionHooks {
     return path;
   }
 
-  /** Birth an arbitrary session (used by ensure* and by the smoke script). */
+  /** Birth an arbitrary session (used by ensure* and by the smoke script).
+   * A PR birth is not complete when tmux returns: the exact Pi generation must
+   * prove that its inject bridge opened and swept the mailbox first. */
   async spawnSession(
     session: string,
     systemPromptBody: string,
@@ -492,6 +500,25 @@ export class PiSessionManager implements SessionHooks {
       sessionName: session,
       themePath: this.themePath(),
     });
+    const generation = randomUUID();
+    const bridgeStateFile = this.bridgeStatePath(session, generation);
+    const durablePrBridge = prOfSession(session) !== undefined
+      && Boolean(this.commandStore && this.commandStore.path !== ":memory:");
+    const spawnEnv = {
+      ...extraEnv,
+      QCR_SESSION_BRIDGE_GENERATION: generation,
+      QCR_SESSION_BRIDGE_STATE_FILE: bridgeStateFile,
+      // Production PR sessions own the durable command ledger. Explicit 0 is
+      // reserved for isolated smoke/replay harnesses with no daemon StateStore.
+      QCR_SESSION_BRIDGE_LEDGER_REQUIRED: durablePrBridge ? "1" : "0",
+    };
+    writeSessionBridgeState(bridgeStateFile, {
+      version: 1,
+      session,
+      generation,
+      stage: "starting",
+      updated_at: this.now().toISOString(),
+    });
     // tmux panes inherit the tmux SERVER's environment, not the client's, so
     // per-session vars must ride the command line itself. Only the QCR_* routing
     // vars and the OPENVIKING_* identity are prefixed — HOME/PATH/OPENAI_API_KEY
@@ -501,25 +528,63 @@ export class PiSessionManager implements SessionHooks {
     // Nothing prefixed here is a secret, and nothing may become one: argv is
     // world-readable inside the container (`ps`), which is why the OpenViking
     // KEY rides a 0600 ovcli.conf instead (see provisionOvCredentials).
-    const qcrPrefix = Object.entries(this.buildEnv(session, extraEnv))
+    const qcrPrefix = Object.entries(this.buildEnv(session, spawnEnv))
       .filter(([k, v]) => ARGV_ENV_PREFIXES.some((p) => k.startsWith(p)) && v !== undefined)
       .map(([k, v]) => `${k}=${v}`);
     await this.tmux.newSession(session, ["env", ...qcrPrefix, ...command], {
       cwd: this.root,
-      env: this.buildEnv(session, extraEnv),
+      env: this.buildEnv(session, spawnEnv),
     });
-    this.recordBirth(session);
+    this.recordBirth(session, generation);
+    if (prOfSession(session) === undefined) return;
+    try {
+      await waitForSessionBridgeReady(
+        bridgeStateFile,
+        session,
+        generation,
+        this.sessionBridgeReadyTimeoutMs(),
+      );
+    } catch (error) {
+      const detail = String(error);
+      this.commandStore?.logEvent("session_bridge_readiness_failed", prOfSession(session)!, {
+        session,
+        generation,
+        detail,
+      });
+      if (await this.tmux.hasSession(session)) await this.tmux.killSession(session);
+      throw error;
+    }
   }
 
   private birthFile(session: string): string {
     return join(this.root, "state", "sessions", `${session}.json`);
   }
 
-  private recordBirth(session: string): void {
+  bridgeStatePath(session: string, generation: string): string {
+    return join(this.root, "state", "sessions", `${session}.bridge-${generation}.json`);
+  }
+
+  private recordBirth(session: string, bridgeGeneration: string): void {
     this.writeAtomic(
       this.birthFile(session),
-      `${JSON.stringify({ session, born_at: this.now().toISOString() }, null, 2)}\n`,
+      `${JSON.stringify({ session, born_at: this.now().toISOString(), bridge_generation: bridgeGeneration }, null, 2)}\n`,
     );
+  }
+
+  private currentBridgeReady(session: string): boolean {
+    try {
+      const birth = JSON.parse(readFileSync(this.birthFile(session), "utf8")) as { bridge_generation?: string };
+      if (!birth.bridge_generation) return false;
+      const state = readSessionBridgeState(this.bridgeStatePath(session, birth.bridge_generation));
+      return Boolean(
+        birth.bridge_generation
+        && state?.session === session
+        && state.generation === birth.bridge_generation
+        && state.stage === "ready",
+      );
+    } catch {
+      return false;
+    }
   }
 
   bornAt(session: string): Date | undefined {
@@ -547,7 +612,14 @@ export class PiSessionManager implements SessionHooks {
 
   private async birthPrSession(pr: number, title: string, worktree: string): Promise<string> {
     const session = prSessionName(pr);
-    if (await this.tmux.hasSession(session)) return session;
+    if (await this.tmux.hasSession(session)) {
+      if (this.currentBridgeReady(session)) return session;
+      this.commandStore?.logEvent("session_bridge_stale", pr, { session, reason: "tmux alive without matching ready generation" });
+      await this.tmux.killSession(session);
+      if (await this.tmux.hasSession(session)) {
+        throw new Error(`session ${session} survived stale-bridge fence`);
+      }
+    }
     // The PR's raw-notes tier, created BEFORE pi starts so the extension has
     // something to attach to on the first turn. A store object, not a session
     // anyone schedules: the daemon still owns exactly two pi session kinds.
@@ -562,9 +634,9 @@ export class PiSessionManager implements SessionHooks {
       });
     } catch (err) {
       // A creator outside this manager instance may win after our first check.
-      // Adopt only when exact tmux state proves that winner exists; otherwise
-      // preserve the original failure.
-      if (await this.tmux.hasSession(session)) return session;
+      // Adopt only when both tmux and the matching bridge-generation receipt
+      // prove that winner is usable; process existence alone caused #5454.
+      if (await this.tmux.hasSession(session) && this.currentBridgeReady(session)) return session;
       throw err;
     }
     return session;
@@ -717,6 +789,10 @@ export class PiSessionManager implements SessionHooks {
 
   private sessionCommandStartLeaseMs(): number {
     return (this.cfg.daemon.session_command_start_lease_s ?? DEFAULT_SESSION_COMMAND_START_LEASE_S) * 1000;
+  }
+
+  private sessionBridgeReadyTimeoutMs(): number {
+    return (this.cfg.daemon?.session_bridge_ready_timeout_s ?? DEFAULT_SESSION_BRIDGE_READY_TIMEOUT_S) * 1000;
   }
 
   private sessionCommandRunningLeaseMs(): number {
@@ -1027,12 +1103,37 @@ export class PiSessionManager implements SessionHooks {
     try {
       this.writeAtomic(command.inject_path, payload);
       await this.ensureSessionForWake(command.pr);
+      const replayed = store.getSessionCommand(command.id);
+      if (replayed?.status === "acked" || replayed?.status === "cancelled") return "settled";
+      // The recovery file exists BEFORE birth. A matching bridge writes ready
+      // only after its synchronous startup drain, whose reservation is the one
+      // transition that increments attempt. Tmux birth without that increment
+      // is zero deliveries, never a successful replay (#5454).
+      if (!replayed || replayed.attempt <= command.attempt) {
+        const detail = `bridge became ready without reserving command ${command.id} (delivery attempt stayed ${command.attempt})`;
+        store.noteSessionCommandRecoveryFailure(command.id, detail);
+        store.logEvent("session_command_replay_unreserved", command.pr, {
+          command_id: command.id,
+          delivery_attempt: replayed?.attempt ?? command.attempt,
+          detail,
+        });
+        console.log(`[quickreviewd] sessions: ${detail}`);
+        return "retry_failed";
+      }
       return "retried";
     } catch (error) {
       // The pending row + immutable payload remain the one obligation. The
       // next finite supervisor check retries rebirth; no held-wake conversion
-      // can evict or reorder it.
-      console.log(`[quickreviewd] sessions: command ${command.id} recovery rebirth failed: ${String(error)}`);
+      // can evict or reorder it. Persist the pre-reserve cause outside the Pi
+      // pane, because the recovery fence is about to destroy that pane.
+      const detail = String(error);
+      store.noteSessionCommandRecoveryFailure(command.id, detail);
+      store.logEvent("session_command_rebirth_failed", command.pr, {
+        command_id: command.id,
+        delivery_attempt: store.getSessionCommand(command.id)?.attempt ?? command.attempt,
+        detail,
+      });
+      console.log(`[quickreviewd] sessions: command ${command.id} recovery rebirth failed: ${detail}`);
       return "retry_failed";
     }
   }
@@ -1059,14 +1160,14 @@ export class PiSessionManager implements SessionHooks {
     this.queuePrCommand(pr, "wake", message, null);
   }
 
-  /** Rebirth a dead sticky session so a wake has somewhere to land. Shared by
-   * `inject` and `redeliverRound` — a redelivery into a dead session would be
-   * written to an inject dir nobody is watching, which is the same silent loss
-   * the receipt exists to catch. Throws only when the PR was never tracked, so
-   * no title is known. */
+  /** Rebirth a dead or bridge-unready sticky session so a wake has somewhere
+   * to land. Shared by `inject` and `redeliverRound` — a redelivery into tmux
+   * without the matching watcher receipt would be written to a mailbox nobody
+   * proved it owns, which is the same silent loss the receipt exists to catch.
+   * Throws only when the PR was never tracked, so no title is known. */
   private async ensureSessionForWake(pr: number): Promise<void> {
     const session = prSessionName(pr);
-    if (await this.tmux.hasSession(session)) return;
+    if (await this.tmux.hasSession(session) && this.currentBridgeReady(session)) return;
     const title = this.titleResolver?.(pr);
     if (title === undefined) {
       throw new Error(`no live session ${session} — dispatch a round to birth it first`);

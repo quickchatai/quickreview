@@ -10,7 +10,7 @@
 // `pending_wakes`), and the round-end paths flush them in arrival order.
 // Nothing is dropped silently — the per-PR cap logs what it evicts.
 import { randomUUID } from "node:crypto";
-import type { StateStore } from "./state.js";
+import type { PendingWakeRow, StateStore } from "./state.js";
 
 export interface WakeDeps {
   store: StateStore;
@@ -50,12 +50,50 @@ export async function wakeOrHold(deps: WakeDeps, pr: number, message: string, re
   return "held";
 }
 
+const AUTHOR_REPLY_HEADING = "# Author reply — PR #";
+
+function isAuthorReplyWake(wake: PendingWakeRow): boolean {
+  if (wake.reason === "author_reply") return true;
+  return wake.reason.startsWith("operator_recovered:") && wake.payload.startsWith(AUTHOR_REPLY_HEADING);
+}
+
+function leadingDeliveryCount(wakes: PendingWakeRow[]): number {
+  if (wakes.length === 0) return 0;
+  if (!isAuthorReplyWake(wakes[0]!)) return 1;
+  let count = 1;
+  while (count < wakes.length && isAuthorReplyWake(wakes[count]!)) count++;
+  return count;
+}
+
+function deliveryPayload(pr: number, wakes: PendingWakeRow[]): string {
+  if (wakes.length === 1) return wakes[0]!.payload;
+  return [
+    `# Coalesced author-reply burst — PR #${pr}`,
+    "",
+    `Process every author message below independently, in order, in this single run (${wakes.length} total).`,
+    "Each section is one complete original wake. Follow every section's `What to do` instructions and write",
+    "every distinct response file it names. Do not merge, skip, or answer multiple comments with one reply;",
+    "the one-reply-per-author-message rule still applies. Do not stop after the first response file.",
+    "",
+    ...wakes.flatMap((wake, index) => [
+      `## Original author message ${index + 1}/${wakes.length} — held wake ${wake.id}`,
+      "",
+      wake.payload,
+      "",
+    ]),
+  ].join("\n");
+}
+
 /**
  * Flush held wakes oldest-first with durable lease→deliver→ack semantics.
- * Failure releases the oldest lease and stops: later author messages never
- * overtake it, and the stranded-wake sweep can retry without losing payload.
- * A crash after inject but before ack may duplicate delivery; without a wake
- * receipt, at-least-once is the honest side of the loss-vs-duplicate tradeoff.
+ * A contiguous burst of author replies is one delivery unit: Pi handles every
+ * distinct response obligation in one run instead of serializing N full runs.
+ * Other wake classes remain one-at-a-time and never move across the burst.
+ *
+ * Failure releases the whole oldest unit and stops, so later messages never
+ * overtake it. A crash after inject but before ack may duplicate delivery;
+ * without a wake receipt, at-least-once is the honest side of the
+ * loss-vs-duplicate tradeoff.
  */
 export async function flushHeldWakes(deps: WakeDeps, pr: number): Promise<number> {
   const { store } = deps;
@@ -65,26 +103,51 @@ export async function flushHeldWakes(deps: WakeDeps, pr: number): Promise<number
   const leaseMs = 5 * 60_000;
   while (true) {
     if (store.blockingSessionCommand(`pr-${pr}`)) break;
+    const queued = store.heldWakes(pr);
+    const batchSize = leadingDeliveryCount(queued);
+    if (batchSize === 0) break;
     const token = randomUUID();
-    const wake = store.claimNextHeldWake(pr, token, new Date(Date.now() - leaseMs).toISOString());
-    if (!wake) break;
-    attempted++;
+    const wakes = store.claimHeldWakeBatch(pr, token, new Date(Date.now() - leaseMs).toISOString(), batchSize);
+    if (!wakes) break;
+    const ids = wakes.map((wake) => wake.id);
+    attempted += wakes.length;
     try {
-      await deps.inject(pr, wake.payload);
-      if (!store.ackHeldWake(wake.id, token)) {
-        log(`wakes: #${pr} delivered held wake ${wake.id}, but its lease was lost before ack`);
-        store.logEvent("wake_ack_lost", pr, { id: wake.id, reason: wake.reason, attempt: wake.attempts });
+      await deps.inject(pr, deliveryPayload(pr, wakes));
+      if (!store.ackHeldWakeBatch(ids, token)) {
+        const first = wakes[0]!;
+        log(`wakes: #${pr} delivered held wake batch ${ids.join(",")}, but its lease was lost before ack`);
+        store.logEvent("wake_ack_lost", pr, {
+          id: first.id,
+          reason: first.reason,
+          attempt: first.attempts,
+          ids,
+          reasons: wakes.map((wake) => wake.reason),
+          attempts: wakes.map((wake) => wake.attempts),
+        });
         break;
       }
-      delivered++;
-      // `inject` transferred exact-byte ownership into the one durable
-      // session-command slot. Stop here: deleting the upstream held row is
-      // safe, but a second inject before the slot acks would violate S4.
+      delivered += wakes.length;
+      if (wakes.length > 1) {
+        store.logEvent("wakes_coalesced", pr, { ids, count: wakes.length, reasons: wakes.map((wake) => wake.reason) });
+      }
+      // `inject` transferred ownership into the one durable session-command
+      // slot. Stop here: deleting the upstream rows is safe, but a second
+      // inject before the slot acks would violate S4.
       if (store.blockingSessionCommand(`pr-${pr}`)) break;
     } catch (err) {
-      store.releaseHeldWake(wake.id, token);
-      log(`wakes: #${pr} failed to deliver held wake ${wake.id}`, err);
-      store.logEvent("wake_flush_failed", pr, { id: wake.id, reason: wake.reason, attempt: wake.attempts, error: String(err) });
+      const first = wakes[0]!;
+      const released = store.releaseHeldWakeBatch(ids, token);
+      log(`wakes: #${pr} failed to deliver held wake batch ${ids.join(",")}`, err);
+      store.logEvent("wake_flush_failed", pr, {
+        id: first.id,
+        reason: first.reason,
+        attempt: first.attempts,
+        ids,
+        reasons: wakes.map((wake) => wake.reason),
+        attempts: wakes.map((wake) => wake.attempts),
+        released,
+        error: String(err),
+      });
       break;
     }
   }

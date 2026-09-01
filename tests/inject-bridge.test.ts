@@ -18,6 +18,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Pi } from "@earendil-works/pi-coding-agent";
 import activate, { RETRY_BASE_MS, START_ACK_TIMEOUT_MS } from "../extensions/inject-bridge.js";
+import { readSessionBridgeState } from "../src/session-bridge.js";
 import { StateStore } from "../src/state.js";
 
 let dir: string;
@@ -27,7 +28,15 @@ let sends: Array<{ content: string; options?: { deliverAs?: string } }>;
 // The internal Promise is intentionally unavailable to extensions, so this
 // fake must never offer tests stronger serialization than production has.
 let sendImpl: (content: string) => void;
-let savedEnv: { inject?: string; session?: string; stateDb?: string; root?: string };
+let savedEnv: {
+  inject?: string;
+  session?: string;
+  stateDb?: string;
+  root?: string;
+  bridgeGeneration?: string;
+  bridgeStateFile?: string;
+  bridgeLedgerRequired?: string;
+};
 
 function fakePi(): Pi {
   return {
@@ -77,9 +86,15 @@ beforeEach(() => {
     session: process.env.QCR_SESSION_NAME,
     stateDb: process.env.QCR_STATE_DB,
     root: process.env.QCR_SANDBOX_ROOT,
+    bridgeGeneration: process.env.QCR_SESSION_BRIDGE_GENERATION,
+    bridgeStateFile: process.env.QCR_SESSION_BRIDGE_STATE_FILE,
+    bridgeLedgerRequired: process.env.QCR_SESSION_BRIDGE_LEDGER_REQUIRED,
   };
   process.env.QCR_INJECT_DIR = dir;
   process.env.QCR_SESSION_NAME = "pr-1";
+  process.env.QCR_SESSION_BRIDGE_GENERATION = "generation-1";
+  process.env.QCR_SESSION_BRIDGE_STATE_FILE = join(dir, "bridge-state.json");
+  process.env.QCR_SESSION_BRIDGE_LEDGER_REQUIRED = "0";
   delete process.env.QCR_STATE_DB;
   delete process.env.QCR_SANDBOX_ROOT;
 });
@@ -96,6 +111,12 @@ afterEach(() => {
   else process.env.QCR_STATE_DB = savedEnv.stateDb;
   if (savedEnv.root === undefined) delete process.env.QCR_SANDBOX_ROOT;
   else process.env.QCR_SANDBOX_ROOT = savedEnv.root;
+  if (savedEnv.bridgeGeneration === undefined) delete process.env.QCR_SESSION_BRIDGE_GENERATION;
+  else process.env.QCR_SESSION_BRIDGE_GENERATION = savedEnv.bridgeGeneration;
+  if (savedEnv.bridgeStateFile === undefined) delete process.env.QCR_SESSION_BRIDGE_STATE_FILE;
+  else process.env.QCR_SESSION_BRIDGE_STATE_FILE = savedEnv.bridgeStateFile;
+  if (savedEnv.bridgeLedgerRequired === undefined) delete process.env.QCR_SESSION_BRIDGE_LEDGER_REQUIRED;
+  else process.env.QCR_SESSION_BRIDGE_LEDGER_REQUIRED = savedEnv.bridgeLedgerRequired;
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -106,6 +127,11 @@ describe("inject-bridge — start-acknowledged single flight", () => {
     activate(fakePi());
     fire("session_start");
 
+    expect(readSessionBridgeState(process.env.QCR_SESSION_BRIDGE_STATE_FILE!)).toMatchObject({
+      session: "pr-1",
+      generation: "generation-1",
+      stage: "ready",
+    });
     await vi.waitFor(() => expect(sends).toHaveLength(1));
     expect(pending()).toHaveLength(1);
     expect(done()).toHaveLength(0);
@@ -369,8 +395,40 @@ describe("inject-bridge — start-acknowledged single flight", () => {
 });
 
 describe("inject-bridge — durable command ownership", () => {
+  it("fails closed when a managed PR bridge has no state database", () => {
+    process.env.QCR_SESSION_BRIDGE_LEDGER_REQUIRED = "1";
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    activate(fakePi());
+    fire("session_start");
+
+    expect(readSessionBridgeState(process.env.QCR_SESSION_BRIDGE_STATE_FILE!)).toMatchObject({
+      stage: "failed",
+      failed_stage: "state_db",
+    });
+    expect(errors).toHaveBeenCalledWith(expect.stringContaining("state_db"));
+  });
+
+  it("persists a pre-reserve ledger failure instead of presenting tmux as ready", () => {
+    process.env.QCR_SESSION_BRIDGE_LEDGER_REQUIRED = "1";
+    process.env.QCR_STATE_DB = join(dir, "missing-state.db");
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    activate(fakePi());
+    fire("session_start");
+
+    expect(sends).toHaveLength(0);
+    expect(readSessionBridgeState(process.env.QCR_SESSION_BRIDGE_STATE_FILE!)).toMatchObject({
+      generation: "generation-1",
+      stage: "failed",
+      failed_stage: "ledger_open",
+    });
+    expect(errors).toHaveBeenCalledWith(expect.stringContaining("ledger_open"));
+  });
+
   function commandStore(): StateStore {
     const dbPath = join(dir, "state.db");
+    process.env.QCR_SESSION_BRIDGE_LEDGER_REQUIRED = "1";
     process.env.QCR_STATE_DB = dbPath;
     process.env.QCR_SANDBOX_ROOT = dir;
     return new StateStore(dbPath, () => new Date("2026-08-27T20:00:00.000Z"));
@@ -395,6 +453,10 @@ describe("inject-bridge — durable command ownership", () => {
       fire("session_start");
       await vi.waitFor(() => expect(sends).toHaveLength(1));
       expect(store.getSessionCommand("cmd-a")).toMatchObject({ status: "running", attempt: 1, started_at: null });
+      expect(readSessionBridgeState(process.env.QCR_SESSION_BRIDGE_STATE_FILE!)).toMatchObject({
+        generation: "generation-1",
+        stage: "ready",
+      });
 
       acknowledgeLatest();
       await vi.waitFor(() => expect(store.getSessionCommand("cmd-a")?.started_at).not.toBeNull());

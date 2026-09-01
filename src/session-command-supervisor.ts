@@ -304,14 +304,25 @@ export class SessionCommandSupervisor {
       return;
     }
     const retryCap = this.deps.cfg.daemon.session_command_max_start_retries ?? DEFAULT_SESSION_COMMAND_MAX_START_RETRIES;
-    // attempt=1 is the original submission; retryCap counts additional starts.
-    if (command.attempt <= retryCap && this.deps.hooks.retrySessionCommand) {
+    // Process rebirths and bridge reservations are different counters. Spend
+    // the finite process-recovery allowance BEFORE tmux/filesystem work: a
+    // generation that dies before reserve must not retry forever at attempt=0.
+    if (command.recovery_attempts < retryCap) {
+      if (!this.deps.hooks.retrySessionCommand) {
+        throw new Error(`round command ${command.id} retry hook unavailable with ${command.recovery_attempts}/${retryCap} recoveries spent`);
+      }
+      if (!this.deps.store.beginSessionCommandRecovery(command.id, command.recovery_attempts)) {
+        throw new Error(`round command ${command.id} lost its automatic-recovery claim`);
+      }
+      const recoveryAttempt = command.recovery_attempts + 1;
       const result = await this.deps.hooks.retrySessionCommand(command.id, reason);
       if (result === "retried") {
+        const replayed = this.deps.store.getSessionCommand(command.id);
         this.deps.store.logEvent("session_command_start_recovery", command.pr, {
           command_id: command.id,
           round_no: command.round_no,
-          attempt: command.attempt,
+          recovery_attempt: recoveryAttempt,
+          delivery_attempt: replayed?.attempt ?? command.attempt,
           retry_cap: retryCap,
           reason,
         });
@@ -319,6 +330,14 @@ export class SessionCommandSupervisor {
       }
       if (result === "round_finished") {
         this.deps.store.failActiveSessionCommand(command.id, `round finished during start recovery: ${reason}`);
+        return;
+      }
+      if (result === "settled") {
+        this.deps.store.logEvent("session_command_start_settled_race", command.pr, {
+          command_id: command.id,
+          round_no: command.round_no,
+          recovery_attempt: recoveryAttempt,
+        });
         return;
       }
       if (result === "accepted_race") {
@@ -330,24 +349,27 @@ export class SessionCommandSupervisor {
       // A failed rebirth leaves the same pending row due. Throw so the scan's
       // durable health is red; the next finite tick retries instead of losing
       // the only obligation by terminalizing it first.
-      throw new Error(`command ${command.id} start recovery failed before replay`);
+      const failed = this.deps.store.getSessionCommand(command.id);
+      throw new Error(`command ${command.id} start recovery failed before replay: ${failed?.failure ?? reason}`);
     }
 
+    const effectiveReason = command.failure?.trim() || reason;
     this.deps.store.logEvent("session_command_start_failed", command.pr, {
       command_id: command.id,
       round_no: command.round_no,
-      attempts: command.attempt,
+      recovery_attempts: command.recovery_attempts,
+      delivery_attempts: command.attempt,
       retry_cap: retryCap,
-      reason,
+      reason: effectiveReason,
     });
     if (command.kind === "round" && command.round_no !== null) {
-      await this.failRound(command, "command_start", reason);
-    } else if (this.deps.store.failActiveSessionCommand(command.id, reason)) {
+      await this.failRound(command, "command_start", effectiveReason);
+    } else if (this.deps.store.failActiveSessionCommand(command.id, effectiveReason)) {
       this.deps.store.logAnomaly(
         "session_command_failed",
         command.pr,
         null,
-        `${reason}; ordinary wake remains failed and blocks successors`,
+        `${effectiveReason}; ordinary wake remains failed and blocks successors`,
       );
     }
   }
@@ -490,6 +512,7 @@ export class SessionCommandSupervisor {
    * convert the payload back into the capped held-wake queue. */
   private async recoverNonRound(command: SessionCommandRow, reason: string): Promise<void> {
     const retryCap = this.deps.cfg.daemon.session_command_max_start_retries ?? DEFAULT_SESSION_COMMAND_MAX_START_RETRIES;
+    const effectiveReason = command.failure?.trim() || reason;
     if (command.recovery_attempts < retryCap) {
       // An unbound production adapter is an unhealthy supervisor, not spent
       // recovery. Keep the failed command due so wiring can be repaired and
@@ -503,15 +526,16 @@ export class SessionCommandSupervisor {
         throw new Error(`command ${command.id} lost its automatic-recovery claim`);
       }
       const recoveryAttempt = command.recovery_attempts + 1;
-      const result = await this.deps.hooks.retrySessionCommand(command.id, reason);
+      const result = await this.deps.hooks.retrySessionCommand(command.id, effectiveReason);
       if (result === "retried") {
+        const replayed = this.deps.store.getSessionCommand(command.id);
         this.deps.store.logEvent("session_command_nonround_recovery", command.pr, {
           command_id: command.id,
           kind: command.kind,
           recovery_attempt: recoveryAttempt,
           retry_cap: retryCap,
-          delivery_attempt: command.attempt,
-          reason,
+          delivery_attempt: replayed?.attempt ?? command.attempt,
+          reason: effectiveReason,
         });
         return;
       }
@@ -519,7 +543,7 @@ export class SessionCommandSupervisor {
         this.deps.store.logEvent("session_command_nonround_settled_race", command.pr, {
           command_id: command.id,
           kind: command.kind,
-          reason,
+          reason: effectiveReason,
         });
         return;
       }
@@ -537,7 +561,8 @@ export class SessionCommandSupervisor {
       }
       // A failed fence/rebirth leaves the same command as the only obligation.
       // Keep supervisor health red; never release it or submit a successor.
-      throw new Error(`command ${command.id} non-round recovery failed before replay`);
+      const failed = this.deps.store.getSessionCommand(command.id);
+      throw new Error(`command ${command.id} non-round recovery failed before replay: ${failed?.failure ?? effectiveReason}`);
     }
 
     if (!this.deps.hooks.killSession) {
@@ -550,7 +575,7 @@ export class SessionCommandSupervisor {
     // failure over the operator's successful reset.
     if (!current || current.status === "acked" || current.status === "cancelled") return;
     if (current.status === "pending" || current.status === "running") {
-      if (!this.deps.store.failActiveSessionCommand(command.id, reason)) return;
+      if (!this.deps.store.failActiveSessionCommand(command.id, effectiveReason)) return;
     }
     const failed = this.deps.store.getSessionCommand(command.id);
     if (!failed || failed.status !== "failed") return;
@@ -562,7 +587,7 @@ export class SessionCommandSupervisor {
       round_no: null,
       head_sha: row?.head_sha ?? "",
       stage: "session_command",
-      detail: reason,
+      detail: effectiveReason,
       attempts: failed.recovery_attempts,
       retry_cap: retryCap,
     });
@@ -570,7 +595,7 @@ export class SessionCommandSupervisor {
       "session_command_recovery_exhausted",
       command.pr,
       null,
-      `${reason}; automatic same-command replay exhausted and operator recovery is required`,
+      `${effectiveReason}; automatic process recovery exhausted and operator recovery is required`,
     );
   }
 

@@ -991,8 +991,8 @@ export interface PendingWakeRow {
 }
 
 /** Per-PR ceiling on held wakes. Ordinary wakes yield their oldest rows when
- * pressure exceeds this cap. Operator-recovered rows are protected: if those
- * alone exceed the cap, preserving owed work wins over the numeric ceiling. */
+ * pressure exceeds this cap. Operator-recovered and actively leased rows are
+ * protected: preserving owed work wins over the numeric ceiling. */
 export const MAX_HELD_WAKES = 5;
 
 /**
@@ -1920,6 +1920,18 @@ export class StateStore {
     ).run({ id, ts, next: nextCheckAt }).changes === 1;
   }
 
+  /** Preserve a failed rebirth's pre-reserve cause on the one command row.
+   * The command remains pending and retryable; this is diagnosis, not a
+   * terminal transition. The next recovery and final FAILED_LOUD incident use
+   * this cause instead of collapsing it back to generic UNKNOWN evidence. */
+  noteSessionCommandRecoveryFailure(id: string, failure: string): boolean {
+    const ts = this.ts();
+    return this.db.prepare(
+      `UPDATE session_commands SET failure=@failure, updated_at=@ts
+        WHERE id=@id AND status IN ('pending', 'running') AND started_at IS NULL`,
+    ).run({ id, failure, ts }).changes === 1;
+  }
+
   /** Spend one durable automatic replay allowance before crossing the async
    * tmux/filesystem boundary. A failed rebirth therefore cannot retry forever
    * merely because no new bridge lived long enough to increment `attempt`. */
@@ -2113,30 +2125,36 @@ export class StateStore {
   // ---- held wakes (single-shepherd S4) -----------------------------------
 
   /** Enforce the ordinary wake budget without ever deleting an obligation
-   * restored by operator recovery. Protected rows consume capacity first; if
-   * they alone exceed the cap, all survive and new ordinary wakes are dropped. */
+   * restored by operator recovery or leased to an in-flight delivery. Those
+   * protected rows consume capacity first; if they alone meet or exceed the
+   * cap, all survive and new ordinary wakes are dropped. */
   private trimHeldWakes(pr: number, cap = MAX_HELD_WAKES): number[] {
     const protectedCount = (this.db.prepare(
-      "SELECT COUNT(*) AS c FROM pending_wakes WHERE pr=? AND reason GLOB 'operator_recovered:*'",
+      `SELECT COUNT(*) AS c FROM pending_wakes
+        WHERE pr=? AND (reason GLOB 'operator_recovered:*' OR claim_token IS NOT NULL)`,
     ).get(pr) as { c: number }).c;
     const ordinaryCap = Math.max(0, cap - protectedCount);
     const overflow = this.db.prepare(
       `SELECT id FROM pending_wakes
-        WHERE pr=? AND reason NOT GLOB 'operator_recovered:*'
+        WHERE pr=? AND reason NOT GLOB 'operator_recovered:*' AND claim_token IS NULL
         ORDER BY ${PENDING_WAKE_REVERSE_ORDER_SQL} LIMIT -1 OFFSET ?`,
     ).all(pr, ordinaryCap) as Array<{ id: number }>;
     for (const row of overflow) this.db.prepare("DELETE FROM pending_wakes WHERE id = ?").run(row.id);
-    return overflow.map((row) => row.id);
+    return overflow.map((row) => row.id).reverse();
   }
 
   /** Hold a rendered wake until this PR's round ends. Returns the ids dropped
    * to stay under `cap` (oldest first) so the caller can log them — a silently
-   * dropped author reply is worse than a late one. */
+   * dropped author reply is worse than a late one. Insert + cap enforcement is
+   * one transaction, including when another delivery already owns a lease. */
   holdWake(pr: number, payload: string, reason: string, cap = MAX_HELD_WAKES): number[] {
-    this.db
-      .prepare("INSERT INTO pending_wakes (pr, payload, reason, held_at) VALUES (?, ?, ?, ?)")
-      .run(pr, payload, reason, this.now().toISOString());
-    return this.trimHeldWakes(pr, cap);
+    const hold = this.db.transaction((): number[] => {
+      this.db
+        .prepare("INSERT INTO pending_wakes (pr, payload, reason, held_at) VALUES (?, ?, ?, ?)")
+        .run(pr, payload, reason, this.now().toISOString());
+      return this.trimHeldWakes(pr, cap);
+    });
+    return hold();
   }
 
   heldWakes(pr: number): PendingWakeRow[] {
@@ -2148,33 +2166,63 @@ export class StateStore {
     return (this.db.prepare("SELECT COUNT(*) AS c FROM pending_wakes WHERE pr=?").get(pr) as { c: number }).c > 0;
   }
 
-  /** Lease only the oldest held wake. A live lease blocks later rows so
-   * concurrent flushers cannot reorder author messages. */
-  claimNextHeldWake(pr: number, token: string, leaseBefore: string): PendingWakeRow | null {
-    const claim = this.db.transaction((n: number): PendingWakeRow | null => {
-      const row = this.db.prepare(`SELECT * FROM pending_wakes WHERE pr = ?
-        ORDER BY ${PENDING_WAKE_ORDER_SQL} LIMIT 1`).get(n) as PendingWakeRow | undefined;
-      if (!row) return null;
-      if (row.claim_token && row.claimed_at && row.claimed_at > leaseBefore) return null;
+  /** Lease an oldest-first prefix as one delivery unit. A live lease anywhere
+   * in that prefix blocks the claim, so concurrent flushers cannot split or
+   * reorder an author-message burst. */
+  claimHeldWakeBatch(pr: number, token: string, leaseBefore: string, count: number): PendingWakeRow[] | null {
+    if (!Number.isSafeInteger(count) || count < 1) throw new Error(`invalid held-wake batch size ${count}`);
+    const claim = this.db.transaction((n: number): PendingWakeRow[] | null => {
+      const rows = this.db.prepare(`SELECT * FROM pending_wakes WHERE pr = ?
+        ORDER BY ${PENDING_WAKE_ORDER_SQL} LIMIT ?`).all(n, count) as PendingWakeRow[];
+      if (rows.length !== count) return null;
+      if (rows.some((row) => row.claim_token && row.claimed_at && row.claimed_at > leaseBefore)) return null;
+      const ids = rows.map((row) => row.id);
+      const holes = ids.map(() => "?").join(",");
       const now = this.now().toISOString();
       const changed = this.db.prepare(
         `UPDATE pending_wakes SET claim_token=?, claimed_at=?, attempts=attempts+1
-          WHERE id=? AND (claim_token IS NULL OR claimed_at IS NULL OR claimed_at <= ?)`,
-      ).run(token, now, row.id, leaseBefore).changes;
-      if (changed !== 1) return null;
-      return this.db.prepare("SELECT * FROM pending_wakes WHERE id = ?").get(row.id) as PendingWakeRow;
+          WHERE id IN (${holes}) AND (claim_token IS NULL OR claimed_at IS NULL OR claimed_at <= ?)`,
+      ).run(token, now, ...ids, leaseBefore).changes;
+      if (changed !== ids.length) throw new Error(`held-wake batch claim lost ${changed}/${ids.length} rows`);
+      return this.db.prepare(`SELECT * FROM pending_wakes WHERE id IN (${holes})
+        ORDER BY ${PENDING_WAKE_ORDER_SQL}`).all(...ids) as PendingWakeRow[];
     });
     return claim(pr);
   }
 
-  ackHeldWake(id: number, token: string): boolean {
-    return this.db.prepare("DELETE FROM pending_wakes WHERE id = ? AND claim_token = ?").run(id, token).changes === 1;
+  ackHeldWakeBatch(ids: number[], token: string): boolean {
+    if (ids.length === 0) return false;
+    const ack = this.db.transaction((): boolean => {
+      const holes = ids.map(() => "?").join(",");
+      const owned = (this.db.prepare(
+        `SELECT COUNT(*) AS c FROM pending_wakes WHERE id IN (${holes}) AND claim_token = ?`,
+      ).get(...ids, token) as { c: number }).c;
+      if (owned !== ids.length) return false;
+      const deleted = this.db.prepare(
+        `DELETE FROM pending_wakes WHERE id IN (${holes}) AND claim_token = ?`,
+      ).run(...ids, token).changes;
+      if (deleted !== ids.length) throw new Error(`held-wake batch ack lost ${deleted}/${ids.length} rows`);
+      return true;
+    });
+    return ack();
   }
 
-  releaseHeldWake(id: number, token: string): boolean {
-    return this.db.prepare(
-      "UPDATE pending_wakes SET claim_token=NULL, claimed_at=NULL WHERE id = ? AND claim_token = ?",
-    ).run(id, token).changes === 1;
+  releaseHeldWakeBatch(ids: number[], token: string): boolean {
+    if (ids.length === 0) return false;
+    const release = this.db.transaction((): boolean => {
+      const holes = ids.map(() => "?").join(",");
+      const owned = (this.db.prepare(
+        `SELECT COUNT(*) AS c FROM pending_wakes WHERE id IN (${holes}) AND claim_token = ?`,
+      ).get(...ids, token) as { c: number }).c;
+      if (owned !== ids.length) return false;
+      const changed = this.db.prepare(
+        `UPDATE pending_wakes SET claim_token=NULL, claimed_at=NULL
+          WHERE id IN (${holes}) AND claim_token = ?`,
+      ).run(...ids, token).changes;
+      if (changed !== ids.length) throw new Error(`held-wake batch release lost ${changed}/${ids.length} rows`);
+      return true;
+    });
+    return release();
   }
 
   /** Explicit destructive cleanup for a closed PR; never use for delivery. */

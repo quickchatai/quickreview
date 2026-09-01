@@ -910,6 +910,9 @@ export interface Config {
      * parser supplies the exported defaults so production always has finite
      * values. Progress telemetry never changes any of them. */
     session_command_start_lease_s?: number;
+    /** Maximum wall time from tmux birth to a generation-matched inject-bridge
+     * startup receipt. Tmux existence alone is never delivery readiness. */
+    session_bridge_ready_timeout_s?: number;
     session_command_running_max_min?: number;
     /** round execution milestones, all anchored to durable command
      * start. They never renew from heartbeat/activity telemetry. */
@@ -1115,6 +1118,7 @@ export const DEFAULT_MAX_PROMPT_REDELIVERIES = 2;
  * the measured 23.4-minute live maximum yet materially below the 75-minute
  * defense-in-depth round deadline. */
 export const DEFAULT_SESSION_COMMAND_START_LEASE_S = 120;
+export const DEFAULT_SESSION_BRIDGE_READY_TIMEOUT_S = 30;
 export const DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN = 45;
 export const DEFAULT_ROUND_FIRST_PASS_MAX_MIN = 5;
 export const DEFAULT_ROUND_PASSES_MAX_MIN = 35;
@@ -1205,6 +1209,7 @@ export function parseConfig(toml: string): Config {
       max_self_requeues: DEFAULT_MAX_SELF_REQUEUES,
       expire_overdue_after_h: 24,
       session_command_start_lease_s: DEFAULT_SESSION_COMMAND_START_LEASE_S,
+      session_bridge_ready_timeout_s: DEFAULT_SESSION_BRIDGE_READY_TIMEOUT_S,
       session_command_running_max_min: DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN,
       round_first_pass_max_min: DEFAULT_ROUND_FIRST_PASS_MAX_MIN,
       round_passes_max_min: DEFAULT_ROUND_PASSES_MAX_MIN,

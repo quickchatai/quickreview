@@ -239,6 +239,21 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
           }
         }
       }
+      // GitHub owns head truth. A successor can outlive its predecessor and
+      // can also survive a crash after the PR row was corrected, so enforce
+      // this independently of whether THIS pass observed a local head change.
+      // The store preserves predecessor, first-request FIFO time, and sticky
+      // human provenance while coalescing only the target head.
+      const successor = store.successorFor(pr.number);
+      if (successor && successor.head_sha !== pr.head_sha) {
+        store.recordSuccessor({
+          pr: pr.number,
+          predecessor_round_id: successor.predecessor_round_id,
+          head_sha: pr.head_sha,
+          provenance: successor.provenance,
+          reason: "reconcile-authoritative-head",
+        });
+      }
       if (local.state === "closed") {
         // GitHub says open, we say closed → GitHub wins.
         correction(deps, pr.number, "reopened", { local: local.state }, report);

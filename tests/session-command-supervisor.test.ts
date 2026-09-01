@@ -155,12 +155,18 @@ describe("bounded round-stage supervision", () => {
       startedAt: "2026-08-27T19:00:00.000Z",
       nextCheckAt: "2026-08-27T19:45:00.000Z",
     });
-    const retry = vi.fn(async () => "retried" as const);
+    const retry = vi.fn(async () => {
+      store.retrySessionCommandAfterFence(id, 1, clock.toISOString());
+      store.claimSessionCommand(id, "bridge-new", clock.toISOString());
+      return "retried" as const;
+    });
 
     await supervisor(hooks({ retrySessionCommand: retry })).supervisor.scan();
 
     expect(retry).toHaveBeenCalledWith(id, expect.stringContaining("fixed 45-minute running bound"));
-    expect(store.getSessionCommand(id)?.status).toBe("running"); // the production hook performs the fenced reset
+    expect(store.getSessionCommand(id)).toMatchObject({ status: "running", attempt: 2 });
+    const recovery = store.recentEvents(20).find((event) => event.kind === "session_command_nonround_recovery");
+    expect(JSON.parse(recovery!.payload!)).toMatchObject({ recovery_attempt: 1, delivery_attempt: 2 });
     expect(store.openReviewFailure(pr)).toBeUndefined();
   });
 
@@ -187,11 +193,19 @@ describe("bounded round-stage supervision", () => {
     expect(s.health()).toMatchObject({ healthy: false, last_error: expect.stringContaining("retry hook unavailable") });
   });
 
-  it("stops automatic non-round recovery after finite failed replay attempts", async () => {
+  it("stops automatic non-round recovery after finite failed process births", async () => {
     const { id, pr } = seedWakeCommand({ status: "failed", attempt: 1 });
-    const retry = vi.fn(async () => "retry_failed" as const);
+    const retry = vi.fn(async () => {
+      store.retrySessionCommandAfterFence(id, 1, clock.toISOString());
+      store.noteSessionCommandRecoveryFailure(id, "bridge ledger_open: database unavailable");
+      return "retry_failed" as const;
+    });
     const kill = vi.fn(async () => {});
-    const s = supervisor(hooks({ retrySessionCommand: retry, killSession: kill })).supervisor;
+    const immediateEvidenceCfg: Config = {
+      ...baseCfg,
+      daemon: { ...baseCfg.daemon, session_command_unknown_max_checks: 0 },
+    };
+    const s = supervisor(hooks({ retrySessionCommand: retry, killSession: kill }), undefined, immediateEvidenceCfg).supervisor;
 
     await expect(s.scan()).rejects.toThrow(/recovery failed before replay/);
     await expect(s.scan()).rejects.toThrow(/recovery failed before replay/);
@@ -206,8 +220,50 @@ describe("bounded round-stage supervision", () => {
       attempts: 2,
       retry_cap: 2,
       work_owed: 1,
+      detail: "bridge ledger_open: database unavailable",
     });
     expect(store.dueSessionCommands(clock.toISOString())).toEqual([]);
+  });
+
+  it("reproduces #5454: attempt-zero rebirths fail precisely and keep four wakes plus queued work blocked", async () => {
+    const { id, pr } = seedWakeCommand({ status: "failed", attempt: 0 });
+    for (let n = 1; n <= 4; n++) store.holdWake(pr, `# Author reply — PR #${pr}\n\nreply ${n}`, "author_reply");
+    const retry = vi.fn(async () => {
+      store.retrySessionCommandAfterFence(id, 0, clock.toISOString());
+      store.noteSessionCommandRecoveryFailure(id, "timed out waiting for matching bridge readiness before reservation");
+      return "retry_failed" as const;
+    });
+    const kill = vi.fn(async () => {});
+    const immediateEvidenceCfg: Config = {
+      ...baseCfg,
+      daemon: { ...baseCfg.daemon, session_command_unknown_max_checks: 0 },
+    };
+    const s = supervisor(
+      hooks({
+        wakeReceiptPresent: async () => null,
+        sessionAlive: async () => true,
+        retrySessionCommand: retry,
+        killSession: kill,
+      }),
+      undefined,
+      immediateEvidenceCfg,
+    ).supervisor;
+
+    await expect(s.scan()).rejects.toThrow(/matching bridge readiness/);
+    await expect(s.scan()).rejects.toThrow(/matching bridge readiness/);
+    await s.scan();
+
+    expect(retry).toHaveBeenCalledTimes(2);
+    expect(kill).toHaveBeenCalledWith(pr);
+    expect(store.getSessionCommand(id)).toMatchObject({ status: "failed", attempt: 0, recovery_attempts: 2 });
+    expect(store.heldWakes(pr)).toHaveLength(4);
+    expect(store.getPr(pr)?.state).toBe("queued");
+    expect(store.blockingSessionCommand(`pr-${pr}`)).toBeTruthy();
+    expect(store.openReviewFailure(pr)).toMatchObject({
+      command_id: id,
+      work_owed: 1,
+      detail: "timed out waiting for matching bridge readiness before reservation",
+    });
   });
 
   it("does not reopen failed-loud debt when operator cancellation wins the exhaustion fence", async () => {
@@ -266,7 +322,46 @@ describe("bounded round-stage supervision", () => {
 
     expect(retried).toEqual([id]);
     expect(store.getSessionCommand(id)?.status).toBe("running"); // the hook owns fail→retry; this fake only records
-    expect(events("session_command_start_recovery")).toMatchObject([{ pr, payload: { command_id: id, attempt: 1 } }]);
+    expect(events("session_command_start_recovery")).toMatchObject([{
+      pr,
+      payload: { command_id: id, recovery_attempt: 1, delivery_attempt: 1 },
+    }]);
+  });
+
+  it("bounds round rebirths even when no bridge generation ever reserves the command", async () => {
+    const { id, pr, round } = seedRoundCommand({ status: "running" });
+    const retry = vi.fn(async () => {
+      store.retrySessionCommandAfterFence(id, 1, clock.toISOString());
+      store.noteSessionCommandRecoveryFailure(id, "inject bridge generation failed at ledger_open");
+      return "retry_failed" as const;
+    });
+    const onRoundFailure = vi.fn(async () => "requeued" as const);
+    const immediateEvidenceCfg: Config = {
+      ...baseCfg,
+      daemon: { ...baseCfg.daemon, session_command_unknown_max_checks: 0 },
+    };
+    const s = supervisor(
+      hooks({ wakeReceiptPresent: async () => false, sessionAlive: async () => true, retrySessionCommand: retry }),
+      onRoundFailure,
+      immediateEvidenceCfg,
+    ).supervisor;
+
+    await expect(s.scan()).rejects.toThrow(/failed before replay.*ledger_open/);
+    await expect(s.scan()).rejects.toThrow(/failed before replay.*ledger_open/);
+    await s.scan();
+
+    expect(retry).toHaveBeenCalledTimes(2);
+    expect(store.getSessionCommand(id)).toMatchObject({
+      status: "failed",
+      attempt: 1,
+      recovery_attempts: 2,
+    });
+    expect(onRoundFailure).toHaveBeenCalledWith(
+      pr,
+      round.round_no,
+      "command_start",
+      expect.stringContaining("ledger_open"),
+    );
   });
 
   it("allows unknown evidence one finite lease, then recovers instead of waiting indefinitely", async () => {

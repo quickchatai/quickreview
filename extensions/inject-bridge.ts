@@ -26,6 +26,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync,
 import { basename, join } from "node:path";
 import type { Pi } from "@earendil-works/pi-coding-agent";
 import { sessionCommandMarker } from "../src/session-command.js";
+import { writeSessionBridgeState } from "../src/session-bridge.js";
 import { SessionCommandLedger } from "./session-command-ledger.js";
 
 /**
@@ -111,16 +112,55 @@ export const activate: (pi: Pi) => void = (pi) => {
   const stateDb = process.env.QCR_STATE_DB?.trim();
   const session = resolveSessionName(pi);
   const root = process.env.QCR_SANDBOX_ROOT?.trim() || process.cwd();
-  const ledgerRequired = Boolean(stateDb && /^pr-\d+$/.test(session));
-  let ledger: SessionCommandLedger | undefined;
-  if (ledgerRequired) {
+  const prSession = /^pr-\d+$/.test(session);
+  // Managed daemon PR sessions explicitly require the SQLite ledger. The
+  // default is fail-closed; only isolated smoke/replay managers pass "0".
+  const ledgerRequired = prSession && process.env.QCR_SESSION_BRIDGE_LEDGER_REQUIRED?.trim() !== "0";
+  const bridgeGeneration = process.env.QCR_SESSION_BRIDGE_GENERATION?.trim();
+  const bridgeStateFile = process.env.QCR_SESSION_BRIDGE_STATE_FILE?.trim();
+  let bridgeFailed = false;
+
+  const publishBridgeState = (
+    stage: "ready" | "failed" | "closed",
+    failure?: { failedStage: string; detail: string },
+  ): void => {
+    if (!bridgeGeneration || !bridgeStateFile) return;
     try {
-      ledger = new SessionCommandLedger(stateDb!, root, session, undefined, {
+      writeSessionBridgeState(bridgeStateFile, {
+        version: 1,
+        session,
+        generation: bridgeGeneration,
+        stage,
+        updated_at: new Date().toISOString(),
+        ...(failure ? { failed_stage: failure.failedStage, detail: failure.detail } : {}),
+      });
+    } catch (error) {
+      console.error(`[inject-bridge] FAILED_LOUD could not publish ${stage} receipt: ${String(error)}`);
+    }
+  };
+
+  const failBridge = (stage: string, detail: string): void => {
+    bridgeFailed = true;
+    publishBridgeState("failed", { failedStage: stage, detail });
+    console.error(`[inject-bridge] FAILED_LOUD ${stage}: ${detail}`);
+  };
+
+  if (ledgerRequired && (!bridgeGeneration || !bridgeStateFile)) {
+    failBridge("startup_fence", "missing QCR_SESSION_BRIDGE_GENERATION or QCR_SESSION_BRIDGE_STATE_FILE");
+  }
+  if (ledgerRequired && !stateDb) {
+    failBridge("state_db", "missing QCR_STATE_DB for a ledger-required PR bridge");
+  }
+
+  let ledger: SessionCommandLedger | undefined;
+  if (ledgerRequired && stateDb) {
+    try {
+      ledger = new SessionCommandLedger(stateDb, root, session, undefined, {
         startMs: positiveEnvMs("QCR_SESSION_COMMAND_START_LEASE_MS"),
         runningMs: positiveEnvMs("QCR_SESSION_COMMAND_RUNNING_LEASE_MS"),
       });
     } catch (err) {
-      console.error(`[inject-bridge] FAILED_LOUD could not open durable command ledger: ${String(err)}`);
+      failBridge("ledger_open", String(err));
     }
   }
   // The span that matters is the AGENT RUN, not one assistant turn:
@@ -190,19 +230,22 @@ export const activate: (pi: Pi) => void = (pi) => {
   const deliver = (file: string): boolean => {
     const full = join(dir, file);
     if (closed || busy || submitted || activeWake || !existsSync(full)) return false;
-    if (ledgerRequired && !ledger) return false;
+    if (ledgerRequired && !ledger) {
+      failBridge("ledger_open", "durable command ledger is unavailable");
+      return false;
+    }
     try {
       const payload = readFileSync(full);
       const content = payload.toString("utf8");
       const link = ledger?.linkOrAdopt(full, payload);
       if (link && !link.ok) {
-        console.error(`[inject-bridge] FAILED_LOUD refusing ${file}: ${link.reason}`);
+        failBridge("command_link", `${file}: ${link.reason}`);
         return false;
       }
       if (content.trim().length === 0) {
         if (link?.ok && ledger) {
           ledger.failPending(link.command.id, "empty command payload");
-          console.error(`[inject-bridge] FAILED_LOUD refusing empty command ${link.command.id}; preserving its file`);
+          failBridge("payload_validate", `refusing empty command ${link.command.id}; preserving its file`);
           return false;
         }
         mkdirSync(doneDir, { recursive: true });
@@ -213,7 +256,7 @@ export const activate: (pi: Pi) => void = (pi) => {
       // Install the single-flight barrier BEFORE invoking Pi: a pinned-Pi
       // adapter may emit agent_start synchronously from inside this call.
       if (link?.ok && ledger && !ledger.reserve(link.command.id)) {
-        console.error(`[inject-bridge] FAILED_LOUD refusing ${file}: command ${link.command.id} could not be reserved`);
+        failBridge("command_reserve", `${file}: command ${link.command.id} could not be reserved`);
         return false;
       }
       const marker = link?.ok
@@ -252,7 +295,7 @@ export const activate: (pi: Pi) => void = (pi) => {
       }
       return false;
     } catch (err) {
-      console.error(`[inject-bridge] failed to read or consume ${file}: ${String(err)}`);
+      failBridge("command_read", `${file}: ${String(err)}`);
       scheduleRetry();
       return false;
     }
@@ -283,30 +326,45 @@ export const activate: (pi: Pi) => void = (pi) => {
   };
 
   const start = (): void => {
-    if (watcher || closed) return;
-    mkdirSync(dir, { recursive: true });
-    mkdirSync(doneDir, { recursive: true });
-    // Register before sweeping: a daemon rename between sweep and watch
-    // registration would otherwise remain pending until an unrelated event.
-    watcher = watch(dir, (_event, filename) => {
-      if (!filename) {
-        drain();
-        return;
-      }
-      // Route EVERY event through the one drain queue (never a per-file
-      // deliver): concurrent watch events cannot interleave or reorder —
-      // pendingFiles() sorts, so delivery is strictly oldest-first.
-      const name = String(filename);
-      if (name.endsWith(".md")) drain();
-    });
-    drain(); // anything dropped before or during watch registration
-    console.error(`[inject-bridge] watching ${dir}`);
+    if (watcher || closed || bridgeFailed) return;
+    let stage = "mkdir";
+    try {
+      mkdirSync(dir, { recursive: true });
+      mkdirSync(doneDir, { recursive: true });
+      stage = "watch_register";
+      // Register before sweeping: a daemon rename between sweep and watch
+      // registration would otherwise remain pending until an unrelated event.
+      watcher = watch(dir, (_event, filename) => {
+        if (!filename) {
+          drain();
+          return;
+        }
+        // Route EVERY event through the one drain queue (never a per-file
+        // deliver): concurrent watch events cannot interleave or reorder —
+        // pendingFiles() sorts, so delivery is strictly oldest-first.
+        const name = String(filename);
+        if (name.endsWith(".md")) drain();
+      });
+      stage = "initial_drain";
+      drain(); // anything dropped before or during watch registration
+      if (bridgeFailed) return;
+      // Recovery writes its immutable command file before Pi birth. Since the
+      // drain above is synchronous and reserve precedes sendUserMessage, this
+      // receipt means a pre-existing command has already incremented attempt.
+      publishBridgeState("ready");
+      console.error(`[inject-bridge] watching ${dir}`);
+    } catch (error) {
+      watcher?.close();
+      watcher = undefined;
+      failBridge(stage, String(error));
+    }
   };
 
   // VERIFY-ON-PIN: "session_start" / "session_shutdown" event names (findings §5).
   pi.on("session_start", () => start());
   pi.on("session_shutdown", () => {
     closed = true;
+    if (!bridgeFailed) publishBridgeState("closed");
     if (retryTimer) clearTimeout(retryTimer);
     if (startAckTimer) clearTimeout(startAckTimer);
     if (settleDrainTimer) clearTimeout(settleDrainTimer);

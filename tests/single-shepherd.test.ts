@@ -3,13 +3,14 @@
 // the `subagent` tool (pi's native subagent extension, loaded per spawn by the
 // first-party glue) launched by that one pi, and it is never given
 // two instructions at once.
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkBashCommand } from "../extensions/bash-guard.js";
 import type { Config } from "../src/config.js";
 import { LEAF_MEMORY_TOOLS, buildAgents, stripAgentSpawnTools } from "../src/include.js";
+import { writeSessionBridgeState } from "../src/session-bridge.js";
 import { OVERSEER_SESSION, PiSessionManager, isSandboxSession } from "../src/sessions.js";
 import { MAX_HELD_WAKES, StateStore } from "../src/state.js";
 import { Tmux } from "../src/tmux.js";
@@ -68,7 +69,21 @@ describe("daemon topology", () => {
       const exec: ExecFn = async (cmd, args) => {
         if (cmd === "tmux") {
           if (args[0] === "has-session") return { code: live.has(String(args[2]).replace(/^=/, "")) ? 0 : 1, stdout: "", stderr: "" };
-          if (args[0] === "new-session") live.add(String(args[3]));
+          if (args[0] === "new-session") {
+            const session = String(args[3]);
+            live.add(session);
+            const generation = args.find((value) => value.startsWith("QCR_SESSION_BRIDGE_GENERATION="))?.split("=", 2)[1];
+            const stateFile = args.find((value) => value.startsWith("QCR_SESSION_BRIDGE_STATE_FILE="))?.slice("QCR_SESSION_BRIDGE_STATE_FILE=".length);
+            if (generation && stateFile) {
+              writeSessionBridgeState(stateFile, {
+                version: 1,
+                session,
+                generation,
+                stage: "ready",
+                updated_at: "2026-08-13T10:00:00.000Z",
+              });
+            }
+          }
           if (args[0] === "list-sessions") return { code: 0, stdout: [...live].join("\n"), stderr: "" };
           if (args[0] === "kill-session") live.delete(String(args[2]).replace(/^=/, ""));
         }
@@ -366,46 +381,113 @@ describe("wakeOrHold / flushHeldWakes", () => {
     expect(await wakeOrHold(deps(), 7, "hello", "author_reply")).toBe("injected");
   });
 
-  it("flushes held wakes in arrival order, once", async () => {
+  it("flushes held author replies in arrival order, once", async () => {
     const id = store.startRound(7, "first", ["pass-baseline"], 75);
     await wakeOrHold(deps(), 7, "first reply", "author_reply");
     await wakeOrHold(deps(), 7, "second reply", "author_reply");
     store.finishRound(id, "APPROVE", null, null);
 
     expect(await flushHeldWakes(deps(), 7)).toBe(2);
-    expect(injected.map((i) => i.message)).toEqual(["first reply", "second reply"]);
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.message.indexOf("first reply")).toBeLessThan(injected[0]!.message.indexOf("second reply"));
     expect(store.heldWakes(7)).toHaveLength(0);
     expect(await flushHeldWakes(deps(), 7)).toBe(0);
   });
 
-  it("flushes only one held wake into the durable slot and leaves successors ordered", async () => {
+  it("coalesces five author replies into one durable run without losing any response obligation", async () => {
     const id = store.startRound(7, "first", ["pass-baseline"], 75);
-    await wakeOrHold(deps(), 7, "first reply", "author_reply");
-    await wakeOrHold(deps(), 7, "second reply", "author_reply");
+    for (let comment = 101; comment <= 105; comment++) {
+      await wakeOrHold(
+        deps(),
+        7,
+        `# Author reply — PR #7\n\nWrite exactly one response file at \`verdict/pr-7-thread-9-comment-${comment}.json\``,
+        "author_reply",
+      );
+    }
     store.finishRound(id, "APPROVE", null, null);
-    let seq = 0;
     const durableDeps = {
       store,
       inject: async (pr: number, message: string) => {
-        const command = `cmd-${seq++}`;
+        injected.push({ pr, message });
         store.createSessionCommand({
-          id: command, pr, session: `pr-${pr}`, kind: "wake", round_no: null,
-          payload_sha256: message.repeat(64).slice(0, 64),
-          payload_path: `/state/${command}.md`, inject_path: `/inject/pr-${pr}/${command}.md`,
+          id: "cmd-batch", pr, session: `pr-${pr}`, kind: "wake", round_no: null,
+          payload_sha256: "b".repeat(64), payload_path: "/state/cmd-batch.md",
+          inject_path: `/inject/pr-${pr}/cmd-batch.md`,
           next_check_at: new Date(Date.now() + 120_000).toISOString(),
         });
       },
     };
 
-    expect(await flushHeldWakes(durableDeps, 7)).toBe(1);
-    expect(store.heldWakes(7).map((w) => w.payload)).toEqual(["second reply"]);
-    const first = store.activeSessionCommand("pr-7")!;
-    const commandDeadline = new Date(Date.now() + 1_800_000).toISOString();
-    store.claimSessionCommand(first.id, "bridge", commandDeadline);
-    store.markSessionCommandStarted(first.id, "bridge", commandDeadline);
-    store.finishSessionCommand(first.id, "bridge", "acked");
-    expect(await flushHeldWakes(durableDeps, 7)).toBe(1);
+    expect(await flushHeldWakes(durableDeps, 7)).toBe(5);
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.message).toContain("Process every author message below independently");
+    for (let comment = 101; comment <= 105; comment++) {
+      expect(injected[0]!.message).toContain(`verdict/pr-7-thread-9-comment-${comment}.json`);
+    }
     expect(store.heldWakes(7)).toHaveLength(0);
+
+    // A queued merits obligation remains behind exactly this one durable run,
+    // then becomes dispatchable as soon as that run settles — never five
+    // serialized author-reply runs.
+    const current = store.getPr(7)!;
+    store.upsertPr({ ...current, state: "queued", trigger_ts: new Date().toISOString() });
+    const canDispatch = (): boolean => store.getPr(7)?.state === "queued" && !store.blockingSessionCommand("pr-7");
+    expect(canDispatch()).toBe(false);
+    const deadline = new Date(Date.now() + 120_000).toISOString();
+    store.claimSessionCommand("cmd-batch", "bridge-batch", deadline);
+    store.markSessionCommandStarted("cmd-batch", "bridge-batch", deadline);
+    store.finishSessionCommand("cmd-batch", "bridge-batch", "acked");
+    expect(canDispatch()).toBe(true);
+  });
+
+  it("never lets cap trimming evict a leased author-reply batch during injection", async () => {
+    for (let comment = 301; comment <= 305; comment++) {
+      store.holdWake(7, `# Author reply — PR #7\n\ncomment ${comment}`, "author_reply");
+    }
+    let accept!: () => void;
+    const injecting = new Promise<void>((resolve) => { accept = resolve; });
+    const flush = flushHeldWakes({ store, inject: async () => injecting }, 7);
+    await vi.waitFor(() => expect(store.heldWakes(7).every((wake) => wake.claim_token !== null)).toBe(true));
+
+    const dropped = store.holdWake(7, "arrived while the batch was injecting", "author_reply");
+    expect(dropped).toHaveLength(1);
+    expect(store.heldWakes(7).map((wake) => wake.payload)).not.toContain("arrived while the batch was injecting");
+
+    accept();
+    expect(await flush).toBe(5);
+    expect(store.heldWakes(7)).toHaveLength(0);
+    expect(store.recentEvents(20).some((event) => event.kind === "wake_ack_lost")).toBe(false);
+  });
+
+  it("joins a recovered author reply to its contiguous burst but never crosses another wake class", async () => {
+    store.holdWake(7, "# Author reply — PR #7\n\nrecovered comment 201", "operator_recovered:wake:old-command");
+    store.holdWake(7, "# Author reply — PR #7\n\ncomment 202", "author_reply");
+    store.holdWake(7, "recheck the pushed head", "recheck:push");
+    store.holdWake(7, "# Author reply — PR #7\n\ncomment 203", "author_reply");
+    let seq = 0;
+    const durableDeps = {
+      store,
+      inject: async (pr: number, message: string) => {
+        injected.push({ pr, message });
+        const command = `cmd-${seq++}`;
+        store.createSessionCommand({
+          id: command, pr, session: `pr-${pr}`, kind: "wake", round_no: null,
+          payload_sha256: "c".repeat(64), payload_path: `/state/${command}.md`,
+          inject_path: `/inject/pr-${pr}/${command}.md`,
+          next_check_at: new Date(Date.now() + 120_000).toISOString(),
+        });
+      },
+    };
+
+    expect(await flushHeldWakes(durableDeps, 7)).toBe(2);
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.message).toContain("recovered comment 201");
+    expect(injected[0]!.message).toContain("comment 202");
+    expect(injected[0]!.message).not.toContain("recheck the pushed head");
+    expect(store.heldWakes(7).map((wake) => wake.payload)).toEqual([
+      "recheck the pushed head",
+      "# Author reply — PR #7\n\ncomment 203",
+    ]);
   });
 
   it("caps held wakes per PR, dropping the oldest with an event", async () => {
@@ -417,7 +499,7 @@ describe("wakeOrHold / flushHeldWakes", () => {
     expect(store.recentEvents(50).some((e) => e.kind === "wake_dropped")).toBe(true);
   });
 
-  it("retains a failed oldest wake and retries it before later messages", async () => {
+  it("releases a failed oldest batch atomically and retries it before later messages", async () => {
     store.startRound(7, "first", ["pass-baseline"], 75);
     await wakeOrHold(deps(), 7, "a", "author_reply");
     await wakeOrHold(deps(), 7, "b", "author_reply");
@@ -426,10 +508,14 @@ describe("wakeOrHold / flushHeldWakes", () => {
       7,
     );
     expect(failed).toBe(0);
-    expect(store.heldWakes(7).map((w) => [w.payload, w.attempts])).toEqual([["a", 1], ["b", 0]]);
+    expect(store.heldWakes(7).map((w) => [w.payload, w.attempts, w.claim_token])).toEqual([
+      ["a", 1, null],
+      ["b", 1, null],
+    ]);
 
     expect(await flushHeldWakes(deps(), 7)).toBe(2);
-    expect(injected.map((i) => i.message)).toEqual(["a", "b"]);
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.message.indexOf("\na\n")).toBeLessThan(injected[0]!.message.indexOf("\nb\n"));
     expect(store.heldWakes(7)).toHaveLength(0);
   });
 });

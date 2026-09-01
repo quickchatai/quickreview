@@ -5,21 +5,30 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Pi } from "@earendil-works/pi-coding-agent";
+import activateInjectBridge from "../extensions/inject-bridge.js";
 import type { Config } from "../src/config.js";
+import { dispatchOnce } from "../src/dispatch.js";
 import { PiSessionManager, OVERSEER_SESSION, buildPiCommand, isSandboxSession, prOfSession, prSessionName } from "../src/sessions.js";
 import { Tmux } from "../src/tmux.js";
 import type { ExecFn } from "../src/tmux.js";
+import { writeSessionBridgeState } from "../src/session-bridge.js";
+import { SessionCommandSupervisor } from "../src/session-command-supervisor.js";
+import { OriginStore } from "../src/slack/origin.js";
 import { StateStore } from "../src/state.js";
 import { roundPromptMarker } from "../src/types.js";
 import type { RoundOrder } from "../src/types.js";
 import { WorktreeManager } from "../src/worktrees.js";
+import { daemonOriginWakes } from "../src/wire.js";
 
 let root: string;
 let secrets: string;
 let calls: { cmd: string; args: string[]; env?: NodeJS.ProcessEnv }[];
 let liveSessions: Set<string>;
 let onKillSession: ((name: string) => void) | undefined;
+let onNewSession: ((name: string, args: string[]) => void) | undefined;
+let autoBridgeReady = true;
 let keepKilledSession = false;
 
 const cfg = (): Config =>
@@ -65,7 +74,24 @@ const fakeExec: ExecFn = async (cmd, args, opts) => {
       const name = String(args[2]).replace(/^=/, "");
       return { code: liveSessions.has(name) ? 0 : 1, stdout: "", stderr: "" };
     }
-    if (args[0] === "new-session") liveSessions.add(String(args[3]));
+    if (args[0] === "new-session") {
+      const session = String(args[3]);
+      liveSessions.add(session);
+      onNewSession?.(session, args);
+      if (autoBridgeReady && session.startsWith("pr-")) {
+        const generation = args.find((value) => value.startsWith("QCR_SESSION_BRIDGE_GENERATION="))?.split("=", 2)[1];
+        const stateFile = args.find((value) => value.startsWith("QCR_SESSION_BRIDGE_STATE_FILE="))?.slice("QCR_SESSION_BRIDGE_STATE_FILE=".length);
+        if (generation && stateFile) {
+          writeSessionBridgeState(stateFile, {
+            version: 1,
+            session,
+            generation,
+            stage: "ready",
+            updated_at: "2026-08-13T10:00:00.000Z",
+          });
+        }
+      }
+    }
     if (args[0] === "kill-session") {
       const name = String(args[2]).replace(/^=/, "");
       onKillSession?.(name);
@@ -88,9 +114,13 @@ const ovSessions = {
   },
 };
 
-function manager(now = () => new Date("2026-08-13T10:00:00Z"), store?: StateStore): PiSessionManager {
+function manager(
+  now = () => new Date("2026-08-13T10:00:00Z"),
+  store?: StateStore,
+  config = cfg(),
+): PiSessionManager {
   return new PiSessionManager({
-    cfg: cfg(),
+    cfg: config,
     root,
     tmux: new Tmux({ exec: fakeExec }),
     worktrees: new WorktreeManager({ root, repo: "o/n", cloneDir: "example-app", cloneUrl: "/dev/null", run: fakeExec }),
@@ -98,6 +128,23 @@ function manager(now = () => new Date("2026-08-13T10:00:00Z"), store?: StateStor
     ovSessions,
     now,
     ...(store ? { commandStore: store } : {}),
+  });
+}
+
+function markExistingSessionReady(m: PiSessionManager, session: string): void {
+  const generation = `existing-${session}`;
+  liveSessions.add(session);
+  mkdirSync(join(root, "state", "sessions"), { recursive: true });
+  writeFileSync(
+    join(root, "state", "sessions", `${session}.json`),
+    `${JSON.stringify({ session, born_at: "2026-08-13T09:00:00.000Z", bridge_generation: generation })}\n`,
+  );
+  writeSessionBridgeState(m.bridgeStatePath(session, generation), {
+    version: 1,
+    session,
+    generation,
+    stage: "ready",
+    updated_at: "2026-08-13T09:00:00.000Z",
   });
 }
 
@@ -127,6 +174,8 @@ beforeEach(() => {
   ovCalls = [];
   liveSessions = new Set();
   onKillSession = undefined;
+  onNewSession = undefined;
+  autoBridgeReady = true;
   keepKilledSession = false;
   mkdirSync(join(root, "prompts"), { recursive: true });
   mkdirSync(secrets, { recursive: true });
@@ -238,6 +287,11 @@ describe("birth", () => {
     expect(newSession).toContain(join(root, "extensions", "inject-bridge.ts"));
     expect(newSession).toContain(join(root, "extensions", "ledger-pin.ts"));
     expect(newSession).toContain(join(root, "state", "pi-sessions", "pr-42"));
+    expect(newSession.some((value) => value.startsWith("QCR_SESSION_BRIDGE_GENERATION="))).toBe(true);
+    expect(newSession.some((value) => value.startsWith(
+      `QCR_SESSION_BRIDGE_STATE_FILE=${join(root, "state", "sessions", "pr-42.bridge-")}`,
+    ))).toBe(true);
+    expect(newSession).toContain("QCR_SESSION_BRIDGE_LEDGER_REQUIRED=0");
 
     const promptPath = m.promptPath("pr-42");
     expect(newSession).toContain(promptPath);
@@ -292,9 +346,28 @@ describe("birth", () => {
 
   it("does not respawn a session that is already live", async () => {
     const m = manager();
-    liveSessions.add("pr-42");
+    markExistingSessionReady(m, "pr-42");
     await m.ensurePrSession(42, "T", "wt/pr-42");
     expect(tmuxArgs().some((a) => a[0] === "new-session")).toBe(false);
+  });
+
+  it("fences a live tmux whose ready receipt belongs to a stale generation", async () => {
+    const m = manager();
+    markExistingSessionReady(m, "pr-42");
+    writeSessionBridgeState(m.bridgeStatePath("pr-42", "existing-pr-42"), {
+      version: 1,
+      session: "pr-42",
+      generation: "stale-generation",
+      stage: "ready",
+      updated_at: "2026-08-13T09:59:00.000Z",
+    });
+
+    await m.ensurePrSession(42, "T", "wt/pr-42");
+
+    const kill = tmuxArgs().findIndex((a) => a[0] === "kill-session" && a.includes("=pr-42"));
+    const birth = tmuxArgs().findIndex((a, index) => index > kill && a[0] === "new-session" && a.includes("pr-42"));
+    expect(kill).toBeGreaterThanOrEqual(0);
+    expect(birth).toBeGreaterThan(kill);
   });
 
   it("builds an env with the app key only — no personal credential", async () => {
@@ -611,7 +684,7 @@ describe("injection", () => {
   it("inject() requires a live session", async () => {
     const m = manager();
     await expect(m.inject(42, "reply to author")).rejects.toThrow(/no live session pr-42/);
-    liveSessions.add("pr-42");
+    markExistingSessionReady(m, "pr-42");
     await m.inject(42, "reply to author");
     expect(readdirSync(m.injectDir("pr-42")).filter((f) => f.endsWith(".md"))).toHaveLength(1);
   });
@@ -631,6 +704,26 @@ describe("injection", () => {
     await expect(m.inject(77, "wake")).rejects.toThrow(/no live session pr-77/);
   });
 
+  it("inject() fences a live PR tmux whose bridge generation is stale", async () => {
+    const m = manager();
+    m.setTitleResolver(() => order.title);
+    markExistingSessionReady(m, "pr-42");
+    writeSessionBridgeState(m.bridgeStatePath("pr-42", "existing-pr-42"), {
+      version: 1,
+      session: "pr-42",
+      generation: "stale-generation",
+      stage: "ready",
+      updated_at: "2026-08-13T09:59:00.000Z",
+    });
+
+    await m.inject(42, "author reply");
+
+    const kill = tmuxArgs().findIndex((args) => args[0] === "kill-session" && args.includes("=pr-42"));
+    const birth = tmuxArgs().findIndex((args, index) => index > kill && args[0] === "new-session" && args.includes("pr-42"));
+    expect(kill).toBeGreaterThanOrEqual(0);
+    expect(birth).toBeGreaterThan(kill);
+  });
+
   it("injectOverseer births the overseer session on demand", async () => {
     const m = manager();
     await m.injectOverseer("EOD sweep");
@@ -642,7 +735,7 @@ describe("injection", () => {
 
   it("gives concurrent injections distinct filenames", async () => {
     const m = manager();
-    liveSessions.add("pr-42");
+    markExistingSessionReady(m, "pr-42");
     await m.inject(42, "one");
     await m.inject(42, "two");
     const files = readdirSync(m.injectDir("pr-42")).filter((f) => f.endsWith(".md"));
@@ -658,6 +751,7 @@ describe("durable command ownership", () => {
       const m = manager(undefined, store);
       await m.dispatchRound(order, "ROUND PROMPT BODY");
 
+      expect(tmuxArgs().find((args) => args[0] === "new-session")).toContain("QCR_SESSION_BRIDGE_LEDGER_REQUIRED=1");
       const row = store.activeSessionCommand("pr-42")!;
       const bytes = readFileSync(row.inject_path);
       expect(row).toMatchObject({ pr: 42, session: "pr-42", kind: "round", round_no: 1, status: "pending", attempt: 0 });
@@ -670,7 +764,7 @@ describe("durable command ownership", () => {
         QCR_SESSION_COMMAND_RUNNING_LEASE_MS: "2700000",
       });
 
-      liveSessions.add("pr-42");
+      markExistingSessionReady(m, "pr-42");
       await expect(m.inject(42, "author replied")).rejects.toThrow(/session command .* is pending/);
     } finally {
       store.close();
@@ -710,16 +804,201 @@ describe("durable command ownership", () => {
       const original = store.activeSessionCommand("pr-42")!;
       const bytes = readFileSync(original.payload_path);
       store.claimSessionCommand(original.id, "bridge-old", "2026-08-13T10:02:00Z");
+      onNewSession = () => {
+        store.claimSessionCommand(original.id, "bridge-new", "2026-08-13T10:04:00Z");
+      };
 
       expect(await m.retrySessionCommand(original.id, "start lease expired")).toBe("retried");
 
       const retried = store.activeSessionCommand("pr-42")!;
-      expect(retried).toMatchObject({ id: original.id, status: "pending", attempt: 1, owner_token: null });
+      expect(retried).toMatchObject({ id: original.id, status: "running", attempt: 2, owner_token: "bridge-new" });
       expect(readFileSync(retried.inject_path)).toEqual(bytes);
       const kill = tmuxArgs().findIndex((a) => a[0] === "kill-session" && a.includes("=pr-42"));
       const birth = tmuxArgs().findIndex((a, index) => index > kill && a[0] === "new-session" && a.includes("pr-42"));
       expect(kill).toBeGreaterThanOrEqual(0);
       expect(birth).toBeGreaterThan(kill);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("does not report replay when the reborn tmux never publishes matching bridge readiness", async () => {
+    const store = new StateStore(join(root, "state", "state.db"), () => new Date("2026-08-13T10:00:00Z"));
+    try {
+      const config = cfg();
+      config.daemon.session_bridge_ready_timeout_s = 0.005;
+      const m = manager(undefined, store, config);
+      m.setTitleResolver(() => order.title);
+      store.upsertPr({ number: 42, state: "queued", head_sha: "abc123", title: order.title, author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+      markExistingSessionReady(m, "pr-42");
+      await m.inject(42, "recovered author reply");
+      const command = store.activeSessionCommand("pr-42")!;
+      store.claimSessionCommand(command.id, "bridge-old", "2026-08-13T10:02:00Z");
+      autoBridgeReady = false;
+
+      expect(await m.retrySessionCommand(command.id, "start evidence unknown")).toBe("retry_failed");
+
+      expect(liveSessions.has("pr-42")).toBe(false);
+      expect(store.getSessionCommand(command.id)).toMatchObject({
+        status: "pending",
+        attempt: 1,
+        failure: expect.stringContaining("timed out"),
+      });
+      expect(store.recentEvents(20).some((event) => event.kind === "session_bridge_readiness_failed")).toBe(true);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("composes #5454 through wire, supervisor, manager, and the real failing bridge", async () => {
+    const dbPath = join(root, "state", "state.db");
+    let clock = new Date("2026-09-01T08:08:00.000Z");
+    const store = new StateStore(dbPath, () => clock);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const config = cfg();
+      config.daemon.session_command_unknown_max_checks = 0;
+      config.daemon.session_command_max_start_retries = 2;
+      config.daemon.session_bridge_ready_timeout_s = 0.05;
+      const m = manager(() => clock, store, config);
+      m.setTitleResolver(() => "PR 5454");
+      store.upsertPr({ number: 5454, state: "queued", head_sha: "e038", title: "PR 5454", author: "alice", trigger_ts: clock.toISOString(), stale_recheck: 0, migration_gate: 0 });
+      const payload = Buffer.from("# Author reply — PR #5454\n\noldest durable wake\n", "utf8");
+      const payloadPath = join(root, "state", "session-commands", "cmd-5454.md");
+      mkdirSync(join(root, "state", "session-commands"), { recursive: true });
+      writeFileSync(payloadPath, payload);
+      store.createSessionCommand({
+        id: "cmd-5454",
+        pr: 5454,
+        session: "pr-5454",
+        kind: "wake",
+        round_no: null,
+        payload_sha256: createHash("sha256").update(payload).digest("hex"),
+        payload_path: payloadPath,
+        inject_path: join(root, "inject", "pr-5454", "wake--cmd-cmd-5454.md"),
+        next_check_at: clock.toISOString(),
+      });
+      store.failPendingSessionCommand("cmd-5454", "historical attempt-zero failure");
+      for (let n = 1; n <= 4; n++) store.holdWake(5454, `# Author reply — PR #5454\n\nreply ${n}`, "author_reply");
+      // Exact incident shape: tmux exists, but no generation receipt does.
+      liveSessions.add("pr-5454");
+      autoBridgeReady = false;
+      onNewSession = (_session, args) => {
+        const changed: Array<[string, string | undefined]> = [];
+        for (const token of args) {
+          const equals = token.indexOf("=");
+          if (equals < 1) continue;
+          const key = token.slice(0, equals);
+          if (!key.startsWith("QCR_")) continue;
+          changed.push([key, process.env[key]]);
+          process.env[key] = token.slice(equals + 1);
+        }
+        try {
+          // The daemon handed Pi the real DB path. Removing only its directory
+          // entry leaves this already-open StateStore usable while making the
+          // bridge's independent fileMustExist open fail before reservation.
+          rmSync(dbPath, { force: true });
+          const handlers = new Map<string, Array<(event?: unknown) => void>>();
+          const pi = {
+            on(event: string, handler: (event?: unknown) => void) {
+              const list = handlers.get(event) ?? [];
+              list.push(handler);
+              handlers.set(event, list);
+            },
+            sendUserMessage() {},
+          } as unknown as Pi;
+          activateInjectBridge(pi);
+          for (const handler of handlers.get("session_start") ?? []) handler({});
+        } finally {
+          for (const [key, prior] of changed) {
+            if (prior === undefined) delete process.env[key];
+            else process.env[key] = prior;
+          }
+        }
+      };
+
+      const retry = vi.spyOn(m, "retrySessionCommand");
+      const { hooks } = daemonOriginWakes({
+        hooks: m,
+        origins: new OriginStore(join(root, "state", "slack", "origin")),
+        enabled: false,
+      });
+      const supervisor = new SessionCommandSupervisor({
+        cfg: config,
+        store,
+        hooks,
+        verdictDir: join(root, "verdict"),
+        onRoundFailure: async () => "requeued",
+        now: () => clock,
+      });
+
+      await expect(supervisor.scan()).rejects.toThrow(/ledger_open/);
+      clock = new Date("2026-09-01T08:11:00.000Z");
+      await expect(supervisor.scan()).rejects.toThrow(/ledger_open/);
+      clock = new Date("2026-09-01T08:14:00.000Z");
+      await supervisor.scan();
+
+      expect(retry).toHaveBeenCalledTimes(2);
+      expect(store.getSessionCommand("cmd-5454")).toMatchObject({
+        status: "failed",
+        attempt: 0,
+        recovery_attempts: 2,
+        failure: expect.stringContaining("ledger_open"),
+      });
+      expect(store.heldWakes(5454)).toHaveLength(4);
+      expect(store.blockingSessionCommand("pr-5454")).toBeTruthy();
+      expect(store.openReviewFailure(5454)).toMatchObject({
+        command_id: "cmd-5454",
+        work_owed: 1,
+        detail: expect.stringContaining("ledger_open"),
+      });
+      expect(store.recentEvents(100).filter((event) => event.kind === "session_bridge_readiness_failed")).toHaveLength(2);
+
+      const listPrFiles = vi.fn(async () => { throw new Error("blocked dispatch touched GitHub"); });
+      expect(await dispatchOnce({
+        cfg: config,
+        store,
+        hooks,
+        adapter: {
+          listPrFiles,
+          getPr: async () => { throw new Error("blocked dispatch read PR"); },
+          addLabel: async () => { throw new Error("blocked dispatch mutated label"); },
+          removeLabel: async () => { throw new Error("blocked dispatch mutated label"); },
+          deleteTeamReviewRequest: async () => { throw new Error("blocked dispatch consumed trigger"); },
+          createReview: async () => { throw new Error("blocked dispatch posted review"); },
+        },
+        now: () => clock,
+      })).toEqual([]);
+      expect(listPrFiles).not.toHaveBeenCalled();
+      expect(store.roundsFor(5454)).toHaveLength(0);
+    } finally {
+      errors.mockRestore();
+      store.close();
+    }
+  });
+
+  it("does not report replay when a ready bridge never reserves the command", async () => {
+    const store = new StateStore(join(root, "state", "state.db"), () => new Date("2026-08-13T10:00:00Z"));
+    try {
+      const m = manager(undefined, store);
+      m.setTitleResolver(() => order.title);
+      store.upsertPr({ number: 42, state: "queued", head_sha: "abc123", title: order.title, author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+      markExistingSessionReady(m, "pr-42");
+      await m.inject(42, "recovered author reply");
+      const command = store.activeSessionCommand("pr-42")!;
+      const payload = readFileSync(command.payload_path);
+      store.claimSessionCommand(command.id, "bridge-old", "2026-08-13T10:02:00Z");
+
+      expect(await m.retrySessionCommand(command.id, "start evidence unknown")).toBe("retry_failed");
+
+      expect(store.getSessionCommand(command.id)).toMatchObject({
+        id: command.id,
+        status: "pending",
+        attempt: 1,
+        owner_token: null,
+      });
+      expect(readFileSync(command.payload_path)).toEqual(payload);
+      expect(readFileSync(command.inject_path)).toEqual(payload);
     } finally {
       store.close();
     }
@@ -731,7 +1010,7 @@ describe("durable command ownership", () => {
       const m = manager(undefined, store);
       m.setTitleResolver((pr) => (pr === 42 ? order.title : undefined));
       store.upsertPr({ number: 42, state: "queued", head_sha: "abc123", title: order.title, author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
-      liveSessions.add("pr-42");
+      markExistingSessionReady(m, "pr-42");
       await m.inject(42, "oldest wake 🚀\0body");
       const original = store.activeSessionCommand("pr-42")!;
       const expectedBytes = Buffer.from("oldest wake 🚀\0body\n", "utf8");
@@ -741,14 +1020,18 @@ describe("durable command ownership", () => {
       store.claimSessionCommand(original.id, "bridge-old", "2026-08-13T10:02:00Z");
       store.markSessionCommandStarted(original.id, "bridge-old", "2026-08-13T10:45:00Z");
       for (let i = 0; i < 6; i++) store.holdWake(42, `later-${i}`, "author_reply");
+      onNewSession = () => {
+        store.claimSessionCommand(original.id, "bridge-new", "2026-08-13T10:47:00Z");
+      };
 
       expect(await m.retrySessionCommand(original.id, "running bound expired")).toBe("retried");
 
       expect(store.getSessionCommand(original.id)).toMatchObject({
         id: original.id,
         kind: "wake",
-        status: "pending",
-        attempt: 1,
+        status: "running",
+        attempt: 2,
+        owner_token: "bridge-new",
         started_at: null,
       });
       expect(readFileSync(original.payload_path)).toEqual(expectedBytes);
@@ -771,7 +1054,7 @@ describe("durable command ownership", () => {
       const m = manager(undefined, store);
       m.setTitleResolver(() => order.title);
       store.upsertPr({ number: 42, state: "queued", head_sha: "abc123", title: order.title, author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
-      liveSessions.add("pr-42");
+      markExistingSessionReady(m, "pr-42");
       await m.inject(42, "author reply");
       const command = store.activeSessionCommand("pr-42")!;
       store.claimSessionCommand(command.id, "bridge-old", "2026-08-13T10:02:00Z");
@@ -938,7 +1221,7 @@ describe("archive and close", () => {
 
   it("archives JSONL + ledger + this PR's verdicts, drops the worktree, kills tmux", async () => {
     const m = manager();
-    liveSessions.add("pr-42");
+    markExistingSessionReady(m, "pr-42");
     seedSessionArtifacts(m, "pr-42");
     mkdirSync(m.worktrees.worktreePath(42), { recursive: true });
     mkdirSync(join(root, "example-app", ".git"), { recursive: true });

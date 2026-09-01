@@ -172,6 +172,61 @@ describe("reconcileOnce", () => {
     expect(row.trigger_ts).toBe("2026-08-13T09:05:00Z");
   });
 
+  it("retargets a terminal predecessor's stale successor to GitHub's authoritative head", async () => {
+    const { hooks } = recordingHooks();
+    seed(39, "queued", { head: "b8dd" });
+    const predecessor = store.startRound(39, "re-review", ["pass-baseline"], 75);
+    store.finishRound(predecessor, "REQUEST_CHANGES", 0);
+    store.recordSuccessor({
+      pr: 39,
+      predecessor_round_id: predecessor,
+      head_sha: "b8dd",
+      provenance: "human",
+      reason: "push+trigger",
+    });
+    const owedSince = store.successorFor(39)!.requested_at;
+    gh.open = [ref(39, { head_sha: "e038" })];
+
+    await reconcileOnce({ cfg, store, adapter: gh, hooks });
+
+    expect(store.successorFor(39)).toMatchObject({
+      predecessor_round_id: predecessor,
+      head_sha: "e038",
+      requested_at: owedSince,
+      provenance: "human",
+    });
+    expect(store.getPr(39)).toMatchObject({
+      state: "queued",
+      head_sha: "e038",
+      trigger_ts: owedSince,
+      trigger_provenance: "human",
+    });
+
+    await reconcileOnce({ cfg, store, adapter: gh, hooks });
+    expect(store.successorFor(39)?.head_sha).toBe("e038");
+    expect(store.getPr(39)?.head_sha).toBe("e038");
+  });
+
+  it("retargets a stale successor even when the PR row was already corrected before this pass", async () => {
+    const { hooks } = recordingHooks();
+    seed(40, "tracked", { head: "github-head" });
+    const predecessor = store.startRound(40, "re-review", ["pass-baseline"], 75);
+    store.finishRound(predecessor, "REQUEST_CHANGES", 0);
+    store.recordSuccessor({
+      pr: 40,
+      predecessor_round_id: predecessor,
+      head_sha: "stale-successor",
+      provenance: "system",
+      reason: "push",
+    });
+    gh.open = [ref(40, { head_sha: "github-head" })];
+
+    await reconcileOnce({ cfg, store, adapter: gh, hooks });
+
+    expect(store.successorFor(40)?.head_sha).toBe("github-head");
+    expect(store.getPr(40)?.head_sha).toBe("github-head");
+  });
+
   it("does not turn standing trigger residue into a full round after a push recheck claimed the head", async () => {
     const { hooks } = recordingHooks();
     seed(37, "reviewing", { head: "approved-sha" });
