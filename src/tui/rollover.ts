@@ -631,15 +631,19 @@ export class CompanionRollover {
    *: a second read could come back unreadable, and a collapsed
    * `undefined` here silently drops `first_run_interviewed` — the exact
    * re-arming the comment below exists to prevent. */
-  private record(date: string, archive: string | undefined, prior: RolloverState | undefined): void {
+  private record(date: string, archive: string | undefined, prior: RolloverState | undefined): RolloverState {
     // Preserve the interview mark across rewrites: dropping it on a later
     // rollover would re-arm a marker-keyed interview forever.
-    writeRolloverState(this.opts.statePath, {
+    const written: RolloverState = {
       last_open_date: date,
       updated_at: this.now().toISOString(),
       ...(archive ? { last_archive: archive } : {}),
       ...(prior?.first_run_interviewed ? { first_run_interviewed: prior.first_run_interviewed } : {}),
-    });
+    };
+    writeRolloverState(this.opts.statePath, written);
+    // Returned so `maybeInterview` can add its mark to the row we KNOW we
+    // wrote, instead of re-reading the file it was just handed.
+    return written;
   }
 
   /** Assemble the first-run interview from its template. */
@@ -656,10 +660,17 @@ export class CompanionRollover {
    * Deliver the first-run interview if it is due — at most once per
    * installation, recorded in the rollover state. `prior` is the state as it
    * stood BEFORE this run touched it (the no-state-ever fallback must see the
-   * original absence, not the row `record()` just created). Nothing here ever
-   * blocks a start: a missing/broken template degrades to a step note.
+   * original absence, not the row `record()` just created). `current` is the
+   * row as it now stands — what `record()` just wrote, or `prior` when this
+   * run wrote nothing. Nothing here ever blocks a start: a missing/broken
+   * template degrades to a step note.
    */
-  private maybeInterview(today: string, prior: RolloverState | undefined, steps: string[]): { interviewFile?: string; interview?: string } {
+  private maybeInterview(
+    today: string,
+    prior: RolloverState | undefined,
+    current: RolloverState | undefined,
+    steps: string[],
+  ): { interviewFile?: string; interview?: string } {
     if (!this.opts.firstRunTemplatePath) return {};
     const marker = this.opts.firstRunMarkerPath ? readFirstRunMarker(this.opts.firstRunMarkerPath) : undefined;
     if (!interviewDue(marker, prior)) return {};
@@ -674,7 +685,14 @@ export class CompanionRollover {
     steps.push(`queued first-run interview → ${interviewFile}`);
     // Mark it delivered so it fires exactly once; later starts run the normal
     // day-open. An abandoned interview resumes in conversation, never here.
-    const state = readRolloverState(this.opts.statePath) ?? { last_open_date: today, updated_at: this.now().toISOString() };
+    // `current`, never a re-read. The old line was
+    // `readRolloverState(path) ?? { last_open_date: today, … }` — the same
+    // collapse `run()` now refuses one function up, with a fabricating
+    // fallback behind it: an unreadable file stamped `last_open_date: today`
+    // over a day we could not see and dropped `last_archive`. `current` is
+    // undefined ONLY when the state was genuinely absent and this run wrote
+    // nothing, in which case today IS the row's true date.
+    const state: RolloverState = current ?? { last_open_date: today, updated_at: this.now().toISOString() };
     writeRolloverState(this.opts.statePath, { ...state, first_run_interviewed: today });
     return { interviewFile, interview };
   }
@@ -691,6 +709,8 @@ export class CompanionRollover {
     const today = this.today();
     const read = readRolloverStateFile(this.opts.statePath);
     const prior = read.state === "state" ? read.value : undefined;
+    // The row as it now stands: `prior` until `record()` replaces it.
+    let current = prior;
     const verdict = decideRollover(today, read);
     const steps: string[] = [];
     let archivedTo: string | undefined;
@@ -710,7 +730,7 @@ export class CompanionRollover {
     }
 
     if (verdict.kind === "first-run") {
-      this.record(today, undefined, prior);
+      current = this.record(today, undefined, prior);
       steps.push(`first run — companion day set to ${today}`);
     } else if (verdict.kind === "rollover") {
       const lookup = await this.newestSessionFile();
@@ -722,7 +742,7 @@ export class CompanionRollover {
       if (lookup.state === "unreadable") {
         const deferred = `could not list the previous conversation (${lookup.reason}) — day NOT rolled over; retrying on the next start`;
         steps.push(deferred);
-        return { verdict, steps, deferred, ...this.maybeInterview(today, prior, steps) };
+        return { verdict, steps, deferred, ...this.maybeInterview(today, prior, current, steps) };
       }
       const file = lookup.state === "found" ? lookup.file : "";
       steps.push(file === "" ? "no previous conversation found" : `found conversation ${file}`);
@@ -737,7 +757,7 @@ export class CompanionRollover {
       if (convo.state === "unreadable") {
         const deferred = `could not read ${file} (${convo.reason}) — day NOT rolled over; retrying on the next start`;
         steps.push(deferred);
-        return { verdict, steps, archivedTo, deferred, ...this.maybeInterview(today, prior, steps) };
+        return { verdict, steps, archivedTo, deferred, ...this.maybeInterview(today, prior, current, steps) };
       }
       const turns = parseConversation(convo.text);
       steps.push(`compacted ${turns.length} turn${turns.length === 1 ? "" : "s"}`);
@@ -747,10 +767,10 @@ export class CompanionRollover {
       steps.push(`killed tmux session ${this.cfg.session}`);
       dayOpenFile = this.writeDayOpen(dayOpen, today);
       steps.push(`queued day-open message → ${dayOpenFile}`);
-      this.record(today, archivedTo, prior);
+      current = this.record(today, archivedTo, prior);
     }
 
-    const interview = this.maybeInterview(today, prior, steps);
+    const interview = this.maybeInterview(today, prior, current, steps);
     return { verdict, steps, archivedTo, dayOpenFile, dayOpen, ...interview };
   }
 }

@@ -112,13 +112,21 @@ export type ManifestRead = { state: "manifest"; files: string[] } | { state: "un
  * we cannot use it, so it is unreadable.
  */
 export function readSeedManifest(root: string): ManifestRead {
-  let manifest: { files?: unknown };
+  let parsed: unknown;
   try {
-    manifest = JSON.parse(readFileSync(resolve(root, "tests/fixtures/seed-manifest.json"), "utf8")) as { files?: unknown };
+    parsed = JSON.parse(readFileSync(resolve(root, "tests/fixtures/seed-manifest.json"), "utf8"));
   } catch (err) {
     return { state: "unreadable", reason: err instanceof Error ? err.message : String(err) };
   }
-  const files = manifest.files;
+  // Everything below is a TOTAL check on an `unknown`. Reaching into the
+  // parsed value with a cast is what broke this once: a top-level `null`
+  // parses fine and `manifest.files` then throws OUT of the `pi.on` handler,
+  // which prints no DEGRADED line and applies no veto — the exact silent
+  // outcome this function exists to make impossible.
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return { state: "unreadable", reason: "manifest is not an object" };
+  }
+  const files = (parsed as { files?: unknown }).files;
   if (typeof files !== "object" || files === null || Array.isArray(files)) {
     return { state: "unreadable", reason: "no files object" };
   }

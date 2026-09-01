@@ -101,6 +101,18 @@ describe("frozenPaths + writeBlockReason", () => {
     writeFileSync(at, JSON.stringify({ files: null }));
     expect(readSeedManifest(empty).state).toBe("unreadable");
 
+    // TOP-LEVEL non-objects. `null` is the one that bit: it parses, and
+    // reaching for `.files` on it THROWS out of the pi tool_call handler —
+    // no DEGRADED line, no veto, the silent outcome this classification
+    // exists to prevent. Every check here must be total on an `unknown`.
+    for (const scalar of ["null", "3", '"a string"', "true", "[]"]) {
+      writeFileSync(at, scalar);
+      expect(() => readSeedManifest(empty)).not.toThrow();
+      expect(readSeedManifest(empty).state, `top-level ${scalar}`).toBe("unreadable");
+    }
+    writeFileSync(at, "null");
+    expect(readSeedManifest(empty)).toEqual({ state: "unreadable", reason: "manifest is not an object" });
+
     // One real entry and it is a good read again.
     writeFileSync(at, JSON.stringify({ files: { "agents/pass-baseline.md": "x" } }));
     expect(readSeedManifest(empty)).toEqual({ state: "manifest", files: ["agents/pass-baseline.md"] });
@@ -170,6 +182,51 @@ describe("activate — a degraded manifest read is never cached", () => {
   // regression: an EMPTY manifest disarms the veto for every seed. It
   // has to be as loud as a torn one — this printed 0 warnings until the read
   // started classifying it.
+  // The same handler, driven over every useless payload shape. The assertion
+  // that matters is that NONE of them throws out of `pi.on("tool_call", …)`:
+  // what pi's dispatcher does with an exception there is VERIFY-ON-PIN, and a
+  // throw skips both the DEGRADED line and the veto.
+  it.each([
+    ["null", "manifest is not an object"],
+    ["3", "manifest is not an object"],
+    ["[]", "manifest is not an object"],
+    ["{}", "no files object"],
+    ['{"files":null}', "no files object"],
+    ['{"files":[]}', "no files object"],
+    ['{"files":{}}', "manifest lists no files"],
+    ["{not json", "JSON"],
+  ])("a %s manifest degrades loudly through activate, never throws", (payload, expected) => {
+    const dir = mkdtempSync(join(tmpdir(), "companion-guard-shape-"));
+    mkdirSync(join(dir, "tests/fixtures"), { recursive: true });
+    writeFileSync(join(dir, "tests/fixtures/seed-manifest.json"), payload);
+    let handler: ((e: unknown) => { block?: boolean; reason?: string } | undefined) | undefined;
+    const pi = {
+      on: (_name: string, h: (e: unknown) => { block?: boolean; reason?: string } | undefined) => {
+        handler = h;
+      },
+    };
+    const prevRoot = process.env.QCR_ROOT;
+    const realError = console.error;
+    const errs: string[] = [];
+    process.env.QCR_ROOT = dir;
+    console.error = (...args: unknown[]): void => {
+      errs.push(args.map(String).join(" "));
+    };
+    try {
+      activate(pi as never);
+      expect(() => handler!({ toolName: "write", input: { path: "agents/pass-baseline.md" } })).not.toThrow();
+      expect(errs.filter((e) => e.includes("DEGRADED"))).toHaveLength(1);
+      expect(errs[0]).toContain(expected);
+      // The fixtures are still vetoed on every one of these shapes.
+      expect(handler!({ toolName: "write", input: { path: "tests/fixtures/ratified-divergence.json" } })?.block).toBe(true);
+    } finally {
+      console.error = realError;
+      if (prevRoot === undefined) delete process.env.QCR_ROOT;
+      else process.env.QCR_ROOT = prevRoot;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("an empty manifest degrades LOUDLY, and is retried rather than cached", () => {
     const dir = mkdtempSync(join(tmpdir(), "companion-guard-empty-act-"));
     mkdirSync(join(dir, "tests/fixtures"), { recursive: true });
