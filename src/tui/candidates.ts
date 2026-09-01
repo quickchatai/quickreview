@@ -345,6 +345,17 @@ export interface CandidateList {
 
 export const CANDIDATES_FILE = "candidates.json";
 
+/** What a read of the durable list found. `absent` and `unreadable` are
+ * deliberately separate members: see `CandidateStore.read`. */
+export type CandidateRead =
+  | { state: "list"; list: CandidateList }
+  | { state: "absent" }
+  | { state: "unreadable"; reason: string };
+
+function errText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 /**
  * The store. Same shape as `EvidenceStore`: a plain file, written atomically
  * (temp + rename) so a reader never sees half a list, and re-read from disk on
@@ -361,16 +372,44 @@ export class CandidateStore {
     mkdirSync(this.dir, { recursive: true });
   }
 
-  /** Missing or unreadable ⇒ undefined. A corrupt list is never a crash, and it
-   * is never "no candidates": the caller reports it and rebuilds. */
-  load(): CandidateList | undefined {
+  /**
+   * The three answers a read of the durable list can give, kept APART.
+   *
+   * `absent` (no file yet) and `unreadable` (a file that exists and could not
+   * be understood — truncated by a crash between the tmp write and the
+   * rename, EACCES, EISDIR) are different facts, and the difference is the
+   * whole point: `absent` means there is genuinely no candidate history,
+   * `unreadable` means there is one and we cannot see it. A caller that folds
+   * the second into the first rebuilds from an empty baseline and then saves
+   * that truncation over the history —.
+   */
+  read(): CandidateRead {
+    let raw: string;
     try {
-      const raw = JSON.parse(readFileSync(this.path, "utf8")) as CandidateList;
-      if (!Array.isArray(raw?.candidates)) return undefined;
-      return raw;
-    } catch {
-      return undefined;
+      raw = readFileSync(this.path, "utf8");
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException | undefined)?.code;
+      if (code === "ENOENT") return { state: "absent" };
+      return { state: "unreadable", reason: code ?? errText(err) };
     }
+    try {
+      const parsed = JSON.parse(raw) as CandidateList;
+      if (!Array.isArray(parsed?.candidates)) return { state: "unreadable", reason: "no candidates array" };
+      return { state: "list", list: parsed };
+    } catch (err) {
+      return { state: "unreadable", reason: errText(err) };
+    }
+  }
+
+  /** Missing or unreadable ⇒ undefined. A corrupt list is never a crash, and it
+   * is never "no candidates": the caller reports it and rebuilds.
+   *
+   * This collapses two of `read()`'s three answers, so it is for callers that
+   * only ever DISPLAY the list. Anything that merges from it, and above all
+   * anything that then SAVES, must use `read()` —. */
+  load(): CandidateList | undefined {
+    const r = this.read();
+    return r.state === "list" ? r.list : undefined;
   }
 
   save(list: CandidateList): void {
@@ -624,6 +663,10 @@ export class CandidateSweeper {
    * never being expiry inputs, so that is a cost of zero. */
   private lastList: CandidateList | undefined;
   private lastFingerprint: string | undefined;
+  /** The reason last reported for an unreadable baseline, so a 3-second poll
+   * says it once rather than 1,200 times an hour. Cleared the moment a read
+   * succeeds, so a recurrence after a recovery is loud again. */
+  private unreadableReported: string | undefined;
 
   constructor(
     readonly store: CandidateStore,
@@ -656,7 +699,40 @@ export class CandidateSweeper {
     }
   }
 
-  private build(snapshot: StatusSnapshot, adjudications: Map<number, string>): CandidateList {
+  /**
+   * The baseline this sweep merges onto: the in-memory list when we have one,
+   * otherwise the durable file. `undefined` means the file EXISTS and could
+   * not be read — the sweep must then do nothing at all.
+   *
+   * The old shape was `(this.lastList ?? this.store.load())?.candidates ?? []`,
+   * which folded "unreadable" into "no candidates" three hundred lines below
+   * the docstring that exists to keep them apart. `mergeCandidates` then seeds
+   * from an empty `previous`, dropping every candidate whose PR has since left
+   * the snapshot, and the save writes that truncation over the history the
+   * feature IS.
+   */
+  private baseline(): Candidate[] | undefined {
+    if (this.lastList !== undefined) return this.lastList.candidates;
+    const read = this.store.read();
+    if (read.state === "unreadable") {
+      if (this.unreadableReported !== read.reason) {
+        this.unreadableReported = read.reason;
+        this.deps.onNotice?.(
+          `survey: ${this.store.path} exists but cannot be read (${read.reason}) — standing down rather than ` +
+            `overwriting the candidate history; move the file aside to rebuild from scratch`,
+        );
+      }
+      return undefined;
+    }
+    this.unreadableReported = undefined;
+    return read.state === "list" ? read.list.candidates : [];
+  }
+
+  private build(snapshot: StatusSnapshot, adjudications: Map<number, string>): CandidateList | undefined {
+    // Read the baseline FIRST: an unread one means this sweep neither merges
+    // nor saves, and there is no point walking the manifests for it.
+    const previous = this.baseline();
+    if (previous === undefined) return undefined;
     const now = (this.deps.now?.() ?? new Date()).toISOString();
     const facts = new Map<number, PrFacts>();
     const detected: Detected[] = [];
@@ -692,7 +768,6 @@ export class CandidateSweeper {
       detected.push(...detectCandidates(f));
     }
 
-    const previous = (this.lastList ?? this.store.load())?.candidates ?? [];
     const candidates = mergeCandidates(previous, detected, { now, facts, adjudications });
     const open = openCandidates(candidates);
     const list: CandidateList = {

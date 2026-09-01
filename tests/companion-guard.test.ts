@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { bashBlockReason, frozenPaths, writeBlockReason, REGISTRY_FIXTURES } from "../extensions/companion-guard.js";
+import activate, { bashBlockReason, frozenPaths, writeBlockReason, REGISTRY_FIXTURES } from "../extensions/companion-guard.js";
 
 describe("bashBlockReason", () => {
   it("vetoes the rule-8 GitHub/deploy family", () => {
@@ -89,6 +89,56 @@ describe("frozenPaths + writeBlockReason", () => {
     // rule 6's ours-to-edit list must never be vetoed:
     for (const ours of ["prompts/companion.md", "agents/pass-intent.md", "agents/pass-placement.md"]) {
       expect(frozen.has(ours)).toBe(false);
+    }
+  });
+});
+
+// ruling on the "judged-lesser" fail-open here: the fail-open itself
+// is CONFIRMED deliberate (see the `frozenPaths` docstring — this guard is
+// belt, tests/seed-integrity.test.ts is the brace, and failing closed would
+// veto every write the companion makes over a fixture problem). What was NOT
+// deliberate is that the degraded set was CACHED for the life of the session.
+describe("activate — a degraded manifest read is never cached", () => {
+  it("retries on the next write, so a transient unreadable manifest costs one tool call", () => {
+    const dir = mkdtempSync(join(tmpdir(), "companion-guard-act-"));
+    mkdirSync(join(dir, "tests/fixtures"), { recursive: true });
+    let handler: ((e: unknown) => { block?: boolean; reason?: string } | undefined) | undefined;
+    const pi = {
+      on: (_name: string, h: (e: unknown) => { block?: boolean; reason?: string } | undefined) => {
+        handler = h;
+      },
+    };
+    const prevRoot = process.env.QCR_ROOT;
+    const realError = console.error;
+    const errs: string[] = [];
+    process.env.QCR_ROOT = dir;
+    console.error = (...args: unknown[]): void => {
+      errs.push(args.map(String).join(" "));
+    };
+    try {
+      activate(pi as never);
+      const write = (path: string): { block?: boolean; reason?: string } | undefined => handler!({ toolName: "write", input: { path } });
+
+      // No manifest: degraded — the seed is NOT vetoed, the fixtures still are.
+      expect(write("agents/pass-baseline.md")).toBeUndefined();
+      expect(write("tests/fixtures/ratified-divergence.json")?.block).toBe(true);
+      expect(errs.filter((e) => e.includes("DEGRADED"))).toHaveLength(1); // said once, not per call
+
+      // The manifest becomes readable. The old code cached the degraded set on
+      // the first write/edit, so this stayed permitted for the whole session —
+      // a rule-6 veto silently switched off by one bad moment.
+      writeFileSync(join(dir, "tests/fixtures/seed-manifest.json"), JSON.stringify({ files: { "agents/pass-baseline.md": "x" } }));
+      expect(write("agents/pass-baseline.md")?.reason).toMatch(/rule 6/);
+
+      // A GOOD read is still cached — the set changes only on a reseed, and a
+      // reseed restarts everything.
+      rmSync(join(dir, "tests/fixtures/seed-manifest.json"));
+      expect(write("agents/pass-baseline.md")?.reason).toMatch(/rule 6/);
+    } finally {
+      console.error = realError;
+      if (prevRoot === undefined) delete process.env.QCR_ROOT;
+      else process.env.QCR_ROOT = prevRoot;
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

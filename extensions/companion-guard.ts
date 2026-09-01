@@ -94,21 +94,50 @@ export const REGISTRY_FIXTURES = [
   "tests/fixtures/ratified-divergence.json",
 ] as const;
 
-/** Repo-relative frozen paths: every file in the seed manifest, plus the two
- * registry fixtures. Read lazily and cached — the set changes only on a
- * ratified reseed, which also restarts everything. A missing/unreadable
- * manifest yields ONLY the fixtures (degraded, logged by the caller): the
- * guard must never make pi unable to start over a manifest problem. */
-export function frozenPaths(root: string): Set<string> {
-  const frozen = new Set<string>(REGISTRY_FIXTURES);
+/** The manifest read, with "could not read it" kept as its own answer so the
+ * caller can decline to CACHE a degraded set. */
+export type ManifestRead = { state: "manifest"; files: string[] } | { state: "unreadable"; reason: string };
+
+export function readSeedManifest(root: string): ManifestRead {
   try {
     const manifest = JSON.parse(readFileSync(resolve(root, "tests/fixtures/seed-manifest.json"), "utf8")) as {
       files?: Record<string, string>;
     };
-    for (const rel of Object.keys(manifest.files ?? {})) frozen.add(rel);
-  } catch {
-    // degraded — caller logs it once
+    return { state: "manifest", files: Object.keys(manifest.files ?? {}) };
+  } catch (err) {
+    return { state: "unreadable", reason: err instanceof Error ? err.message : String(err) };
   }
+}
+
+/**
+ * Repo-relative frozen paths: every file in the seed manifest, plus the two
+ * registry fixtures. A missing/unreadable manifest yields ONLY the fixtures.
+ *
+ * **This fail-open is DELIBERATE, and re-confirmed it** — it is the
+ * one member of the "could not read ⇒ there is nothing" family in this repo
+ * that is not a defect, so here is why, since every other one now is:
+ *
+ *  * This guard is BELT, not the brace. The module header says so already: it
+ *    is a `tool_call` veto over the companion's own write/edit calls, and bash
+ *    can in principle write a frozen file (sed, tee) without going near it.
+ *    The AUTHORITATIVE enforcement of rule 6 is
+ *    `tests/seed-integrity.test.ts` — a sha256 manifest that fails the suite —
+ *    and that check reads the same file this one does, but a suite that cannot
+ *    read it FAILS. Failing closed here would not close a hole; it would only
+ *    move the report from the place that already catches it.
+ *  * Failing closed means vetoing every write and edit the companion makes,
+ *    which is a companion that cannot do its job at all (rule 11: it edits the
+ *    live checkout, that IS the loop) — over a fixture problem it could
+ *    normally fix ITSELF. The cost of the strict reading is total; the cost of
+ *    the open one is bounded by the brace above.
+ *
+ * What DID change is that a degraded read is no longer cached for the
+ * life of the session — see `activate`.
+ */
+export function frozenPaths(root: string): Set<string> {
+  const frozen = new Set<string>(REGISTRY_FIXTURES);
+  const read = readSeedManifest(root);
+  if (read.state === "manifest") for (const rel of read.files) frozen.add(rel);
   return frozen;
 }
 
@@ -147,17 +176,30 @@ export default function activate(pi: Pi): void {
     }
 
     if (ev.toolName !== "write" && ev.toolName !== "edit") return;
-    if (frozen === undefined) {
-      frozen = frozenPaths(root);
-      if (frozen.size === REGISTRY_FIXTURES.length && !warnedDegraded) {
+    // cache a GOOD read only. The old code cached whatever the first
+    // write/edit call produced, so a manifest that was unreadable for one
+    // moment (a half-written fixture, a checkout mid-rewrite) left the guard
+    // degraded for the whole session, silently, long after the file was fine
+    // again. A degraded read is retried on the next call; the read is one
+    // small JSON file, and only on the degraded path.
+    let set = frozen;
+    if (set === undefined) {
+      const read = readSeedManifest(root);
+      set = new Set<string>(REGISTRY_FIXTURES);
+      if (read.state === "manifest") {
+        for (const rel of read.files) set.add(rel);
+        frozen = set; // cached: the set changes only on a reseed, which restarts everything
+        warnedDegraded = false; // recovered — a later degradation is loud again
+      } else if (!warnedDegraded) {
         warnedDegraded = true;
         // Loud, never fatal: the guard must never make pi unable to start.
-        console.error("companion-guard: DEGRADED — seed manifest unreadable; only the registry fixtures are vetoed.");
+        // Fail-open here is deliberate — see `frozenPaths` for why.
+        console.error(`companion-guard: DEGRADED — seed manifest unreadable (${read.reason}); only the registry fixtures are vetoed.`);
       }
     }
     const target = input?.path ?? input?.file_path;
     if (typeof target !== "string") return;
-    const reason = writeBlockReason(target, root, frozen);
+    const reason = writeBlockReason(target, root, set);
     if (reason) return { block: true, reason: `companion-guard: ${reason}` };
     return;
   });

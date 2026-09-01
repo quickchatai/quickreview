@@ -689,13 +689,21 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
         firstRunMarkerPath: join(companionStateDir, "first-run.json"),
       });
       const report = await rollover.run();
-      if (report.verdict.kind === "rollover") {
+      if (report.deferred) {
+        // the container could not be read, so the day is deliberately
+        // NOT recorded and yesterday's conversation continues. Loud, because a
+        // rollover that silently did not happen reads as one that did.
+        app.notice(`companion: day rollover DEFERRED — ${report.deferred}`);
+      } else if (report.verdict.kind === "rollover") {
         app.notice(`companion: new day ${report.verdict.today} — fresh conversation (${report.steps.length} steps)`);
       }
       if (report.interviewFile) {
         app.notice("companion: first start on this installation — greeting + calibration interview queued");
       }
-      progress.done("rollover", report.verdict.kind === "rollover" ? `new day ${report.verdict.today}` : "same day");
+      progress.done(
+        "rollover",
+        report.deferred ? `deferred — ${report.deferred}` : report.verdict.kind === "rollover" ? `new day ${report.verdict.today}` : "same day",
+      );
       progress.begin("companion-pi");
       await companion.spawnPi();
       progress.done("companion-pi");

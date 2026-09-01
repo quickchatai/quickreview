@@ -26,7 +26,21 @@ import type { CompanionConfig } from "../config.js";
 import { zoneDateString } from "../eod.js";
 import type { StatusSnapshot } from "../state.js";
 import { parseAlert, readPolicyState, type AlertTier } from "./alerts.js";
-import { CONTAINER, type DockerRunner } from "./companion.js";
+import { CONTAINER, type DockerResult, type DockerRunner } from "./companion.js";
+
+/** What a lookup of the previous conversation found. `none` (the volume holds
+ * no conversation) and `unreadable` (the exec never answered) are separate
+ * answers —. */
+export type SessionFileLookup = { state: "found"; file: string } | { state: "none" } | { state: "unreadable"; reason: string };
+
+/** Likewise for the conversation's contents: an empty conversation and one we
+ * could not fetch are different facts. */
+export type ConversationRead = { state: "read"; text: string } | { state: "unreadable"; reason: string };
+
+/** One-line cause from a failed `docker exec`, for the step log. */
+function execReason(r: DockerResult): string {
+  return (r.stderr.trim() || r.stdout.trim() || `exit ${r.code}`).split("\n").slice(-1)[0]!;
+}
 
 /** Bounds for the compacted summary and the raw tail — the opening message is
  * a briefing, not a transcript. */
@@ -431,6 +445,10 @@ export interface RolloverReport {
   interviewFile?: string;
   /** The rendered interview text. */
   interview?: string;
+  /** Set when the verdict was `rollover` but the container could not be read,
+   * so the day was deliberately NOT recorded and nothing was killed or
+   * queued. The next start retries the whole sequence. */
+  deferred?: string;
 }
 
 /**
@@ -467,8 +485,18 @@ export class CompanionRollover {
     return `${CONTAINER.piHome}/archive/${this.cfg.session}/${date}`;
   }
 
-  /** Newest conversation file on the pihome volume, or "" when there is none. */
-  async newestSessionFile(): Promise<string> {
+  /**
+   * The newest conversation file on the pihome volume.
+   *
+   * THREE answers, never two: `found`, `none` (the exec ran and the
+   * volume holds no conversation) and `unreadable` (the exec itself failed —
+   * `companion.ts` records that an exec immediately after a container recreate
+   * loses exactly this race). The old `""`-on-failure folded the third into
+   * the second, and the rollover then archived nothing, compacted zero turns
+   * and handed the companion "nothing happened yesterday" as its opening
+   * context — before recording the day so it never retried.
+   */
+  async newestSessionFile(): Promise<SessionFileLookup> {
     const res = await this.docker([
       "exec",
       this.cfg.container_name,
@@ -476,7 +504,9 @@ export class CompanionRollover {
       "-c",
       `ls -1t '${this.sessionDir()}'/*.jsonl 2>/dev/null | head -1`,
     ]);
-    return res.ok ? res.stdout.trim() : "";
+    if (!res.ok) return { state: "unreadable", reason: execReason(res) };
+    const file = res.stdout.trim();
+    return file === "" ? { state: "none" } : { state: "found", file };
   }
 
   /** Archive it date-stamped (rotateOverseer pattern), returning the copy's
@@ -495,11 +525,14 @@ export class CompanionRollover {
     return res.ok ? dest : undefined;
   }
 
-  /** Read a bounded tail of the conversation file through the docker seam. */
-  async readConversation(file: string): Promise<string> {
-    if (file === "") return "";
+  /** Read a bounded tail of the conversation file through the docker seam.
+   * A failed exec is `unreadable`, never `""` — an empty conversation and a
+   * conversation we could not fetch produce very different day-opens, and
+   * only one of them is true. */
+  async readConversation(file: string): Promise<ConversationRead> {
+    if (file === "") return { state: "read", text: "" };
     const res = await this.docker(["exec", this.cfg.container_name, "sh", "-c", `tail -c 400000 '${file}'`]);
-    return res.ok ? res.stdout : "";
+    return res.ok ? { state: "read", text: res.stdout } : { state: "unreadable", reason: execReason(res) };
   }
 
   async killSession(): Promise<void> {
@@ -607,11 +640,33 @@ export class CompanionRollover {
       this.record(today);
       steps.push(`first run — companion day set to ${today}`);
     } else if (verdict.kind === "rollover") {
-      const file = await this.newestSessionFile();
+      const lookup = await this.newestSessionFile();
+      // a lost exec is not an empty volume. Standing down leaves the
+      // day UNRECORDED, so the next start runs the whole rollover again; the
+      // cost is one more day on yesterday's conversation, against handing the
+      // companion a fabricated "nothing happened yesterday" that can never be
+      // retried. The deferral is loud in the step log and the caller notices.
+      if (lookup.state === "unreadable") {
+        const deferred = `could not list the previous conversation (${lookup.reason}) — day NOT rolled over; retrying on the next start`;
+        steps.push(deferred);
+        return { verdict, steps, deferred, ...this.maybeInterview(today, prior, steps) };
+      }
+      const file = lookup.state === "found" ? lookup.file : "";
       steps.push(file === "" ? "no previous conversation found" : `found conversation ${file}`);
       archivedTo = await this.archive(file, verdict.previous);
+      // A failed copy is NOT a deferral: the conversation is still on the
+      // volume and the day-open below is still assembled from the real turns,
+      // so nothing fabricated is published. It is only the dated archive that
+      // is missing — and going quiet about that is how it would stay missing.
       if (archivedTo) steps.push(`archived → ${archivedTo}`);
-      const turns = parseConversation(await this.readConversation(file));
+      else if (file !== "") steps.push(`archive FAILED — ${file} is unarchived (it remains on the volume)`);
+      const convo = await this.readConversation(file);
+      if (convo.state === "unreadable") {
+        const deferred = `could not read ${file} (${convo.reason}) — day NOT rolled over; retrying on the next start`;
+        steps.push(deferred);
+        return { verdict, steps, archivedTo, deferred, ...this.maybeInterview(today, prior, steps) };
+      }
+      const turns = parseConversation(convo.text);
       steps.push(`compacted ${turns.length} turn${turns.length === 1 ? "" : "s"}`);
       dayOpen = this.buildDayOpen(today, turns);
       steps.push(`assembled opening context (${dayOpen.length} chars)`);

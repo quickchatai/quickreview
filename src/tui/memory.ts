@@ -441,6 +441,31 @@ export class TuiMemoryStore implements HealthyMemoryStore {
     return `${user} memory refused the read: ${gap.status} ${gap.code} — ${gap.message}`;
   }
 
+  /**
+   * examined the asymmetry here — `error` iff EVERY namespace is down,
+   * so a PARTIAL outage sets only `warning` — and **kept it deliberately**.
+   * The ruling, recorded because everything else of this shape in the repo is
+   * now a defect:
+   *
+   *  * The RENDER half is already honest. `memtab.ts` paints
+   *    "⚠ memory degraded" plus the per-namespace sentence, so a half-visible
+   *    timeline never reads as a complete one. Nothing claims "there is
+   *    nothing" from a namespace that did not answer.
+   *  * The ACTION half — `deps.sink.file(...)` runs while `error` is unset —
+   *    UNDER-files and cannot mis-file. The sink is per-entry and deduped on
+   *    `Memory-key`; an entry from the down namespace is simply never seen, so
+   *    it is filed by the next healthy sweep. No wrong ticket, no write over a
+   *    partial view, nothing lost.
+   *  * Promoting a partial outage to `error` would stop auto-filing every
+   *    VISIBLE `#bug` because an unrelated namespace is down — turning a
+   *    partial degradation into a total one, which is strictly worse for the
+   *    only thing the field gates.
+   *
+   * The one thing that would make this a defect is a future consumer that
+   * treats `ok`/absent-`error` as "this list is complete" and WRITES from it.
+   * There is none today (the auto-filer is the sole action gated on `error`);
+   * if you add one, gate it on `warning` too.
+   */
   health(): MemoryHealth {
     const namespaces = this.ns.map((n) => n.health);
     const down = namespaces.filter((h) => !h.ok);

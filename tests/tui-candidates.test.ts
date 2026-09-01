@@ -10,7 +10,7 @@
 //
 // If one of these tests goes red, the fix is almost certainly in the code.
 import { describe, expect, it } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CapturedComment } from "../src/capture.js";
@@ -247,6 +247,25 @@ describe("durability — the list does not expire", () => {
     writeFileSync(join(dir, "candidates.json"), "{ not json");
     expect(new CandidateStore(dir).load()).toBeUndefined();
   });
+
+  // `load()` collapses two facts into one `undefined`, which is why
+  // anything that MERGES or SAVES must go through `read()` instead.
+  it("read() keeps 'no file yet' and 'exists but unreadable' apart", () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-cand-"));
+    mkdirSync(dir, { recursive: true });
+    expect(new CandidateStore(dir).read()).toEqual({ state: "absent" });
+
+    writeFileSync(join(dir, "candidates.json"), '{"version":1,"candidates":[');
+    const torn = new CandidateStore(dir).read();
+    expect(torn.state).toBe("unreadable");
+
+    // Valid JSON that is not a list is unreadable too, not empty.
+    writeFileSync(join(dir, "candidates.json"), '{"version":1}');
+    expect(new CandidateStore(dir).read()).toEqual({ state: "unreadable", reason: "no candidates array" });
+
+    writeFileSync(join(dir, "candidates.json"), JSON.stringify({ version: 1, candidates: [] }));
+    expect(new CandidateStore(dir).read().state).toBe("list");
+  });
 });
 
 describe("judged items return only if the PR moved", () => {
@@ -401,6 +420,63 @@ describe("the sweep and the empty answer", () => {
     const sweeper = new CandidateSweeper(new CandidateStore(dir), { evidenceDir: dir });
     expect(await sweeper.sweep(undefined)).toBeUndefined();
     expect(sweeper.running).toBe(false);
+  });
+
+  // the data-loss defect. `(lastList ?? store.load())?.candidates ?? []`
+  // read a torn file as "no candidates", merged from that empty baseline (so
+  // every candidate whose PR has left the snapshot was dropped) and then SAVED
+  // the truncation over the history the feature IS.
+  describe("an unreadable candidates.json is never read as an empty one", () => {
+    const TORN = '{\n  "version": 1,\n  "updated_at": "2026-08-25T09:00:00Z",\n  "candidates": [\n    { "key": "no-verdict:pr-42"';
+
+    it("the sweep stands down: it neither merges from empty nor writes over the file", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "qcr-cand-"));
+      writeManifest(dir, 5000, 1, "done", "APPROVE");
+      const store = new CandidateStore(dir);
+      writeFileSync(store.path, TORN); // a crash between the tmp write and the rename
+      const notices: string[] = [];
+      const sweeper = new CandidateSweeper(store, {
+        evidenceDir: dir,
+        now: () => new Date("2026-08-25T09:00:00Z"),
+        onNotice: (t) => notices.push(t),
+      });
+
+      const list = await sweeper.sweep(snapshot([{ number: 5000, state: "closed", title: "t", head_sha: "abc", stale_recheck: 0, rounds: 1 } as never]));
+
+      expect(list).toBeUndefined(); // no list built from an unread baseline
+      expect(readFileSync(store.path, "utf8")).toBe(TORN); // and nothing written over it
+      expect(notices).toHaveLength(1);
+      expect(notices[0]).toMatch(/cannot be read/);
+      expect(notices[0]).toMatch(/standing down/);
+    });
+
+    it("the notice is said once per cause, not once per 3-second poll", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "qcr-cand-"));
+      const store = new CandidateStore(dir);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(store.path, TORN);
+      const notices: string[] = [];
+      const sweeper = new CandidateSweeper(store, { evidenceDir: dir, onNotice: (t) => notices.push(t) });
+      const snap = snapshot([]);
+      for (let i = 0; i < 5; i++) await sweeper.sweep(snap);
+      expect(notices).toHaveLength(1);
+      expect(readFileSync(store.path, "utf8")).toBe(TORN);
+
+      // Repaired: the sweep resumes and saves normally.
+      writeFileSync(store.path, JSON.stringify({ version: 1, updated_at: "", families: [], candidates: [], coverage: {} }));
+      expect(await sweeper.sweep(snap)).toBeDefined();
+      expect(store.load()?.version).toBe(1);
+    });
+
+    it("a genuinely absent file is still an empty baseline, not a stand-down", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "qcr-cand-"));
+      const store = new CandidateStore(dir);
+      const notices: string[] = [];
+      const sweeper = new CandidateSweeper(store, { evidenceDir: dir, onNotice: (t) => notices.push(t) });
+      expect(await sweeper.sweep(snapshot([]))).toBeDefined();
+      expect(notices).toEqual([]);
+      expect(existsSync(store.path)).toBe(true);
+    });
   });
 
   it("the list lands in the evidence dir, so it rides /evidence:ro", async () => {
