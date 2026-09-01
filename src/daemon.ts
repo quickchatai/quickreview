@@ -662,20 +662,16 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
   };
 }
 
-async function main(): Promise<void> {
-  const daemon = createDaemon();
-  const shutdown = (sig: string) => {
-    void (async () => {
-      console.log(`[quickreviewd] ${sig} — shutting down`);
-      await daemon.stop();
-      process.exit(0);
-    })();
-  };
-  process.on("SIGINT", () => shutdown("SIGINT"));
-  process.on("SIGTERM", () => shutdown("SIGTERM"));
-  await daemon.start();
-}
-
-if (process.argv[1]?.endsWith("daemon.js")) {
-  void main();
-}
+// NO SECOND ENTRYPOINT HERE, deliberately (MC-09).
+//
+// `daemon.ts` used to end with `main()` plus
+// `if (process.argv[1]?.endsWith("daemon.js")) void main();`. Nothing ever
+// launched it — not package.json, not a script, not the image — and if
+// anything had, it would have built a REAL MutationGate against the real
+// config and never called `setGuard`/`setLog`: a daemon with no posting
+// guards and no CI gate, one `node dist/src/daemon.js` away.
+//
+// `src/wire.ts` is the production assembly and the only entrypoint that
+// builds a live gate; it installs the guards before it starts. This module
+// stays the stub-wired, test-friendly core it is documented as.
+// Pinned by `tests/fences-gate.test.ts`.
