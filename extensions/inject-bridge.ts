@@ -107,6 +107,7 @@ export const DELIVER_AS = "followUp" as const;
 export const activate: (pi: Pi) => void = (pi) => {
   const dir = resolveInjectDir(pi);
   const doneDir = join(dir, ".done");
+  const terminalDir = join(dir, ".terminal");
   let watcher: ReturnType<typeof watch> | undefined;
   let closed = false;
   const stateDb = process.env.QCR_STATE_DB?.trim();
@@ -226,10 +227,37 @@ export const activate: (pi: Pi) => void = (pi) => {
     }
   };
 
+  const disposeTerminalTransport = (
+    full: string,
+    file: string,
+    terminal: { id: string; status: "acked" | "failed" | "cancelled"; blocksSuccessors: boolean },
+  ): boolean => {
+    // SQLite + immutable payload_path own terminal evidence. The exact
+    // inject_path copy is only transport residue: acked is a delivery receipt;
+    // failed/cancelled use a distinct non-delivery quarantine.
+    const targetDir = terminal.status === "acked" ? doneDir : terminalDir;
+    const targetName = terminal.status === "acked" ? basename(full) : `${basename(full)}.${terminal.status}`;
+    try {
+      mkdirSync(targetDir, { recursive: true });
+      renameSync(full, join(targetDir, targetName));
+    } catch (error) {
+      failBridge("terminal_transport", `${file}: could not move stale ${terminal.status} transport: ${String(error)}`);
+      return false;
+    }
+    console.error(
+      `[inject-bridge] moved stale ${terminal.status} transport ${file} for command ${terminal.id}`,
+    );
+    if (terminal.blocksSuccessors) {
+      failBridge("command_link", `failed command ${terminal.id} still owns the serialized session lane`);
+      return false;
+    }
+    return true;
+  };
+
   /** Returns true only when drain may immediately inspect another file. */
   const deliver = (file: string): boolean => {
     const full = join(dir, file);
-    if (closed || busy || submitted || activeWake || !existsSync(full)) return false;
+    if (closed || bridgeFailed || busy || submitted || activeWake || !existsSync(full)) return false;
     if (ledgerRequired && !ledger) {
       failBridge("ledger_open", "durable command ledger is unavailable");
       return false;
@@ -239,6 +267,7 @@ export const activate: (pi: Pi) => void = (pi) => {
       const content = payload.toString("utf8");
       const link = ledger?.linkOrAdopt(full, payload);
       if (link && !link.ok) {
+        if (link.terminal) return disposeTerminalTransport(full, file, link.terminal);
         failBridge("command_link", `${file}: ${link.reason}`);
         return false;
       }
@@ -307,7 +336,7 @@ export const activate: (pi: Pi) => void = (pi) => {
   let draining = false;
   let drainAgain = false;
   const drain = (): void => {
-    if (closed) return;
+    if (closed || bridgeFailed) return;
     if (draining) {
       drainAgain = true;
       return;
@@ -319,7 +348,7 @@ export const activate: (pi: Pi) => void = (pi) => {
         for (const file of pendingFiles(dir)) {
           if (!deliver(file)) break;
         }
-      } while (drainAgain && !closed && !busy && !submitted && !activeWake);
+      } while (drainAgain && !closed && !bridgeFailed && !busy && !submitted && !activeWake);
     } finally {
       draining = false;
     }
@@ -348,6 +377,11 @@ export const activate: (pi: Pi) => void = (pi) => {
       stage = "initial_drain";
       drain(); // anything dropped before or during watch registration
       if (bridgeFailed) return;
+      const blockingFailure = ledger?.blockingFailedCommand();
+      if (blockingFailure) {
+        failBridge("command_link", `failed command ${blockingFailure.id} still owns the serialized session lane`);
+        return;
+      }
       // Recovery writes its immutable command file before Pi birth. Since the
       // drain above is synchronous and reserve precedes sendUserMessage, this
       // receipt means a pre-existing command has already incremented attempt.

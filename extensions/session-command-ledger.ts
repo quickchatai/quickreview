@@ -4,8 +4,9 @@
 // different process, so the bridge claims/acks those rows directly through
 // SQLite WAL. Every transition is one guarded UPDATE; owner_token prevents an
 // extension instance that survived recovery from terminalizing a newer
-// attempt. This module never creates schema and never reads any daemon table
-// other than session_commands.
+// attempt. This module never creates schema. It reads `rounds` only to mirror
+// the daemon's failed-command lane-ownership rule; every mutation remains
+// confined to session_commands.
 import Database from "better-sqlite3";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
@@ -35,7 +36,20 @@ interface CommandRow {
 
 export type CommandLink =
   | { ok: true; command: CommandRow }
-  | { ok: false; reason: string };
+  | {
+      ok: false;
+      reason: string;
+      /** The durable row is terminal; its exact-path mailbox copy is stale
+       * transport, not submit-ready work. Failed/cancelled debt remains in
+       * SQLite and payload_path after the copy leaves the live namespace. */
+      terminal?: {
+        id: string;
+        status: "acked" | "failed" | "cancelled";
+        /** Failed ordinary commands, missing rounds and running rounds still
+         * own the serialized session lane after transport quarantine. */
+        blocksSuccessors: boolean;
+      };
+    };
 
 function sha256(payload: Buffer): string {
   return createHash("sha256").update(payload).digest("hex");
@@ -77,9 +91,29 @@ export class SessionCommandLedger {
     }
   }
 
+  /** Failed commands which still own the serialized lane. This SQL mirrors
+   * StateStore's BLOCKING_SESSION_COMMAND_SQL failed-status branch. */
+  blockingFailedCommand(excludeId?: string): CommandRow | undefined {
+    return this.db.prepare(`
+      SELECT c.* FROM session_commands c
+       WHERE c.session=? AND c.status='failed'
+         AND (? IS NULL OR c.id!=?)
+         AND (
+           c.kind!='round'
+           OR NOT EXISTS (SELECT 1 FROM rounds r WHERE r.pr=c.pr AND r.round_no=c.round_no)
+           OR EXISTS (SELECT 1 FROM rounds r WHERE r.pr=c.pr AND r.round_no=c.round_no AND r.status='running')
+         )
+       ORDER BY c.created_at, c.id
+       LIMIT 1
+    `).get(this.session, excludeId ?? null, excludeId ?? null) as CommandRow | undefined;
+  }
+
   private linkOrAdoptUnsafe(injectPath: string, payload: Buffer): CommandLink {
     let row = this.byInjectPath(injectPath);
     const hash = sha256(payload);
+    if (!row && /--cmd-[^/]+\.md$/.test(injectPath)) {
+      return { ok: false, reason: "command-shaped transport has no exact durable row" };
+    }
     if (!row) {
       const prMatch = /^pr-(\d+)$/.exec(this.session);
       if (!prMatch) return { ok: false, reason: "non-PR session has no durable command slot" };
@@ -119,7 +153,23 @@ export class SessionCommandLedger {
       return { ok: false, reason: "payload hash mismatch" };
     }
     if (row.status !== "pending") {
-      return { ok: false, reason: `command ${row.id} is already ${row.status}` };
+      const reason = `command ${row.id} is already ${row.status}`;
+      if (row.status === "acked" || row.status === "failed" || row.status === "cancelled") {
+        return {
+          ok: false,
+          reason,
+          terminal: {
+            id: row.id,
+            status: row.status,
+            blocksSuccessors: row.status === "failed" && this.blockingFailedCommand()?.id === row.id,
+          },
+        };
+      }
+      return { ok: false, reason };
+    }
+    const blocker = this.blockingFailedCommand(row.id);
+    if (blocker) {
+      return { ok: false, reason: `command ${row.id} is blocked by failed command ${blocker.id}` };
     }
     return { ok: true, command: row };
   }

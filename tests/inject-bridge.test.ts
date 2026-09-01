@@ -75,6 +75,10 @@ function done(): string[] {
   const d = join(dir, ".done");
   return existsSync(d) ? readdirSync(d).filter((f) => f.endsWith(".md")) : [];
 }
+function terminal(): string[] {
+  const d = join(dir, ".terminal");
+  return existsSync(d) ? readdirSync(d) : [];
+}
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "qcr-bridge-"));
@@ -433,6 +437,324 @@ describe("inject-bridge — durable command ownership", () => {
     process.env.QCR_SANDBOX_ROOT = dir;
     return new StateStore(dbPath, () => new Date("2026-08-27T20:00:00.000Z"));
   }
+
+  it("quarantines an obsolete failed-round transport and continues to the next pending command", async () => {
+    const store = commandStore();
+    try {
+      store.upsertPr({ number: 1, state: "queued", head_sha: "head", title: "PR 1", author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+      const staleRoundId = store.startRound(1, "re-review", ["pass-baseline"], 75);
+      const staleRoundNo = store.roundsFor(1)[0]!.round_no;
+      const staleFile = "2026-08-27T19-00-00-0000--cmd-stale-failed.md";
+      const stalePath = join(dir, staleFile);
+      const payloadDir = join(dir, "payloads");
+      mkdirSync(payloadDir, { recursive: true });
+      const stalePayload = "old failed command\n";
+      writeFileSync(stalePath, stalePayload);
+      writeFileSync(join(payloadDir, "stale.md"), stalePayload);
+      store.createSessionCommand({
+        id: "stale-failed", pr: 1, session: "pr-1", kind: "round", round_no: staleRoundNo,
+        payload_sha256: createHash("sha256").update(stalePayload).digest("hex"),
+        payload_path: join(payloadDir, "stale.md"), inject_path: stalePath,
+        next_check_at: "2026-08-27T20:02:00.000Z",
+      });
+      store.failPendingSessionCommand("stale-failed", "delivery failed");
+      store.markRoundCancelled(staleRoundId, "old round settled", "infrastructure_failure");
+
+      const pendingFile = "2026-08-27T20-00-00-0000--cmd-current.md";
+      const pendingPath = join(dir, pendingFile);
+      const pendingPayload = "current batch\n";
+      writeFileSync(pendingPath, pendingPayload);
+      writeFileSync(join(payloadDir, "current.md"), pendingPayload);
+      store.createSessionCommand({
+        id: "current", pr: 1, session: "pr-1", kind: "wake", round_no: null,
+        payload_sha256: createHash("sha256").update(pendingPayload).digest("hex"),
+        payload_path: join(payloadDir, "current.md"), inject_path: pendingPath,
+        next_check_at: "2026-08-27T20:02:00.000Z",
+      });
+
+      activate(fakePi());
+      fire("session_start");
+
+      await vi.waitFor(() => expect(sends).toHaveLength(1));
+      expect(sentBody(0)).toContain("current batch");
+      expect(terminal()).toEqual([`${staleFile}.failed`]);
+      expect(done()).toEqual([]);
+      expect(store.getSessionCommand("stale-failed")).toMatchObject({ status: "failed", attempt: 0, failure: "delivery failed" });
+      expect(store.getSessionCommand("current")).toMatchObject({ status: "running", attempt: 1 });
+      expect(readSessionBridgeState(process.env.QCR_SESSION_BRIDGE_STATE_FILE!)).toMatchObject({ stage: "ready" });
+    } finally {
+      fire("session_shutdown");
+      store.close();
+    }
+  });
+
+  it("quarantines a blocking failed transport but does not release its successor", () => {
+    const store = commandStore();
+    try {
+      store.upsertPr({ number: 1, state: "queued", head_sha: "head", title: "PR 1", author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+      const payloadDir = join(dir, "payloads");
+      mkdirSync(payloadDir, { recursive: true });
+      const failedFile = "2026-08-27T19-00-00-0000--cmd-blocking-failed.md";
+      const failedPath = join(dir, failedFile);
+      const failedPayload = "failed ordinary wake\n";
+      writeFileSync(failedPath, failedPayload);
+      writeFileSync(join(payloadDir, "blocking-failed.md"), failedPayload);
+      store.createSessionCommand({
+        id: "blocking-failed", pr: 1, session: "pr-1", kind: "wake", round_no: null,
+        payload_sha256: createHash("sha256").update(failedPayload).digest("hex"),
+        payload_path: join(payloadDir, "blocking-failed.md"), inject_path: failedPath,
+        next_check_at: "2026-08-27T20:02:00.000Z",
+      });
+      store.failPendingSessionCommand("blocking-failed", "delivery failed");
+      store.openReviewFailure({
+        pr: 1, command_id: "blocking-failed", round_id: null, round_no: null,
+        head_sha: "head", stage: "session_command", detail: "delivery failed", attempts: 2, retry_cap: 2,
+      });
+
+      const pendingFile = "2026-08-27T20-00-00-0000--cmd-blocked-current.md";
+      const pendingPath = join(dir, pendingFile);
+      const pendingPayload = "must not overtake\n";
+      writeFileSync(pendingPath, pendingPayload);
+      writeFileSync(join(payloadDir, "blocked-current.md"), pendingPayload);
+      store.createSessionCommand({
+        id: "blocked-current", pr: 1, session: "pr-1", kind: "wake", round_no: null,
+        payload_sha256: createHash("sha256").update(pendingPayload).digest("hex"),
+        payload_path: join(payloadDir, "blocked-current.md"), inject_path: pendingPath,
+        next_check_at: "2026-08-27T20:02:00.000Z",
+      });
+
+      activate(fakePi());
+      fire("session_start");
+
+      expect(sends).toHaveLength(0);
+      expect(terminal()).toEqual([`${failedFile}.failed`]);
+      expect(pending()).toEqual([pendingFile]);
+      expect(store.getSessionCommand("blocking-failed")).toMatchObject({ status: "failed", attempt: 0 });
+      expect(store.getSessionCommand("blocked-current")).toMatchObject({ status: "pending", attempt: 0 });
+      expect(store.openReviewFailure(1)).toMatchObject({ command_id: "blocking-failed", work_owed: 1 });
+      expect(readSessionBridgeState(process.env.QCR_SESSION_BRIDGE_STATE_FILE!)).toMatchObject({
+        stage: "failed",
+        failed_stage: "command_link",
+      });
+    } finally {
+      fire("session_shutdown");
+      store.close();
+    }
+  });
+
+  it.each(["acked", "cancelled"] as const)("removes a stale %s transport without submitting it", (status) => {
+    const store = commandStore();
+    try {
+      const file = `2026-08-27T19-00-00-0000--cmd-terminal-${status}.md`;
+      const path = join(dir, file);
+      const payloadDir = join(dir, "payloads");
+      mkdirSync(payloadDir, { recursive: true });
+      const payload = `${status} command\n`;
+      writeFileSync(path, payload);
+      writeFileSync(join(payloadDir, `${status}.md`), payload);
+      store.createSessionCommand({
+        id: `terminal-${status}`, pr: 1, session: "pr-1", kind: "wake", round_no: null,
+        payload_sha256: createHash("sha256").update(payload).digest("hex"),
+        payload_path: join(payloadDir, `${status}.md`), inject_path: path,
+        next_check_at: "2026-08-27T20:02:00.000Z",
+      });
+      if (status === "acked") {
+        store.claimSessionCommand(`terminal-${status}`, "bridge-old", "2026-08-27T20:02:00.000Z");
+        store.markSessionCommandStarted(`terminal-${status}`, "bridge-old", "2026-08-27T20:45:00.000Z");
+        store.finishSessionCommand(`terminal-${status}`, "bridge-old", "acked");
+      } else {
+        store.db.prepare("UPDATE session_commands SET status='cancelled' WHERE id=?").run(`terminal-${status}`);
+      }
+
+      activate(fakePi());
+      fire("session_start");
+
+      expect(sends).toHaveLength(0);
+      expect(pending()).toEqual([]);
+      expect(status === "acked" ? done() : terminal()).toEqual([
+        status === "acked" ? file : `${file}.${status}`,
+      ]);
+      expect(store.getSessionCommand(`terminal-${status}`)?.status).toBe(status);
+      expect(readSessionBridgeState(process.env.QCR_SESSION_BRIDGE_STATE_FILE!)).toMatchObject({ stage: "ready" });
+    } finally {
+      fire("session_shutdown");
+      store.close();
+    }
+  });
+
+  it("fails closed permanently if a terminal transport cannot be moved atomically", async () => {
+    const store = commandStore();
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const file = "2026-08-27T19-00-00-0000--cmd-move-failure.md";
+      const path = join(dir, file);
+      const payloadDir = join(dir, "payloads");
+      mkdirSync(payloadDir, { recursive: true });
+      const payload = "acked command\n";
+      writeFileSync(path, payload);
+      writeFileSync(join(payloadDir, "move-failure.md"), payload);
+      store.createSessionCommand({
+        id: "move-failure", pr: 1, session: "pr-1", kind: "wake", round_no: null,
+        payload_sha256: createHash("sha256").update(payload).digest("hex"),
+        payload_path: join(payloadDir, "move-failure.md"), inject_path: path,
+        next_check_at: "2026-08-27T20:02:00.000Z",
+      });
+      store.claimSessionCommand("move-failure", "bridge-old", "2026-08-27T20:02:00.000Z");
+      store.markSessionCommandStarted("move-failure", "bridge-old", "2026-08-27T20:45:00.000Z");
+      store.finishSessionCommand("move-failure", "bridge-old", "acked");
+      mkdirSync(join(dir, ".done", file), { recursive: true }); // rename(file → directory) must fail
+
+      activate(fakePi());
+      fire("session_start");
+
+      expect(sends).toHaveLength(0);
+      expect(pending()).toEqual([file]);
+      expect(readSessionBridgeState(process.env.QCR_SESSION_BRIDGE_STATE_FILE!)).toMatchObject({
+        stage: "failed",
+        failed_stage: "terminal_transport",
+        detail: expect.stringContaining(file),
+      });
+      expect(errors).toHaveBeenCalledWith(expect.stringContaining(`FAILED_LOUD terminal_transport: ${file}`));
+
+      // A durable failed birth is terminal for this generation. Even if the
+      // filesystem obstruction disappears and a new watch event arrives, the
+      // old Pi process must not spring back to life behind the daemon's back.
+      rmSync(join(dir, ".done", file), { recursive: true, force: true });
+      writeFileSync(join(dir, "2026-08-27T20-00-00-0000.md"), "later legacy wake\n");
+      await sleep(30);
+      expect(sends).toHaveLength(0);
+      expect(pending()).toContain(file);
+      expect(store.db.prepare("SELECT COUNT(*) AS n FROM session_commands").get()).toEqual({ n: 1 });
+    } finally {
+      fire("session_shutdown");
+      store.close();
+    }
+  });
+
+  it("fails readiness on blocking failed debt even after its transport residue is gone", () => {
+    const store = commandStore();
+    try {
+      const payloadDir = join(dir, "payloads");
+      mkdirSync(payloadDir, { recursive: true });
+      const payload = "owed failed command\n";
+      const payloadPath = join(payloadDir, "owed-failure.md");
+      writeFileSync(payloadPath, payload);
+      store.createSessionCommand({
+        id: "owed-failure", pr: 1, session: "pr-1", kind: "wake", round_no: null,
+        payload_sha256: createHash("sha256").update(payload).digest("hex"),
+        payload_path: payloadPath, inject_path: join(dir, "already-quarantined--cmd-owed-failure.md"),
+        next_check_at: "2026-08-27T20:02:00.000Z",
+      });
+      store.failPendingSessionCommand("owed-failure", "still owed");
+
+      activate(fakePi());
+      fire("session_start");
+
+      expect(sends).toHaveLength(0);
+      expect(pending()).toEqual([]);
+      expect(readSessionBridgeState(process.env.QCR_SESSION_BRIDGE_STATE_FILE!)).toMatchObject({
+        stage: "failed",
+        failed_stage: "command_link",
+        detail: expect.stringContaining("owed-failure"),
+      });
+    } finally {
+      fire("session_shutdown");
+      store.close();
+    }
+  });
+
+  it("does not quarantine a terminal row whose transport bytes fail the durable hash", () => {
+    const store = commandStore();
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const file = "2026-08-27T19-00-00-0000--cmd-corrupt-failed.md";
+      const path = join(dir, file);
+      const payloadDir = join(dir, "payloads");
+      mkdirSync(payloadDir, { recursive: true });
+      const durablePayload = "durable original\n";
+      writeFileSync(path, "corrupt transport\n");
+      writeFileSync(join(payloadDir, "corrupt.md"), durablePayload);
+      store.createSessionCommand({
+        id: "corrupt-failed", pr: 1, session: "pr-1", kind: "wake", round_no: null,
+        payload_sha256: createHash("sha256").update(durablePayload).digest("hex"),
+        payload_path: join(payloadDir, "corrupt.md"), inject_path: path,
+        next_check_at: "2026-08-27T20:02:00.000Z",
+      });
+      store.failPendingSessionCommand("corrupt-failed", "old failure");
+
+      activate(fakePi());
+      fire("session_start");
+
+      expect(pending()).toEqual([file]);
+      expect(terminal()).toEqual([]);
+      expect(readSessionBridgeState(process.env.QCR_SESSION_BRIDGE_STATE_FILE!)).toMatchObject({
+        stage: "failed",
+        failed_stage: "command_link",
+      });
+      expect(errors).toHaveBeenCalledWith(expect.stringContaining("payload hash mismatch"));
+    } finally {
+      fire("session_shutdown");
+      store.close();
+    }
+  });
+
+  it("keeps a running transport in place and fails readiness rather than duplicating it", () => {
+    const store = commandStore();
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const file = "2026-08-27T19-00-00-0000--cmd-running.md";
+      const path = join(dir, file);
+      const payloadDir = join(dir, "payloads");
+      mkdirSync(payloadDir, { recursive: true });
+      const payload = "possibly accepted command\n";
+      writeFileSync(path, payload);
+      writeFileSync(join(payloadDir, "running.md"), payload);
+      store.createSessionCommand({
+        id: "running", pr: 1, session: "pr-1", kind: "wake", round_no: null,
+        payload_sha256: createHash("sha256").update(payload).digest("hex"),
+        payload_path: join(payloadDir, "running.md"), inject_path: path,
+        next_check_at: "2026-08-27T20:02:00.000Z",
+      });
+      store.claimSessionCommand("running", "bridge-old", "2026-08-27T20:02:00.000Z");
+
+      activate(fakePi());
+      fire("session_start");
+
+      expect(sends).toHaveLength(0);
+      expect(pending()).toEqual([file]);
+      expect(terminal()).toEqual([]);
+      expect(readSessionBridgeState(process.env.QCR_SESSION_BRIDGE_STATE_FILE!)).toMatchObject({
+        stage: "failed",
+        failed_stage: "command_link",
+      });
+      expect(errors).toHaveBeenCalledWith(expect.stringContaining("already running"));
+    } finally {
+      fire("session_shutdown");
+      store.close();
+    }
+  });
+
+  it("fails closed on an unlinked command-shaped transport instead of adopting it", () => {
+    const store = commandStore();
+    try {
+      const file = "2026-08-27T20-00-00-0000--cmd-orphan.md";
+      writeFileSync(join(dir, file), "orphan command transport\n");
+
+      activate(fakePi());
+      fire("session_start");
+
+      expect(sends).toHaveLength(0);
+      expect(pending()).toEqual([file]);
+      expect(store.db.prepare("SELECT COUNT(*) AS n FROM session_commands").get()).toEqual({ n: 0 });
+      expect(readSessionBridgeState(process.env.QCR_SESSION_BRIDGE_STATE_FILE!)).toMatchObject({
+        stage: "failed",
+        failed_stage: "command_link",
+      });
+    } finally {
+      fire("session_shutdown");
+      store.close();
+    }
+  });
 
   it("claims the correlated command as running and acks it only on settlement", async () => {
     const store = commandStore();

@@ -19,6 +19,7 @@ import { OriginStore } from "../src/slack/origin.js";
 import { StateStore } from "../src/state.js";
 import { roundPromptMarker } from "../src/types.js";
 import type { RoundOrder } from "../src/types.js";
+import { flushHeldWakes } from "../src/wakes.js";
 import { WorktreeManager } from "../src/worktrees.js";
 import { daemonOriginWakes } from "../src/wire.js";
 
@@ -973,6 +974,96 @@ describe("durable command ownership", () => {
       expect(store.roundsFor(5454)).toHaveLength(0);
     } finally {
       errors.mockRestore();
+      store.close();
+    }
+  });
+
+  it("quarantines #5454-shaped terminal residue and transfers five replies into one live command", async () => {
+    const dbPath = join(root, "state", "state.db");
+    const store = new StateStore(dbPath, () => new Date("2026-09-01T12:00:00.000Z"));
+    let shutdownBridge = (): void => {};
+    try {
+      const config = cfg();
+      const m = manager(undefined, store, config);
+      m.setTitleResolver(() => "PR 5454");
+      store.upsertPr({ number: 5454, state: "queued", head_sha: "e038", title: "PR 5454", author: "alice", trigger_ts: "2026-09-01T11:34:30.000Z", stale_recheck: 0, migration_gate: 0 });
+
+      const staleRoundId = store.startRound(5454, "re-review", ["pass-baseline"], 75);
+      const staleRoundNo = store.roundsFor(5454)[0]!.round_no;
+      const staleInjectDir = m.injectDir("pr-5454");
+      mkdirSync(staleInjectDir, { recursive: true });
+      const staleInject = join(staleInjectDir, "2026-08-31T14-28-38-150Z-0247--cmd-stale-terminal.md");
+      const stalePayload = Buffer.from("old terminal round transport\n", "utf8");
+      const stalePayloadPath = join(root, "state", "session-commands", "stale-terminal.md");
+      mkdirSync(join(root, "state", "session-commands"), { recursive: true });
+      writeFileSync(staleInject, stalePayload);
+      writeFileSync(stalePayloadPath, stalePayload);
+      store.createSessionCommand({
+        id: "stale-terminal", pr: 5454, session: "pr-5454", kind: "round", round_no: staleRoundNo,
+        payload_sha256: createHash("sha256").update(stalePayload).digest("hex"),
+        payload_path: stalePayloadPath, inject_path: staleInject,
+        next_check_at: "2026-09-01T11:00:00.000Z",
+      });
+      store.failPendingSessionCommand("stale-terminal", "old infrastructure failure");
+      store.markRoundCancelled(staleRoundId, "old infrastructure failure", "infrastructure_failure");
+      const row = store.getPr(5454)!;
+      store.upsertPr({ ...row, state: "queued", head_sha: "e038", trigger_ts: "2026-09-01T11:34:30.000Z" });
+      for (let n = 1; n <= 5; n++) {
+        store.holdWake(5454, `# Author reply — PR #5454\n\nreply ${n}\nresponse-${n}.json`, "author_reply");
+      }
+
+      const sent: string[] = [];
+      autoBridgeReady = false;
+      onNewSession = (_session, args) => {
+        const changed: Array<[string, string | undefined]> = [];
+        for (const token of args) {
+          const equals = token.indexOf("=");
+          if (equals < 1) continue;
+          const key = token.slice(0, equals);
+          if (!key.startsWith("QCR_")) continue;
+          changed.push([key, process.env[key]]);
+          process.env[key] = token.slice(equals + 1);
+        }
+        try {
+          const handlers = new Map<string, Array<(event?: unknown) => void>>();
+          const pi = {
+            on(event: string, handler: (event?: unknown) => void) {
+              const list = handlers.get(event) ?? [];
+              list.push(handler);
+              handlers.set(event, list);
+            },
+            sendUserMessage(content: string) { sent.push(content); },
+          } as unknown as Pi;
+          activateInjectBridge(pi);
+          shutdownBridge = () => {
+            for (const handler of handlers.get("session_shutdown") ?? []) handler({});
+          };
+          for (const handler of handlers.get("session_start") ?? []) handler({});
+        } finally {
+          for (const [key, prior] of changed) {
+            if (prior === undefined) delete process.env[key];
+            else process.env[key] = prior;
+          }
+        }
+      };
+
+      expect(await flushHeldWakes({ store, inject: (pr, message) => m.inject(pr, message) }, 5454)).toBe(5);
+
+      await vi.waitFor(() => expect(store.activeSessionCommand("pr-5454")).toMatchObject({
+        kind: "wake",
+        status: "running",
+        attempt: 1,
+      }));
+      expect(store.heldWakes(5454)).toHaveLength(0);
+      expect(sent).toHaveLength(1);
+      for (let n = 1; n <= 5; n++) expect(sent[0]).toContain(`response-${n}.json`);
+      expect(readdirSync(join(staleInjectDir, ".terminal"))).toEqual([
+        "2026-08-31T14-28-38-150Z-0247--cmd-stale-terminal.md.failed",
+      ]);
+      expect(store.getSessionCommand("stale-terminal")).toMatchObject({ status: "failed", attempt: 0 });
+      expect(store.recentEvents(50).some((event) => event.kind === "wakes_coalesced")).toBe(true);
+    } finally {
+      shutdownBridge();
       store.close();
     }
   });
