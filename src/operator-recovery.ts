@@ -160,10 +160,15 @@ export async function recoverPrForOperator(
   const recoveredFailure = deps.store.recoverReviewFailure(pr, mode);
   const successor = deps.store.successorFor(pr);
   if (successor) deps.store.promoteSuccessor(pr);
-  else deps.store.queuePrForOperatorRecovery(
-    pr,
-    (deps.now ?? (() => new Date()))().toISOString(),
-  );
+  // A human may explicitly retrigger the unchanged head while old receipt debt
+  // waits for recovery. It is already queued; replacing its timestamp and
+  // provenance with an operator-system trigger would erase that new request.
+  else if (!(row.state === "queued" && row.trigger_ts !== null && row.trigger_provenance === "human")) {
+    deps.store.queuePrForOperatorRecovery(
+      pr,
+      (deps.now ?? (() => new Date()))().toISOString(),
+    );
+  }
 
   await deps.pump();
   const after = deps.store.getPr(pr);

@@ -925,6 +925,18 @@ export interface ReviewedHeadRow {
   last_author_reply_at: string | null;
 }
 
+/** Shell posting stamps `posted_event` before the verdict watcher enriches the
+ * same mark with `verdict`. A crash or historical row can therefore carry a
+ * fully substantive review proof with a null verdict; guard 2 intentionally
+ * treats that mark as reviewed, so exact-head recovery must recognize the same
+ * proof vocabulary rather than demanding the later enrichment. */
+function substantiveStandingVerdict(mark: ReviewedHeadRow | undefined): "REQUEST_CHANGES" | "APPROVE" | null {
+  if (!mark) return null;
+  if (mark.verdict === "REQUEST_CHANGES" || mark.verdict === "APPROVE") return mark.verdict;
+  if (mark.posted_event === "REQUEST_CHANGES" || mark.posted_event === "APPROVE") return mark.posted_event;
+  return null;
+}
+
 /**
  * An approval withheld for red CI. The row says: this head was
  * reviewed, nothing blocked, and the approval is waiting on CI and nothing
@@ -2737,6 +2749,7 @@ export class StateStore {
         const prior = this.db.prepare("SELECT * FROM review_failures WHERE incident_id=?").get(input.incident_id) as ReviewFailureRow | undefined;
         const command = this.getSessionCommand(input.command_id);
         const mark = this.reviewedHead(input.pr);
+        const standingVerdict = substantiveStandingVerdict(mark);
         if (
           prior?.pr === input.pr
           && prior.command_id === input.command_id
@@ -2745,16 +2758,16 @@ export class StateStore {
           && prior.head_sha === input.head_sha
           && prior.work_owed === 0
           && prior.recovery === recovery
-          && command?.status === "cancelled"
+          && (command?.status === "cancelled" || command?.status === "acked")
           && mark?.head_sha === input.head_sha
-          && (mark.verdict === "REQUEST_CHANGES" || mark.verdict === "APPROVE")
+          && standingVerdict !== null
         ) {
           return {
             kind: "resolved",
             incident_id: input.incident_id,
             command_id: input.command_id,
-            restored_state: mark.verdict === "REQUEST_CHANGES" ? "awaiting_author" : "tracked",
-            standing_verdict: mark.verdict,
+            restored_state: standingVerdict === "REQUEST_CHANGES" ? "awaiting_author" : "tracked",
+            standing_verdict: standingVerdict,
             already_resolved: true,
           };
         }
@@ -2770,10 +2783,11 @@ export class StateStore {
       ) return { kind: "blocked", reason: `open review failure identity changed for PR #${input.pr}` };
 
       const mark = this.reviewedHead(input.pr);
+      const standingVerdict = substantiveStandingVerdict(mark);
       if (
         !mark
         || mark.head_sha !== input.head_sha
-        || (mark.verdict !== "REQUEST_CHANGES" && mark.verdict !== "APPROVE")
+        || standingVerdict === null
         || (mark.last_author_reply_at !== null && mark.last_author_reply_at >= mark.reviewed_at)
       ) return { kind: "not_applicable" };
 
@@ -2781,6 +2795,10 @@ export class StateStore {
       if (!pr || pr.state === "closed" || pr.head_sha !== input.head_sha) {
         return { kind: "blocked", reason: `PR #${input.pr} local head/state changed during exact-head recovery` };
       }
+      // A fresh explicit trigger is new work even on an unchanged head. Fall
+      // through to ordinary recovery, which preserves this human-owned queue
+      // identity, rather than clearing it as obsolete receipt debt.
+      if (pr.trigger_provenance === "human") return { kind: "not_applicable" };
       if (this.hasRunningRound(input.pr)) return { kind: "blocked", reason: `PR #${input.pr} still has a running round` };
       const active = this.db.prepare(
         "SELECT * FROM session_commands WHERE pr=? AND status IN ('pending','running') ORDER BY created_at, id LIMIT 1",
@@ -2798,7 +2816,7 @@ export class StateStore {
         || command.session !== `pr-${input.pr}`
         || command.kind !== "round"
         || command.round_no !== input.round_no
-        || command.status !== "failed"
+        || (command.status !== "acked" && command.status !== "failed")
         || !round
         || round.pr !== input.pr
         || round.round_no !== input.round_no
@@ -2816,19 +2834,29 @@ export class StateStore {
       if (otherFailed) return { kind: "blocked", reason: `PR #${input.pr} still has blocking command ${otherFailed.id}` };
 
       const ts = this.ts();
-      const commandChanged = this.db.prepare(
-        `UPDATE session_commands
-            SET status='cancelled', owner_token=NULL, settled_at=COALESCE(settled_at, @ts),
-                updated_at=@ts, next_check_at=@ts,
-                failure=CASE WHEN failure IS NULL OR failure='' THEN @reason ELSE failure || '; ' || @reason END
-          WHERE id=@command_id AND pr=@pr AND session=@session AND kind='round'
-            AND round_no=@round_no AND status='failed'`,
-      ).run({
-        ...input,
-        session: `pr-${input.pr}`,
-        ts,
-        reason: `operator resolved ${recovery} review debt`,
-      }).changes;
+      const commandStatus = command.status;
+      const commandChanged = commandStatus === "failed"
+        ? this.db.prepare(
+          `UPDATE session_commands
+              SET status='cancelled', owner_token=NULL, settled_at=COALESCE(settled_at, @ts),
+                  updated_at=@ts, next_check_at=@ts,
+                  failure=CASE WHEN failure IS NULL OR failure='' THEN @reason ELSE failure || '; ' || @reason END
+            WHERE id=@command_id AND pr=@pr AND session=@session AND kind='round'
+              AND round_no=@round_no AND status='failed'`,
+        ).run({
+          ...input,
+          session: `pr-${input.pr}`,
+          ts,
+          reason: `operator resolved ${recovery} review debt`,
+        }).changes
+        // An acked command proves successful prompt delivery, not failed work.
+        // Keep it acked; a no-op CAS still fences its exact terminal identity
+        // in the transaction which closes only the posting-receipt debt.
+        : this.db.prepare(
+          `UPDATE session_commands SET status='acked'
+            WHERE id=@command_id AND pr=@pr AND session=@session AND kind='round'
+              AND round_no=@round_no AND status='acked'`,
+        ).run({ ...input, session: `pr-${input.pr}` }).changes;
       if (commandChanged !== 1) throw new Error(`exact-head command CAS lost for ${input.command_id}`);
 
       const failureChanged = this.db.prepare(
@@ -2841,7 +2869,7 @@ export class StateStore {
       ).run({ ...input, recovery, ts }).changes;
       if (failureChanged !== 1) throw new Error(`exact-head failure CAS lost for ${input.incident_id}`);
 
-      const restoredState = mark.verdict === "REQUEST_CHANGES" ? "awaiting_author" : "tracked";
+      const restoredState = standingVerdict === "REQUEST_CHANGES" ? "awaiting_author" : "tracked";
       const prChanged = this.db.prepare(
         `UPDATE pr_state
             SET state=@state, trigger_ts=NULL, trigger_provenance=NULL, updated_at=@ts
@@ -2856,9 +2884,10 @@ export class StateStore {
         round_id: input.round_id,
         round_no: input.round_no,
         head_sha: input.head_sha,
-        standing_verdict: mark.verdict,
+        standing_verdict: standingVerdict,
         standing_round_no: mark.round_no,
         posted_event: mark.posted_event,
+        command_status: commandStatus,
         restored_state: restoredState,
       });
       return {
@@ -2866,7 +2895,7 @@ export class StateStore {
         incident_id: input.incident_id,
         command_id: input.command_id,
         restored_state: restoredState,
-        standing_verdict: mark.verdict,
+        standing_verdict: standingVerdict,
         already_resolved: false,
       };
     })();

@@ -39,6 +39,8 @@ function postingReceiptFailure(
   pr: number,
   withAuthorReply = false,
   verdict: "REQUEST_CHANGES" | "APPROVE" = "REQUEST_CHANGES",
+  shellOnlyMark = false,
+  commandTerminal: "acked" | "failed" = "acked",
 ) {
   const head = "a".repeat(40);
   store.recordReviewedHead(pr, {
@@ -47,6 +49,7 @@ function postingReceiptFailure(
     posted_event: verdict,
     round_no: 8,
   });
+  if (shellOnlyMark) store.db.prepare("UPDATE reviewed_heads SET verdict=NULL, round_no=NULL WHERE pr=?").run(pr);
   if (withAuthorReply) store.noteAuthorReply(pr, T0);
   store.setPrState(pr, "reviewing");
   const roundId = store.startRound(pr, "re-review", ["pass-baseline"], 75);
@@ -62,7 +65,12 @@ function postingReceiptFailure(
     payload_sha256: createHash("sha256").update(payload).digest("hex"),
     payload_path: payloadPath, inject_path: injectPath, next_check_at: T0,
   });
-  store.failPendingSessionCommand(commandId, "posting receipt absent");
+  if (commandTerminal === "failed") store.failPendingSessionCommand(commandId, "posting receipt absent");
+  else {
+    expect(store.claimSessionCommand(commandId, "test-owner", T0)).toBeDefined();
+    expect(store.markSessionCommandStarted(commandId, "test-owner", T0)).toBe(true);
+    expect(store.finishSessionCommand(commandId, "test-owner", "acked")).toBe(true);
+  }
   store.markRoundCancelled(roundId, "posting receipt absent", "infrastructure_failure");
   store.setPrState(pr, "queued");
   const failure = store.openReviewFailure({
@@ -247,7 +255,7 @@ describe("operator PR recovery", () => {
     });
     expect(pump).not.toHaveBeenCalled();
     expect(store.getPr(pr)?.state).toBe("awaiting_author");
-    expect(store.getSessionCommand(fixture.commandId)?.status).toBe("cancelled");
+    expect(store.getSessionCommand(fixture.commandId)?.status).toBe("acked");
     expect(store.openReviewFailure(pr)).toBeUndefined();
     expect(store.roundsFor(pr).find((round) => round.id === fixture.roundId)?.status).toBe("cancelled");
     const event = store.eventsOn("2026-08-31").find((row) => row.kind === "exact_head_review_failure_retired");
@@ -261,9 +269,36 @@ describe("operator PR recovery", () => {
     });
   });
 
-  it("restores tracked for an exact-head standing approval", async () => {
+  it("recognizes a substantive shell-only posting mark before verdict enrichment", async () => {
     const { store, dir, pr } = setup();
-    postingReceiptFailure(store, dir, pr, false, "APPROVE");
+    postingReceiptFailure(store, dir, pr, false, "REQUEST_CHANGES", true);
+    expect(store.reviewedHead(pr)).toMatchObject({ verdict: null, posted_event: "REQUEST_CHANGES", round_no: null });
+    const pump = vi.fn(async () => []);
+
+    const result = await recoverPrForOperator({ store, pump }, pr, "rerun-round");
+
+    expect(result).toMatchObject({
+      ok: true, redispatched: false, exact_head_retired: true,
+      restored_state: "awaiting_author",
+    });
+    expect(pump).not.toHaveBeenCalled();
+  });
+
+  it("cancels an exact failed command while retiring its receipt debt", async () => {
+    const { store, dir, pr } = setup();
+    const fixture = postingReceiptFailure(store, dir, pr, false, "REQUEST_CHANGES", false, "failed");
+    const pump = vi.fn(async () => []);
+
+    const result = await recoverPrForOperator({ store, pump }, pr, "rerun-round");
+
+    expect(result).toMatchObject({ ok: true, exact_head_retired: true, restored_state: "awaiting_author" });
+    expect(store.getSessionCommand(fixture.commandId)?.status).toBe("cancelled");
+    expect(pump).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])("restores tracked for an exact-head standing approval (shellOnly=%s)", async (shellOnly) => {
+    const { store, dir, pr } = setup();
+    postingReceiptFailure(store, dir, pr, false, "APPROVE", shellOnly);
     const pump = vi.fn(async () => []);
 
     const result = await recoverPrForOperator({ store, pump }, pr, "rerun-round");
@@ -272,6 +307,21 @@ describe("operator PR recovery", () => {
     expect(store.getPr(pr)?.state).toBe("tracked");
     expect(pump).not.toHaveBeenCalled();
   });
+
+  it.each(["COMMENT", "NEEDS_HUMAN", "request_changes", ""]) (
+    "does not treat posted event %j as substantive proof",
+    (postedEvent) => {
+      const { store, dir, pr } = setup();
+      const fixture = postingReceiptFailure(store, dir, pr, false, "REQUEST_CHANGES", true);
+      store.db.prepare("UPDATE reviewed_heads SET posted_event=? WHERE pr=?").run(postedEvent, pr);
+
+      expect(store.resolveExactHeadReviewedFailure({
+        pr, incident_id: fixture.failure.incident_id, command_id: fixture.commandId,
+        round_id: fixture.roundId, round_no: fixture.roundNo, head_sha: fixture.head,
+      })).toEqual({ kind: "not_applicable" });
+      expect(store.openReviewFailure(pr)?.work_owed).toBe(1);
+    },
+  );
 
   it("refuses mismatched failed-round identity without clearing or dispatching", async () => {
     const { store, dir, pr } = setup();
@@ -284,7 +334,7 @@ describe("operator PR recovery", () => {
 
     expect(result).toMatchObject({ ok: false, reason: expect.stringContaining("command/round identity") });
     expect(store.openReviewFailure(pr)?.work_owed).toBe(1);
-    expect(store.getSessionCommand(fixture.commandId)?.status).toBe("failed");
+    expect(store.getSessionCommand(fixture.commandId)?.status).toBe("acked");
     expect(pump).not.toHaveBeenCalled();
   });
 
@@ -303,7 +353,7 @@ describe("operator PR recovery", () => {
 
     expect(result).toMatchObject({ ok: false, reason: expect.stringContaining("legacy-failed") });
     expect(store.openReviewFailure(pr)?.incident_id).toBe(fixture.failure.incident_id);
-    expect(store.getSessionCommand(fixture.commandId)?.status).toBe("failed");
+    expect(store.getSessionCommand(fixture.commandId)?.status).toBe("acked");
     expect(pump).not.toHaveBeenCalled();
   });
 
@@ -326,7 +376,7 @@ describe("operator PR recovery", () => {
     const result = await recoverPrForOperator({ store, pump }, pr, "rerun-round");
 
     expect(result).toMatchObject({ ok: true, exact_head_retired: true });
-    expect(store.getSessionCommand(fixture.commandId)?.status).toBe("cancelled");
+    expect(store.getSessionCommand(fixture.commandId)?.status).toBe("acked");
     expect(store.getSessionCommand("obsolete-round-command")?.status).toBe("failed");
   });
 
@@ -339,8 +389,33 @@ describe("operator PR recovery", () => {
     };
 
     expect(store.resolveExactHeadReviewedFailure(input)).toMatchObject({ kind: "resolved", already_resolved: false });
+    // Idempotence is a historical exact-identity receipt: later evidence does
+    // not rewrite the already-committed result or emit a second event.
+    store.noteAuthorReply(pr, T0);
+    store.upsertPr({
+      number: pr, state: "queued", head_sha: "b".repeat(40), title: `PR ${pr}`,
+      author: "alice", trigger_ts: T0, trigger_provenance: "human",
+      stale_recheck: 0, migration_gate: 0,
+    });
     expect(store.resolveExactHeadReviewedFailure(input)).toMatchObject({ kind: "resolved", already_resolved: true });
+    expect(store.getPr(pr)).toMatchObject({ head_sha: "b".repeat(40), trigger_provenance: "human" });
     expect(store.eventsOn("2026-08-31").filter((row) => row.kind === "exact_head_review_failure_retired")).toHaveLength(1);
+  });
+
+  it("preserves a fresh human retrigger through ordinary recovery", async () => {
+    const { store, dir, pr } = setup();
+    postingReceiptFailure(store, dir, pr);
+    const humanTs = "2026-08-31T08:05:00.000Z";
+    store.db.prepare("UPDATE pr_state SET trigger_ts=?, trigger_provenance='human' WHERE number=?").run(humanTs, pr);
+    const pump = vi.fn(async () => []);
+
+    const result = await recoverPrForOperator({ store, pump }, pr, "rerun-round");
+
+    expect(result).toMatchObject({ ok: false, redispatched: false });
+    expect(result).not.toHaveProperty("exact_head_retired");
+    expect(store.getPr(pr)).toMatchObject({ state: "queued", trigger_ts: humanTs, trigger_provenance: "human" });
+    expect(store.openReviewFailure(pr)).toBeUndefined();
+    expect(pump).toHaveBeenCalledOnce();
   });
 
   it("preserves a held wake by falling through to ordinary recovery", async () => {
