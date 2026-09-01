@@ -158,6 +158,22 @@ interface RawPrHistory {
   timelineItems?: { nodes?: Array<RawTimelineNode | null> } | null;
 }
 
+export type PrDisposition =
+  | { kind: "open" | "closed"; head_sha: string }
+  | { kind: "absent" };
+
+export class GitHubRequestError extends Error {
+  constructor(
+    readonly method: string,
+    readonly path: string,
+    readonly status: number,
+    detail: string,
+  ) {
+    super(`${method} ${path} → ${status}: ${detail}`);
+    this.name = "GitHubRequestError";
+  }
+}
+
 export interface SearchIssueItem {
   number: number;
   title: string;
@@ -213,7 +229,7 @@ export class GitHubAdapter {
       this.minter.invalidate();
       return this.request(method, path, body, auth, true);
     }
-    if (!res.ok) throw new Error(`${method} ${path} → ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    if (!res.ok) throw new GitHubRequestError(method, path, res.status, (await res.text()).slice(0, 300));
     if (res.status === 204) return undefined as T;
     return (await res.json()) as T;
   }
@@ -365,6 +381,44 @@ export class GitHubAdapter {
       merged: Boolean(pr.merged),
       labels: (pr.labels ?? []).map((l: { name: string }) => l.name),
     };
+  }
+
+  /** Authoritative terminality read for operator debt cleanup. A PR-endpoint
+   * 404 is not enough by itself: GitHub also conceals inaccessible private
+   * repositories as 404. Absence therefore requires a second installation-
+   * authenticated read proving access to this exact repository. */
+  async getPrDisposition(n: number): Promise<PrDisposition> {
+    const path = `/repos/${this.owner}/${this.repo}/pulls/${n}`;
+    try {
+      const raw = await this.request<unknown>("GET", path);
+      if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+        throw new Error(`malformed PR #${n} response`);
+      }
+      const pr = raw as { number?: unknown; state?: unknown; head?: { sha?: unknown } | null };
+      if (pr.number !== n) throw new Error(`PR endpoint #${n} returned number ${String(pr.number)}`);
+      if (pr.state !== "open" && pr.state !== "closed") throw new Error(`unexpected PR #${n} state ${String(pr.state)}`);
+      const head = pr.head?.sha;
+      if (typeof head !== "string" || head.length === 0) throw new Error(`malformed PR #${n} head sha`);
+      return { kind: pr.state, head_sha: head };
+    } catch (error) {
+      if (!(
+        error instanceof GitHubRequestError
+        && error.method === "GET"
+        && error.path === path
+        && error.status === 404
+      )) throw error;
+      const repoPath = `/repos/${this.owner}/${this.repo}`;
+      const rawRepo = await this.request<unknown>("GET", repoPath);
+      if (typeof rawRepo !== "object" || rawRepo === null || Array.isArray(rawRepo)) {
+        throw new Error(`malformed repository proof for ${this.owner}/${this.repo}`);
+      }
+      const fullName = (rawRepo as { full_name?: unknown }).full_name;
+      const expected = `${this.owner}/${this.repo}`;
+      if (typeof fullName !== "string" || fullName.toLowerCase() !== expected.toLowerCase()) {
+        throw new Error(`repository proof mismatch for ${expected}`);
+      }
+      return { kind: "absent" };
+    }
   }
 
   /** Read-only conversation surface for the TUI detail pane (QOL):

@@ -24,6 +24,19 @@ export type PrLifecycleState =
  * default is a full round. */
 export type TriggerProvenance = "human" | "system";
 
+export type TerminalReviewFailureDisposition = "closed" | "absent";
+
+export type TerminalReviewFailureResolution =
+  | {
+      ok: true;
+      disposition: TerminalReviewFailureDisposition;
+      incident_id: string;
+      command_id: string;
+      command_status: "cancelled";
+      already_resolved: boolean;
+    }
+  | { ok: false; reason: string };
+
 export interface ReviewFailureRow {
   incident_id: string;
   pr: number;
@@ -2688,6 +2701,141 @@ export class StateStore {
     return this.db.prepare(
       "SELECT * FROM review_failures WHERE work_owed=0 AND recovered_at IS NOT NULL AND recovered_at>=? ORDER BY recovered_at DESC, incident_id",
     ).all(since) as ReviewFailureRow[];
+  }
+
+  /**
+   * Resolve debt which authoritative GitHub truth has already made terminal.
+   * This is deliberately narrower than operator recovery: it never republishes
+   * work. The exact failed command and failure row terminalize together, or
+   * neither changes. Contradictory live ownership refuses rather than guessing.
+   */
+  resolveTerminalReviewFailure(input: {
+    pr: number;
+    incident_id: string;
+    command_id: string;
+    head_sha: string;
+    disposition: TerminalReviewFailureDisposition;
+  }): TerminalReviewFailureResolution {
+    const recovery = `terminal-${input.disposition}`;
+    const resolved = this.db.transaction((): TerminalReviewFailureResolution => {
+      const current = this.openReviewFailure(input.pr);
+      if (!current) {
+        const prior = this.db.prepare("SELECT * FROM review_failures WHERE incident_id=?").get(input.incident_id) as ReviewFailureRow | undefined;
+        const command = this.getSessionCommand(input.command_id);
+        if (
+          prior?.pr === input.pr
+          && prior.command_id === input.command_id
+          && prior.head_sha === input.head_sha
+          && prior.work_owed === 0
+          && prior.recovery === recovery
+          && command?.pr === input.pr
+          && command.session === `pr-${input.pr}`
+          && command.status === "cancelled"
+        ) {
+          return {
+            ok: true,
+            disposition: input.disposition,
+            incident_id: input.incident_id,
+            command_id: input.command_id,
+            command_status: command.status,
+            already_resolved: true,
+          };
+        }
+        return { ok: false, reason: `no matching open review failure for PR #${input.pr}` };
+      }
+      if (
+        current.incident_id !== input.incident_id
+        || current.command_id !== input.command_id
+        || current.head_sha !== input.head_sha
+      ) {
+        return { ok: false, reason: `open review failure identity changed for PR #${input.pr}` };
+      }
+
+      const pr = this.getPr(input.pr);
+      if (input.disposition === "closed" && pr?.state !== "closed") {
+        return { ok: false, reason: `local PR #${input.pr} is not closed` };
+      }
+      if (input.disposition === "absent" && pr !== undefined) {
+        return { ok: false, reason: `absent PR #${input.pr} still has local state ${pr.state}` };
+      }
+      if (this.hasRunningRound(input.pr)) return { ok: false, reason: `PR #${input.pr} still has a running round` };
+      // Query by PR, not only by the canonical session spelling: malformed or
+      // legacy rows must not become an invisible concurrent owner.
+      const active = this.db.prepare(
+        "SELECT * FROM session_commands WHERE pr=? AND status IN ('pending','running') ORDER BY created_at, id LIMIT 1",
+      ).get(input.pr) as SessionCommandRow | undefined;
+      if (active) return { ok: false, reason: `PR #${input.pr} still has active command ${active.id} (${active.status})` };
+      const wakes = this.heldWakes(input.pr);
+      if (wakes.length > 0) return { ok: false, reason: `PR #${input.pr} still has ${wakes.length} held wake(s)` };
+      if (this.successorFor(input.pr)) return { ok: false, reason: `PR #${input.pr} still has a successor obligation` };
+
+      const command = this.getSessionCommand(input.command_id);
+      if (
+        !command
+        || command.pr !== input.pr
+        || command.session !== `pr-${input.pr}`
+        || command.status !== "failed"
+        || command.round_no !== current.round_no
+      ) {
+        return { ok: false, reason: `failed command identity changed for ${input.command_id}` };
+      }
+      if (command.kind === "round" || current.round_id !== null || current.round_no !== null) {
+        if (command.kind !== "round" || current.round_id === null || current.round_no === null) {
+          return { ok: false, reason: `failed command/failure round identity is incomplete for ${input.command_id}` };
+        }
+        const round = this.db.prepare("SELECT * FROM rounds WHERE id=?").get(current.round_id) as RoundRow | undefined;
+        if (!round || round.pr !== input.pr || round.round_no !== current.round_no || round.round_no !== command.round_no) {
+          return { ok: false, reason: `failed command/failure round identity changed for ${input.command_id}` };
+        }
+        if (round.status === "running") return { ok: false, reason: `PR #${input.pr} linked round ${round.round_no} is still running` };
+      }
+      const otherBlocker = this.blockingSessionCommandsForPr(input.pr).find((row) => row.id !== input.command_id);
+      if (otherBlocker) return { ok: false, reason: `PR #${input.pr} still has blocking command ${otherBlocker.id}` };
+
+      const ts = this.ts();
+      const commandChanged = this.db.prepare(
+        `UPDATE session_commands
+            SET status='cancelled', owner_token=NULL, settled_at=COALESCE(settled_at, @ts),
+                updated_at=@ts, next_check_at=@ts,
+                failure=CASE WHEN failure IS NULL OR failure='' THEN @reason ELSE failure || '; ' || @reason END
+          WHERE id=@command_id AND pr=@pr AND session=@session AND status='failed'`,
+      ).run({
+        command_id: input.command_id,
+        pr: input.pr,
+        session: `pr-${input.pr}`,
+        ts,
+        reason: `operator resolved ${recovery} review debt`,
+      }).changes;
+      if (commandChanged !== 1) throw new Error(`terminal debt command CAS lost for ${input.command_id}`);
+
+      const failureChanged = this.db.prepare(
+        `UPDATE review_failures
+            SET work_owed=0, recovered_at=@ts, recovery=@recovery,
+                next_action='closed', updated_at=@ts
+          WHERE incident_id=@incident_id AND pr=@pr AND command_id=@command_id
+            AND head_sha=@head_sha AND work_owed=1`,
+      ).run({ ...input, recovery, ts }).changes;
+      if (failureChanged !== 1) throw new Error(`terminal debt failure CAS lost for ${input.incident_id}`);
+      // Audit and state transition are one SQLite commit. There is no window
+      // where debt is gone but its exact terminal proof is unrecorded.
+      this.logEvent("review_failure_recovered", input.pr, { incident_id: input.incident_id, recovery });
+      this.logEvent("terminal_review_failure_resolved", input.pr, {
+        incident_id: input.incident_id,
+        command_id: input.command_id,
+        head_sha: input.head_sha,
+        disposition: input.disposition,
+        command_status: "cancelled",
+      });
+      return {
+        ok: true,
+        disposition: input.disposition,
+        incident_id: input.incident_id,
+        command_id: input.command_id,
+        command_status: "cancelled",
+        already_resolved: false,
+      };
+    })();
+    return resolved;
   }
 
   recoverReviewFailure(

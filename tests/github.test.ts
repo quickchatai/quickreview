@@ -57,6 +57,29 @@ function build(handler: (url: string, init: RequestInit) => unknown, dryRun = tr
   return { adapter, calls: rec.calls };
 }
 
+function buildStatus(status: number, payload: unknown) {
+  return buildStatusSequence([{ status, payload }]).adapter;
+}
+
+function buildStatusSequence(responses: Array<{ status: number; payload: unknown }>) {
+  const calls: string[] = [];
+  let index = 0;
+  const fetchFn = (async (url: string | URL) => {
+    calls.push(String(url));
+    const response = responses[Math.min(index++, responses.length - 1)]!;
+    return {
+      ok: response.status >= 200 && response.status < 300,
+      status: response.status,
+      json: async () => response.payload,
+      text: async () => JSON.stringify(response.payload),
+    } as Response;
+  }) as unknown as FetchFn;
+  let adapter!: GitHubAdapter;
+  const gate = new MutationGate(true, dryrunDir, (intent) => adapter.executeMutation(intent));
+  adapter = new GitHubAdapter(cfg, minter, gate, fetchFn, "https://api.github.com");
+  return { adapter, calls };
+}
+
 function dryrunRecords() {
   return readdirSync(dryrunDir).map((f) => JSON.parse(readFileSync(join(dryrunDir, f), "utf8")));
 }
@@ -116,6 +139,56 @@ describe("authoritative per-PR reads", () => {
       labels: ["AI review requested"],
     });
     expect(await adapter.getRequestedReviewers(12)).toEqual({ users: ["mhale"], teams: ["review"] });
+  });
+
+  it("classifies authoritative open, closed and repository-scoped absent PRs", async () => {
+    const open = build(() => ({
+      number: 12, title: "T", user: { login: "alice" }, head: { sha: "abc" }, base: { ref: "master" },
+      updated_at: "2026-08-13T10:00:00Z", state: "open", draft: false, merged: false, labels: [],
+    })).adapter;
+    const closed = build(() => ({
+      number: 12, title: "T", user: { login: "alice" }, head: { sha: "abc" }, base: { ref: "master" },
+      updated_at: "2026-08-13T10:00:00Z", state: "closed", draft: false, merged: true, labels: [],
+    })).adapter;
+
+    expect(await open.getPrDisposition(12)).toEqual({ kind: "open", head_sha: "abc" });
+    expect(await closed.getPrDisposition(12)).toEqual({ kind: "closed", head_sha: "abc" });
+    const absent = buildStatusSequence([
+      { status: 404, payload: { message: "Not Found" } },
+      { status: 200, payload: { full_name: "example-org/example-app" } },
+    ]);
+    expect(await absent.adapter.getPrDisposition(999902)).toEqual({ kind: "absent" });
+    expect(absent.calls.map((url) => new URL(url).pathname)).toEqual([
+      "/repos/example-org/example-app/pulls/999902",
+      "/repos/example-org/example-app",
+    ]);
+  });
+
+  it("does not turn auth, concealed repository access or upstream failures into PR absence", async () => {
+    await expect(buildStatus(403, { message: "Resource not accessible" }).getPrDisposition(12)).rejects.toThrow("403");
+    await expect(buildStatus(500, { message: "upstream" }).getPrDisposition(12)).rejects.toThrow("500");
+    const concealed = buildStatusSequence([
+      { status: 404, payload: { message: "Not Found" } },
+      { status: 404, payload: { message: "Not Found" } },
+    ]).adapter;
+    await expect(concealed.getPrDisposition(999902)).rejects.toThrow("404");
+  });
+
+  it("rejects malformed, cross-PR or mismatched-repository terminal responses", async () => {
+    for (const payload of [
+      { number: 13, state: "closed", head: { sha: "abc" } },
+      { number: 12, state: "closed", head: { sha: "" } },
+      { number: 12, state: "closed", head: null },
+      { number: 12, state: "mystery", head: { sha: "abc" } },
+      null,
+    ]) {
+      await expect(build(() => payload).adapter.getPrDisposition(12)).rejects.toThrow();
+    }
+    const wrongRepo = buildStatusSequence([
+      { status: 404, payload: { message: "Not Found" } },
+      { status: 200, payload: { full_name: "someone/else" } },
+    ]).adapter;
+    await expect(wrongRepo.getPrDisposition(12)).rejects.toThrow("repository proof mismatch");
   });
 
   it("keeps only the bot's own review comments for the registry backfill", async () => {

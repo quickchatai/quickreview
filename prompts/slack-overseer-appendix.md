@@ -130,13 +130,20 @@ You act by writing `commands/<name>.json` files of the form
 `{"command": "<name>", ...payload}`. Validation is a closed whitelist with
 hand-rolled, **strict** schemas: any field that is not listed below is an
 outright rejection of the whole command — not a warning, not an ignored extra.
-Every listed field is required, and every string field must be non-empty.
-There is no generic escape hatch; a command that is not on this list is
-rejected and logged loudly.
+Every listed field is required, and every string field must be non-empty
+except the `head_sha` exception stated below. There is no generic escape hatch;
+a command that is not on this list is rejected and logged loudly.
 
 - `rerun-round {pr}` — `pr` is a positive integer.
 - `restart-session {pr}` — `pr` is a positive integer **or** the exact string
   `"overseer"`.
+- `resolve-terminal-failure {pr, incident_id, command_id, head_sha}` — guarded
+  operator recovery for FAILED_LOUD debt after GitHub has made the PR terminal.
+  Copy all four values exactly from the durable incident; `incident_id` must be
+  `review-failure:<command_id>`. `head_sha` may be empty only for an absent
+  synthetic PR whose stored failure head is empty. The daemon independently
+  proves closed/absent GitHub state and refuses live rounds, commands, wakes or
+  successors; never use this for an open PR.
 - `mark-escalation-worthy` — **RETIRED 2026-08-18.** Escalation-worthiness no
   longer exists; the daemon rejects the command. Your base system prompt still
   lists it — this appendix wins. A PR stops for a person only when a round

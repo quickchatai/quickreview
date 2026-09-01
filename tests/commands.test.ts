@@ -18,6 +18,7 @@ function makeDeps() {
     slackReply: vi.fn(async () => ({ ok: true, ts: "1712345678.000100" })),
     rerunRound: vi.fn(async () => ({ ok: true, redispatched: true })),
     restartSession: vi.fn(async () => undefined),
+    resolveTerminalFailure: vi.fn(async () => ({ ok: true, disposition: "closed" })),
     pausePr: vi.fn(async () => undefined),
     resumePr: vi.fn(async () => undefined),
     flagOwner: vi.fn(async () => undefined),
@@ -33,6 +34,8 @@ describe("validateCommand — whitelist", () => {
       { command: "rerun-round", pr: 12 },
       { command: "restart-session", pr: 12 },
       { command: "restart-session", pr: "overseer" },
+      { command: "resolve-terminal-failure", pr: 5408, incident_id: "review-failure:cmd-5408", command_id: "cmd-5408", head_sha: "abc123" },
+      { command: "resolve-terminal-failure", pr: 999902, incident_id: "review-failure:synthetic", command_id: "synthetic", head_sha: "" },
       { command: "pause-pr", pr: 12, reason: "same-head staleness churn" },
       { command: "resume-pr", pr: 12 },
       { command: "flag-owner", message: "webhook signature failures spiking" },
@@ -47,7 +50,7 @@ describe("validateCommand — whitelist", () => {
       const res = validateCommand(v);
       expect(res.ok, JSON.stringify(v)).toBe(true);
     }
-    expect(COMMAND_WHITELIST).toHaveLength(10); // + drain and bounded thread-decision replay
+    expect(COMMAND_WHITELIST).toHaveLength(11); // + drain, bounded thread replay, terminal-debt resolution
   });
 
   it("slack_reply: strict shape, ts format, and no channel field", () => {
@@ -87,6 +90,9 @@ describe("validateCommand — whitelist", () => {
     expect(validateCommand({ command: "rerun-round", pr: "12" }).ok).toBe(false);
     expect(validateCommand({ command: "rerun-round", pr: -3 }).ok).toBe(false);
     expect(validateCommand({ command: "restart-session", pr: "everything" }).ok).toBe(false);
+    expect(validateCommand({ command: "resolve-terminal-failure", pr: 1, incident_id: "wrong", command_id: "cmd", head_sha: "abc" }).ok).toBe(false);
+    expect(validateCommand({ command: "resolve-terminal-failure", pr: 1, incident_id: "review-failure:cmd", command_id: "cmd", head_sha: 42 }).ok).toBe(false);
+    expect(validateCommand({ command: "resolve-terminal-failure", pr: 1, incident_id: "review-failure:cmd", command_id: "cmd", head_sha: "abc", force: true }).ok).toBe(false);
     expect(validateCommand({ command: "mark-escalation-worthy", pr: 1, reason: "x" }).ok).toBe(false); // retired
     expect(validateCommand({ command: "pause-pr", pr: 1 }).ok).toBe(false); // reason required
     expect(validateCommand({ command: "resume-pr", pr: 1, reason: "x" }).ok).toBe(false); // unknown field
@@ -113,6 +119,9 @@ describe("executeCommand", () => {
     expect(deps.rerunRound).toHaveBeenCalledWith(41);
     await executeCommand({ command: "restart-session", pr: "overseer" }, deps);
     expect(deps.restartSession).toHaveBeenCalledWith("overseer");
+    const terminal = { pr: 5408, incident_id: "review-failure:cmd-5408", command_id: "cmd-5408", head_sha: "abc123" };
+    await executeCommand({ command: "resolve-terminal-failure", ...terminal }, deps);
+    expect(deps.resolveTerminalFailure).toHaveBeenCalledWith(terminal);
     await executeCommand({ command: "pause-pr", pr: 5266, reason: "same-head churn" }, deps);
     expect(deps.pausePr).toHaveBeenCalledWith(5266, "same-head churn");
     await executeCommand({ command: "resume-pr", pr: 5266 }, deps);
@@ -306,6 +315,7 @@ describe("CommandWatcher", () => {
       { command: "pause-pr", pr: 1234, reason: "r" },
       { command: "resume-pr", pr: 1234 },
       { command: "restart-session", pr: "overseer" },
+      { command: "resolve-terminal-failure", pr: 1234, incident_id: "review-failure:cmd", command_id: "cmd", head_sha: "abc" },
       { command: "file-improvement-pr", branch: "wip/x", title: "t", body: "b", slug: "x" },
       { command: "file-issue", title: "t", body: "b" },
     ]) {
@@ -337,10 +347,11 @@ describe("CommandWatcher", () => {
     expect(nope.pausePr).not.toHaveBeenCalled();
   });
 
-  it("tier author cannot restart sessions or file improvement PRs", async () => {
+  it("tier author cannot restart sessions, resolve debt, or file improvement PRs", async () => {
     const alice = origin({ tier: "author", authorized_prs: [1234] });
     for (const cmd of [
       { command: "restart-session", pr: 1234 },
+      { command: "resolve-terminal-failure", pr: 1234, incident_id: "review-failure:cmd", command_id: "cmd", head_sha: "abc" },
       { command: "file-improvement-pr", branch: "wip/x", title: "t", body: "b", slug: "x" },
     ]) {
       const r = await runSlack(makeDeps(), cmd, alice);
@@ -383,6 +394,7 @@ describe("CommandWatcher", () => {
     for (const cmd of [
       { command: "rerun-round", pr: 42 },
       { command: "restart-session", pr: "overseer" },
+      { command: "resolve-terminal-failure", pr: 5408, incident_id: "review-failure:cmd", command_id: "cmd", head_sha: "abc" },
       { command: "file-issue", title: "t", body: "b" },
     ]) {
       const r = await runSlack(makeDeps(), cmd, m);
@@ -489,6 +501,7 @@ describe("authorizeCommand (pure)", () => {
   it("a null origin is a local turn — full (system-grade) autonomy", () => {
     const cmds: Command[] = [
       { command: "restart-session", pr: "overseer" },
+      { command: "resolve-terminal-failure", pr: 999902, incident_id: "review-failure:cmd", command_id: "cmd", head_sha: "" },
       { command: "file-issue", title: "t", body: "b" },
     ];
     for (const c of cmds) expect(authorizeCommand(c, null)).toEqual({ ok: true });
@@ -510,6 +523,17 @@ describe("authorizeCommand (pure)", () => {
   it("tier 'ignored' is treated as read-only, like 'anyone'", () => {
     expect(authorizeCommand({ command: "flag-owner", message: "m" }, rec("ignored")).ok).toBe(true);
     expect(authorizeCommand({ command: "rerun-round", pr: 1 }, rec("ignored")).ok).toBe(false);
+  });
+
+  it("terminal cleanup accepts only stamped owner/system tiers", () => {
+    const command: Command = {
+      command: "resolve-terminal-failure", pr: 5408,
+      incident_id: "review-failure:cmd", command_id: "cmd", head_sha: "abc",
+    };
+    expect(authorizeCommand(command, rec("owner"))).toEqual({ ok: true });
+    expect(authorizeCommand(command, rec("system"))).toEqual({ ok: true });
+    expect(authorizeCommand(command, rec("author", [5408])).ok).toBe(false);
+    expect(authorizeCommand(command, rec("anyone")).ok).toBe(false);
   });
 
   it("restart-session on 'overseer' is owner-only and needs no PR", () => {

@@ -16,6 +16,7 @@ import { SLACK_TS_RE } from "./slack/reply.js";
 export type CommandName =
   | "rerun-round"
   | "restart-session"
+  | "resolve-terminal-failure"
   | "pause-pr"
   | "resume-pr"
   | "flag-owner"
@@ -28,6 +29,7 @@ export type CommandName =
 export const COMMAND_WHITELIST: readonly CommandName[] = [
   "rerun-round",
   "restart-session",
+  "resolve-terminal-failure",
   "pause-pr",
   "resume-pr",
   "flag-owner",
@@ -51,9 +53,17 @@ const LEGACY_COMMAND_NAMES: Readonly<Record<string, CommandName>> = {
   "flag-owner-legacy": "flag-owner",
 };
 
+export interface TerminalFailurePayload {
+  pr: number;
+  incident_id: string;
+  command_id: string;
+  head_sha: string;
+}
+
 export type Command =
   | { command: "rerun-round"; pr: number }
   | { command: "restart-session"; pr: number | "overseer" }
+  | ({ command: "resolve-terminal-failure" } & TerminalFailurePayload)
   | { command: "pause-pr"; pr: number; reason: string }
   | { command: "resume-pr"; pr: number }
   | { command: "flag-owner"; message: string }
@@ -76,6 +86,7 @@ export interface CommandContext {
 export interface CommandDeps {
   rerunRound(pr: number): Promise<FileOutcome | void> | FileOutcome | void;
   restartSession(target: number | "overseer"): Promise<FileOutcome | void> | FileOutcome | void;
+  resolveTerminalFailure(payload: TerminalFailurePayload): Promise<FileOutcome | void> | FileOutcome | void;
   pausePr(pr: number, reason: string): Promise<FileOutcome | void> | FileOutcome | void;
   resumePr(pr: number): Promise<FileOutcome | void> | FileOutcome | void;
   flagOwner(message: string): Promise<FileOutcome | void> | FileOutcome | void;
@@ -157,6 +168,31 @@ export function validateCommand(raw: unknown): ValidationResult {
         return { ok: false, reason: "'pr' must be a positive integer or the string \"overseer\"" };
       }
       return { ok: true, command: { command: "restart-session", pr: pr as number | "overseer" } };
+    }
+    case "resolve-terminal-failure": {
+      const err = fieldError(obj, ["pr", "incident_id", "command_id", "head_sha"]);
+      if (err) return { ok: false, reason: err };
+      if (!isPrNumber(obj["pr"])) return { ok: false, reason: "'pr' must be a positive integer" };
+      for (const field of ["incident_id", "command_id"]) {
+        if (!isNonEmptyString(obj[field])) return { ok: false, reason: `'${field}' must be a non-empty string` };
+      }
+      // An authoritative GitHub 404 can legitimately correspond to a legacy
+      // synthetic debt whose stored head is the empty string. Closed PRs are
+      // still forced to a non-empty exact match by resolveTerminalFailure().
+      if (typeof obj["head_sha"] !== "string") return { ok: false, reason: "'head_sha' must be a string" };
+      if (obj["incident_id"] !== `review-failure:${obj["command_id"] as string}`) {
+        return { ok: false, reason: "'incident_id' must exactly equal review-failure:<command_id>" };
+      }
+      return {
+        ok: true,
+        command: {
+          command: "resolve-terminal-failure",
+          pr: obj["pr"],
+          incident_id: obj["incident_id"] as string,
+          command_id: obj["command_id"] as string,
+          head_sha: obj["head_sha"] as string,
+        },
+      };
     }
     case "pause-pr": {
       const err = fieldError(obj, ["pr", "reason"]);
@@ -281,6 +317,9 @@ const TIER_TABLE: Record<CommandName, { anyone: boolean; author: "own" | boolean
   // The safety valve: anyone may always reach a human.
   "flag-owner": { anyone: true, author: true, owner: true, system: true },
   "restart-session": { anyone: false, author: false, owner: true, system: true },
+  // Terminal debt cleanup is destructive and never author-reachable. Its
+  // handler additionally requires exact identity + authoritative terminality.
+  "resolve-terminal-failure": { anyone: false, author: false, owner: true, system: true },
   // improvements.ts caps still apply ON TOP — a tier never lifts a cap.
   "file-improvement-pr": { anyone: false, author: false, owner: true, system: true },
   // (corrected by the owner): the review SESSION files a deferral's
@@ -367,6 +406,13 @@ export async function executeCommand(
       return normalize(await deps.rerunRound(command.pr));
     case "restart-session":
       return normalize(await deps.restartSession(command.pr));
+    case "resolve-terminal-failure":
+      return normalize(await deps.resolveTerminalFailure({
+        pr: command.pr,
+        incident_id: command.incident_id,
+        command_id: command.command_id,
+        head_sha: command.head_sha,
+      }));
     case "pause-pr":
       return normalize(await deps.pausePr(command.pr, command.reason));
     case "resume-pr":

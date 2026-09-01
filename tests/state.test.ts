@@ -694,6 +694,233 @@ describe("durable FAILED_LOUD review obligations", () => {
     expect(recovered.pipeline?.recoveries).toEqual([{ key: "review-failure:cmd-5408", pr: 5408, recovered_at: T0.toISOString(), recovery: "operator-rerun" }]);
   });
 
+  it("atomically terminalizes the exact failed command and matching debt for a closed PR", () => {
+    store.upsertPr(prRow(5408, { state: "closed", head_sha: "abc123" }));
+    store.createSessionCommand({
+      id: "cmd-5408",
+      pr: 5408,
+      session: "pr-5408",
+      kind: "wake",
+      round_no: null,
+      payload_sha256: "hash",
+      payload_path: "/payload/cmd-5408.md",
+      inject_path: "/inject/cmd-5408.md",
+      next_check_at: T0.toISOString(),
+    });
+    store.failPendingSessionCommand("cmd-5408", "fixed bound exhausted");
+    store.openReviewFailure({
+      pr: 5408,
+      command_id: "cmd-5408",
+      round_id: null,
+      round_no: null,
+      head_sha: "abc123",
+      stage: "session_command",
+      detail: "fixed bound exhausted",
+      attempts: 2,
+      retry_cap: 2,
+    });
+
+    expect(store.resolveTerminalReviewFailure({
+      pr: 5408,
+      incident_id: "review-failure:cmd-5408",
+      command_id: "cmd-5408",
+      head_sha: "abc123",
+      disposition: "closed",
+    })).toMatchObject({ ok: true, disposition: "closed", incident_id: "review-failure:cmd-5408", command_id: "cmd-5408" });
+
+    expect(store.getSessionCommand("cmd-5408")).toMatchObject({ status: "cancelled", owner_token: null });
+    expect(store.openReviewFailure(5408)).toBeUndefined();
+    expect(store.recentReviewRecoveries("2026-01-01T00:00:00.000Z")[0]).toMatchObject({
+      incident_id: "review-failure:cmd-5408",
+      work_owed: 0,
+      recovery: "terminal-closed",
+    });
+    const terminalEvent = store.eventsOn("2026-08-13").find((event) => event.kind === "terminal_review_failure_resolved");
+    expect(terminalEvent).toBeDefined();
+    expect(JSON.parse(terminalEvent!.payload!)).toEqual({
+      incident_id: "review-failure:cmd-5408",
+      command_id: "cmd-5408",
+      head_sha: "abc123",
+      disposition: "closed",
+      command_status: "cancelled",
+    });
+  });
+
+  it("resolves a failed terminal round command after its round is cancelled", () => {
+    store.upsertPr(prRow(5426, { state: "reviewing", head_sha: "posted-head" }));
+    const roundId = store.startRound(5426, "re-review", [], 75);
+    const roundNo = store.roundsFor(5426)[0]!.round_no;
+    store.createSessionCommand({
+      id: "cmd-posting", pr: 5426, session: "pr-5426", kind: "round", round_no: roundNo,
+      payload_sha256: "hash", payload_path: "/payload/posting.md", inject_path: "/inject/posting.md",
+      next_check_at: T0.toISOString(),
+    });
+    store.failPendingSessionCommand("cmd-posting", "posting receipt absent");
+    store.markRoundCancelled(roundId, "posting receipt absent", "infrastructure_failure");
+    store.upsertPr(prRow(5426, { state: "closed", head_sha: "posted-head" }));
+    store.openReviewFailure({
+      pr: 5426, command_id: "cmd-posting", round_id: roundId, round_no: roundNo,
+      head_sha: "posted-head", stage: "posting_receipt", detail: "receipt absent", attempts: 1, retry_cap: 0,
+    });
+
+    expect(store.resolveTerminalReviewFailure({
+      pr: 5426, incident_id: "review-failure:cmd-posting", command_id: "cmd-posting",
+      head_sha: "posted-head", disposition: "closed",
+    })).toMatchObject({ ok: true, command_status: "cancelled" });
+    expect(store.openReviewFailure(5426)).toBeUndefined();
+  });
+
+  it("resolves an exact absent-PR debt idempotently without inventing PR state", () => {
+    store.createSessionCommand({
+      id: "cmd-synthetic", pr: 999902, session: "pr-999902", kind: "wake", round_no: null,
+      payload_sha256: "hash", payload_path: "/payload/synthetic.md", inject_path: "/inject/synthetic.md",
+      next_check_at: T0.toISOString(),
+    });
+    store.failPendingSessionCommand("cmd-synthetic", "synthetic fixture exhausted");
+    store.openReviewFailure({
+      pr: 999902, command_id: "cmd-synthetic", head_sha: "",
+      stage: "session_command", detail: "synthetic fixture exhausted", attempts: 2, retry_cap: 2,
+    });
+    const input = {
+      pr: 999902, incident_id: "review-failure:cmd-synthetic", command_id: "cmd-synthetic",
+      head_sha: "", disposition: "absent" as const,
+    };
+
+    expect(store.resolveTerminalReviewFailure(input)).toMatchObject({ ok: true, already_resolved: false });
+    expect(store.resolveTerminalReviewFailure(input)).toMatchObject({ ok: true, already_resolved: true });
+    expect(store.getPr(999902)).toBeUndefined();
+    expect(store.eventsOn("2026-08-13").filter((event) => event.kind === "terminal_review_failure_resolved")).toHaveLength(1);
+  });
+
+  it("refuses changed identity or contradictory live ownership without partial cleanup", () => {
+    store.upsertPr(prRow(5408, { state: "closed", head_sha: "abc123" }));
+    store.createSessionCommand({
+      id: "cmd-target", pr: 5408, session: "pr-5408", kind: "wake", round_no: null,
+      payload_sha256: "target", payload_path: "/payload/target.md", inject_path: "/inject/target.md",
+      next_check_at: T0.toISOString(),
+    });
+    store.failPendingSessionCommand("cmd-target", "target failed");
+    store.openReviewFailure({
+      pr: 5408, command_id: "cmd-target", head_sha: "abc123",
+      stage: "session_command", detail: "target failed", attempts: 2, retry_cap: 2,
+    });
+    const base = {
+      pr: 5408, incident_id: "review-failure:cmd-target", command_id: "cmd-target",
+      head_sha: "abc123", disposition: "closed" as const,
+    };
+
+    expect(store.resolveTerminalReviewFailure({ ...base, head_sha: "stale" })).toMatchObject({ ok: false });
+    store.createSessionCommand({
+      id: "new-owner", pr: 5408, session: "pr-5408", kind: "wake", round_no: null,
+      payload_sha256: "new", payload_path: "/payload/new.md", inject_path: "/inject/new.md",
+      next_check_at: T0.toISOString(),
+    });
+    expect(store.resolveTerminalReviewFailure(base)).toMatchObject({ ok: false, reason: expect.stringContaining("active command") });
+    expect(store.getSessionCommand("cmd-target")?.status).toBe("failed");
+    expect(store.openReviewFailure(5408)?.work_owed).toBe(1);
+  });
+
+  it("refuses an active command for the PR even if its session name is malformed", () => {
+    store.upsertPr(prRow(5408, { state: "closed", head_sha: "abc123" }));
+    store.createSessionCommand({
+      id: "cmd-target", pr: 5408, session: "pr-5408", kind: "wake", round_no: null,
+      payload_sha256: "target", payload_path: "/payload/target.md", inject_path: "/inject/target.md",
+      next_check_at: T0.toISOString(),
+    });
+    store.failPendingSessionCommand("cmd-target", "target failed");
+    store.openReviewFailure({
+      pr: 5408, command_id: "cmd-target", head_sha: "abc123",
+      stage: "session_command", detail: "target failed", attempts: 2, retry_cap: 2,
+    });
+    store.createSessionCommand({
+      id: "wrong-session-owner", pr: 5408, session: "overseer", kind: "wake", round_no: null,
+      payload_sha256: "other", payload_path: "/payload/other.md", inject_path: "/inject/other.md",
+      next_check_at: T0.toISOString(),
+    });
+
+    expect(store.resolveTerminalReviewFailure({
+      pr: 5408, incident_id: "review-failure:cmd-target", command_id: "cmd-target",
+      head_sha: "abc123", disposition: "closed",
+    })).toMatchObject({ ok: false, reason: expect.stringContaining("active command") });
+    expect(store.getSessionCommand("cmd-target")?.status).toBe("failed");
+    expect(store.openReviewFailure(5408)?.work_owed).toBe(1);
+  });
+
+  it("refuses a failure whose round identity does not resolve exactly", () => {
+    store.upsertPr(prRow(5426, { state: "reviewing", head_sha: "abc123" }));
+    const roundId = store.startRound(5426, "re-review", [], 75);
+    const roundNo = store.roundsFor(5426)[0]!.round_no;
+    store.createSessionCommand({
+      id: "cmd-round", pr: 5426, session: "pr-5426", kind: "round", round_no: roundNo,
+      payload_sha256: "round", payload_path: "/payload/round.md", inject_path: "/inject/round.md",
+      next_check_at: T0.toISOString(),
+    });
+    store.failPendingSessionCommand("cmd-round", "round failed");
+    store.markRoundCancelled(roundId, "round failed", "infrastructure_failure");
+    store.upsertPr(prRow(5426, { state: "closed", head_sha: "abc123" }));
+    store.openReviewFailure({
+      pr: 5426, command_id: "cmd-round", round_id: roundId + 999, round_no: roundNo,
+      head_sha: "abc123", stage: "posting_receipt", detail: "round failed", attempts: 1, retry_cap: 0,
+    });
+
+    expect(store.resolveTerminalReviewFailure({
+      pr: 5426, incident_id: "review-failure:cmd-round", command_id: "cmd-round",
+      head_sha: "abc123", disposition: "closed",
+    })).toMatchObject({ ok: false, reason: expect.stringContaining("round identity") });
+    expect(store.getSessionCommand("cmd-round")?.status).toBe("failed");
+    expect(store.openReviewFailure(5426)?.work_owed).toBe(1);
+  });
+
+  it("refuses outstanding held work instead of erasing it", () => {
+    store.upsertPr(prRow(5408, { state: "closed", head_sha: "abc123" }));
+    store.createSessionCommand({
+      id: "cmd-target", pr: 5408, session: "pr-5408", kind: "wake", round_no: null,
+      payload_sha256: "target", payload_path: "/payload/target.md", inject_path: "/inject/target.md",
+      next_check_at: T0.toISOString(),
+    });
+    store.failPendingSessionCommand("cmd-target", "target failed");
+    store.openReviewFailure({
+      pr: 5408, command_id: "cmd-target", head_sha: "abc123",
+      stage: "session_command", detail: "target failed", attempts: 2, retry_cap: 2,
+    });
+    store.holdWake(5408, "author reply", "author_reply");
+
+    expect(store.resolveTerminalReviewFailure({
+      pr: 5408, incident_id: "review-failure:cmd-target", command_id: "cmd-target",
+      head_sha: "abc123", disposition: "closed",
+    })).toMatchObject({ ok: false, reason: expect.stringContaining("held wake") });
+    expect(store.heldWakes(5408)).toHaveLength(1);
+    expect(store.getSessionCommand("cmd-target")?.status).toBe("failed");
+  });
+
+  it("refuses and preserves an outstanding successor obligation", () => {
+    store.upsertPr(prRow(5408, { state: "reviewing", head_sha: "abc123" }));
+    const predecessor = store.startRound(5408, "re-review", [], 75);
+    store.markRoundCancelled(predecessor, "terminal predecessor", "head_moved");
+    store.upsertPr(prRow(5408, { state: "closed", head_sha: "abc123" }));
+    store.createSessionCommand({
+      id: "cmd-target", pr: 5408, session: "pr-5408", kind: "wake", round_no: null,
+      payload_sha256: "target", payload_path: "/payload/target.md", inject_path: "/inject/target.md",
+      next_check_at: T0.toISOString(),
+    });
+    store.failPendingSessionCommand("cmd-target", "target failed");
+    store.openReviewFailure({
+      pr: 5408, command_id: "cmd-target", head_sha: "abc123",
+      stage: "session_command", detail: "target failed", attempts: 2, retry_cap: 2,
+    });
+    store.recordSuccessor({
+      pr: 5408, predecessor_round_id: predecessor, head_sha: "new-head",
+      provenance: "system", reason: "push",
+    });
+
+    expect(store.resolveTerminalReviewFailure({
+      pr: 5408, incident_id: "review-failure:cmd-target", command_id: "cmd-target",
+      head_sha: "abc123", disposition: "closed",
+    })).toMatchObject({ ok: false, reason: expect.stringContaining("successor obligation") });
+    expect(store.successorFor(5408)).toMatchObject({ head_sha: "new-head", predecessor_round_id: predecessor });
+    expect(store.getSessionCommand("cmd-target")?.status).toBe("failed");
+  });
+
   it("does not let a stale verdict clear newer failed work", () => {
     store.upsertPr(prRow(5408, { state: "reviewing", head_sha: "new" }));
     const roundId = store.startRound(5408, "re-review", [], 75);

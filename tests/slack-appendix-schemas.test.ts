@@ -53,6 +53,9 @@ const CANDIDATE_FIELDS = [
   "text",
   "on",
   "comment_id",
+  "incident_id",
+  "command_id",
+  "head_sha",
   "channel",
   "__control_never_valid__",
 ] as const;

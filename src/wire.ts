@@ -35,6 +35,7 @@ import { OpenVikingClient, OpenVikingSupervisor, keyFromFile, openVikingContextA
 import { OV_REVIEWER_KEY_SECRET, openVikingSessionLifecycle } from "./memory/ovsession.js";
 import type { ContextAssembler, RoundMemory } from "./memory/context.js";
 import { recoverPrForOperator } from "./operator-recovery.js";
+import { resolveTerminalFailure } from "./terminal-failure.js";
 import type { MemoryStore } from "./memory/store.js";
 import { startEodPinWatch } from "./eodpinwatch.js";
 import { reconcileOrphanedRounds } from "./reconcile.js";
@@ -659,6 +660,12 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
               }
             },
           }, target, "restart-session");
+        },
+        resolveTerminalFailure(payload) {
+          return resolveTerminalFailure({
+            store: d.store,
+            getPrDisposition: (pr) => adapter.getPrDisposition(pr),
+          }, payload);
         },
         pausePr(pr, reason) {
           const row = d.store.getPr(pr);
