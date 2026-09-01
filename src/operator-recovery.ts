@@ -30,6 +30,8 @@ export interface OperatorRecoveryResult {
   cancelled_rounds?: number[];
   cancelled_session_commands?: string[];
   recovered_wakes?: number;
+  exact_head_retired?: boolean;
+  restored_state?: "awaiting_author" | "tracked";
 }
 
 /**
@@ -56,6 +58,35 @@ export async function recoverPrForOperator(
       reason: `PR #${pr} is owned by session command ${blockers[0]!.id}; use restart-session to fence it`,
       blocking_command: blockers[0]!.id,
     };
+  }
+
+  const failure = deps.store.openReviewFailure(pr);
+  if (
+    mode === "rerun-round"
+    && failure?.stage === "posting_receipt"
+    && failure.command_id !== null
+    && failure.round_id !== null
+    && failure.round_no !== null
+    && failure.head_sha !== ""
+  ) {
+    const retired = deps.store.resolveExactHeadReviewedFailure({
+      pr,
+      incident_id: failure.incident_id,
+      command_id: failure.command_id,
+      round_id: failure.round_id,
+      round_no: failure.round_no,
+      head_sha: failure.head_sha,
+    });
+    if (retired.kind === "blocked") return { ok: false, reason: retired.reason };
+    if (retired.kind === "resolved") {
+      return {
+        ok: true,
+        redispatched: false,
+        exact_head_retired: true,
+        restored_state: retired.restored_state,
+        recovery_hold_cleared: retired.incident_id,
+      };
+    }
   }
 
   let reset: { cancelled_command_ids: string[]; recovered_wake_ids: number[] } = {
@@ -122,7 +153,6 @@ export async function recoverPrForOperator(
     for (const { quarantinePath } of quarantined) rmSync(quarantinePath, { force: true });
   }
 
-  const failure = deps.store.openReviewFailure(pr);
   const migrationMarkRepaired = failure?.stage === "posting_receipt"
     ? deps.store.repairMigrationPrecheckReviewedHead(pr)
     : false;

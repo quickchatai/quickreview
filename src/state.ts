@@ -26,6 +26,18 @@ export type TriggerProvenance = "human" | "system";
 
 export type TerminalReviewFailureDisposition = "closed" | "absent";
 
+export type ExactHeadReviewedFailureResolution =
+  | { kind: "not_applicable" }
+  | { kind: "blocked"; reason: string }
+  | {
+      kind: "resolved";
+      incident_id: string;
+      command_id: string;
+      restored_state: "awaiting_author" | "tracked";
+      standing_verdict: "REQUEST_CHANGES" | "APPROVE";
+      already_resolved: boolean;
+    };
+
 export type TerminalReviewFailureResolution =
   | {
       ok: true;
@@ -2701,6 +2713,163 @@ export class StateStore {
     return this.db.prepare(
       "SELECT * FROM review_failures WHERE work_owed=0 AND recovered_at IS NOT NULL AND recovered_at>=? ORDER BY recovered_at DESC, incident_id",
     ).all(since) as ReviewFailureRow[];
+  }
+
+  /**
+   * Retire a posting-receipt failure whose target head already has the review
+   * guard 2 says must not be posted again. This is not a general recovery: the
+   * exact failed round, command, debt and substantive standing mark must all
+   * agree, with no author evidence since the mark. The ordinary recovery path
+   * remains authoritative for every other shape.
+   */
+  resolveExactHeadReviewedFailure(input: {
+    pr: number;
+    incident_id: string;
+    command_id: string;
+    round_id: number;
+    round_no: number;
+    head_sha: string;
+  }): ExactHeadReviewedFailureResolution {
+    const recovery = "exact-head-already-reviewed";
+    return this.db.transaction((): ExactHeadReviewedFailureResolution => {
+      const current = this.openReviewFailure(input.pr);
+      if (!current) {
+        const prior = this.db.prepare("SELECT * FROM review_failures WHERE incident_id=?").get(input.incident_id) as ReviewFailureRow | undefined;
+        const command = this.getSessionCommand(input.command_id);
+        const mark = this.reviewedHead(input.pr);
+        if (
+          prior?.pr === input.pr
+          && prior.command_id === input.command_id
+          && prior.round_id === input.round_id
+          && prior.round_no === input.round_no
+          && prior.head_sha === input.head_sha
+          && prior.work_owed === 0
+          && prior.recovery === recovery
+          && command?.status === "cancelled"
+          && mark?.head_sha === input.head_sha
+          && (mark.verdict === "REQUEST_CHANGES" || mark.verdict === "APPROVE")
+        ) {
+          return {
+            kind: "resolved",
+            incident_id: input.incident_id,
+            command_id: input.command_id,
+            restored_state: mark.verdict === "REQUEST_CHANGES" ? "awaiting_author" : "tracked",
+            standing_verdict: mark.verdict,
+            already_resolved: true,
+          };
+        }
+        return { kind: "blocked", reason: `review failure identity changed for PR #${input.pr}` };
+      }
+      if (current.stage !== "posting_receipt") return { kind: "not_applicable" };
+      if (
+        current.incident_id !== input.incident_id
+        || current.command_id !== input.command_id
+        || current.round_id !== input.round_id
+        || current.round_no !== input.round_no
+        || current.head_sha !== input.head_sha
+      ) return { kind: "blocked", reason: `open review failure identity changed for PR #${input.pr}` };
+
+      const mark = this.reviewedHead(input.pr);
+      if (
+        !mark
+        || mark.head_sha !== input.head_sha
+        || (mark.verdict !== "REQUEST_CHANGES" && mark.verdict !== "APPROVE")
+        || (mark.last_author_reply_at !== null && mark.last_author_reply_at >= mark.reviewed_at)
+      ) return { kind: "not_applicable" };
+
+      const pr = this.getPr(input.pr);
+      if (!pr || pr.state === "closed" || pr.head_sha !== input.head_sha) {
+        return { kind: "blocked", reason: `PR #${input.pr} local head/state changed during exact-head recovery` };
+      }
+      if (this.hasRunningRound(input.pr)) return { kind: "blocked", reason: `PR #${input.pr} still has a running round` };
+      const active = this.db.prepare(
+        "SELECT * FROM session_commands WHERE pr=? AND status IN ('pending','running') ORDER BY created_at, id LIMIT 1",
+      ).get(input.pr) as SessionCommandRow | undefined;
+      if (active) return { kind: "blocked", reason: `PR #${input.pr} still has active command ${active.id} (${active.status})` };
+      // A held wake or successor is genuine new work. Do not consume it here;
+      // hand the caller back to ordinary recovery, which preserves/promotes it.
+      if (this.heldWakes(input.pr).length > 0 || this.successorFor(input.pr)) return { kind: "not_applicable" };
+
+      const command = this.getSessionCommand(input.command_id);
+      const round = this.db.prepare("SELECT * FROM rounds WHERE id=?").get(input.round_id) as RoundRow | undefined;
+      if (
+        !command
+        || command.pr !== input.pr
+        || command.session !== `pr-${input.pr}`
+        || command.kind !== "round"
+        || command.round_no !== input.round_no
+        || command.status !== "failed"
+        || !round
+        || round.pr !== input.pr
+        || round.round_no !== input.round_no
+        || round.status !== "cancelled"
+        || round.verdict !== null
+      ) return { kind: "blocked", reason: `failed command/round identity changed for ${input.command_id}` };
+      // Do not limit this to the canonical session spelling: a malformed or
+      // legacy failed row is still durable PR ownership and must not disappear
+      // behind cleanup of the named incident.
+      const otherFailed = this.db.prepare(
+        `SELECT c.* FROM session_commands c
+          WHERE c.pr=@pr AND c.id<>@command_id AND ${BLOCKING_SESSION_COMMAND_SQL}
+          ORDER BY c.created_at, c.id LIMIT 1`,
+      ).get({ pr: input.pr, command_id: input.command_id }) as SessionCommandRow | undefined;
+      if (otherFailed) return { kind: "blocked", reason: `PR #${input.pr} still has blocking command ${otherFailed.id}` };
+
+      const ts = this.ts();
+      const commandChanged = this.db.prepare(
+        `UPDATE session_commands
+            SET status='cancelled', owner_token=NULL, settled_at=COALESCE(settled_at, @ts),
+                updated_at=@ts, next_check_at=@ts,
+                failure=CASE WHEN failure IS NULL OR failure='' THEN @reason ELSE failure || '; ' || @reason END
+          WHERE id=@command_id AND pr=@pr AND session=@session AND kind='round'
+            AND round_no=@round_no AND status='failed'`,
+      ).run({
+        ...input,
+        session: `pr-${input.pr}`,
+        ts,
+        reason: `operator resolved ${recovery} review debt`,
+      }).changes;
+      if (commandChanged !== 1) throw new Error(`exact-head command CAS lost for ${input.command_id}`);
+
+      const failureChanged = this.db.prepare(
+        `UPDATE review_failures
+            SET work_owed=0, recovered_at=@ts, recovery=@recovery,
+                next_action='closed', updated_at=@ts
+          WHERE incident_id=@incident_id AND pr=@pr AND command_id=@command_id
+            AND round_id=@round_id AND round_no=@round_no AND head_sha=@head_sha
+            AND stage='posting_receipt' AND work_owed=1`,
+      ).run({ ...input, recovery, ts }).changes;
+      if (failureChanged !== 1) throw new Error(`exact-head failure CAS lost for ${input.incident_id}`);
+
+      const restoredState = mark.verdict === "REQUEST_CHANGES" ? "awaiting_author" : "tracked";
+      const prChanged = this.db.prepare(
+        `UPDATE pr_state
+            SET state=@state, trigger_ts=NULL, trigger_provenance=NULL, updated_at=@ts
+          WHERE number=@pr AND head_sha=@head_sha AND state!='closed'`,
+      ).run({ pr: input.pr, head_sha: input.head_sha, state: restoredState, ts }).changes;
+      if (prChanged !== 1) throw new Error(`exact-head PR-state CAS lost for #${input.pr}`);
+
+      this.logEvent("review_failure_recovered", input.pr, { incident_id: input.incident_id, recovery });
+      this.logEvent("exact_head_review_failure_retired", input.pr, {
+        incident_id: input.incident_id,
+        command_id: input.command_id,
+        round_id: input.round_id,
+        round_no: input.round_no,
+        head_sha: input.head_sha,
+        standing_verdict: mark.verdict,
+        standing_round_no: mark.round_no,
+        posted_event: mark.posted_event,
+        restored_state: restoredState,
+      });
+      return {
+        kind: "resolved",
+        incident_id: input.incident_id,
+        command_id: input.command_id,
+        restored_state: restoredState,
+        standing_verdict: mark.verdict,
+        already_resolved: false,
+      };
+    })();
   }
 
   /**

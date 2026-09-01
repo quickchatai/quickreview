@@ -33,6 +33,45 @@ function setup(pr = 5409) {
   return { store, dir, pr };
 }
 
+function postingReceiptFailure(
+  store: StateStore,
+  dir: string,
+  pr: number,
+  withAuthorReply = false,
+  verdict: "REQUEST_CHANGES" | "APPROVE" = "REQUEST_CHANGES",
+) {
+  const head = "a".repeat(40);
+  store.recordReviewedHead(pr, {
+    head_sha: head,
+    verdict,
+    posted_event: verdict,
+    round_no: 8,
+  });
+  if (withAuthorReply) store.noteAuthorReply(pr, T0);
+  store.setPrState(pr, "reviewing");
+  const roundId = store.startRound(pr, "re-review", ["pass-baseline"], 75);
+  const roundNo = store.roundsFor(pr)[0]!.round_no;
+  const payload = "round order\n";
+  const payloadPath = join(dir, "posting.payload.md");
+  const injectPath = join(dir, "posting.inject.md");
+  writeFileSync(payloadPath, payload);
+  writeFileSync(injectPath, payload);
+  const commandId = "cmd-posting";
+  store.createSessionCommand({
+    id: commandId, pr, session: `pr-${pr}`, kind: "round", round_no: roundNo,
+    payload_sha256: createHash("sha256").update(payload).digest("hex"),
+    payload_path: payloadPath, inject_path: injectPath, next_check_at: T0,
+  });
+  store.failPendingSessionCommand(commandId, "posting receipt absent");
+  store.markRoundCancelled(roundId, "posting receipt absent", "infrastructure_failure");
+  store.setPrState(pr, "queued");
+  const failure = store.openReviewFailure({
+    pr, command_id: commandId, round_id: roundId, round_no: roundNo, head_sha: head,
+    stage: "posting_receipt", detail: "receipt absent", attempts: 1, retry_cap: 0,
+  });
+  return { failure, commandId, roundId, roundNo, head };
+}
+
 function command(
   store: StateStore,
   dir: string,
@@ -190,6 +229,169 @@ describe("operator PR recovery", () => {
     expect(killSession).not.toHaveBeenCalled();
     expect(pump).not.toHaveBeenCalled();
     expect(store.blockingSessionCommand(`pr-${pr}`)?.id).toBe(c.row.id);
+  });
+
+  it("retires an impossible same-head posting-receipt retry without dispatch", async () => {
+    const { store, dir, pr } = setup();
+    const fixture = postingReceiptFailure(store, dir, pr);
+    const pump = vi.fn(async () => []);
+
+    const result = await recoverPrForOperator({ store, pump }, pr, "rerun-round");
+
+    expect(result).toMatchObject({
+      ok: true,
+      redispatched: false,
+      exact_head_retired: true,
+      recovery_hold_cleared: fixture.failure.incident_id,
+      restored_state: "awaiting_author",
+    });
+    expect(pump).not.toHaveBeenCalled();
+    expect(store.getPr(pr)?.state).toBe("awaiting_author");
+    expect(store.getSessionCommand(fixture.commandId)?.status).toBe("cancelled");
+    expect(store.openReviewFailure(pr)).toBeUndefined();
+    expect(store.roundsFor(pr).find((round) => round.id === fixture.roundId)?.status).toBe("cancelled");
+    const event = store.eventsOn("2026-08-31").find((row) => row.kind === "exact_head_review_failure_retired");
+    expect(JSON.parse(event!.payload!)).toMatchObject({
+      incident_id: fixture.failure.incident_id,
+      command_id: fixture.commandId,
+      round_id: fixture.roundId,
+      head_sha: fixture.head,
+      standing_verdict: "REQUEST_CHANGES",
+      restored_state: "awaiting_author",
+    });
+  });
+
+  it("restores tracked for an exact-head standing approval", async () => {
+    const { store, dir, pr } = setup();
+    postingReceiptFailure(store, dir, pr, false, "APPROVE");
+    const pump = vi.fn(async () => []);
+
+    const result = await recoverPrForOperator({ store, pump }, pr, "rerun-round");
+
+    expect(result).toMatchObject({ ok: true, exact_head_retired: true, restored_state: "tracked" });
+    expect(store.getPr(pr)?.state).toBe("tracked");
+    expect(pump).not.toHaveBeenCalled();
+  });
+
+  it("refuses mismatched failed-round identity without clearing or dispatching", async () => {
+    const { store, dir, pr } = setup();
+    const fixture = postingReceiptFailure(store, dir, pr);
+    store.db.prepare("UPDATE review_failures SET round_id=? WHERE incident_id=?")
+      .run(fixture.roundId + 999, fixture.failure.incident_id);
+    const pump = vi.fn(async () => []);
+
+    const result = await recoverPrForOperator({ store, pump }, pr, "rerun-round");
+
+    expect(result).toMatchObject({ ok: false, reason: expect.stringContaining("command/round identity") });
+    expect(store.openReviewFailure(pr)?.work_owed).toBe(1);
+    expect(store.getSessionCommand(fixture.commandId)?.status).toBe("failed");
+    expect(pump).not.toHaveBeenCalled();
+  });
+
+  it("refuses a second failed owner even under a malformed session name", async () => {
+    const { store, dir, pr } = setup();
+    const fixture = postingReceiptFailure(store, dir, pr);
+    store.createSessionCommand({
+      id: "legacy-failed", pr, session: "overseer", kind: "wake", round_no: null,
+      payload_sha256: "hash", payload_path: join(dir, "legacy.payload"), inject_path: join(dir, "legacy.inject"),
+      next_check_at: T0,
+    });
+    store.failPendingSessionCommand("legacy-failed", "legacy owner failed");
+    const pump = vi.fn(async () => []);
+
+    const result = await recoverPrForOperator({ store, pump }, pr, "rerun-round");
+
+    expect(result).toMatchObject({ ok: false, reason: expect.stringContaining("legacy-failed") });
+    expect(store.openReviewFailure(pr)?.incident_id).toBe(fixture.failure.incident_id);
+    expect(store.getSessionCommand(fixture.commandId)?.status).toBe("failed");
+    expect(pump).not.toHaveBeenCalled();
+  });
+
+  it("ignores obsolete failed commands whose rounds are already terminal", async () => {
+    const { store, dir, pr } = setup();
+    const fixture = postingReceiptFailure(store, dir, pr);
+    store.setPrState(pr, "reviewing");
+    const obsoleteRoundId = store.startRound(pr, "re-review", [], 75);
+    const obsoleteRoundNo = store.roundsFor(pr).find((round) => round.id === obsoleteRoundId)!.round_no;
+    store.createSessionCommand({
+      id: "obsolete-round-command", pr, session: `pr-${pr}`, kind: "round", round_no: obsoleteRoundNo,
+      payload_sha256: "hash", payload_path: join(dir, "obsolete.payload"), inject_path: join(dir, "obsolete.inject"),
+      next_check_at: T0,
+    });
+    store.failPendingSessionCommand("obsolete-round-command", "old failed attempt");
+    store.markRoundCancelled(obsoleteRoundId, "old terminal attempt", "infrastructure_failure");
+    store.setPrState(pr, "queued");
+    const pump = vi.fn(async () => []);
+
+    const result = await recoverPrForOperator({ store, pump }, pr, "rerun-round");
+
+    expect(result).toMatchObject({ ok: true, exact_head_retired: true });
+    expect(store.getSessionCommand(fixture.commandId)?.status).toBe("cancelled");
+    expect(store.getSessionCommand("obsolete-round-command")?.status).toBe("failed");
+  });
+
+  it("is transactionally idempotent for the same captured incident", () => {
+    const { store, dir, pr } = setup();
+    const fixture = postingReceiptFailure(store, dir, pr);
+    const input = {
+      pr, incident_id: fixture.failure.incident_id, command_id: fixture.commandId,
+      round_id: fixture.roundId, round_no: fixture.roundNo, head_sha: fixture.head,
+    };
+
+    expect(store.resolveExactHeadReviewedFailure(input)).toMatchObject({ kind: "resolved", already_resolved: false });
+    expect(store.resolveExactHeadReviewedFailure(input)).toMatchObject({ kind: "resolved", already_resolved: true });
+    expect(store.eventsOn("2026-08-31").filter((row) => row.kind === "exact_head_review_failure_retired")).toHaveLength(1);
+  });
+
+  it("preserves a held wake by falling through to ordinary recovery", async () => {
+    const { store, dir, pr } = setup();
+    postingReceiptFailure(store, dir, pr);
+    store.holdWake(pr, "author reply", "author_reply");
+    const pump = vi.fn(async () => []);
+
+    const result = await recoverPrForOperator({ store, pump }, pr, "rerun-round");
+
+    expect(result).toMatchObject({ ok: false, redispatched: false });
+    expect(result).not.toHaveProperty("exact_head_retired");
+    expect(store.heldWakes(pr).map((wake) => wake.payload)).toEqual(["author reply"]);
+    expect(pump).toHaveBeenCalledOnce();
+  });
+
+  it("promotes successor work instead of retiring it as already reviewed", async () => {
+    const { store, dir, pr } = setup();
+    const fixture = postingReceiptFailure(store, dir, pr);
+    store.recordSuccessor({
+      pr, predecessor_round_id: fixture.roundId, head_sha: "b".repeat(40),
+      provenance: "system", reason: "push",
+    });
+    const pump = vi.fn(async () => {
+      expect(store.getPr(pr)?.head_sha).toBe("b".repeat(40));
+      store.setPrState(pr, "reviewing");
+      store.startRound(pr, "re-review", ["pass-baseline"], 75);
+      return [];
+    });
+
+    const result = await recoverPrForOperator({ store, pump }, pr, "rerun-round");
+
+    expect(result).toMatchObject({ ok: true, redispatched: true });
+    expect(result).not.toHaveProperty("exact_head_retired");
+    expect(store.successorFor(pr)?.head_sha).toBe("b".repeat(40));
+  });
+
+  it("keeps the ordinary recovery path when an author reply is new evidence", async () => {
+    const { store, dir, pr } = setup();
+    postingReceiptFailure(store, dir, pr, true);
+    const pump = vi.fn(async () => {
+      store.setPrState(pr, "reviewing");
+      store.startRound(pr, "re-review", ["pass-baseline"], 75);
+      return [];
+    });
+
+    const result = await recoverPrForOperator({ store, pump }, pr, "rerun-round");
+
+    expect(result).toMatchObject({ ok: true, redispatched: true });
+    expect(result).not.toHaveProperty("exact_head_retired");
+    expect(pump).toHaveBeenCalledOnce();
   });
 
   it("does not call a mere pump invocation success when the PR stays queued", async () => {
