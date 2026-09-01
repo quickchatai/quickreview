@@ -7,7 +7,7 @@ const snapshot: StatusSnapshot = {
   dry_run: true,
   prs: [
     { number: 1421, state: "reviewing", title: "Add rate limiting to the widget API", head_sha: "0f1e2d3c4b5a6978", stale_recheck: 0 },
-    { number: 88, state: "awaiting_human", title: "Bump ansible role", head_sha: "aaaabbbbccccdddd", stale_recheck: 1 },
+    { number: 88, state: "awaiting_author", title: "Bump ansible role", head_sha: "aaaabbbbccccdddd", stale_recheck: 1 },
   ],
   running_rounds: 2,
   total_spend_usd: 3.5,

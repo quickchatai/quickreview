@@ -97,8 +97,8 @@ function seed(s: StateStore): void {
     trigger_ts: null, stale_recheck: 0, migration_gate: 0,
   });
   s.upsertPr({
-    number: 101, state: "awaiting_human", head_sha: "bbb1", title: "PR 101", author: "bob",
-    trigger_ts: null, stale_recheck: 0, escalation_worthy: 1, migration_gate: 0,
+    number: 101, state: "tracked", head_sha: "bbb1", title: "PR 101", author: "bob",
+    trigger_ts: null, stale_recheck: 0, migration_gate: 0,
   });
 
   // PR 100 — two daemon rounds ending in an approval.

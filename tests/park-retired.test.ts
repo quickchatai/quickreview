@@ -8,22 +8,24 @@
 // measurement that was structurally always zero.
 //
 // These tests are the fence. The load-bearing one is the FIRST: every member of
-// `PrLifecycleState` must be PRODUCIBLE by the state machine. That is the
-// general form of "a state that cannot exist should not be representable", so
-// re-adding a writerless state fails here rather than being noticed two weeks
-// later on a screen.
+// `PrLifecycleState` must be REACHABLE from `INITIAL_STATE` by a walk over the
+// real transition function. That is the general form of "a state that cannot
+// exist should not be representable", so re-adding a writerless state fails
+// here rather than being noticed two weeks later on a screen.
 import { readFileSync } from "node:fs";
 import { EventEmitter } from "node:events";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { TUI_DEFAULTS } from "../src/config.js";
-import { transition, type SmEvent } from "../src/statemachine.js";
+import { INITIAL_STATE, transition, type SmEvent } from "../src/statemachine.js";
 import type { PrLifecycleState } from "../src/state.js";
 import { App } from "../src/tui/app.js";
 import { registeredKeys } from "../src/tui/cmdbar.js";
 import { parseTuiAction } from "../src/tui/actions.js";
-import { STATE_GLYPHS } from "../src/tui/model.js";
-import { legendLine, stateColor } from "../src/tui/theme.js";
+import { MUTED } from "../src/tui/design.js";
+import type { MetricsWindow } from "../src/metrics.js";
+import { RETIRED_STATES, STATE_GLYPHS } from "../src/tui/model.js";
+import { FG, legendLine, stateColor, verdictChip, verdictColor } from "../src/tui/theme.js";
 import { CompanionSidebar } from "../src/tui/sidebar.js";
 import type { DockerRunner } from "../src/tui/companion.js";
 import { installMemoryLearningHooks, type MemTabState } from "../src/tui/memtab.js";
@@ -63,25 +65,36 @@ const ALL_EVENTS: SmEvent[] = [
 ];
 
 /**
- * The states the machine can actually land a PR on, DERIVED not asserted.
+ * The states a real PR can actually end up in — a BFS from `INITIAL_STATE`
+ * over the real transition function, DERIVED and not asserted.
  *
- * Identity results are excluded deliberately: most events return `current`
- * unchanged, so counting those would make every state self-producing and the
- * fence would pass for a state nothing can ever enter — which is exactly the
- * bug (`awaiting_human` answered `track`, `author_reply` and `synchronize`
- * with itself for the entire two weeks it was unreachable). A state is
- * producible only if some event MOVES a PR into it, or it is the state a newly
- * tracked PR is created in.
+ * Reachability, not "is any arrow pointing at it". The weaker question passes
+ * for a pair of writerless states that only produce each other: `limbo_a ⇄
+ * limbo_b` both have an incoming arrow, and no PR can ever be in either. A
+ * newly tracked PR starts at `INITIAL_STATE` (imported, so this cannot drift
+ * from the daemon), and every state after that is somewhere a sequence of real
+ * events can walk to.
+ *
+ * Identity results still do not count as *discovery* — they are simply the
+ * `to === from` case that adds nothing to the frontier — which is what killed
+ * the first version of this fence: `awaiting_human` answered `track`,
+ * `author_reply` and `synchronize` with itself for the entire two weeks it was
+ * unreachable, so counting self-arrows made it look produced.
  */
 function producibleStates(): Set<string> {
-  const out = new Set<string>(["tracked"]); // the state a newly-tracked PR is created in
-  for (const from of ALL_STATES) {
+  const seen = new Set<string>([INITIAL_STATE]);
+  const frontier: string[] = [INITIAL_STATE];
+  while (frontier.length > 0) {
+    const from = frontier.pop()!;
     for (const ev of ALL_EVENTS) {
-      const to = transition(from, ev);
-      if (to !== from) out.add(to);
+      const to = transition(from as PrLifecycleState, ev);
+      if (!seen.has(to)) {
+        seen.add(to);
+        frontier.push(to);
+      }
     }
   }
-  return out;
+  return seen;
 }
 
 describe("the lifecycle union has no unreachable member", () => {
@@ -91,9 +104,36 @@ describe("the lifecycle union has no unreachable member", () => {
   // the producible set is DERIVED by driving the real transition function over
   // the whole event × state matrix, so a member added back without a writer
   // fails here rather than being noticed on a screen a fortnight later.
-  it("every PrLifecycleState is produced by some transition", () => {
+  it("every PrLifecycleState is REACHABLE from the initial state", () => {
     const producible = producibleStates();
     for (const state of ALL_STATES) expect([state, producible.has(state)]).toEqual([state, true]);
+  });
+
+  // The fence walks a graph, so it has to be shown to reject an unreachable
+  // one — otherwise "everything is reachable" could just mean the walk is
+  // wrong. Two states that only produce EACH OTHER have incoming arrows and
+  // are still unreachable; the weaker "does anything point at it" question
+  // passes them, which is the gap this version closes.
+  it("rejects a mutually-producing pair that no PR can reach", () => {
+    const island = (from: string, ev: SmEvent): string => {
+      if (from === "limbo_a") return ev.type === "track" ? "limbo_b" : "limbo_a";
+      if (from === "limbo_b") return ev.type === "track" ? "limbo_a" : "limbo_b";
+      return from; // the real states never leave home in this toy machine
+    };
+    const seen = new Set<string>([INITIAL_STATE]);
+    const frontier: string[] = [INITIAL_STATE];
+    while (frontier.length > 0) {
+      const from = frontier.pop()!;
+      for (const ev of ALL_EVENTS) {
+        const to = island(from, ev);
+        if (!seen.has(to)) {
+          seen.add(to);
+          frontier.push(to);
+        }
+      }
+    }
+    expect(seen.has("limbo_a")).toBe(false);
+    expect(seen.has("limbo_b")).toBe(false);
   });
 
   it("reads a non-empty union, so the fence cannot pass by finding nothing", () => {
@@ -101,7 +141,13 @@ describe("the lifecycle union has no unreachable member", () => {
   });
 });
 
-describe("no surface renders a state the state machine cannot produce", () => {
+// The claim this file can honestly make is about LIVE state surfaces. It is
+// deliberately not "no surface anywhere mentions the string": the metrics tab's
+// TIME IN STATE card is derived from the `pr_transition` event log, which holds
+// 75 real transitions into the park on the live install, and those are history.
+// Erasing them would be falsifying the record. The rule for that one surface is
+// the next describe: history must READ as history.
+describe("no LIVE state surface renders a state the state machine cannot produce", () => {
   const producible = producibleStates();
 
   it("the board's glyph table names only producible states", () => {
@@ -113,6 +159,24 @@ describe("no surface renders a state the state machine cannot produce", () => {
     // The magenta survives, but as the NEEDS_HUMAN *verdict* colour only — a
     // verdict spelling older rounds still carry. It is no longer a state.
     expect(stateColor("awaiting_human")).toBe(stateColor("no-such-state"));
+  });
+
+  // The ONE survivor of the retired vocabulary, and the scenario it is for:
+  // `NEEDS_HUMAN` is still a legal verdict SPELLING (rounds recorded before
+  // 2026-08-18 carry it, `normalizeVerdict` folds `ESCALATE` into it, and
+  //'s optional escalation keeps the word live). The magenta the park's
+  // state used to own is now its colour and nothing else's — which is why the
+  // FG key is named `needs_human`, not `awaiting_human`.
+  it("the NEEDS_HUMAN verdict still chips and colours — the verdict survived, the state did not", () => {
+    expect(stripAnsi(verdictChip("NEEDS_HUMAN"))).toBe("⚑H");
+    expect(stripAnsi(verdictChip("ESCALATE"))).toBe("⚑H");
+    expect(verdictChip("NEEDS_HUMAN")).toContain(FG.needs_human);
+    expect(verdictColor("NEEDS_HUMAN")).toBe(FG.needs_human);
+    expect(verdictColor("ESCALATE")).toBe(FG.needs_human);
+    // Distinct from every other verdict, and from the "unknown verdict" default.
+    for (const other of ["APPROVE", "REQUEST_CHANGES", "COMMENT", null]) {
+      expect([String(other), verdictColor(other)]).not.toEqual([String(other), FG.needs_human]);
+    }
   });
 
   it("the board legend advertises no ⚑ needs-you row", () => {
@@ -132,7 +196,6 @@ describe("no surface renders a state the state machine cannot produce", () => {
     for (const file of [
       "src/metrics.ts",
       "src/slack/messages.ts",
-      "src/tui/model.ts",
       "src/tui/theme.ts",
       "src/tui/metricstab.ts",
       "src/tui/memtab.ts",
@@ -141,6 +204,80 @@ describe("no surface renders a state the state machine cannot produce", () => {
       const src = readFileSync(resolve(process.cwd(), file), "utf8");
       expect([file, src.includes("awaiting_human")]).toEqual([file, false]);
     }
+  });
+
+  it("`RETIRED_STATES` is the ONE place the name survives in code, and it is a lookup table", () => {
+    // `model.ts` is exempt from the sweep above only because it declares the
+    // registry the metrics card reads. Exempting a file is cheap; exempting it
+    // for a SECOND reason is how this rots — so the exemption is bounded to
+    // one occurrence, inside the registry literal.
+    const src = readFileSync(resolve(process.cwd(), "src/tui/model.ts"), "utf8");
+    const mentions = src.match(/awaiting_human/g) ?? [];
+    expect(mentions).toHaveLength(1);
+    expect(src).toMatch(/RETIRED_STATES[\s\S]{0,200}awaiting_human/);
+    expect(Object.keys(RETIRED_STATES)).toEqual(["awaiting_human"]);
+  });
+});
+
+describe("historical dwell is kept, and reads as history", () => {
+  it("a retired state is not a lifecycle state and has no board glyph", () => {
+    for (const retired of Object.keys(RETIRED_STATES)) {
+      expect([retired, (ALL_STATES as string[]).includes(retired)]).toEqual([retired, false]);
+      expect([retired, retired in STATE_GLYPHS]).toEqual([retired, false]);
+      expect([retired, producibleStates().has(retired)]).toEqual([retired, false]);
+    }
+  });
+
+  // Built through the REAL aggregation, from the same shape of intervals the
+  // `pr_transition` log yields, so the test cannot pass on a hand-made window
+  // the daemon would never produce.
+  const historicalWindow = async (): Promise<MetricsWindow> => {
+    const { computeWindow } = await import("../src/metrics.js");
+    return computeWindow({
+      rounds: [],
+      events: [],
+      comments: [],
+      threads: [],
+      intervals: [
+        { pr: 101, state: "awaiting_human", start: "2026-08-14T11:45:00.000Z", seconds: 900 },
+        { pr: 102, state: "awaiting_author", start: "2026-08-14T10:00:00.000Z", seconds: 26_000 },
+      ],
+      resolvedPrs: new Map(),
+      since: null,
+      nowIso: "2026-08-14T12:01:00.000Z",
+    });
+  };
+
+  it("the daemon still COMPUTES the historical bucket — the data is not deleted with the state", async () => {
+    const bucket = (await historicalWindow()).time_in_state.find((r) => r.state === "awaiting_human");
+    expect(bucket?.total_s).toBe(900);
+  });
+
+  it("the metrics TIME IN STATE card labels a retired bucket with its retirement, and mutes it", async () => {
+    const { metricsCards } = await import("../src/tui/metricstab.js");
+    const card = metricsCards(await historicalWindow(), [], 24).find((c) => c.title === "TIME IN STATE")!;
+    const rows = card.body(60);
+    const plain = rows.map(stripAnsi).join("\n");
+    // Marked, and the mark is a PREFIX so the ~16-cell label column cannot
+    // truncate it away — a marker that vanishes at real widths is not one.
+    expect(plain).toContain("† awaiting_human");
+    // The date rides the value column, where there is room for it.
+    expect(plain).toContain("retired 2026-08-19");
+    // The live bucket beside it is NOT marked — otherwise the marker is noise.
+    expect(plain).toContain("awaiting_author");
+    expect(plain).not.toContain("† awaiting_author");
+    // …and it is painted MUTED rather than in a state hue. Before it
+    // was magenta; renaming the colour key silently degraded it to ordinary
+    // text, which reads exactly like a current state. This makes it a choice.
+    const retiredRow = rows.find((l) => stripAnsi(l).includes("awaiting_human"))!;
+    expect(retiredRow).toContain(MUTED);
+    expect(retiredRow).not.toContain(FG.needs_human);
+    // The card explains the glyph on its own subtitle — the mark is useless
+    // if the reader has to guess what it means.
+    expect(card.subtitle).toContain("† = retired state, history only");
+    // And the mark survives a NARROW card, which is the case that broke the
+    // first attempt at this (a `(retired …)` suffix was truncated off).
+    expect(card.body(34).map(stripAnsi).join("\n")).toContain("† awaiting");
   });
 });
 
@@ -298,6 +435,57 @@ describe("the six keys the awaiting panel registered now reach the companion col
     h.app.quit();
     await h.running;
   });
+
+  // Deleting the awaiting panel took the arrow keys' old job (moving a
+  // selection over it) and gave them the digest's scroll. Both halves need
+  // pinning: the OLD `tests/tui-msg-digest.test.ts` case that covered j/k
+  // scrolling went with `installDigestHooks`, and gutting `down`/`up` in
+  // `digestViewKey` left the whole suite green.
+  it("j/k AND the arrows scroll the digest, and up clamps at the top", async () => {
+    const h = harness();
+    await settle();
+    expect(h.mem.digest.scroll).toBe(0);
+    h.type("k"); // already at the top
+    await settle();
+    expect(h.mem.digest.scroll).toBe(0);
+    h.type("j");
+    h.type("j");
+    await settle();
+    expect(h.mem.digest.scroll).toBe(2);
+    h.type(Buffer.from("\x1b[B").toString("utf8")); // ↓ scrolls now; it used to move a selection
+    await settle();
+    expect(h.mem.digest.scroll).toBe(3);
+    h.type(Buffer.from("\x1b[A").toString("utf8")); // ↑
+    await settle();
+    expect(h.mem.digest.scroll).toBe(2);
+    h.app.quit();
+    await h.running;
+  });
+
+  // A live alert owns ⏎ from wherever you are. Both halves of tab [2] must
+  // agree about that: before this, the digest view let it through (its handler
+  // declined) while the memory view swallowed it, so following an alert worked
+  // or did not depending on which view you happened to be in.
+  for (const view of ["digest", "memory"] as const) {
+    it(`a live alert still owns ⏎ on tab [2]'s ${view} view`, async () => {
+      const h = harness();
+      await settle();
+      if (view === "memory") {
+        h.type("v");
+        await settle();
+      }
+      let opened = 0;
+      (h.app as unknown as { openCompanion: () => void }).openCompanion = () => {
+        opened += 1;
+      };
+      h.app.view.alertFocus = true;
+      h.type("\r");
+      await settle();
+      expect(opened).toBe(1);
+      h.app.quit();
+      await h.running;
+    });
+  }
 
   it("⏎ on tab [2] does not focus the BOARD's pi pane", async () => {
     // ⏎ is not printable, so it can never reach the companion; the point is

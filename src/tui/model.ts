@@ -19,6 +19,47 @@ export function glyphFor(pr: Pick<SnapshotPr, "state" | "stale_recheck">): strin
   return pr.stale_recheck ? `↻${base}` : base;
 }
 
+/**
+ * States the daemon USED to write, and the date it stopped.
+ *
+ * A key here is NOT a `PrLifecycleState`: nothing can produce it and no LIVE
+ * surface renders it. It exists for exactly one reader — the metrics tab's
+ * `TIME IN STATE` card, which is derived from the `pr_transition` event log
+ * and therefore keeps reporting real dwell for states the machine has since
+ * retired (75 such rows on the live install, and they are true history:
+ * deleting them would be falsifying the record, not retiring a state).
+ *
+ * Without this, a retired state renders in that card as a bare label
+ * indistinguishable from a current one — which is how could otherwise
+ * claim "no surface renders a retired state" while one still did.
+ * `tests/park-retired.test.ts` pins both halves: a key here must be absent
+ * from the union and from `STATE_GLYPHS`, and must render marked.
+ */
+export const RETIRED_STATES: Record<string, string> = {
+  awaiting_human: "retired 2026-08-19",
+};
+
+/**
+ * The mark a retired state carries in a historical series.
+ *
+ * A PREFIX, deliberately: the metrics bar fits its label into ~16 cells, so a
+ * `(retired …)` suffix is the first thing truncation eats — a marker that
+ * disappears at the widths people actually run is not a marker. The date rides
+ * the bar's value column, where there is room, and the card's subtitle
+ * explains the glyph.
+ */
+export const RETIRED_STATE_MARK = "†";
+
+/**
+ * How a state reads in a HISTORICAL series, where the event log can still
+ * carry something the machine can no longer produce. Live surfaces (the board
+ * list, its legend, the detail pane) must never call this — they render
+ * `STATE_GLYPHS`, which has no retired members at all.
+ */
+export function historicalStateLabel(state: string): string {
+  return state in RETIRED_STATES ? `${RETIRED_STATE_MARK} ${state}` : state;
+}
+
 const SORT_ORDER: PrLifecycleState[] = ["reviewing", "queued", "awaiting_author", "tracked"];
 
 /** Board order: lifecycle groups per the mockup, stable by PR number within

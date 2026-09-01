@@ -101,8 +101,19 @@ export type Tab = "board" | "digest" | "deploy" | "metrics" | "changes";
 /** Every encoding of the End key we might see — the pi pane's "back to live". */
 const END_KEYS = new Set(["\x1b[F", "\x1bOF", "\x1b[4~", "\x1b[8~"]);
 
-/** Decoded verbs whose subject is the BOARD's selected PR. `handleInput`
- * refuses them off the board — see the comment at the guard. */
+/**
+ * Decoded verbs the BOARD owns. `handleInput` refuses them off the board
+ * — see the comment at the guard.
+ *
+ * The membership test is "is this key advertised by the board's command bar",
+ * NOT "does it read the selection". Most of them do read it (`attach`/`enter`,
+ * `message`, `detail`, `github`), but `overseer` and `main-session` attach to
+ * fixed global sessions and touch no selection at all. They belong here
+ * because they are the board's bar, they are unregistered elsewhere, and the
+ * board is where an operator looks for them — not because of the selection.
+ * Getting that reason wrong is how the next verb ends up in or out by
+ * accident.
+ */
 const BOARD_ONLY_VERBS: ReadonlySet<string> = new Set(["attach", "enter", "message", "detail", "github", "overseer", "main-session"]);
 
 export class App {
@@ -967,14 +978,16 @@ export class App {
       return;
     }
 
-    // the verbs below act on the BOARD's selected PR, so they only
-    // answer on the board. They used to run from any tab whose handler let
-    // them through — pressing `a` on the memory tab focused the board's pi
-    // pane behind your back, and `w` toggled the board's detail page you
-    // could not see. A verb with no meaning on the current surface must do
-    // nothing; the printable spellings are unregistered off the board, so
-    // they reach the companion column instead of dying here. The one
-    // exception is a live alert, which owns ⏎ from wherever you are.
+    // the verbs below belong to the BOARD's command bar, so they only
+    // answer on the board. Most of them act on its selected PR; `o`/`M` attach
+    // to fixed global sessions and act on no selection at all — they are here
+    // because they are board keys, not because of what they read. They used to
+    // run from any tab whose handler let them through: pressing `a` on the
+    // memory tab focused the board's pi pane behind your back, and `w` toggled
+    // a detail page you could not see. A verb with no meaning on the current
+    // surface must do nothing; the printable spellings are unregistered off
+    // the board, so they reach the companion column instead of dying here. The
+    // one exception is a live alert, which owns ⏎ from wherever you are.
     if (this.tab !== "board" && BOARD_ONLY_VERBS.has(key.kind) && !(key.kind === "enter" && this.view.alertFocus)) return;
 
     switch (key.kind) {

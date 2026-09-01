@@ -1070,9 +1070,14 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
         theApp.repaint();
         return true;
       case "enter":
-        // ⏎ is not a printable, so it can never reach the companion column;
-        // swallowing it here keeps it from focusing the BOARD's pi pane from a
-        // tab that is not the board.
+        // A live alert owns ⏎ from wherever you are — the board's guard has
+        // the same carve-out, and this view swallowing it made the two halves
+        // of tab [2] disagree: the alert was followable from the digest view
+        // and inert here.
+        if (theApp.view.alertFocus) return false;
+        // Otherwise: ⏎ is not a printable, so it can never reach the companion
+        // column; swallowing it here keeps it from focusing the BOARD's pi
+        // pane from a tab that is not the board.
         return true;
       default:
         // tabs/quit/help — and reconnect: the bar promises [s ssh]

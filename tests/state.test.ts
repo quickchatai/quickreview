@@ -53,8 +53,8 @@ describe("pr_state", () => {
 
   it("setPrState transitions an existing row", () => {
     store.upsertPr(prRow(10));
-    store.setPrState(10, "awaiting_human");
-    expect(store.getPr(10)!.state).toBe("awaiting_human");
+    store.setPrState(10, "awaiting_author");
+    expect(store.getPr(10)!.state).toBe("awaiting_author");
   });
 });
 
