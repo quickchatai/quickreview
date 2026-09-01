@@ -369,21 +369,40 @@ describe("origin cause, not recency (the belt)", () => {
     // production (found 2026-08-19) — every stuck round parked.
     const probed: number[] = [];
     const killedPrs: number[] = [];
+    const optionalCalls: string[] = [];
     const { hooks: fullHooks } = daemonOriginWakes({
       hooks: {
         ...noHooks,
         sessionAlive: async (pr: number) => (probed.push(pr), true),
         killSession: async (pr: number) => void killedPrs.push(pr),
+        roundPromptAccepted: async () => (optionalCalls.push("roundPromptAccepted"), true),
+        wakeReceiptPresent: async () => (optionalCalls.push("wakeReceiptPresent"), false),
+        redeliverRound: async () => (optionalCalls.push("redeliverRound"), true),
+        retrySessionCommand: async () => (optionalCalls.push("retrySessionCommand"), "retried" as const),
       },
       origins: runtime.origins,
       enabled: true,
     });
     expect(fullHooks.sessionAlive).toBeDefined();
     expect(fullHooks.killSession).toBeDefined();
+    expect(fullHooks.roundPromptAccepted).toBeDefined();
+    expect(fullHooks.wakeReceiptPresent).toBeDefined();
+    expect(fullHooks.redeliverRound).toBeDefined();
+    expect(fullHooks.retrySessionCommand).toBeDefined();
     await fullHooks.sessionAlive!(42);
     await fullHooks.killSession!(43);
+    await fullHooks.roundPromptAccepted!(42, 1, 0);
+    await fullHooks.wakeReceiptPresent!(42, "marker", 0);
+    await fullHooks.redeliverRound!(42, 1);
+    await fullHooks.retrySessionCommand!("cmd", "reason");
     expect(probed).toEqual([42]);
     expect(killedPrs).toEqual([43]);
+    expect(optionalCalls).toEqual([
+      "roundPromptAccepted",
+      "wakeReceiptPresent",
+      "redeliverRound",
+      "retrySessionCommand",
+    ]);
 
     writeLegacyCommand("blocked", { command: "file-issue", title: "t", body: "b" });
     await legacy(runtime, { ...noopCommandDeps, fileIssue }).sweep();

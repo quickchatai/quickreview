@@ -490,7 +490,13 @@ export class SessionCommandSupervisor {
    * convert the payload back into the capped held-wake queue. */
   private async recoverNonRound(command: SessionCommandRow, reason: string): Promise<void> {
     const retryCap = this.deps.cfg.daemon.session_command_max_start_retries ?? DEFAULT_SESSION_COMMAND_MAX_START_RETRIES;
-    if (command.recovery_attempts < retryCap && this.deps.hooks.retrySessionCommand) {
+    if (command.recovery_attempts < retryCap) {
+      // An unbound production adapter is an unhealthy supervisor, not spent
+      // recovery. Keep the failed command due so wiring can be repaired and
+      // the same bytes replayed without inventing operator debt at 0/N.
+      if (!this.deps.hooks.retrySessionCommand) {
+        throw new Error(`command ${command.id} retry hook unavailable with ${command.recovery_attempts}/${retryCap} recoveries spent`);
+      }
       // Spend the allowance before tmux/filesystem work. If rebirth fails
       // before a bridge reserves the row, the finite bound still advances.
       if (!this.deps.store.beginSessionCommandRecovery(command.id, command.recovery_attempts)) {

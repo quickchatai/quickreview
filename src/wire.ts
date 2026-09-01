@@ -378,6 +378,21 @@ export function daemonOriginWakes(opts: {
       ...(hooks.killSession ? { killSession: (pr: number) => hooks.killSession!(pr) } : {}),
       ...(hooks.sessionActivityAt ? { sessionActivityAt: (pr: number) => hooks.sessionActivityAt!(pr) } : {}),
       ...(hooks.injectPending ? { injectPending: (pr: number) => hooks.injectPending!(pr) } : {}),
+      // Receipt/replay hooks are the command supervisor's positive evidence
+      // and safe recovery path. Dropping them here made production exhaust a
+      // failed ordinary wake at 0/N without attempting same-command replay.
+      ...(hooks.roundPromptAccepted
+        ? { roundPromptAccepted: (pr: number, roundNo: number, startedAtMs: number) => hooks.roundPromptAccepted!(pr, roundNo, startedAtMs) }
+        : {}),
+      ...(hooks.wakeReceiptPresent
+        ? { wakeReceiptPresent: (pr: number, marker: string, sinceMs: number) => hooks.wakeReceiptPresent!(pr, marker, sinceMs) }
+        : {}),
+      ...(hooks.redeliverRound
+        ? { redeliverRound: (pr: number, roundNo: number) => hooks.redeliverRound!(pr, roundNo) }
+        : {}),
+      ...(hooks.retrySessionCommand
+        ? { retrySessionCommand: (commandId: string, reason: string) => hooks.retrySessionCommand!(commandId, reason) }
+        : {}),
       injectOverseer: (message) => wake("overseer-wake", message),
     },
   };

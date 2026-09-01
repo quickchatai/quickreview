@@ -174,6 +174,19 @@ describe("bounded round-stage supervision", () => {
     expect(store.getSessionCommand(id)).toMatchObject({ status: "failed", recovery_attempts: 1 });
   });
 
+  it("fails supervisor health without consuming recovery when the production retry hook is missing", async () => {
+    const { id, pr } = seedWakeCommand({ status: "failed", attempt: 1 });
+    const kill = vi.fn(async () => {});
+    const s = supervisor(hooks({ killSession: kill })).supervisor;
+
+    await expect(s.scan()).rejects.toThrow(/retry hook unavailable/);
+
+    expect(kill).not.toHaveBeenCalled();
+    expect(store.getSessionCommand(id)).toMatchObject({ status: "failed", recovery_attempts: 0 });
+    expect(store.openReviewFailure(pr)).toBeUndefined();
+    expect(s.health()).toMatchObject({ healthy: false, last_error: expect.stringContaining("retry hook unavailable") });
+  });
+
   it("stops automatic non-round recovery after finite failed replay attempts", async () => {
     const { id, pr } = seedWakeCommand({ status: "failed", attempt: 1 });
     const retry = vi.fn(async () => "retry_failed" as const);
