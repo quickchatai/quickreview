@@ -94,6 +94,13 @@ const SANCTIONED_SCRIPTS = new Set([
   "mint-token.sh",
   "pr-context.sh",
   "pr-checks.sh",
+  // pr-self.sh is MANDATED by all three round templates and was absent here,
+  // so every invocation form was blocked and the mandated read simply failed
+  // (MC-08). Read-only by construction — GETs only, no method override, no
+  // body — and its two delegates, pr-threads.sh and pr-checks.sh, are already
+  // sanctioned. `tests/fences.test.ts` now derives this set from the prompts,
+  // so the exec policy and the prompt contract can no longer disagree.
+  "pr-self.sh",
   "pr-threads.sh",
   "post-review.sh",
   "reply-thread.sh",
@@ -482,7 +489,43 @@ const COMMAND_INJECTING_ENV = new Set([
 /** `GIT_CONFIG_KEY_0=alias.x GIT_CONFIG_VALUE_0=!cmd` is `-c` by another name. */
 const COMMAND_INJECTING_ENV_RE = /^GIT_CONFIG_(KEY|VALUE)_\d+$/;
 
+/**
+ * Environment variables that RELOCATE this system's own policy inputs — the
+ * same primitive as `HOME=` above, aimed at us instead of at git (MC-05,
+ * fenced by `tests/fences.test.ts` and `tests/bash-guard.test.ts`).
+ *
+ * The posting scripts are sanctioned, and every guard knob they consult is
+ * read out of `$QCR_CONFIG`:
+ *
+ *     QCR_CONFIG=/tmp/mine.toml bash scripts/approve-pr.sh 5 body.md
+ *
+ * passed the exec policy, because `VAR=val` prefixes are skipped by the
+ * splitter and only the git family was named. `guard_enabled` treats a knob as
+ * ON unless the value is literally `false`, so one hand-written TOML file —
+ * created with the ordinary write tool, which reviewer sessions have — turns
+ * guards 2 through 5 off on a REAL approval. The same file carries `dry_run`,
+ * so it also flips a dry-run install into posting for real: hard rule 1, by an
+ * env prefix.
+ *
+ * `QCR_STATE_DB` relocates the database the guards query for the head mark and
+ * the approval-withheld state; `QCR_DRYRUN_DIR` relocates where a suppressed
+ * intent is recorded, which is the only evidence a dry-run run leaves.
+ *
+ * NOT here, deliberately: `QCR_EXPECTED_HEAD`, `QCR_POSTING_KEY`,
+ * `QCR_ROUND_NO`, `QCR_POST_RESPONSE`, `QCR_POSTING_RECEIPT_DIR`. Those are
+ * per-invocation ARGUMENTS the daemon hands the script — a session setting one
+ * changes what this call is about, which the guards then check; it does not
+ * change what the guards ARE. Blocking them would break the daemon's own
+ * dispatch path.
+ */
+const POLICY_RELOCATING_ENV = new Set(["QCR_CONFIG", "QCR_STATE_DB", "QCR_DRYRUN_DIR"]);
+
 function envInjectionBlock(name: string): BashCheck | null {
+  if (POLICY_RELOCATING_ENV.has(name)) {
+    return block(
+      `exec policy: '${name}=' relocates the posting guards' own configuration — the guards are not a knob a session may move`,
+    );
+  }
   if (!COMMAND_INJECTING_ENV.has(name) && !COMMAND_INJECTING_ENV_RE.test(name)) return null;
   return block(
     `exec policy: '${name}=' names a program for another command to run — the reviewer never executes anything`,
