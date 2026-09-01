@@ -39,7 +39,7 @@ function snap(overrides: Partial<StatusSnapshot> = {}): StatusSnapshot {
   return {
     written_at: "2026-08-14T10:00:00Z",
     dry_run: true,
-    prs: [{ number: 5012, state: "reviewing", title: "t", head_sha: "abc", stale_recheck: false, rounds: 1, last_verdict: null }],
+    prs: [{ number: 5012, state: "reviewing", title: "t", head_sha: "abc", stale_recheck: 0, rounds: 1, last_verdict: null }],
     running_rounds: 1,
     total_spend_usd: 1,
     heartbeat: "2026-08-14T10:00:00Z",
@@ -85,7 +85,7 @@ describe("FeedWriter", () => {
     writeFileSync(join(dir, "wake"), "legacy");
     w.write(snap(), [], "ok");
     w.write(
-      snap({ prs: [{ number: 5012, state: "awaiting_author", title: "t", head_sha: "abc", stale_recheck: false, rounds: 1, last_verdict: "REQUEST_CHANGES" }] }),
+      snap({ prs: [{ number: 5012, state: "awaiting_author", title: "t", head_sha: "abc", stale_recheck: 0, rounds: 1, last_verdict: "REQUEST_CHANGES" }] }),
       [ev("2026-08-14T10:01:00Z")],
       "stale",
     );

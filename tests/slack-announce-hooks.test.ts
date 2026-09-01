@@ -41,9 +41,12 @@ class FakeSlack implements SlackWebApi {
 }
 
 class FakeDispatchAdapter implements DispatchAdapter {
-  files: PrFileEntry[] = [{ filename: "src/app.ts", status: "modified", additions: 120, deletions: 34, changes: 154 }];
+  files: PrFileEntry[] = [{ filename: "src/app.ts", status: "modified", additions: 120, deletions: 34 }];
   async listPrFiles(): Promise<PrFileEntry[]> {
     return this.files;
+  }
+  async getPr(): Promise<{ base_ref: string; body?: string }> {
+    return { base_ref: "master" };
   }
   async addLabel(): Promise<GateResult> {
     return { executed: false, dryRunFile: "x" };
@@ -66,8 +69,8 @@ class FakeVerdictAdapter implements VerdictAdapter {
   async removeLabel(): Promise<GateResult> {
     return { executed: false, dryRunFile: "d" };
   }
-  async requestEscalationReview(): Promise<{ skipped: string | null }> {
-    return { skipped: null };
+  async requestEscalationReview(): Promise<GateResult> {
+    return { executed: false, dryRunFile: "d" };
   }
 }
 
@@ -114,7 +117,6 @@ beforeEach(() => {
   cfg.owner.slack_id = "U_MAT";
   cfg.slack.users = { U_MAT: "mhale", U_ALICE: "alice" };
   cfg.github.repo = "exampleorg/example-app";
-  cfg.github.escalation_reviewer = "mhale";
   slack = new FakeSlack();
   dir = mkdtempSync(join(tmpdir(), "qcr-slack-hooks-"));
 });
@@ -129,10 +131,10 @@ describe("dispatch hook", () => {
     const orders = await dispatchOnce({ cfg, store, adapter: new FakeDispatchAdapter(), hooks, announce: announcer(), now });
     expect(orders).toHaveLength(1);
     expect(slack.posts).toHaveLength(1);
-    expect(slack.posts[0].text.split("\n")[0]).toBe(
+    expect(slack.posts[0]!.text.split("\n")[0]).toBe(
       "👀 *<https://github.com/exampleorg/example-app/pull/5263|#5263 Add rate limiting>* — review started for <@U_ALICE>",
     );
-    expect(slack.posts[0].text.split("\n")[1]).toContain("_round 1 · first review · 1 files, +120/−34 · lenses: ");
+    expect(slack.posts[0]!.text.split("\n")[1]).toContain("_round 1 · first review · 1 files, +120/−34 · lenses: ");
     expect(store.slackThreadForPr(5263)).toBeDefined();
   });
 
@@ -163,7 +165,7 @@ describe("verdict hooks", () => {
       verdictDir: dir,
       announce,
       now,
-      usage: { globalStoreDir: null, fs: { readdir: () => [], readFile: () => "" } },
+      usage: { globalStoreDir: null, fs: { readDir: () => [], readFile: () => "" } },
       parseRetries: 0,
       retryDelayMs: 0,
     });
@@ -224,7 +226,7 @@ describe("verdict hooks", () => {
       finished_at: clock.toISOString(),
     });
     await watcher(announcer()).sweep();
-    expect(slack.posts[0].text.split("\n")).toHaveLength(2);
+    expect(slack.posts[0]!.text.split("\n")).toHaveLength(2);
   });
 
   it("announces a malformed verdict as an anomaly, never as an approval", async () => {
@@ -243,7 +245,7 @@ describe("verdict hooks", () => {
     reviewingRound(5263);
     clock = new Date("2026-08-17T23:00:00.000Z");
     await watcher(announcer()).checkDeadlines();
-    expect(slack.posts[0].text).toBe(
+    expect(slack.posts[0]!.text).toBe(
       `⏱ #5263 round 1 blew its ${cfg.daemon.round_deadline_min}-min deadline — ` +
         "parked on awaiting_human for <@U_MAT>. No verdict was posted.",
     );
@@ -255,8 +257,8 @@ describe("verdict hooks", () => {
     store.startRound(5263, "re-review", ["pass-baseline"], cfg.daemon.round_deadline_min);
     clock = new Date("2026-08-17T23:00:00.000Z");
     await watcher(announcer()).checkDeadlines();
-    expect(slack.posts[0].text).toBe("♻️ the round-1 review is superseded by round 2 (`abcdef1`) — read the newest one");
-    expect(slack.posts[0].text).not.toContain("dismiss");
+    expect(slack.posts[0]!.text).toBe("♻️ the round-1 review is superseded by round 2 (`abcdef1`) — read the newest one");
+    expect(slack.posts[0]!.text).not.toContain("dismiss");
   });
 
   it("applies verdicts unchanged with no announcer, and survives a Slack outage", async () => {
@@ -270,7 +272,7 @@ describe("verdict hooks", () => {
       summary: "ok",
     });
     await watcher().sweep();
-    expect(store.roundsFor(5263)[0].verdict).toBe("APPROVE");
+    expect(store.roundsFor(5263)[0]!.verdict).toBe("APPROVE");
 
     slack.throwAlways = true;
     reviewingRound(6000);
@@ -283,7 +285,7 @@ describe("verdict hooks", () => {
       summary: "ok",
     });
     await watcher(announcer()).sweep();
-    expect(store.roundsFor(6000)[0].verdict).toBe("APPROVE");
+    expect(store.roundsFor(6000)[0]!.verdict).toBe("APPROVE");
     expect(store.slackPost("verdict:6000:1")).toMatchObject({ ok: 0 });
   });
 });

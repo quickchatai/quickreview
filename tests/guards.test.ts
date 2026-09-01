@@ -129,7 +129,7 @@ describe("guard 1 — a human approval at the head downgrades the bot to COMMENT
 
     expect(result.executed).toBe(true);
     expect(result.blocked).toBeUndefined();
-    const sent = executor.mock.calls[0][0] as MutationIntent;
+    const sent = executor.mock.calls[0]![0] as MutationIntent;
     const body = sent.body as { event: string; body: string; comments: unknown[] };
     expect(body.event).toBe("COMMENT");
     expect(body.body).toContain("**Verdict: Changes requested**"); // findings survive
@@ -144,7 +144,7 @@ describe("guard 1 — a human approval at the head downgrades the bot to COMMENT
 
     await gate.execute(reviewIntent("REQUEST_CHANGES"));
 
-    expect((executor.mock.calls[0][0] as MutationIntent).body).toMatchObject({ event: "REQUEST_CHANGES" });
+    expect((executor.mock.calls[0]![0] as MutationIntent).body).toMatchObject({ event: "REQUEST_CHANGES" });
   });
 
   it("never touches an APPROVE or a COMMENT payload", async () => {
@@ -153,7 +153,7 @@ describe("guard 1 — a human approval at the head downgrades the bot to COMMENT
 
     await gate.execute(reviewIntent("APPROVE"));
 
-    expect((executor.mock.calls[0][0] as MutationIntent).body).toMatchObject({ event: "APPROVE" });
+    expect((executor.mock.calls[0]![0] as MutationIntent).body).toMatchObject({ event: "APPROVE" });
   });
 
   it("downgradeForHumanApproval is pure: event swapped, body appended", () => {
@@ -323,6 +323,8 @@ describe("the reviewed-head mark (state)", () => {
       in_reply_to_id: 10,
       author: "alice",
       body: "fixed",
+      via: "thread_reply",
+      scope: "review_comment",
     });
 
     expect(store.reviewedHead(5180)?.last_author_reply_at).toBeTruthy();

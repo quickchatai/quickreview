@@ -6,7 +6,7 @@ import { piPaneSize, piRows, renderBoard, topBar, detailLines, type BoardView } 
 import { decodeKey, decodeInputKey } from "../src/tui/keys.js";
 import { displayWidth, fit, rule, sanitizeText, stripAnsi, truncate, wrap } from "../src/tui/paint.js";
 import { captureArgv, statusArgv, whyArgv, eventsArgv, progressArgv, attachArgv, type SshRunner } from "../src/tui/remote.js";
-import { PiMirror } from "../src/tui/pipane.js";
+import { PiMirror, type PiPaneView } from "../src/tui/pipane.js";
 import { TUI_DEFAULTS } from "../src/config.js";
 
 const snapshot: StatusSnapshot = {
@@ -257,7 +257,7 @@ describe("detailLines keeps foreign text inside the pane", () => {
     spend_usd: 1.3,
     rounds: [],
     threads: { open: 0, total: 0 },
-    ledger: null,
+    ledger: undefined,
   };
   it("wraps a long CRLF description instead of truncating rightwards", () => {
     const d: WhyPayload = {
@@ -362,11 +362,12 @@ describe("renderBoard", () => {
 
   it("keeps every row at the terminal width at 30 / 100 / 220 cols, mirror and overlay included", () => {
     const events = Array.from({ length: 20 }, (_, i) => ({ ts: `t${i}`, text: `10:00:0${i} verdict_applied #504${i % 10}`, anomaly: i % 3 === 0 }));
-    const pi = {
+    const pi: PiPaneView = {
       pr: 5012,
       lines: ["\x1b[32mgreen line that runs on and on and on past any sane pane width\x1b[0m", "plain"],
       missing: false,
       stale: false,
+      offset: 0,
     };
     for (const cols of [30, 100, 220]) {
       for (const over of [{}, { eventsFocus: true }, { detailFull: true }, { piFocus: true, piPr: 5012 }, { piFocus: true, piPr: 5012, pi: { ...pi, offset: 9 } }]) {

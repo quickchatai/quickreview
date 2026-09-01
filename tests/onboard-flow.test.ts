@@ -110,7 +110,7 @@ function runner(): OnboardAdapters["runner"] {
  * labels are created on demand. Routed on the PATH, so the real api.github.com
  * base the registered step carries never leaves this process. */
 function ghFetch(): typeof fetch {
-  return (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+  return (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]): Promise<Response> => {
     const url = new URL(String(input));
     const path = `${url.pathname}${url.search}`;
     const method = (init?.method ?? "GET").toUpperCase();

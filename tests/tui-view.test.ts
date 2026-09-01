@@ -113,7 +113,7 @@ describe("buildTuiView — the derived state behind the frame", () => {
       causes: [{ key: "review-failure:cmd-1", pr: 5408, since: "2026-08-25T09:55:00Z", stage: "command_start", detail: "no start", next_action: "operator_unwedge" }],
       recoveries: [{ key: "review-failure:cmd-0", pr: 5407, recovered_at: "2026-08-25T09:59:00Z", recovery: "operator-rerun" }],
     };
-    const v = buildTuiView({ now: NOW, tab: "board", snapshot: snap({ pipeline }), health: { kind: "pipeline_unhealthy", heartbeatAgeS: 4, causes: pipeline.causes } });
+    const v = buildTuiView({ now: NOW, tab: "board", snapshot: snap({ pipeline }), health: { kind: "pipeline_unhealthy", heartbeatAgeS: 4 } });
     expect(v.board.pipeline_healthy).toBe(false);
     expect(v.board.pipeline_causes).toEqual([{ key: "review-failure:cmd-1", pr: 5408 }]);
     expect(v.board.pipeline_recoveries).toEqual([{ key: "review-failure:cmd-0", pr: 5407 }]);
@@ -373,6 +373,10 @@ describe("the tools read already-fetched state and can NEVER become a fetcher", 
       { container_name: "qcr-companion", session: "companion", model: "openai-codex/gpt-5.6-sol", repo_dir: "/repo" } as never,
       async () => ({ ok: true, stdout: "", stderr: "", code: 0 }),
       {},
+      // 4th parameter is `ensureDirs`, NOT the fs seam — passing the seam here
+      // left `fs` on its real-filesystem default, so this assertion used to
+      // read the host's disk.
+      () => {},
       { exists: () => false, read: () => undefined, mode: () => undefined },
     );
     expect(pi.piArgv()).toContain("/workspace/extensions/tui-view.ts");

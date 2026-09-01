@@ -50,7 +50,6 @@ export interface SessionCommandSupervisorDeps {
     detail: string,
   ) => Promise<RoundRecoveryDisposition>;
   now?: () => Date;
-  log?: (message: string, extra?: unknown) => void;
 }
 
 export interface RoundStageSupervisorHealth {
@@ -64,12 +63,10 @@ export interface RoundStageSupervisorHealth {
 
 export class SessionCommandSupervisor {
   private readonly now: () => Date;
-  private readonly log: (message: string, extra?: unknown) => void;
   private inFlight = false;
 
   constructor(private readonly deps: SessionCommandSupervisorDeps) {
     this.now = deps.now ?? (() => new Date());
-    this.log = deps.log ?? (() => {});
   }
 
   /** One non-overlapping scan. A second timer firing while this awaits Pi

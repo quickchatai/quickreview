@@ -210,7 +210,6 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     },
     onRoundFailure: (pr, roundNo, stage, detail) =>
       verdicts.recoverInfrastructureFailure(pr, roundNo, stage, detail),
-    log,
   });
   const pingpong = new PingPongLedger(store.db);
   const threadDecisions = new ThreadDecisionWatcher({

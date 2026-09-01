@@ -455,9 +455,9 @@ describe("reverse direction: the reviewer key cannot reach companion memory", ()
   it("passes on a server that confines both keys, and FAILS the moment the reviewer key can read companion memory", async () => {
     // The confinement the server actually enforces: the Bearer key owns one
     // user, and X-OpenViking-User names the user being addressed.
-    const confined = async (_url: string, init: { headers: Record<string, string> }) => {
-      const owner = init.headers.Authorization === "Bearer companion-key" ? "companion" : "reviewer";
-      const addressed = init.headers["X-OpenViking-User"];
+    const confined = async (_url: string, init?: { headers?: Record<string, string> }) => {
+      const owner = init?.headers?.Authorization === "Bearer companion-key" ? "companion" : "reviewer";
+      const addressed = init?.headers?.["X-OpenViking-User"];
       return { status: owner === addressed ? 200 : 403, json: async () => ({}) };
     };
     const lines: string[] = [];
@@ -543,7 +543,7 @@ describe("memory health watcher", () => {
 
   it("deployGraceActive: fresh marker opens it, stale or missing or future-dated does not", () => {
     const now = 1_000_000_000;
-    const statAt = (mtimeMs: number) => () => ({ mtimeMs }) as ReturnType<typeof import("node:fs").statSync>;
+    const statAt = (mtimeMs: number) => () => ({ mtimeMs });
     expect(health.deployGraceActive("/a", now, health.DEPLOY_GRACE_MS, statAt(now - 60_000))).toBe(true);
     expect(health.deployGraceActive("/a", now, health.DEPLOY_GRACE_MS, statAt(now - health.DEPLOY_GRACE_MS))).toBe(false);
     // A future mtime is corruption, and corruption must fail toward alerting

@@ -35,7 +35,7 @@
 // back: a stack on the machine they are switching away from keeps running
 // until they stop it, and this step says so.
 import { CHOICE_KEYS, type Topology } from "../choices.js";
-import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
+import type { CheckResult, OnboardingStep, StepReport } from "../engine.js";
 
 export const TOPOLOGY_STEP_ID = "topology";
 

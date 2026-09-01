@@ -16,8 +16,10 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-// @ts-expect-error — plain-JS script, deliberately dependency-free so the
-// container entrypoint can run it before any TypeScript build exists.
+// A plain-JS script, deliberately dependency-free so the container entrypoint
+// can run it before any TypeScript build exists. `tsconfig.tests.json` sets
+// `allowJs`, so tsc now INFERS its exported shapes and this import needs no
+// suppression — which is what makes the call sites below checked.
 import * as prov from "../scripts/openviking-provision.mjs";
 
 interface Call {
@@ -30,9 +32,12 @@ interface Call {
 /** A fetch that answers from a scripted table and records every call. */
 function fakeFetch(routes: Array<{ match: RegExp; method?: string; status: number; body?: unknown }>) {
   const calls: Call[] = [];
-  const fetchFn = async (url: string, init: { method: string; headers: Record<string, string>; body?: string }) => {
-    calls.push({ url, method: init.method, headers: init.headers, body: init.body });
-    const hit = routes.find((r) => r.match.test(url) && (r.method === undefined || r.method === init.method));
+  // `init` is optional here because the module's seam declares it optional —
+  // a two-required-parameter double is not assignable to it, which is how the
+  // tests/ type-check catches a fake that has drifted from the real contract.
+  const fetchFn = async (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => {
+    calls.push({ url, method: init?.method ?? "GET", headers: init?.headers ?? {}, body: init?.body });
+    const hit = routes.find((r) => r.match.test(url) && (r.method === undefined || r.method === (init?.method ?? "GET")));
     if (!hit) return { ok: false, status: 404, json: async () => ({}) };
     return { ok: hit.status < 300, status: hit.status, json: async () => hit.body ?? {} };
   };

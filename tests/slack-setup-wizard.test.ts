@@ -6,7 +6,9 @@ import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseConfig } from "../src/config.js";
-// @ts-expect-error — plain ESM script, no type declarations by design
+// A plain ESM script with no type declarations by design; `tsconfig.tests.json`
+// sets `allowJs`, so tsc infers its exports and the call sites below are
+// really checked.
 import * as wiz from "../deploy/collect-slack-secrets.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -129,7 +131,7 @@ describe("maskToken", () => {
     const masked = wiz.maskToken(secret);
     const revealed = masked.replace(/ \(\d+ chars\)$/, "").split("…");
     expect(revealed[0]).toBe("xoxb-");
-    expect(revealed[1].length).toBeLessThanOrEqual(3);
+    expect(revealed[1]!.length).toBeLessThanOrEqual(3);
   });
 
   it("masks a short value completely and handles empties", () => {
@@ -428,8 +430,8 @@ describe("finalChecks", () => {
   it("fails the identity check when legacy_owner_slack_id is not a key in the map", () => {
     const checks = wiz.finalChecks({ ...good, users: { U0OTHER: "x" } });
     const c = checks.find((x: { label: string }) => x.label.includes("key in [slack.users]"));
-    expect(c.ok).toBe(false);
-    expect(c.hint).toMatch(/own-PR rights/);
+    expect(c!.ok).toBe(false);
+    expect(c!.hint).toMatch(/own-PR rights/);
   });
 
   it("fails on an empty channel, a bad kind, or a missing token file", () => {

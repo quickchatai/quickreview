@@ -1,8 +1,13 @@
 // pure filter helpers for the board and the memory timeline.
 import { describe, expect, it } from "vitest";
 import { applyBoardFilter, applyMemoryFilter, filterLabel, isEmptyBoardFilter, memoryFilterLabel } from "../src/tui/filters.js";
+import type { PrLifecycleState } from "../src/state.js";
 
-const prs = [
+// Typed against the real lifecycle union, not `string`: an untyped literal
+// widens to `string`, which does NOT satisfy `applyBoardFilter`'s constraint —
+// so inference fell back to the constraint and `.number` vanished from the
+// element type. The suite compiled only because tests/ was unchecked.
+const prs: Array<{ number: number; state: PrLifecycleState; author?: string }> = [
   { number: 1, state: "reviewing", author: "JAdamska" },
   { number: 2, state: "queued", author: "mnovak" },
   { number: 3, state: "reviewing", author: "mnovak" },

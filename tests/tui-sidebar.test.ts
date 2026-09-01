@@ -40,7 +40,6 @@ function fakeDocker(answer: (argv: string[]) => DockerResult = () => OK): { runn
 const VIEW = (over: Partial<SidebarView> = {}): SidebarView => ({
   header: { up: true, piUp: true, day: "2026-08-21", lastWake: "3m ago", memory: "ok" },
   lines: [],
-  input: "",
   focused: false,
   collapsed: false,
   available: true,
@@ -108,7 +107,6 @@ describe("paintSidebar geometry", () => {
         VIEW({
           lines: ["one", "two", "three", "four", "five", "six"],
           alerts: [{ tier: "alert", title: "companion stalled", ts: "12:01" }],
-          input: "hello",
           focused: true,
         }),
         width,

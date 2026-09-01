@@ -8,8 +8,8 @@ import { cancelCauseLabel, isLoudCancelCause, type StatusSnapshot } from "../sta
 import type { AlertBadge } from "./alerts.js";
 import { paintCmdBar } from "./cmdbar.js";
 import { filterLabel, visiblePrs, type BoardFilter } from "./filters.js";
-import { formatEvent, glyphFor, type EventLine, type SnapshotPr } from "./model.js";
-import { ACCENT, ACCENT_BG, HEADING, MUTED, OK, RESET as DRESET, STRONG, WARN, modeBadge, sectionTitle, selected as selectedLine } from "./design.js";
+import { glyphFor, type EventLine, type SnapshotPr } from "./model.js";
+import { ACCENT, ACCENT_BG, HEADING, MUTED, RESET as DRESET, STRONG, WARN, modeBadge, sectionTitle, selected as selectedLine } from "./design.js";
 import { Frame, displayWidth, fit, rule, sanitizeText, stripAnsi, truncate, wrap } from "./paint.js";
 import type { PiPaneView } from "./pipane.js";
 import type { Health } from "./poll.js";

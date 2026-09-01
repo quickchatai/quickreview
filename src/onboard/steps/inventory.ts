@@ -208,7 +208,7 @@ export interface VmInventoryOptions {
 export function vmInventoryStep(opts: VmInventoryOptions = {}): OnboardingStep {
   const pythonInterpreter = opts.pythonInterpreter ?? DEFAULT_PYTHON_INTERPRETER;
 
-  function facts(ctx: StepContext, root: string): InventoryFacts {
+  function facts(ctx: StepContext, _root: string): InventoryFacts {
     const typedUser = typeof ctx.input.ansible_user === "string" ? ctx.input.ansible_user.trim() : "";
     const recordedUser = typeof ctx.choices[SSH_USER_CHOICE_KEY] === "string" ? (ctx.choices[SSH_USER_CHOICE_KEY] as string).trim() : "";
     return {

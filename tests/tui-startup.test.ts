@@ -534,7 +534,7 @@ describe("connection triage", () => {
     });
     const probe = seen.find((a) => a.includes("true"))!;
     const opt = (name: string): string | undefined =>
-      probe.map((t, i) => (t.startsWith(`${name}=`) ? t.slice(name.length + 1) : undefined)).find((v) => v !== undefined);
+      probe.map((t) => (t.startsWith(`${name}=`) ? t.slice(name.length + 1) : undefined)).find((v) => v !== undefined);
     // WRITE: only these two values ever persist a host key. Neither may appear.
     expect(["accept-new", "no"]).not.toContain(opt("StrictHostKeyChecking"));
     // VERIFY: and it must not be pointed at a throwaway file either, which
@@ -857,7 +857,11 @@ describe("startup progress", () => {
 
   it("never lets a reporting failure break the bring-up it reports on", async () => {
     const { StartupProgress } = await import("../src/tui/startup.js");
-    const p = new StartupProgress([{ key: "a", label: "alpha" }], { tickMs: 0 });
+    // Widened to `string` deliberately: the whole point of this case is the
+    // key TypeScript forbids, reaching the runtime anyway (a computed key, a
+    // stale caller after a rename). The behaviour under test only exists off
+    // the typed path, so the cast is the test, not a suppression of it.
+    const p = new StartupProgress<string>([{ key: "a", label: "alpha" }], { tickMs: 0 });
     expect(() => p.done("does-not-exist")).not.toThrow();
     expect(() => p.fail("does-not-exist", "boom")).not.toThrow();
     p.fail("a", "boom");

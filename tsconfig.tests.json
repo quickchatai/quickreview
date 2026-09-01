@@ -1,0 +1,38 @@
+{
+  // [T6]: `tsconfig.json` excludes `tests/` from the build, which hid
+  // ~40 latent type errors — including three tests that were silently reading
+  // the REAL filesystem while asserting on `piArgv()`, because the object they
+  // passed did not match the parameter type and nobody was checking.
+  //
+  // This config type-checks the suite. It emits nothing (`noEmit`), so it can
+  // never write into `dist/` and can never trip the hot reload; it is run by
+  // `npm run typecheck:tests`, which `npm run build` chains.
+  //
+  // `noUnusedLocals`/`noUnusedParameters` are ON here and deliberately not in
+  // the build config: an unused local in a test is nearly always a stale
+  // assertion or a fixture that stopped being wired, which is exactly the rot
+  // this fence exists to catch.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "incremental": false,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    // Several tests import the repo's plain-JS helpers directly
+    // (`scripts/companion-memory-forward.mjs`, `scripts/verify-dist.mjs`,
+    // `docker/tunnel/sidecar.mjs`, …) — that is deliberate: they are the ONE
+    // implementation and a test must drive the real one. `allowJs` lets tsc
+    // INFER their exported shapes so those call sites are really checked;
+    // `checkJs` stays off because the .mjs files are not written to the
+    // strict settings above and would fail on their own terms.
+    "allowJs": true,
+    "checkJs": false
+  },
+  "include": ["tests/**/*.ts", "src/**/*.ts", "extensions/**/*.ts"],
+  // `extensions/vendor/**` is VENDORED VERBATIM (rule 7's extension pin) — its
+  // provenance is a byte-comparison against upstream, so an unused-parameter
+  // cleanup in it would be a local modification we are forbidden to make. The
+  // BUILD config still type-checks it under the shared strict settings; only
+  // the unused-symbol rules added here are lifted.
+  "exclude": ["node_modules", "dist", "extensions/inline-bash.ts", "extensions/vendor"]
+}

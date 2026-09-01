@@ -44,7 +44,7 @@ describe("OriginStore", () => {
       tier: "owner",
       authorized_prs: [],
       // deliberately smuggled in
-      ...({ expires_at: far } as Record<string, never>),
+      ...({ expires_at: far } as unknown as Record<string, never>),
     });
     expect(rec.expires_at).not.toBe(far);
   });

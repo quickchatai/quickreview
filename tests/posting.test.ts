@@ -540,8 +540,8 @@ describe("approvalActions", () => {
 
     const calls: string[] = [];
     const adapter = {
-      createReview: vi.fn(async (n: number) => (calls.push(`review:${n}`), { executed: false })),
-      removeLabel: vi.fn(async (n: number, l: string) => (calls.push(`label:${l}`), { executed: false })),
+      createReview: vi.fn(async (n: number) => (calls.push("review:" + n), { executed: false })),
+      removeLabel: vi.fn(async (_n: number, l: string) => (calls.push(`label:${l}`), { executed: false })),
       deleteTeamReviewRequest: vi.fn(async (n: number) => (calls.push(`team:${n}`), { executed: false })),
     };
     for (const a of actions) await a.run(adapter as never);

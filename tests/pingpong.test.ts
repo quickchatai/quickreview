@@ -170,10 +170,9 @@ describe("structured thread decision", () => {
   const harness = () => {
     const createReviewCommentReply = vi.fn().mockResolvedValue({ executed: true, response: { id: 6001 } });
     const resolveOwnReviewThread = vi.fn().mockResolvedValue({ skipped: null, result: { executed: true } });
-    const requestEscalationReview = vi.fn().mockResolvedValue({ skipped: null });
     const store = { registerBotComment: vi.fn(), logEvent: vi.fn() };
     const watcher = new ThreadDecisionWatcher({
-      adapter: { createReviewCommentReply, resolveOwnReviewThread, requestEscalationReview },
+      adapter: { createReviewCommentReply, resolveOwnReviewThread },
       store,
       ledger,
       verdictDir: root,
@@ -234,7 +233,7 @@ describe("structured thread decision", () => {
     const resolveOwnReviewThread = vi.fn().mockRejectedValueOnce(new Error("graphql timeout")).mockResolvedValueOnce({ skipped: null });
     const store = { registerBotComment: vi.fn(), logEvent: vi.fn(), logAnomaly: vi.fn() };
     const watcher = new ThreadDecisionWatcher({
-      adapter: { createReviewCommentReply, resolveOwnReviewThread, requestEscalationReview: vi.fn() },
+      adapter: { createReviewCommentReply, resolveOwnReviewThread },
       store, ledger, verdictDir: root, now: () => now,
     });
     const name = "pr-77-thread-4000-comment-5001.json";
@@ -254,7 +253,7 @@ describe("structured thread decision", () => {
     const resolveOwnReviewThread = vi.fn().mockRejectedValue(new Error('graphql errors: [{"code":"graphql_rate_limit"}]'));
     const store = { registerBotComment: vi.fn(), logEvent: vi.fn(), logAnomaly: vi.fn() };
     const watcher = new ThreadDecisionWatcher({
-      adapter: { createReviewCommentReply: vi.fn(), resolveOwnReviewThread, requestEscalationReview: vi.fn() },
+      adapter: { createReviewCommentReply: vi.fn(), resolveOwnReviewThread },
       store, ledger, verdictDir: root, now: () => now,
     });
     for (let i = 0; i < 44; i++) {
@@ -282,7 +281,7 @@ describe("structured thread decision", () => {
       .mockResolvedValue({ skipped: null });
     const store = { registerBotComment: vi.fn(), logEvent: vi.fn(), logAnomaly: vi.fn() };
     const watcher = new ThreadDecisionWatcher({
-      adapter: { createReviewCommentReply: vi.fn(), resolveOwnReviewThread, requestEscalationReview: vi.fn() },
+      adapter: { createReviewCommentReply: vi.fn(), resolveOwnReviewThread },
       store, ledger, verdictDir: root, now: () => now,
     });
     for (const comment of [6000, 6001, 6002]) {
@@ -314,7 +313,7 @@ describe("structured thread decision", () => {
     const resolveOwnReviewThread = vi.fn().mockRejectedValue(new Error("graphql timeout"));
     const store = { registerBotComment: vi.fn(), logEvent: vi.fn(), logAnomaly: vi.fn() };
     const watcher = new ThreadDecisionWatcher({
-      adapter: { createReviewCommentReply: vi.fn(), resolveOwnReviewThread, requestEscalationReview: vi.fn() },
+      adapter: { createReviewCommentReply: vi.fn(), resolveOwnReviewThread },
       store, ledger, verdictDir: root, now: () => now,
     });
     const name = "pr-77-thread-4000-comment-5001.json";
@@ -370,7 +369,7 @@ describe("structured thread decision", () => {
     }
     const store = { registerBotComment: vi.fn(), logEvent: vi.fn(), logAnomaly: vi.fn() };
     const watcher = new ThreadDecisionWatcher({
-      adapter: { createReviewCommentReply: vi.fn(), resolveOwnReviewThread: vi.fn(), requestEscalationReview: vi.fn() },
+      adapter: { createReviewCommentReply: vi.fn(), resolveOwnReviewThread: vi.fn() },
       store, ledger, verdictDir: root, ownerActorAlias: "example-review",
     });
 
@@ -385,7 +384,7 @@ describe("structured thread decision", () => {
     let draining = true;
     const h = harness();
     const watcher = new ThreadDecisionWatcher({
-      adapter: { createReviewCommentReply: h.createReviewCommentReply, resolveOwnReviewThread: h.resolveOwnReviewThread, requestEscalationReview: vi.fn() },
+      adapter: { createReviewCommentReply: h.createReviewCommentReply, resolveOwnReviewThread: h.resolveOwnReviewThread },
       store: h.store, ledger, verdictDir: root, isDraining: () => draining,
     });
     const name = "pr-77-thread-4000-comment-5001.json";

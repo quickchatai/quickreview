@@ -282,6 +282,7 @@ function ref(number: number, over: Partial<PrRef> = {}): PrRef {
     title: `PR ${number}`,
     author: "alice",
     head_sha: `sha${number}`,
+    base_ref: "master",
     updated_at: "2026-08-25T09:00:00Z",
     state: "open",
     draft: false,

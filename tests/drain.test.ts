@@ -10,7 +10,7 @@
 //   * the boot's FIRST healthy reconcile pass lifts it (`drain_lifted`); a
 //     failed first pass leaves it standing — a broken deploy must not resume
 //     work blind. Manual `drain off` works at any time.
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -208,7 +208,10 @@ describe("recheck while draining", () => {
     expect(inject).not.toHaveBeenCalled();
     store.setDraining(false);
     const after = await runRecheck({ cfg, store, adapter: {}, inject }, { pr: 5, trigger: "push", head_sha: "h2" });
-    expect(after.reason).not.toBe("draining");
+    // `reason` lives only on the noop arm; reading it off the union asserted
+    // `undefined !== "draining"` on every other arm and would have passed for
+    // the wrong reason. Narrow first, then name the reason.
+    expect(after.action === "noop" ? after.reason : null).not.toBe("draining");
     store.close();
   });
 
@@ -290,6 +293,7 @@ function bootAdapter(over: Partial<Record<string, unknown>> = {}): DaemonAdapter
     title: "test PR",
     author: "someone",
     head_sha: "headsha1",
+    base_ref: "master",
     updated_at: "2026-08-25T00:00:00Z",
     state: "open",
     draft: false,

@@ -84,12 +84,12 @@ function fakeTransport(over: Partial<SlackTransport> = {}): SlackTransport & {
 const noopCommandDeps: CommandDeps = {
   rerunRound: () => ({ ok: true }),
   restartSession: () => ({ ok: true }),
-  markEscalationWorthy: () => ({ ok: true }),
   pausePr: () => ({ ok: true }),
   resumePr: () => ({ ok: true }),
   flagOwner: () => ({ ok: true }),
   fileImprovementPr: () => ({ ok: true }),
   fileIssue: () => ({ ok: true }),
+  resolveTerminalFailure: () => ({ ok: true }),
 };
 
 function wiring(over: Partial<Parameters<typeof startSlack>[0]> = {}): Parameters<typeof startSlack>[0] {

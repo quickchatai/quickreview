@@ -20,6 +20,8 @@
     "dev": "bash scripts/dev-tui.sh",
     "onboard": "bash scripts/qcr onboard",
     "test": "vitest run",
+    "//typecheck:tests": "tests/ is excluded from the BUILD (it emits nothing), so nothing type-checked it and ~40 latent errors accumulated — three of them tests that read the real filesystem while claiming to assert on a pure function. Deliberately NOT chained into `build`: `scripts/dev-tui.sh` blocks on that build before the TUI paints (ruling 5), and a second full tsc pass there is 7s of blank terminal. `tests/fences.test.ts` runs this as part of the suite instead, which is this repo's CI.",
+    "typecheck:tests": "tsc -p tsconfig.tests.json",
     "daemon": "npm run build && node dist/src/wire.js",
     "smoke:session": "npm run build && node dist/src/smoke-session.js",
     "slack:setup": "node deploy/collect-slack-secrets.mjs",

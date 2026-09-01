@@ -421,7 +421,7 @@ describe("acceptProposal (local dirs, fake git)", () => {
     const res = await acceptProposal(
       {
         git: {
-          run: (cmd, args) => (args[1] === "--check" ? Promise.reject(new Error("does not apply")) : Promise.resolve("")),
+          run: (_cmd, args) => (args[1] === "--check" ? Promise.reject(new Error("does not apply")) : Promise.resolve("")),
         },
         repoRoot: root,
         today: () => "2026-08-20",

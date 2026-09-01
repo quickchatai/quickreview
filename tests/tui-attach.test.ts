@@ -186,7 +186,7 @@ describe("AttachScreen", () => {
     const ptys: FakePty[] = [];
     const spawner: PtySpawner =
       spawnImpl ??
-      ((argv, cols, rows) => {
+      ((_argv, cols, rows) => {
         const p = new FakePty();
         p.cols = cols;
         p.rows = rows;
@@ -248,7 +248,7 @@ describe("AttachScreen", () => {
     const streams = fakeStreams();
     const app = makeApp(streams);
     const ptys: FakePty[] = [];
-    const spawner: PtySpawner = (argv, cols, rows) => {
+    const spawner: PtySpawner = (_argv, cols, rows) => {
       const p = new FakePty();
       p.cols = cols;
       p.rows = rows;

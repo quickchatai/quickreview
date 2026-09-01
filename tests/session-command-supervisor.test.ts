@@ -6,7 +6,7 @@ import { parseConfig, type Config } from "../src/config.js";
 import { sessionCommandMarker } from "../src/session-command.js";
 import { SessionCommandSupervisor } from "../src/session-command-supervisor.js";
 import { StateStore } from "../src/state.js";
-import type { SessionHooks } from "../src/types.js";
+import type { RoundRecoveryDisposition, SessionHooks } from "../src/types.js";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -130,7 +130,10 @@ function hooks(overrides: Partial<SessionHooks> = {}): SessionHooks {
 
 function supervisor(
   h: SessionHooks,
-  onRoundFailure = vi.fn(async () => "requeued" as const),
+  // Typed by the REAL disposition union, not inferred from the default's one
+  // literal — inference pinned this parameter to `"requeued"` and made every
+  // other disposition uncompilable at a call site.
+  onRoundFailure: ReturnType<typeof vi.fn<() => Promise<RoundRecoveryDisposition>>> = vi.fn(async () => "requeued" as const),
   cfg = baseCfg,
   progress?: () => import("../src/round-progress.js").RoundProgressSnapshot | undefined,
 ) {

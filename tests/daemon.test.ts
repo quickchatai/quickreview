@@ -27,6 +27,7 @@ function fakeAdapter(recorded: string[], dryrunDir: string): DaemonAdapter {
     title: "test PR",
     author: "someone",
     head_sha: "headsha1",
+    base_ref: "master",
     updated_at: "2026-08-13T00:00:00Z",
     state: "open",
     draft: false,
@@ -135,6 +136,7 @@ describe("daemon wiring", () => {
         pr: PR,
         round_no: 1,
         head_sha: "headsha1",
+        base_ref: "master",
         intended_event: "APPROVE",
         actual_event: "APPROVE",
         status: "dryrun",
@@ -189,7 +191,14 @@ describe("daemon wiring", () => {
     try {
       const stateBefore = store.getPr(PR)!.state;
       // The watcher only accepts a decision for a CLAIMED author message.
-      new PingPongLedger(store.db).claimAuthorMessage({ pr: PR, comment_id: 5001, in_reply_to_id: 4000, path: "src/app.ts" });
+      new PingPongLedger(store.db).claimAuthorMessage({
+        pr: PR,
+        comment_id: 5001,
+        in_reply_to_id: 4000,
+        path: "src/app.ts",
+        body: "can a person look at this?",
+        author: "alice",
+      });
       // `keep_open` with an empty reply, so nothing but the human-request
       // branch runs: no GitHub reply, no thread resolve.
       writeFileSync(

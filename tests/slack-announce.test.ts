@@ -104,7 +104,6 @@ beforeEach(() => {
   cfg.owner.slack_id = "U_MAT";
   cfg.slack.users = { U_MAT: "mhale", U_ALICE: "alice" };
   cfg.github.repo = "exampleorg/example-app";
-  cfg.github.escalation_reviewer = "mhale";
   slack = new FakeSlack();
 });
 afterEach(() => store.close());
@@ -145,14 +144,14 @@ describe("root-on-first-event (DP-2a)", () => {
   it("pickup opens the root, and only a GENUINELY later round speaks the 🔄 line", async () => {
     const a = announcer();
     await a.roundStarted(round);
-    expect(slack.posts[0].thread_ts).toBeUndefined();
-    expect(slack.posts[0].text).toContain("👀");
+    expect(slack.posts[0]!.thread_ts).toBeUndefined();
+    expect(slack.posts[0]!.text).toContain("👀");
     const root = store.slackThreadForPr(5263)!.root_ts;
 
     await a.roundStarted({ ...round, round_no: 2, round_type: "re-review" });
     expect(slack.posts).toHaveLength(2);
-    expect(slack.posts[1].thread_ts).toBe(root);
-    expect(slack.posts[1].text).toBe("🔄 round 2 started — you pushed new commits (`abcdef1`)");
+    expect(slack.posts[1]!.thread_ts).toBe(root);
+    expect(slack.posts[1]!.text).toBe("🔄 round 2 started — you pushed new commits (`abcdef1`)");
   });
 
   it("a not-picked-up notice can open the thread, and the pickup TEMPLATE lands as the first REPLY", async () => {
@@ -160,20 +159,20 @@ describe("root-on-first-event (DP-2a)", () => {
     const a = announcer();
     await a.announceNotPickedUp();
     expect(slack.posts).toHaveLength(1);
-    expect(slack.posts[0].thread_ts).toBeUndefined();
-    expect(slack.posts[0].text).toContain("🐢 #5263 has been waiting 60 min");
+    expect(slack.posts[0]!.thread_ts).toBeUndefined();
+    expect(slack.posts[0]!.text).toContain("🐢 #5263 has been waiting 60 min");
     const root = store.slackThreadForPr(5263)!.root_ts;
 
     // The thread exists but the PICKUP was never said: round 1 must still say
     // it (in-thread), and must NOT claim "you pushed new commits".
     await a.roundStarted(round);
     expect(slack.posts).toHaveLength(2);
-    expect(slack.posts[1].thread_ts).toBe(root);
-    expect(slack.posts[1].text).toBe(
+    expect(slack.posts[1]!.thread_ts).toBe(root);
+    expect(slack.posts[1]!.text).toBe(
       "👀 *<https://github.com/exampleorg/example-app/pull/5263|#5263 Add rate limiting>* — review started for <@U_ALICE>\n" +
         "_round 1 · first review · 7 files, +120/−34 · lenses: pass-baseline, pass-validate_",
     );
-    expect(slack.posts[1].text).not.toContain("🔄");
+    expect(slack.posts[1]!.text).not.toContain("🔄");
     expect(store.slackPost("pickup:5263")).toMatchObject({ ok: 1 });
 
     // …and the round AFTER that is the first genuine re-round.
@@ -197,13 +196,13 @@ describe("root-on-first-event (DP-2a)", () => {
     expect(slack.posts).toHaveLength(0);
     await a.roundStarted(round);
     expect(slack.posts).toHaveLength(1);
-    expect(slack.posts[0].text).toContain("👀");
+    expect(slack.posts[0]!.text).toContain("👀");
   });
 
   it("promotes a reply to a root when the PR has no thread yet", async () => {
     const a = announcer();
     await a.verdict({ pr: 77, round_no: 1, verdict: "APPROVE", summary: null, duration_s: 60 });
-    expect(slack.posts[0].thread_ts).toBeUndefined();
+    expect(slack.posts[0]!.thread_ts).toBeUndefined();
     expect(store.slackThreadForPr(77)?.root_ts).toBe("1700000001.0001");
   });
 });
@@ -308,7 +307,7 @@ describe("policy", () => {
     await a.roundStarted(round);
     await a.verdict({ pr: 5263, round_no: 1, verdict: "APPROVE", summary: "s", duration_s: 60 });
     for (const post of slack.posts) expect(Object.keys(post)).not.toContain("reply_broadcast");
-    expect(slack.posts[1].thread_ts).toBe(store.slackThreadForPr(5263)!.root_ts);
+    expect(slack.posts[1]!.thread_ts).toBe(store.slackThreadForPr(5263)!.root_ts);
   });
 
   it("says the cap-reached line once a day", async () => {
@@ -354,7 +353,7 @@ describe("daemon lifecycle", () => {
   it("reports the measured gap above the threshold", async () => {
     const a = announcer({ readStatus: status("2026-08-17T08:38:00.000Z") }); // 22 min
     expect(await a.daemonUp()).toBe(true);
-    expect(slack.posts[0].text).toBe(
+    expect(slack.posts[0]!.text).toBe(
       "🟢 review daemon up (0.1.0) — was down 22 min (since 2026-08-17T08:38:00Z); " +
         "events in that window may have been missed, reconcile is catching up.",
     );
@@ -363,7 +362,7 @@ describe("daemon lifecycle", () => {
   it("announces stopping without ever blocking on Slack", async () => {
     const a = announcer({ stopTimeoutMs: 5 });
     await a.daemonStopping("deploy");
-    expect(slack.posts[0].text).toBe("🟡 review daemon stopping (deploy) — back shortly.");
+    expect(slack.posts[0]!.text).toBe("🟡 review daemon stopping (deploy) — back shortly.");
   });
 
   it("a hung stopping post is abandoned at the timeout instead of delaying exit", async () => {
@@ -387,7 +386,7 @@ describe("pinned heartbeat", () => {
     await a.heartbeat();
     expect(slack.posts).toHaveLength(1);
     expect(slack.updates.map((u) => u.ts)).toEqual([ts, ts]);
-    expect(slack.updates[1].text).toContain("2026-08-17T09:10:00Z");
+    expect(slack.updates[1]!.text).toContain("2026-08-17T09:10:00Z");
   });
 
   it("keeps FAILED_LOUD review debt visible in the pinned heartbeat", async () => {
@@ -444,10 +443,10 @@ describe("pinned heartbeat", () => {
     });
     const flush = () => new Promise<void>((r) => setImmediate(r));
     a.startHeartbeat();
-    expect(ticks[0].ms).toBe(cfg.slack.policy.heartbeat_interval_min * 60_000);
+    expect(ticks[0]!.ms).toBe(cfg.slack.policy.heartbeat_interval_min * 60_000);
     await flush(); // the initial post
     at("2026-08-17T09:05:00.000Z");
-    ticks[0].fn();
+    ticks[0]!.fn();
     await flush();
     expect(slack.updates.map((u) => u.ts)).toEqual(["1700000001.0001"]);
     a.stopHeartbeat();

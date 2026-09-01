@@ -2,7 +2,7 @@
 // with a throwaway copy of the group_vars. Nothing here touches the
 // real ansible asset, and no live deploy ever runs: every case stops at
 // --dry-run or at a refusal.
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

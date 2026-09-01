@@ -21,7 +21,7 @@ import type { App } from "./app.js";
 import { paintCmdBar } from "./cmdbar.js";
 import { HEAD_ARGV, logArgv, type LocalRunner } from "./deploytab.js";
 import type { BoardKey } from "./keys.js";
-import { ACCENT, ACCENT_BG, BAD, HEADING, MUTED, OK, RESET as DRESET, SEP, STRONG, WARN, modeBadge, sectionTitle } from "./design.js";
+import { ACCENT, ACCENT_BG, BAD, HEADING, OK, RESET as DRESET, SEP, STRONG, WARN, modeBadge, sectionTitle } from "./design.js";
 import { Frame, displayWidth, fit, rule, sanitizeText, truncate } from "./paint.js";
 import { metricsArgv, metricsPrArgv, type SshRunner } from "./remote.js";
 import { FG, RESET, fmtAge, stateColor, verdictColor } from "./theme.js";
@@ -129,7 +129,7 @@ export function histogramLines(dist: Dist, width: number, color: string = FG.acc
   const rows: string[] = [];
   for (let r = height - 1; r >= 0; r--) {
     const row = buckets
-      .map((b, i) => {
+      .map((_b, i) => {
         const rem = levels[i]! - r * 8;
         if (rem >= 8) return `${color}${"█".repeat(cell)}${RESET}`;
         if (rem > 0) return `${color}${SPARK[rem - 1]!.repeat(cell)}${RESET}`;
@@ -569,7 +569,7 @@ export function columnWidths(cols: number): number[] {
  * (longest-first bin packing, then original order restored inside each
  * column) so no column strands a screenful of dead rows.
  */
-export function packColumns(cards: MetricsCard[], widths: number[], targetRows = 0): string[][] {
+export function packColumns(cards: MetricsCard[], widths: number[]): string[][] {
   const n = widths.length;
   const measureW = Math.max(8, Math.min(...widths) - 1);
   const heights = new Array<number>(n).fill(0);
@@ -748,7 +748,7 @@ export function renderMetrics(view: MetricsView, cols: number, rows: number): Fr
     ...(view.local ? { local: view.local } : {}),
     now,
   });
-  const columns = packColumns(cards, widths, bodyRows);
+  const columns = packColumns(cards, widths);
   for (let r = 0; r < bodyRows; r++) {
     frame.boxRow(
       3 + r,

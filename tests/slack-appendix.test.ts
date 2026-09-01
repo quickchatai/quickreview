@@ -41,7 +41,6 @@ function cfg(slackEnabled: boolean): Config {
       app_slug: "example-review",
       bot_login: "example-review[bot]",
       review_team: "exampleorg/review",
-      escalation_reviewer: "mhale",
       trigger_label: "AI review requested",
       in_progress_label: "AI review in progress",
       reviewed_label: "Automatic Review",

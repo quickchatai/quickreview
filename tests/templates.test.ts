@@ -107,7 +107,7 @@ describe("roundVars", () => {
   });
 
   it("keeps the migration gate but drops its escalation framing", () => {
-    const note = roundVars(order).migration_gate_note;
+    const note = roundVars(order).migration_gate_note!;
     expect(note).toMatch(/MIGRATION GATE/);
     expect(note.toLowerCase()).not.toContain("escalate unless");
   });

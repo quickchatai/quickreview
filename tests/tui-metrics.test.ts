@@ -423,9 +423,10 @@ describe("metrics dashboard", () => {
       // every card is present, in order, in the single stack
       const stack = packed[0]!.join("\n");
       for (const c of cards) expect(stack).toContain(c.title.split(" ")[0]!);
-      // slack spreading never shrinks the stack
-      const spread = packColumns(cards, widths, rows - 5);
-      expect(spread[0]!.length).toBeGreaterThanOrEqual(packed[0]!.length);
+      // (A third `targetRows` argument used to be passed here to assert that
+      // "slack spreading never shrinks the stack". `packColumns` never read
+      // that parameter, so the two calls were identical and the `>=` held
+      // trivially. Parameter and assertion both deleted —.)
     }
   });
 

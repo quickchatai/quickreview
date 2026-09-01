@@ -26,7 +26,6 @@ import { OnboardingEngine, type CheckResult, type OnboardAdapters, type StepRepo
 import {
   APP_HTML_URL_CHOICE_KEY,
   APP_ID_CHOICE_KEY,
-  APP_NAME_CHOICE_KEY,
   APP_SLUG_CHOICE_KEY,
   APP_TARGET_CHOICE_KEY,
   BOT_LOGIN_CHOICE_KEY,
@@ -112,7 +111,7 @@ function ghState(over: Partial<GhState> = {}): GhState {
 }
 
 function ghFetch(s: GhState): typeof fetch {
-  return (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+  return (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]): Promise<Response> => {
     const url = String(input);
     const method = (init?.method ?? "GET").toUpperCase();
     const path = url.replace(API, "");
@@ -198,7 +197,7 @@ const refusingServer: CallbackServerFactory = async () => {
   throw new Error("the callback server must not be started when credentials already exist");
 };
 
-function step(s: GhState, server: CallbackServerFactory, over: Parameters<typeof githubAppStep>[0] = {}) {
+function step(_s: GhState, server: CallbackServerFactory, over: Parameters<typeof githubAppStep>[0] = {}) {
   return githubAppStep({
     repoRoot,
     secretsDir,
@@ -241,6 +240,7 @@ function verifyOnly(
   const recorded = ctxChoices(choices);
   return st.verify({
     adapters: adapters(s),
+    input: {},
     choices: recorded,
     data: {},
     recordChoice: (k, v) => {
@@ -652,7 +652,7 @@ describe("inputs and credential validation", () => {
   it("no recorded repo is a refusal-as-answer naming the choice", async () => {
     const s = ghState();
     const st = step(s, refusingServer);
-    const report = await st.run({ adapters: adapters(s), choices: {}, data: {}, recordChoice: () => undefined });
+    const report = await st.run({ adapters: adapters(s), input: {}, choices: {}, data: {}, recordChoice: () => undefined });
     expect(report.ok).toBe(false);
     expect(report.checks[0]!.detail).toMatch(/reviewed_repo/);
   });

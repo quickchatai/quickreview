@@ -219,7 +219,7 @@ describe("a none round prompt carries no migration-gate prose", () => {
 });
 
 describe("the tier-forcing gate through the plan", () => {
-  const migrationDiff = [{ filename: "app/migrations/0007_x.py", additions: 5, deletions: 0 }];
+  const migrationDiff = [{ filename: "app/migrations/0007_x.py", additions: 5, deletions: 0, status: "added" }];
 
   it("django forces sol-med on a small migrations diff; none leaves terra-med", () => {
     const django = buildPassPlan(cfg, migrationDiff, undefined, DJANGO_ECOSYSTEM);

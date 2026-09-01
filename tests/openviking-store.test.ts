@@ -30,6 +30,7 @@ import {
   buildContextSearchBody,
   keyFromFile,
   type HttpFetch,
+  type OvDirEntry,
 } from "../src/openviking/client.js";
 import { OpenVikingContextAssembler } from "../src/openviking/context.js";
 import { OpenVikingStore, entryFrom, renderEntryBody, sha256Prefixed, tsFromName, validEntryId, withTag, withoutTag } from "../src/openviking/store.js";
@@ -226,14 +227,23 @@ describe("ensureWritable materializes the namespace before anyone writes", () =>
 
   it("creates the category root, and makes the namespace visible to a lister", async () => {
     const { store, client } = wire(server);
+    // `.result` lives only on the success arm of `OvOutcome`, so `?? []` used
+    // to fold a FAILED listing into "nothing there" — the same read this very
+    // suite exists to forbid, sitting inside its own assertion. Narrow first:
+    // a refusal now fails the test instead of satisfying it.
+    const listing = async (): Promise<OvDirEntry[]> => {
+      const out = await client.ls("viking://user/reviewer/memories");
+      if (!out.ok) throw new Error(`ls refused: ${out.status} ${out.code}`);
+      return out.result;
+    };
     // Precondition: this is what the companion's resolver saw — nothing.
-    expect((await client.ls("viking://user/reviewer/memories")).result ?? []).toHaveLength(0);
+    expect(await listing()).toHaveLength(0);
 
     const res = await store.ensureWritable();
     expect(res.ok).toBe(true);
     expect(server.dirs.has(`${ROOT}/experiences`)).toBe(true);
 
-    const listed = (await client.ls("viking://user/reviewer/memories")).result ?? [];
+    const listed = await listing();
     expect(listed.map((e) => e.name)).toContain("experiences");
   });
 

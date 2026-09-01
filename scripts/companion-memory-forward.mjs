@@ -226,6 +226,13 @@ export const FAILURE_REPEAT_MS = 60_000;
  * window, a count of what was suppressed, and a `recovered` line that proves
  * the self-healing actually happened: nothing here needs a restart, the next
  * successful relay clears the state on its own.
+ *
+ * @param {{ log?: (line: string) => void, now?: () => number, windowMs?: number }} [opts]
+ *   `log` is declared here rather than defaulted on purpose: it has no
+ *   sensible default (a collapser that swallows its own output is worse than
+ *   one that throws), but without the annotation TypeScript infers the option
+ *   bag from the DEFAULTED keys only and `tsconfig.tests.json` then rejects
+ *   every caller that passes it.
  */
 export function createFailureCollapser({ log, now = () => Date.now(), windowMs = FAILURE_REPEAT_MS } = {}) {
   let key = null;
@@ -617,6 +624,20 @@ async function probePair(base, key, ns, env, fetchFn, doWrite) {
 /**
  * Run the matrix. Resolves a report; never throws on a probe failure.
  * `keys` maps role → key value.
+ *
+ * `fetchFn` is declared by the MINIMUM the probe reads — a status and an
+ * optional `json()` — not as `typeof fetch`, which is what the default binds
+ * it to. A seam typed by its implementation makes every test double fabricate
+ * a whole `Response` for no gain.
+ *
+ * @param {{
+ *   base: string,
+ *   keys: Record<string, string>,
+ *   env?: Record<string, string | undefined>,
+ *   fetchFn?: (url: string, init?: { method?: string, headers?: Record<string, string>, body?: string, signal?: AbortSignal }) => Promise<{ status: number, json?: () => Promise<unknown> }>,
+ *   write?: boolean,
+ *   log?: (line: string) => void,
+ * }} opts
  */
 export async function runVerify({ base, keys, env = process.env, fetchFn = fetch, write = false, log = console.log }) {
   const rows = [];

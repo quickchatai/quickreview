@@ -298,7 +298,7 @@ function appWith(opts: { liveSessions?: number[] } = {}) {
   const captureArgvs: string[][] = [];
   const sendKeys: string[][] = [];
   const ssh: SshRunner = async (_h, argv) => {
-    const last = argv[argv.length - 1] ?? "";
+
     if (argv.includes("capture-pane")) {
       const pr = Number(/pr-(\d+)/.exec(argv.join(" "))?.[1]);
       captures.push(pr);

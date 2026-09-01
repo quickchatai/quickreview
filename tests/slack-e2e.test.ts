@@ -99,12 +99,12 @@ function commandDeps(): CommandDeps {
   return {
     rerunRound: () => ({ ok: true, requeued: PR }),
     restartSession: forbidden("restart-session"),
-    markEscalationWorthy: () => ({ ok: true }),
     pausePr: () => ({ ok: true }),
     resumePr: () => ({ ok: true }),
     flagOwner: () => ({ ok: true }),
     fileImprovementPr: forbidden("file-improvement-pr"),
     fileIssue: forbidden("file-issue"),
+    resolveTerminalFailure: forbidden("resolve-terminal-failure"),
   };
 }
 

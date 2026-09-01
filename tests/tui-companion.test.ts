@@ -297,7 +297,7 @@ describe("the reviewed repo, read-only", () => {
   });
 
   it("recreates when the mount points at a different checkout", async () => {
-    const { lc, calls } = withRepo([
+    const { lc } = withRepo([
       inspectWith(false, { ...BASE, [CONTAINER.reviewedRepo]: "/host/old-example-app" }),
       okFor("rm"),
       okFor("image"),
@@ -311,7 +311,7 @@ describe("the reviewed repo, read-only", () => {
   it("treats the mount as STALE once the checkout goes away", async () => {
     // Symmetry matters: expectedMounts() and runArgv() share one condition, so
     // a container holding a mount whose source no longer exists is drift too.
-    const { lc, calls } = lifecycle([
+    const { lc } = lifecycle([
       inspectWith(false, { ...BASE, [CONTAINER.reviewedRepo]: "/host/example-app" }),
       okFor("rm"),
       okFor("image"),
@@ -424,7 +424,7 @@ describe("mount drift", () => {
   });
 
   it("recreates when a mount points at the wrong host path", async () => {
-    const { lc, calls } = lifecycle([
+    const { lc } = lifecycle([
       inspectWith(false, { ...CURRENT, [CONTAINER.tracker]: "/host/old-tracker" }),
       okFor("rm"),
       okFor("image"),
@@ -718,7 +718,7 @@ describe("companion image", () => {
     expect(entrypoint).toContain('trust["/workspace"] = true');
     expect(entrypoint).not.toContain('trust["/opt/quickreview"]');
     // ① the spawn flag
-    expect(new CompanionLifecycle(CFG, async () => OK, {}, { exists: () => false, read: () => undefined, mode: () => undefined }).piArgv()).toContain("--approve");
+    expect(new CompanionLifecycle(CFG, async () => OK, {}, noDirs, { exists: () => false, read: () => undefined, mode: () => undefined }).piArgv()).toContain("--approve");
   });
 
   // the image's HOME and the code's mount destination are ONE fact
@@ -736,7 +736,7 @@ describe("companion image", () => {
     expect(dockerfile).toContain(`VOLUME ["${CONTAINER.piHome}"]`);
     // The session dir the spawn names must be on the volume too — that is the
     // only reason the conversation survived when the token did not.
-    const pi = new CompanionLifecycle(CFG, async () => OK, {}, { exists: () => false, read: () => undefined, mode: () => undefined }).piArgv();
+    const pi = new CompanionLifecycle(CFG, async () => OK, {}, noDirs, { exists: () => false, read: () => undefined, mode: () => undefined }).piArgv();
     const sessionDir = pi[pi.indexOf("--session-dir") + 1]!;
     expect(sessionDir.startsWith(`${CONTAINER.piHome}/`)).toBe(true);
     // And the entrypoint says so out loud when it is not a mount point.

@@ -569,6 +569,7 @@ describe("verify()", () => {
     const step = memoryStep(stepOptions());
     const report: StepReport = await step.verify({
       adapters: adapters(server.fetchFn),
+      input: {},
       choices: {},
       data: {},
       recordChoice: () => {},

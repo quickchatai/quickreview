@@ -7,6 +7,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { COMPANION_DEFAULTS, type CompanionConfig } from "../src/config.js";
+import type { StatusSnapshot } from "../src/state.js";
 import { AlertPolicy, filePolicyStore, readPolicyState, type AlertRecord } from "../src/tui/alerts.js";
 import type { DockerResult, DockerRunner } from "../src/tui/companion.js";
 import {
@@ -216,12 +217,12 @@ describe("conversation parsing and compaction", () => {
 });
 
 describe("carry items", () => {
-  const snap = {
+  const snap: StatusSnapshot = {
     written_at: "2026-08-14T06:00:00Z",
     dry_run: true,
     prs: [
-      { number: 5012, state: "reviewing", title: "add retries", head_sha: "a", stale_recheck: false, rounds: 2, last_verdict: "changes" },
-      { number: 5013, state: "awaiting_author", title: "docs", head_sha: "b", stale_recheck: false, paused: true },
+      { number: 5012, state: "reviewing", title: "add retries", head_sha: "a", stale_recheck: 0, rounds: 2, last_verdict: "changes" },
+      { number: 5013, state: "awaiting_author", title: "docs", head_sha: "b", stale_recheck: 0, paused: 1 },
     ],
     running_rounds: 1,
     total_spend_usd: 12.5,

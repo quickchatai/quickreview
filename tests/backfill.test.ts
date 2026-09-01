@@ -11,7 +11,7 @@ import { MutationGate } from "../src/gate.js";
 import { GitHubAdapter } from "../src/github.js";
 import type { FetchFn, TokenMinter } from "../src/githubAuth.js";
 import { StateStore } from "../src/state.js";
-import type { PrReviewHistory, PrTimelineRecord } from "../src/github.js";
+import type { PrTimelineRecord } from "../src/github.js";
 import { enumerationQueries, planPr, runBackfill, triggerCandidates, triggerForReview, verdictForReviewState } from "../src/backfill.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -51,10 +51,6 @@ function labeled(createdAt: string, name: string, actor = "alice"): Record<strin
 
 function teamRequested(createdAt: string, slug = "review"): Record<string, unknown> {
   return { __typename: "ReviewRequestedEvent", createdAt, requestedReviewer: { slug } };
-}
-
-function forcePushed(createdAt: string): Record<string, unknown> {
-  return { __typename: "HeadRefForcePushedEvent", createdAt };
 }
 
 let dryrunDir: string;

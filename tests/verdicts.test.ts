@@ -137,15 +137,20 @@ function writePostingReceipt(pr: number, roundNo: number, key: string, actualEve
   }));
 }
 
-const verdictFile = (over: Partial<VerdictFile> = {}): VerdictFile => ({
+// A verdict file is UNTRUSTED input written by a session, so the builder takes
+// the loose shape on purpose: several cases here feed a legacy or malformed
+// `verdict` string that `Verdict` deliberately does not name (`ESCALATE`), and
+// typing the override as `Partial<VerdictFile>` made those cases uncompilable.
+const verdictFile = (over: Partial<Record<keyof VerdictFile, unknown>> = {}): VerdictFile =>
+  ({
   pr: 100,
   round_no: 1,
   verdict: "REQUEST_CHANGES",
   head_sha: "abc123",
-  spend_usd: 2.25,
-  finished_at: "2026-08-13T12:00:00Z",
-  ...over,
-});
+    spend_usd: 2.25,
+    finished_at: "2026-08-13T12:00:00Z",
+    ...over,
+  }) as VerdictFile;
 
 function watcher(over: Partial<ConstructorParameters<typeof VerdictWatcher>[0]> = {}, hooks?: SessionHooks): VerdictWatcher {
   const h = hooks ?? recordingHooks().hooks;

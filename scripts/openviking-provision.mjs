@@ -229,6 +229,22 @@ export function readSecret(path) {
 
 // ---- calls ------------------------------------------------------------------
 
+/**
+ * The HTTP seam every exported call takes, declared by the MINIMUM this module
+ * reads — a status and an optional `json()`. Deliberately not `typeof fetch`:
+ * the `fetchFn = fetch` defaults would otherwise bind the seam to the global's
+ * full `Response` contract, and a seam typed by its implementation rather than
+ * by its use forces every test double to fabricate a whole Response.
+ *
+ * @typedef {(url: string, init?: { method?: string, headers?: Record<string, string>, body?: string, signal?: AbortSignal }) => Promise<{ status: number, json?: () => Promise<unknown> }>} OvFetch
+ */
+
+/**
+ * @param {OvFetch} fetchFn
+ * @param {string} url
+ * @param {{ method?: string, headers?: Record<string, string>, body?: string }} init
+ * @param {number} timeoutMs
+ */
 async function call(fetchFn, url, init, timeoutMs) {
   try {
     const res = await fetchFn(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
@@ -245,7 +261,7 @@ async function call(fetchFn, url, init, timeoutMs) {
  * listing — including OpenViking's habit of answering an error HTTP 200 with
  * `{status:"error"}` in the envelope.
  */
-export async function listUsers({ base, account, rootKey, fetchFn = fetch, timeoutMs = DEFAULTS.requestTimeoutMs }) {
+export async function listUsers({ base, account, rootKey, fetchFn = /** @type {OvFetch} */ (fetch), timeoutMs = DEFAULTS.requestTimeoutMs }) {
   const r = await call(fetchFn, `${base}${adminUsersPath(account)}`, { method: "GET", headers: adminHeaders(rootKey) }, timeoutMs);
   if (r.status < 200 || r.status >= 300) return { users: null, keys: {}, status: r.status, detail: r.error ?? `HTTP ${r.status}` };
   if (r.body && typeof r.body === "object" && r.body.status === "error") {
@@ -258,7 +274,7 @@ export async function listUsers({ base, account, rootKey, fetchFn = fetch, timeo
 }
 
 /** Create ONE user. A 409 is success: the user already exists. */
-export async function createUser({ base, account, user, rootKey, fetchFn = fetch, timeoutMs = DEFAULTS.requestTimeoutMs }) {
+export async function createUser({ base, account, user, rootKey, fetchFn = /** @type {OvFetch} */ (fetch), timeoutMs = DEFAULTS.requestTimeoutMs }) {
   const r = await call(
     fetchFn,
     `${base}${adminUsersPath(account)}`,
@@ -296,7 +312,7 @@ export async function createUser({ base, account, user, rootKey, fetchFn = fetch
  * reports them; it must never invent or rotate one. Never throws, never writes
  * a file, never logs a key value.
  */
-export async function mintUserKeys({ base, account, users, rootKey, fetchFn = fetch, log = () => {} }) {
+export async function mintUserKeys({ base, account, users, rootKey, fetchFn = /** @type {OvFetch} */ (fetch), log = () => {} }) {
   const report = { keys: {}, created: [], kept: [], missing: [], ok: true, detail: "" };
   if (!rootKey) {
     report.ok = false;
@@ -359,7 +375,7 @@ export async function mintUserKeys({ base, account, users, rootKey, fetchFn = fe
  * request shape and verdict logic (`scripts/companion-memory-forward.mjs`) so
  * there is exactly ONE definition of reach/refusal/inconclusive in the repo.
  */
-export async function probeKey({ base, key, user, fetchFn = fetch, env = process.env, timeoutMs = DEFAULTS.requestTimeoutMs }) {
+export async function probeKey({ base, key, user, fetchFn = /** @type {OvFetch} */ (fetch), env = process.env, timeoutMs = DEFAULTS.requestTimeoutMs }) {
   // Namespace in the URI — the server confines by URI, not by the header
   // (verified live 2026-08-25; see PATHS.readUri in the forward).
   const url = `${base}${PATHS.read(env)}?uri=${encodeURIComponent(PATHS.readUri(env, user))}`;
@@ -378,7 +394,7 @@ export function serverArgv(cfg) {
   return ["--config", cfg.config, "--host", cfg.host, "--port", String(cfg.port)];
 }
 
-export async function waitForReady({ base, fetchFn = fetch, timeoutMs = DEFAULTS.readyTimeoutMs, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now }) {
+export async function waitForReady({ base, fetchFn = /** @type {OvFetch} */ (fetch), timeoutMs = DEFAULTS.readyTimeoutMs, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now }) {
   const deadline = now() + timeoutMs;
   for (;;) {
     const r = await call(fetchFn, `${base}/ready`, { method: "GET", headers: {} }, 2000);
@@ -396,7 +412,7 @@ export async function waitForReady({ base, fetchFn = fetch, timeoutMs = DEFAULTS
  *
  * Returns a report; NEVER throws.
  */
-export async function provision({ base, account, users, rootKey, reviewerKey, reviewerUser = "reviewer", fetchFn = fetch, env = process.env, log = console.log }) {
+export async function provision({ base, account, users, rootKey, reviewerKey, reviewerUser = "reviewer", fetchFn = /** @type {OvFetch} */ (fetch), env = process.env, log = console.log }) {
   const report = { created: [], kept: [], failed: [], reviewer: "skipped", ok: true };
   if (!rootKey) {
     log("openviking: no root key in the secrets mount — users NOT provisioned; memory degrades until one is");

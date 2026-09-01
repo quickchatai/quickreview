@@ -104,7 +104,9 @@ describe("validateCommand — whitelist", () => {
     // The overseer's frozen system prompt still advertises the retired
     // command, so the rejection must say WHY, not just "unknown".
     const retired = validateCommand({ command: "mark-escalation-worthy", pr: 1, reason: "x" });
-    expect(retired.ok).toBe(false);
+    // Narrow before reading `reason` — it lives only on the refusal arm, and
+    // reading it off the union asserted against `undefined`.
+    if (retired.ok) throw new Error("mark-escalation-worthy must be refused");
     expect(retired.reason).toMatch(/RETIRED on 2026-08-18/);
     expect(retired.reason).toMatch(/NEEDS_HUMAN/);
     expect(validateCommand([{ command: "rerun-round", pr: 1 }]).ok).toBe(false);

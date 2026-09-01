@@ -43,7 +43,16 @@ export const DEPLOY_MARKER = ".deploy-window.json";
 export const DEPLOY_GRACE_MS = 10 * 60 * 1000;
 
 /** Is a deploy window open? Never throws: no marker (or an unreadable one)
- * means no grace. mtime is the signal — the stamp refreshes it. */
+ * means no grace. mtime is the signal — the stamp refreshes it.
+ *
+ * `statFn` is declared by the one field this reads, not as `typeof statSync`
+ * (whose overloads make every stub uncompilable) — same reasoning as `probe`.
+ *
+ * @param {string} dir
+ * @param {number} nowMs
+ * @param {number} [graceMs]
+ * @param {(path: string) => { mtimeMs: number }} [statFn]
+ */
 export function deployGraceActive(dir, nowMs, graceMs = DEPLOY_GRACE_MS, statFn = statSync) {
   try {
     const age = nowMs - statFn(join(dir, DEPLOY_MARKER)).mtimeMs;
@@ -59,6 +68,7 @@ export const CAUSE_UP = "companion-memory-restored";
 /** @typedef {{ ok: boolean, reason: string }} Sample */
 /** @typedef {{ fails: number, announced: "down" | "up" | null }} WatchState */
 
+/** @returns {WatchState} */
 export function initialState() {
   return { fails: 0, announced: null };
 }
@@ -143,6 +153,14 @@ export function writeAlertFile(dir, body) {
  * which is our normal state), `/health` first because a refused connection
  * makes the second call pointless.
  *
+ * The `fetchFn` seam is declared by the MINIMUM this function reads — a status
+ * and an ok flag — not as `typeof fetch`: the default binds it to the global,
+ * and a seam typed by its implementation rather than by its use forces every
+ * test double to fabricate a whole `Response`.
+ *
+ * @param {string} endpoint
+ * @param {number} [timeoutMs]
+ * @param {(url: string, init?: { signal?: AbortSignal }) => Promise<{ ok: boolean, status: number }>} [fetchFn]
  * @returns {Promise<Sample>}
  */
 export async function probe(endpoint, timeoutMs = DEFAULT_TIMEOUT_MS, fetchFn = fetch) {

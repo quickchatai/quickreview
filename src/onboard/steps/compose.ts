@@ -27,7 +27,7 @@ import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { expandHome } from "../../config.js";
 import { CHOICE_KEYS } from "../choices.js";
 import type { CheckResult, OnboardAdapters, ProcessResult, ProcessRunner, StepContext } from "../engine.js";
-import { INGRESS_CHOICE_KEY, optionFor, parseComposePs, readEnvKey, readTomlKey, secretsDirOf, type IngressOption, type RunningService } from "./ingress.js";
+import { INGRESS_CHOICE_KEY, optionFor, parseComposePs, readEnvKey, readTomlKey, type IngressOption, type RunningService } from "./ingress.js";
 
 /** The compose service that runs the daemon (docker-compose.yml). */
 export const DAEMON_SERVICE = "daemon";

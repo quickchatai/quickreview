@@ -28,7 +28,6 @@ beforeEach(() => {
   cfg.owner.slack_id = "U_MAT";
   cfg.slack.users = { U_MAT: "mhale", U_ALICE: "alice" };
   cfg.github.repo = "exampleorg/example-app";
-  cfg.github.escalation_reviewer = "mhale";
 });
 
 describe("escaping and refs", () => {

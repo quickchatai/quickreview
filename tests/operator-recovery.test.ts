@@ -109,7 +109,7 @@ describe("operator PR recovery", () => {
   it("refuses rerun-round while durable session ownership still blocks dispatch", async () => {
     const { store, dir, pr } = setup();
     command(store, dir, pr);
-    const pump = vi.fn(async () => []);
+    const pump = vi.fn(async () => {});
 
     const result = await recoverPrForOperator({ store, pump }, pr, "rerun-round");
 
@@ -126,7 +126,7 @@ describe("operator PR recovery", () => {
     const pump = vi.fn(async () => {
       store.setPrState(pr, "reviewing");
       store.startRound(pr, "re-review", ["pass-baseline"], 75);
-      return [];
+      return;
     });
 
     const result = await recoverPrForOperator({ store, pump, killSession }, pr, "restart-session");
@@ -144,7 +144,7 @@ describe("operator PR recovery", () => {
     const c = command(store, dir, pr, "wake", "zażółć 🧭\0\n");
     const pump = vi.fn(async () => {
       expect(store.heldWakes(pr).map((wake) => wake.payload)).toEqual([c.payload]);
-      return [];
+      return;
     });
 
     const result = await recoverPrForOperator({ store, pump, killSession: async () => {} }, pr, "restart-session");
@@ -162,7 +162,7 @@ describe("operator PR recovery", () => {
     const successorInjectPath = join(dir, "successor.inject.md");
     writeFileSync(successorPayloadPath, successorPayload);
     writeFileSync(successorInjectPath, successorPayload);
-    const pump = vi.fn(async () => []);
+    const pump = vi.fn(async () => {});
 
     await expect(recoverPrForOperator({
       store,
@@ -194,7 +194,7 @@ describe("operator PR recovery", () => {
   it("never reopens a PR that closes while its old session is being fenced", async () => {
     const { store, dir, pr } = setup();
     command(store, dir, pr, "round");
-    const pump = vi.fn(async () => []);
+    const pump = vi.fn(async () => {});
 
     const result = await recoverPrForOperator({
       store,
@@ -209,7 +209,7 @@ describe("operator PR recovery", () => {
   it("changes nothing when the old session cannot be fenced", async () => {
     const { store, dir, pr } = setup();
     const c = command(store, dir, pr, "wake");
-    const pump = vi.fn(async () => []);
+    const pump = vi.fn(async () => {});
 
     await expect(recoverPrForOperator({
       store,
@@ -228,7 +228,7 @@ describe("operator PR recovery", () => {
     const c = command(store, dir, pr);
     writeFileSync(c.payloadPath, "corrupt\n");
     const killSession = vi.fn(async () => {});
-    const pump = vi.fn(async () => []);
+    const pump = vi.fn(async () => {});
 
     const result = await recoverPrForOperator({ store, pump, killSession }, pr, "restart-session");
 
@@ -242,7 +242,7 @@ describe("operator PR recovery", () => {
   it("retires an impossible same-head posting-receipt retry without dispatch", async () => {
     const { store, dir, pr } = setup();
     const fixture = postingReceiptFailure(store, dir, pr);
-    const pump = vi.fn(async () => []);
+    const pump = vi.fn(async () => {});
 
     const result = await recoverPrForOperator({ store, pump }, pr, "rerun-round");
 
@@ -273,7 +273,7 @@ describe("operator PR recovery", () => {
     const { store, dir, pr } = setup();
     postingReceiptFailure(store, dir, pr, false, "REQUEST_CHANGES", true);
     expect(store.reviewedHead(pr)).toMatchObject({ verdict: null, posted_event: "REQUEST_CHANGES", round_no: null });
-    const pump = vi.fn(async () => []);
+    const pump = vi.fn(async () => {});
 
     const result = await recoverPrForOperator({ store, pump }, pr, "rerun-round");
 
@@ -287,7 +287,7 @@ describe("operator PR recovery", () => {
   it("cancels an exact failed command while retiring its receipt debt", async () => {
     const { store, dir, pr } = setup();
     const fixture = postingReceiptFailure(store, dir, pr, false, "REQUEST_CHANGES", false, "failed");
-    const pump = vi.fn(async () => []);
+    const pump = vi.fn(async () => {});
 
     const result = await recoverPrForOperator({ store, pump }, pr, "rerun-round");
 
@@ -299,7 +299,7 @@ describe("operator PR recovery", () => {
   it.each([false, true])("restores tracked for an exact-head standing approval (shellOnly=%s)", async (shellOnly) => {
     const { store, dir, pr } = setup();
     postingReceiptFailure(store, dir, pr, false, "APPROVE", shellOnly);
-    const pump = vi.fn(async () => []);
+    const pump = vi.fn(async () => {});
 
     const result = await recoverPrForOperator({ store, pump }, pr, "rerun-round");
 
@@ -328,7 +328,7 @@ describe("operator PR recovery", () => {
     const fixture = postingReceiptFailure(store, dir, pr);
     store.db.prepare("UPDATE review_failures SET round_id=? WHERE incident_id=?")
       .run(fixture.roundId + 999, fixture.failure.incident_id);
-    const pump = vi.fn(async () => []);
+    const pump = vi.fn(async () => {});
 
     const result = await recoverPrForOperator({ store, pump }, pr, "rerun-round");
 
@@ -347,7 +347,7 @@ describe("operator PR recovery", () => {
       next_check_at: T0,
     });
     store.failPendingSessionCommand("legacy-failed", "legacy owner failed");
-    const pump = vi.fn(async () => []);
+    const pump = vi.fn(async () => {});
 
     const result = await recoverPrForOperator({ store, pump }, pr, "rerun-round");
 
@@ -371,7 +371,7 @@ describe("operator PR recovery", () => {
     store.failPendingSessionCommand("obsolete-round-command", "old failed attempt");
     store.markRoundCancelled(obsoleteRoundId, "old terminal attempt", "infrastructure_failure");
     store.setPrState(pr, "queued");
-    const pump = vi.fn(async () => []);
+    const pump = vi.fn(async () => {});
 
     const result = await recoverPrForOperator({ store, pump }, pr, "rerun-round");
 
@@ -407,7 +407,7 @@ describe("operator PR recovery", () => {
     postingReceiptFailure(store, dir, pr);
     const humanTs = "2026-08-31T08:05:00.000Z";
     store.db.prepare("UPDATE pr_state SET trigger_ts=?, trigger_provenance='human' WHERE number=?").run(humanTs, pr);
-    const pump = vi.fn(async () => []);
+    const pump = vi.fn(async () => {});
 
     const result = await recoverPrForOperator({ store, pump }, pr, "rerun-round");
 
@@ -422,7 +422,7 @@ describe("operator PR recovery", () => {
     const { store, dir, pr } = setup();
     postingReceiptFailure(store, dir, pr);
     store.holdWake(pr, "author reply", "author_reply");
-    const pump = vi.fn(async () => []);
+    const pump = vi.fn(async () => {});
 
     const result = await recoverPrForOperator({ store, pump }, pr, "rerun-round");
 
@@ -443,7 +443,7 @@ describe("operator PR recovery", () => {
       expect(store.getPr(pr)?.head_sha).toBe("b".repeat(40));
       store.setPrState(pr, "reviewing");
       store.startRound(pr, "re-review", ["pass-baseline"], 75);
-      return [];
+      return;
     });
 
     const result = await recoverPrForOperator({ store, pump }, pr, "rerun-round");
@@ -459,7 +459,7 @@ describe("operator PR recovery", () => {
     const pump = vi.fn(async () => {
       store.setPrState(pr, "reviewing");
       store.startRound(pr, "re-review", ["pass-baseline"], 75);
-      return [];
+      return;
     });
 
     const result = await recoverPrForOperator({ store, pump }, pr, "rerun-round");
@@ -472,7 +472,7 @@ describe("operator PR recovery", () => {
   it("does not call a mere pump invocation success when the PR stays queued", async () => {
     const { store, pr } = setup();
 
-    const result = await recoverPrForOperator({ store, pump: async () => [] }, pr, "rerun-round");
+    const result = await recoverPrForOperator({ store, pump: async () => {} }, pr, "rerun-round");
 
     expect(result).toMatchObject({ ok: false, redispatched: false });
     expect(result.reason).toContain("no running round");
@@ -485,7 +485,7 @@ describe("operator PR recovery", () => {
       store,
       pump: async () => {
         store.setPrState(pr, "reviewing");
-        return [];
+        return;
       },
     }, pr, "rerun-round");
 
@@ -503,7 +503,7 @@ describe("operator PR recovery", () => {
 
     const result = await recoverPrForOperator({
       store,
-      pump: async () => [],
+      pump: async () => {},
       killSession: async () => {},
     }, pr, "restart-session");
 

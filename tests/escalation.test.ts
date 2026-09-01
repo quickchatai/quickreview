@@ -188,7 +188,10 @@ describe("INVARIANT 1 — the reviewer still decides; escalation rides beside th
       const row = s.getPr(42)!;
       snapshots.push({
         state: row.state,
-        verdict: row.last_verdict ?? null,
+        // (`PrStateRow` carries no verdict column at all — the line that used
+        // to read `row.last_verdict` here compared undefined against undefined
+        // on both sides of the parity and asserted nothing. The `round` line
+        // below is where the verdict actually is..)
         head: row.head_sha,
         round: s.roundsFor(42).map((r) => `${r.round_no}:${r.status}:${r.verdict ?? ""}`),
         // Timestamps are wall-clock, so only the SHAPE and content are

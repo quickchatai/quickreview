@@ -135,6 +135,7 @@ async function runStep(opts: RunOpts = {}) {
   const prompter = opts.noPrompter ? undefined : scriptedPrompter(answers, askedIds(choices), log);
   const ctx: StepContext = {
     adapters: adapters(prompter),
+    input: {},
     choices,
     data: opts.data ?? {},
     recordChoice: (k, v) => {
@@ -461,6 +462,7 @@ describe("re-run", () => {
     const choices: Record<string, unknown> = {};
     const ctx: StepContext = {
       adapters: adapters(async () => ""),
+      input: {},
       choices,
       data: (first.report.data ?? {}) as Record<string, unknown>,
       recordChoice: (k, v) => {
@@ -484,6 +486,7 @@ describe("re-run", () => {
         for (const [needle, value] of answers) if (q.includes(needle)) return value;
         return "";
       }),
+      input: {},
       choices,
       data: {},
       recordChoice: (k, v) => {
@@ -506,6 +509,7 @@ describe("re-run", () => {
     const choices: Record<string, unknown> = {};
     const ctx: StepContext = {
       adapters: adapters(async () => ""),
+      input: {},
       choices,
       data: {},
       recordChoice: (k, v) => {
@@ -520,6 +524,7 @@ describe("re-run", () => {
     const first = await runStep();
     const ctx: StepContext = {
       adapters: adapters(),
+      input: {},
       choices: {},
       data: (first.report.data ?? {}) as Record<string, unknown>,
       recordChoice: () => {},
@@ -531,7 +536,7 @@ describe("re-run", () => {
   });
 
   it("verify is red when there is no config, and when a required key is empty", async () => {
-    const bare: StepContext = { adapters: adapters(), choices: {}, data: {}, recordChoice: () => {} };
+    const bare: StepContext = { adapters: adapters(), input: {}, choices: {}, data: {}, recordChoice: () => {} };
     const none = await configFillStep().verify(bare);
     expect(none.ok).toBe(false);
     expect(failed(none)).toMatch(/does not exist/);
@@ -548,7 +553,7 @@ describe("re-run", () => {
     await runStep();
     const path = join(root, "config.toml");
     writeFileSync(path, readFileSync(path, "utf8").replace('bot_login = "acme-reviewer[bot]"', 'bot_login = "someone-else[bot]"'));
-    const ctx: StepContext = { adapters: adapters(), choices: {}, data: {}, recordChoice: () => {} };
+    const ctx: StepContext = { adapters: adapters(), input: {}, choices: {}, data: {}, recordChoice: () => {} };
     const report = await configFillStep().verify(ctx);
     expect(report.ok).toBe(false);
     expect(failed(report)).toMatch(/bot_login/);

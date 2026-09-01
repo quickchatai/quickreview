@@ -28,7 +28,7 @@
 // focused on.
 import type { CompanionConfig } from "../config.js";
 import type { DockerRunner } from "./companion.js";
-import { ACCENT, ACCENT_BG, BAD, MUTED, OK, RESET, SEP, WARN } from "./design.js";
+import { ACCENT, BAD, MUTED, OK, RESET, SEP, WARN } from "./design.js";
 import { displayWidth, fit } from "./paint.js";
 import { keysToTmux, SCROLL_STEP, splitCapture } from "./pipane.js";
 

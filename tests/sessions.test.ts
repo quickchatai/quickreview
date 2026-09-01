@@ -40,7 +40,6 @@ const cfg = (): Config =>
       app_slug: "example-review",
       bot_login: "example-review[bot]",
       review_team: "exampleorg/review",
-      escalation_reviewer: "mhale",
       trigger_label: "AI review requested",
       in_progress_label: "AI review in progress",
       reviewed_label: "Automatic Review",
@@ -156,7 +155,15 @@ const order: RoundOrder = {
   round_no: 1,
   round_type: "first",
   lenses: ["pass-baseline"],
-  escalation_reasons: [],
+  // These five are REQUIRED on RoundOrder and were missing: the fixture also
+  // carried a long-retired `escalation_reasons` key, and TypeScript reports
+  // the excess property first — so the retired key was masking five holes
+  // while tests/ went unchecked.
+  pass_plan: [{ lens: "pass-baseline", agent: "pass-baseline", tier: "sol-med", raisable_to: [] }],
+  addable_lenses: [],
+  base_ref: "master",
+  base_sha: "base123",
+  merge_base: "base123",
   migration_gate: false,
   head_sha: "abc123",
   worktree: "wt/pr-42",

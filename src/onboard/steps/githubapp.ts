@@ -43,7 +43,7 @@
 // step's own options — so the tests fake the whole flow and never bind a port
 // or touch the network.
 import { createPrivateKey, randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";

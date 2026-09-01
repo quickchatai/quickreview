@@ -23,7 +23,7 @@ import {
 } from "../src/tui/design.js";
 import { renderBoard, type BoardView } from "../src/tui/board.js";
 import { renderDeployTab, type DeployState } from "../src/tui/deploytab.js";
-import { renderDigestTab, type DigestState } from "../src/tui/digesttab.js";
+import { renderDigestTab } from "../src/tui/digesttab.js";
 import { renderMemoryView, type MemTabState } from "../src/tui/memtab.js";
 import { renderMetrics, type MetricsView } from "../src/tui/metricstab.js";
 import { displayWidth, stripAnsi, Frame } from "../src/tui/paint.js";
