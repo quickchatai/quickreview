@@ -586,7 +586,6 @@ downtime_notice_min = 5
 heartbeat_interval_min = 5
 storm_corrections = 5
 awaiting_author_stale_h = 48
-awaiting_human_stale_h = 72
 broadcast_verdicts = "never"      # verdicts stay in-thread — no reply_broadcast
 
 [slack.policy.causes]
@@ -602,4 +601,3 @@ broadcast_verdicts = "never"      # verdicts stay in-thread — no reply_broadca
 "reconcile.storm"          = { enabled = false, cooldown_min = 180 }
 "digest.eod"               = { enabled = false, cooldown_min = 0 }
 "pr.awaiting_author_stale" = { enabled = false, cooldown_min = 1440 }
-"pr.awaiting_human_stale"  = { enabled = false, cooldown_min = 1440 }

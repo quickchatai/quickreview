@@ -201,7 +201,6 @@ describe("computeMetrics", () => {
       rounds: 3,
       spend_usd: 4,
       overruns: 1,
-      awaiting_you: 1,
     });
     // The backfilled round joins the 30-day/all windows: one more round, one
     // more APPROVE, no extra dollar.

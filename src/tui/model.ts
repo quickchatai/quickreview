@@ -9,7 +9,6 @@ export const STATE_GLYPHS: Record<PrLifecycleState, string> = {
   queued: "●",
   reviewing: "▶",
   awaiting_author: "✎",
-  awaiting_human: "⚑",
   tracked: "·",
   closed: " ", // closed PRs never render — they drop off the list
 };
@@ -20,7 +19,7 @@ export function glyphFor(pr: Pick<SnapshotPr, "state" | "stale_recheck">): strin
   return pr.stale_recheck ? `↻${base}` : base;
 }
 
-const SORT_ORDER: PrLifecycleState[] = ["reviewing", "queued", "awaiting_human", "awaiting_author", "tracked"];
+const SORT_ORDER: PrLifecycleState[] = ["reviewing", "queued", "awaiting_author", "tracked"];
 
 /** Board order: lifecycle groups per the mockup, stable by PR number within
  * a group; closed PRs are dropped entirely. */
@@ -61,18 +60,6 @@ export function formatEvent(e: { ts: string; kind: string; pr: number | null; pa
   const anomaly = /anomal|reject|error|fail|overdue/i.test(e.kind);
   const kind = anomaly ? e.kind.toUpperCase() : e.kind;
   return { ts: hhmmss, text: `${hhmmss} ${kind}${e.pr ? ` #${e.pr}` : ""}${detail}`, anomaly };
-}
-
-/** Awaiting-you rows: parked PRs oldest-first with age in whole days. */
-export function awaitingRows(prs: SnapshotPr[], now: Date): Array<{ pr: SnapshotPr; ageDays: number }> {
-  return prs
-    .filter((p) => p.state === "awaiting_human")
-    .map((pr) => {
-      const since = pr.trigger_ts ?? pr.updated_at;
-      const ageDays = since ? Math.max(0, Math.floor((now.getTime() - new Date(since).getTime()) / 86_400_000)) : 0;
-      return { pr, ageDays };
-    })
-    .sort((a, b) => b.ageDays - a.ageDays || a.pr.number - b.pr.number);
 }
 
 export function moveSelection(current: number, delta: number, length: number): number {

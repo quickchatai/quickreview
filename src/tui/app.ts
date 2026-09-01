@@ -101,6 +101,10 @@ export type Tab = "board" | "digest" | "deploy" | "metrics" | "changes";
 /** Every encoding of the End key we might see — the pi pane's "back to live". */
 const END_KEYS = new Set(["\x1b[F", "\x1bOF", "\x1b[4~", "\x1b[8~"]);
 
+/** Decoded verbs whose subject is the BOARD's selected PR. `handleInput`
+ * refuses them off the board — see the comment at the guard. */
+const BOARD_ONLY_VERBS: ReadonlySet<string> = new Set(["attach", "enter", "message", "detail", "github", "overseer", "main-session"]);
+
 export class App {
   readonly view: BoardView = {
     health: { kind: "unreachable", sinceS: Number.POSITIVE_INFINITY },
@@ -962,6 +966,16 @@ export class App {
       this.repaint();
       return;
     }
+
+    // the verbs below act on the BOARD's selected PR, so they only
+    // answer on the board. They used to run from any tab whose handler let
+    // them through — pressing `a` on the memory tab focused the board's pi
+    // pane behind your back, and `w` toggled the board's detail page you
+    // could not see. A verb with no meaning on the current surface must do
+    // nothing; the printable spellings are unregistered off the board, so
+    // they reach the companion column instead of dying here. The one
+    // exception is a live alert, which owns ⏎ from wherever you are.
+    if (this.tab !== "board" && BOARD_ONLY_VERBS.has(key.kind) && !(key.kind === "enter" && this.view.alertFocus)) return;
 
     switch (key.kind) {
       case "quit":

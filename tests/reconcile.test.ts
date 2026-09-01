@@ -390,18 +390,20 @@ describe("reconcileOnce", () => {
     expect(store.isBotComment(333)).toBe(false);
   });
 
-  // Since the escalation scrap (2026-08-18), awaiting_human is a purely LOCAL
-  // state: a requested reviewer on GitHub is somebody else's business and must
-  // no longer park a PR here. The reconcile pass only counts what is parked.
-  it("reports locally parked PRs and never parks one off a GitHub review request", async () => {
+  // A human reviewer requested on GitHub is somebody else's business: it must
+  // not move our lifecycle state, and it can never produce a park — there is
+  // no park (removed the state and the migration that used to
+  // drain it, after a live check found no row left carrying one).
+  it("never changes local state off a GitHub review request", async () => {
     gh.open = [ref(16), ref(17)];
     gh.requested.set(16, { users: ["mhale"], teams: [] });
     seed(16, "tracked");
-    seed(17, "awaiting_human");
+    seed(17, "awaiting_author");
     const { hooks } = recordingHooks();
     const report = await reconcileOnce({ cfg, store, adapter: gh, hooks });
-    expect(store.getPr(16)!.state).toBe("tracked"); // a human reviewer ≠ our park
-    expect(report.awaiting_human).toEqual([17]);
+    expect(store.getPr(16)!.state).toBe("tracked");
+    expect(store.getPr(17)!.state).toBe("awaiting_author");
+    expect(report.triggered).not.toContain(16);
     expect(gh.calls).not.toContain("searchAwaitingEscalationReviewer");
   });
 

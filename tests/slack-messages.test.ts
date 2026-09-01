@@ -210,13 +210,13 @@ describe("re-round, pre-flag, superseded", () => {
 describe("unprompted causes", () => {
   it("renders round.overdue", () => {
     expect(causeMessage(cfg, { cause: "round.overdue", pr: 5263, round_no: 2, deadline_min: 45 })).toBe(
-      "⏱ #5263 round 2 blew its 45-min deadline — parked on awaiting_human for <@U_MAT>. No verdict was posted.",
+      "⏱ #5263 round 2 blew its 45-min deadline — no verdict was posted, and no approval was implied. <@U_MAT>",
     );
   });
 
   it("renders round.malformed_verdict", () => {
     expect(causeMessage(cfg, { cause: "round.malformed_verdict", pr: 5263, round_no: 2 })).toBe(
-      "⚠️ #5263 round 2 ended without a usable verdict — parked on awaiting_human, no approval was implied.",
+      "⚠️ #5263 round 2 ended without a usable verdict — nothing was posted and no approval was implied.",
     );
   });
 
@@ -246,7 +246,6 @@ describe("unprompted causes", () => {
       { cause: "reconcile.storm", corrections: 9, window_min: 30 },
       { cause: "digest.eod", headline: "3 reviews, 1 escalation" },
       { cause: "pr.awaiting_author_stale", pr: 5, hours: 48 },
-      { cause: "pr.awaiting_human_stale", pr: 5, hours: 72 },
     ] as const) {
       expect(causeMessage(cfg, input).length).toBeGreaterThan(10);
     }
@@ -281,7 +280,6 @@ describe("hard rule 2 — nothing the daemon says implies a dismissal", () => {
       causeMessage(cfg, { cause: "reconcile.storm", corrections: 1, window_min: 1 }),
       causeMessage(cfg, { cause: "digest.eod", headline: "h" }),
       causeMessage(cfg, { cause: "pr.awaiting_author_stale", pr: 1, hours: 48 }),
-      causeMessage(cfg, { cause: "pr.awaiting_human_stale", pr: 1, hours: 72 }),
       messages.heartbeatMessage({ refreshed_at: "2026-08-17T09:00:00.000Z", running: 1, max_concurrent: 2, queued: 0, dry_run: false }),
     ];
     for (const text of rendered) expect(text.toLowerCase()).not.toContain("dismiss");

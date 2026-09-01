@@ -20,10 +20,10 @@ review_team = "example-org/review"          # team-review-requested trigger
 # neutral base branch (the code default); clone_dir stays "" so the
 # derived-from-repo-slug path ("example-app") is what tests exercise.
 base_branch = "main"
-# escalation_reviewer was removed on 2026-08-18 with the escalation mechanics:
-# the daemon never nominates a reviewer on GitHub. A PR it cannot decide is
-# parked on `awaiting_human` daemon-side (verdict NEEDS_HUMAN) and surfaced in
-# the TUI and Slack.
+# There is no reviewer knob here. The reviewer never hands a PR back: it always
+# decides on the merits and posts a verdict. If you want a named person told
+# about a particular KIND of change, that is the optional [escalation] section
+# further down — off by default.
 trigger_label = "AI review requested"
 in_progress_label = "AI review in progress"
 reviewed_label = "Automatic Review"
@@ -431,7 +431,6 @@ downtime_notice_min = 5
 heartbeat_interval_min = 5
 storm_corrections = 5
 awaiting_author_stale_h = 48
-awaiting_human_stale_h = 72
 broadcast_verdicts = "never"      # verdicts stay in-thread — no reply_broadcast
 
 [slack.policy.causes]
@@ -447,4 +446,3 @@ broadcast_verdicts = "never"      # verdicts stay in-thread — no reply_broadca
 "reconcile.storm"          = { enabled = false, cooldown_min = 180 }
 "digest.eod"               = { enabled = false, cooldown_min = 0 }
 "pr.awaiting_author_stale" = { enabled = false, cooldown_min = 1440 }
-"pr.awaiting_human_stale"  = { enabled = false, cooldown_min = 1440 }

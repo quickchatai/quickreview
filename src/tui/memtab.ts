@@ -1,7 +1,7 @@
 // The Memory & learning tab — the renamed [2] tab. Two views:
 //
-//   * digest view — the digest screen, unchanged in substance
-//     (digest left, awaiting-you right), still paged by [ / ].
+//   * digest view — the digest screen, full width
+//     retired the awaiting-you panel beside it, still paged by [ / ].
 //   * memory view (`v` toggles) — the full memory timeline newest-first on
 //     the left (pinned floated, the digest-selected day highlighted), the
 //     proposals + defects stack on the right.
@@ -33,7 +33,6 @@ import type { IssueSink } from "./issuesink.js";
 import { paintCmdBar } from "./cmdbar.js";
 import { currentFile, renderDigestTab, SshDigestFetcher, type DigestAction, type DigestFetcher, type DigestState } from "./digesttab.js";
 import { applyMemoryFilter, memoryFilterLabel } from "./filters.js";
-import { awaitingRows, sortPrs } from "./model.js";
 import { parseEventTags } from "../memory/eventtags.js";
 import { defectEntries, refOf, storeHealth, timelineOrder, tuiMemoryStore, type MemoryEntry, type MemoryStore } from "./memory.js";
 import type { ForwardStatus } from "./memforward.js";
@@ -598,7 +597,7 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
   const now = deps.now ?? (() => new Date());
   const st: MemTabState = {
     view: "digest",
-    digest: { files: [], back: 0, scroll: 0, awaitingSelected: 0, loaded: false },
+    digest: { files: [], back: 0, scroll: 0, loaded: false },
     entries: [],
     memLoaded: false,
     focus: "timeline",
@@ -813,8 +812,7 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
     }
     const today = now().toISOString().slice(0, 10);
     if (st.view === "digest") {
-      const prs = theApp.view.snapshot ? sortPrs(theApp.view.snapshot.prs) : undefined;
-      const frame = renderDigestTab(st.digest, prs, theApp.view.dryRun, today, cols, rows);
+      const frame = renderDigestTab(st.digest, theApp.view.dryRun, today, cols, rows);
       lastZones = frame.zones;
       // The Frame, not its rendering: the app composes the companion column
       // beside it and only then paints.
@@ -870,16 +868,6 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
         theApp.hooks.openUrl?.(action.url);
         theApp.notice(`opened ${action.url}`);
         return;
-      case "await": {
-        // Like the board: first click selects the row, a second attaches.
-        if (st.digest.awaitingSelected === action.i) {
-          void theApp.hooks.attach?.(`pr-${action.pr}`, theApp);
-        } else {
-          st.digest.awaitingSelected = action.i;
-          theApp.repaint();
-        }
-        return;
-      }
     }
   };
 
@@ -918,18 +906,17 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
   };
 
   const digestViewKey = (theApp: App, key: BoardKey): boolean => {
-    const awaiting = theApp.view.snapshot ? awaitingRows(sortPrs(theApp.view.snapshot.prs), now()) : [];
     switch (key.kind) {
       case "events":
         // `e` is the MEMORY view's edit; here it would fall through to the
         // board's events overlay and silently toggle it — swallow instead.
         return true;
+      // j/k AND the arrows scroll the digest. Until the arrows moved a
+      // selection over the awaiting-you list instead; with that list gone there
+      // is nothing on this view to select, so both spellings do the one thing.
       case "down":
       case "up": {
-        if (key.arrow) {
-          const delta = key.kind === "down" ? 1 : -1;
-          st.digest.awaitingSelected = Math.max(0, Math.min(st.digest.awaitingSelected + delta, Math.max(0, awaiting.length - 1)));
-        } else if (key.kind === "down") st.digest.scroll += 1;
+        if (key.kind === "down") st.digest.scroll += 1;
         else st.digest.scroll = Math.max(0, st.digest.scroll - 1);
         theApp.repaint();
         return true;
@@ -937,26 +924,6 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
       case "digest-older":
       case "digest-newer":
         return pageDigest(theApp, key.kind === "digest-older" ? 1 : -1);
-      case "enter": {
-        const row = awaiting[st.digest.awaitingSelected];
-        if (row) void theApp.hooks.attach?.(`pr-${row.pr.number}`, theApp);
-        return true;
-      }
-      case "detail": {
-        const row = awaiting[st.digest.awaitingSelected];
-        if (row) {
-          theApp.tab = "board";
-          theApp.selectPr(row.pr.number);
-          theApp.view.detailFull = true;
-          theApp.repaint();
-        }
-        return true;
-      }
-      case "message": {
-        const row = awaiting[st.digest.awaitingSelected];
-        if (row) theApp.hooks.message?.(`pr-${row.pr.number}`, theApp);
-        return true;
-      }
       case "refresh":
         st.digest.loaded = false;
         st.memLoaded = false;
@@ -1093,22 +1060,19 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
             return true; // memory view swallows stray chars — nothing falls to the board
         }
       case "attach":
-        // `a` is attach in the digest's awaiting-PR list, but in the feedback
-        // timeline it is the spatially local archive toggle the owner asked for.
-        if ((st.memFilter ?? "").replace(/^#+/, "").toLowerCase() === "feedback") {
-          st.feedbackShowArchived = !st.feedbackShowArchived;
-          st.sel = 0;
-          theApp.repaint();
-        }
+        // In a #feedback timeline `a` is the spatially local archive toggle the
+        // owner asked for. Anywhere else it is NOT this tab's key: took
+        // a/m/w/g/o/M off `registeredKeys("digest")`, so returning false hands
+        // the keystroke to the companion column like any other printable.
+        if ((st.memFilter ?? "").replace(/^#+/, "").toLowerCase() !== "feedback") return false;
+        st.feedbackShowArchived = !st.feedbackShowArchived;
+        st.sel = 0;
+        theApp.repaint();
         return true;
       case "enter":
-      // Decoded board verbs must not leak through to the board while the
-      // memory view is up. Tabs, quit, and help still fall through.
-      case "message":
-      case "detail":
-      case "github":
-      case "overseer":
-      case "main-session":
+        // ⏎ is not a printable, so it can never reach the companion column;
+        // swallowing it here keeps it from focusing the BOARD's pi pane from a
+        // tab that is not the board.
         return true;
       default:
         // tabs/quit/help — and reconnect: the bar promises [s ssh]

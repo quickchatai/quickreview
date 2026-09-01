@@ -35,7 +35,7 @@ const snapshot: StatusSnapshot = {
   prs: [
     {
       number: 5265,
-      state: "awaiting_human",
+      state: "awaiting_author",
       title: "fix(ui): frame the buttons",
       head_sha: "19277cdff",
       stale_recheck: 0,
@@ -80,7 +80,7 @@ const view = (over: Partial<BoardView> = {}): BoardView => ({
 
 describe("theme", () => {
   it("maps every lifecycle state to a distinct color", () => {
-    const colors = ["reviewing", "queued", "awaiting_author", "awaiting_human", "tracked"].map(stateColor);
+    const colors = ["reviewing", "queued", "awaiting_author", "tracked"].map(stateColor);
     expect(new Set(colors).size).toBe(colors.length);
   });
 
@@ -108,7 +108,9 @@ describe("theme", () => {
 
   it("legend covers every glyph", () => {
     const plain = stripAnsi(legendLine());
-    for (const g of ["▶", "●", "⚑", "✎", "·", "↻"]) expect(plain).toContain(g);
+    for (const g of ["▶", "●", "✎", "·", "↻"]) expect(plain).toContain(g);
+    // no ⚑ — the park it stood for cannot exist.
+    expect(plain).not.toContain("⚑");
   });
 });
 
@@ -156,14 +158,14 @@ describe("mouse decode", () => {
 describe("rich board", () => {
   it("PR rows carry author, age, round count and verdict chip", () => {
     const text = renderBoard(view(), 140, 40).lines.map(stripAnsi).join("\n");
-    expect(text).toContain("⚑ #5265 jbennett 12m r3 ✗RC fix(ui)");
+    expect(text).toContain("✎ #5265 jbennett 12m r3 ✗RC fix(ui)");
     expect(text).toContain("▶ #5277 author1 3h r1 fix(ci)");
   });
 
   it("renders the colored legend under the list", () => {
     const text = renderBoard(view(), 140, 40).lines.map(stripAnsi).join("\n");
     expect(text).toContain("▶ reviewing");
-    expect(text).toContain("⚑ needs-you");
+    expect(text).toContain("✎ author");
   });
 
   it("declares zones: rows select, numbers open GitHub (bar clicks live in cmdbar)", () => {
@@ -187,7 +189,7 @@ describe("rich board", () => {
     const detail: WhyPayload = {
       pr: 5265,
       known: true,
-      state: "awaiting_human",
+      state: "awaiting_author",
       title: "fix(ui): frame the buttons",
       head_sha: "19277cdff",
       author: "jbennett",

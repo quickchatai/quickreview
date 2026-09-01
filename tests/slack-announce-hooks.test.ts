@@ -234,7 +234,7 @@ describe("verdict hooks", () => {
     await watcher(announcer()).sweep();
     expect(slack.posts[0]).toEqual({
       thread_ts: "1699999999.0001",
-      text: "⚠️ #5263 round 1 ended without a usable verdict — parked on awaiting_human, no approval was implied.",
+      text: "⚠️ #5263 round 1 ended without a usable verdict — nothing was posted and no approval was implied.",
     });
   });
 
@@ -245,7 +245,7 @@ describe("verdict hooks", () => {
     await watcher(announcer()).checkDeadlines();
     expect(slack.posts[0].text).toBe(
       `⏱ #5263 round 1 blew its ${cfg.daemon.round_deadline_min}-min deadline — ` +
-        "parked on awaiting_human for <@U_MAT>. No verdict was posted.",
+        "no verdict was posted, and no approval was implied. <@U_MAT>",
     );
   });
 

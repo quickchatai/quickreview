@@ -50,7 +50,7 @@ describe("shipped config.toml [slack]", () => {
     expect(cfg.slack.policy.causes["round.overdue"]).toEqual({ enabled: true, cooldown_min: 60 });
     expect(cfg.slack.policy.causes["pr.not_picked_up"]).toEqual({ enabled: true, cooldown_min: 120 });
     expect(cfg.slack.policy.causes["reconcile.storm"]).toEqual({ enabled: false, cooldown_min: 180 });
-    expect(cfg.slack.policy.causes["pr.awaiting_human_stale"]).toEqual({ enabled: false, cooldown_min: 1440 });
+    expect(cfg.slack.policy.causes["pr.awaiting_author_stale"]).toEqual({ enabled: false, cooldown_min: 1440 });
     expect(Object.keys(cfg.slack.policy.causes).sort()).toEqual(Object.keys(SLACK_CAUSE_DEFAULTS).sort());
   });
 

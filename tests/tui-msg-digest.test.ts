@@ -15,7 +15,6 @@ import {
   currentFile,
   digestCatArgv,
   digestListArgv,
-  installDigestHooks,
   parseDigestList,
   renderDigestTab,
   styleDigestLine,
@@ -206,53 +205,27 @@ describe("digest tab", () => {
   });
 
   it("pages older/newer through currentFile", () => {
-    const st: DigestState = { files: ["2026-08-11.md", "2026-08-12.md", "2026-08-13.md"], back: 0, scroll: 0, awaitingSelected: 0, loaded: true };
+    const st: DigestState = { files: ["2026-08-11.md", "2026-08-12.md", "2026-08-13.md"], back: 0, scroll: 0, loaded: true };
     expect(currentFile(st)).toBe("2026-08-13.md");
     st.back = 2;
     expect(currentFile(st)).toBe("2026-08-11.md");
   });
 
-  it("styles headings and renders the two-column frame with the yesterday tag", () => {
+  // one full-width column. The AWAITING YOU panel that took ~45% of
+  // this view, its `⏎ attach · w why · m msg` hint and its click zone are gone
+  // with the park they listed — a document is read, not chosen from.
+  it("styles headings and renders one full-width column with the yesterday tag", () => {
     expect(stripAnsi(styleDigestLine("# Reviews"))).toBe("Reviews");
-    const st: DigestState = { files: ["2026-08-12.md"], back: 0, scroll: 0, awaitingSelected: 0, loaded: true, content: "# Reviews\n6 PRs · 9 rounds" };
-    const prs = [
-      { number: 4820, state: "awaiting_human", title: "feat(ui): glow", head_sha: "x", stale_recheck: 0, trigger_ts: "2026-08-01T12:00:00Z" },
-    ] as any;
-    const text = renderDigestTab(st, prs, true, "2026-08-13", 100, 24).lines.map(stripAnsi).join("\n");
+    const st: DigestState = { files: ["2026-08-12.md"], back: 0, scroll: 0, loaded: true, content: "# Reviews\n6 PRs · 9 rounds" };
+    const frame = renderDigestTab(st, true, "2026-08-13", 100, 24);
+    const text = frame.lines.map(stripAnsi).join("\n");
     expect(text).toContain("digest 2026-08-12 (yesterday)");
     expect(text).toContain("Reviews");
-    expect(text).toContain("AWAITING YOU (1)");
-    expect(text).toContain("12d ⚑ #4820");
-    expect(text).toContain("⏎ attach · w why · m msg");
-  });
-
-  it("routes digest keys: j scrolls, arrows pick awaiting rows, w jumps to board detail", async () => {
-    const streams = fakeStreams();
-    const app = new App(TUI_DEFAULTS, async (_h, argv) => (argv.join(" ").includes("ls '") ? ok("2026-08-13.md\n") : ok("digest body")), streams.out, streams.input);
-    const st = installDigestHooks(app);
-    app.view.snapshot = {
-      written_at: "",
-      dry_run: true,
-      prs: [
-        { number: 4820, state: "awaiting_human", title: "a", head_sha: "x", stale_recheck: 0, trigger_ts: "2026-08-01T12:00:00Z" },
-        { number: 4993, state: "awaiting_human", title: "b", head_sha: "x", stale_recheck: 0, trigger_ts: "2026-08-10T12:00:00Z" },
-      ],
-      running_rounds: 0,
-      total_spend_usd: 0,
-      heartbeat: "",
-    };
-    const running = app.run();
-    streams.type("2"); // digest tab
-    expect(app.tab).toBe("digest");
-    streams.type("j");
-    expect(st.scroll).toBe(1);
-    streams.type(Buffer.from("\x1b[B")); // ↓ picks the second awaiting row
-    expect(st.awaitingSelected).toBe(1);
-    streams.type("w"); // jump to board detail of that PR
-    expect(app.tab).toBe("board");
-    expect(app.view.detailFull).toBe(true);
-    streams.type("q");
-    streams.type("y"); //: q asks before it quits
-    await running;
+    expect(text).not.toContain("AWAITING YOU");
+    expect(text).not.toContain("⏎ attach");
+    expect(frame.zones).toEqual([]);
+    // No interior divider: the body is one box row across the whole width.
+    const body = frame.lines.map(stripAnsi)[2]!;
+    expect(body.slice(1, -1)).not.toContain("│");
   });
 });

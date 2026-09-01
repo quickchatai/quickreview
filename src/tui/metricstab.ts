@@ -625,7 +625,6 @@ export function statStrip(win: MetricsWindow, width: number): string {
     win.cancellations === undefined
       ? `${FG.dim}stopped ?${RESET}`
       : `${win.cancellations.loud > 0 ? WARN : FG.dim}stopped ${win.cancellations.loud}${RESET}`,
-    `${FG.awaiting_human}⚑ ${h.awaiting_you} awaiting you${RESET}`,
   ];
   return truncate(bits.join(SEP), width);
 }
@@ -656,7 +655,7 @@ const KIND_GLYPHS: Array<[RegExp, string, string]> = [
   [/push|synchron/i, "↑", FG.awaiting_author],
   [/merge/i, "⇢", FG.approve],
   [/close/i, "✖", FG.closed],
-  [/state|transition/i, "→", FG.awaiting_human],
+  [/state|transition/i, "→", FG.needs_human],
 ];
 
 export function kindGlyph(kind: string): string {
