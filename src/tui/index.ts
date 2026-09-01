@@ -245,6 +245,22 @@ export interface RunTuiDeps {
  * container, day rollover, pi. It never blocks the board, and a step that
  * fails is a degraded mode, never a reason the TUI does not open.
  */
+/** First slice of the quit-time wait for an in-flight bring-up. */
+const BRING_UP_QUIT_GRACE_MS = 250;
+
+/** True if the promise settled inside `ms`. The timer is unref'd, so a slow
+ * bring-up can never be the thing that holds the process open. */
+async function settledWithin(p: Promise<unknown>, ms: number): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<false>((resolve) => {
+    timer = setTimeout(() => resolve(false), ms);
+    timer.unref?.();
+  });
+  const settled = await Promise.race([p.then(() => true), timeout]);
+  if (timer) clearTimeout(timer);
+  return settled;
+}
+
 export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}): Promise<void> {
   const args = parseTuiArgs(typeof argv === "string" ? [argv] : argv);
   if (args.help) {
@@ -303,6 +319,14 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
 
   /** Suspend the TUI, run something on the real terminal, come back. */
   const onRealTerminal = (fn: () => void): void => {
+    // Quit can land mid-flight (the operator presses `s`, then Ctrl-C twice
+    // while the probes run). The terminal is already restored by then, so
+    // going back into the alt screen would leave a blank alternate screen with
+    // no TUI behind it. Run the work plainly and leave the terminal alone.
+    if (app.isStopped()) {
+      fn();
+      return;
+    }
     app.suspend();
     try {
       if (input.isTTY) input.setRawMode(false);
@@ -313,6 +337,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     try {
       fn();
     } finally {
+      if (app.isStopped()) return; // quit happened while fn ran
       if (input.isTTY) input.setRawMode(true);
       out.write(ALT_SCREEN_ON + CLEAR + MOUSE_ON);
       app.resume();
@@ -589,10 +614,13 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     app.notice(d.kind === "ok" || d.kind === "local" ? `✓ ${d.cause}` : `✖ ${diagnosisLine(d)}`);
     app.repaint();
   };
+  // `s` starts its own async chain, independent of the bring-up. Tracked for
+  // the same reason: quit must not tear the terminal down underneath it.
+  let pendingReconnect: Promise<void> = Promise.resolve();
   app.hooks.reconnect = () => {
     progress.begin("ssh", "re-checking");
     app.notice("checking the connection to the VM…");
-    void (async () => {
+    pendingReconnect = (async () => {
       let d = await triageConnection(cfg);
       // A missing key is the one class the operator can clear from here: `s`
       // is them asking for the single native passphrase prompt. A wedged
@@ -605,7 +633,9 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
         d = await triageConnection(cfg);
       }
       applyDiagnosis(d);
-      void app.poller.tick();
+      // Awaited, not fired and forgotten: it is part of "re-run the check and
+      // report the new outcome", and quit waits for this chain.
+      await app.poller.tick();
     })().catch((err: unknown) => app.notice(`✖ ssh check failed: ${String(err instanceof Error ? err.message : err)}`));
   };
 
@@ -930,10 +960,26 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   // Only now: a recursive dist watcher walks the tree, and the bring-up talks
   // to ssh, docker and OpenViking. Neither may precede the frame above.
   reloader?.start();
-  void bringUp();
+  // Kept, not dropped on the floor. Quitting DURING the bring-up used to leave
+  // it running against the teardown below: `spawnPi()` could land after
+  // `gracefulStop()` (a clean quit that leaves a freshly spawned companion
+  // behind — the opposite of what it promises), and `memForward.stop()` could
+  // close a forward the bring-up was still about to use.
+  const bringUpDone = bringUp().catch(() => {
+    /* every step already reports itself; a bring-up cannot fail the quit */
+  });
   if (target.kind === "pr") void app.hooks.attach?.(`pr-${target.pr}`, app);
   else if (target.kind === "session") void app.hooks.attach?.(target.session, app);
   await running;
+  // Let the bring-up finish before tearing down what it is still touching.
+  // Bounded, and announced: this runs AFTER the terminal is restored, so a
+  // silent wait here is a terminal that looks dead — the same reasoning the
+  // companion stop below is written under.
+  const inFlight = Promise.allSettled([bringUpDone, pendingReconnect]);
+  if (!(await settledWithin(inFlight, BRING_UP_QUIT_GRACE_MS))) {
+    out.write("qcr tui: waiting for startup to finish before shutting down…\n");
+    await settledWithin(inFlight, BRING_UP_QUIT_GRACE_MS * 3);
+  }
   reloader?.stop();
   progress.stop();
   alerts?.stop();

@@ -318,6 +318,15 @@ export class App {
     this.quitResolve?.();
   }
 
+  /** The terminal has been restored and nothing may write to it again. Public
+   * so the orchestrator's real-terminal escape hatch can check it: re-entering
+   * the alt screen after teardown leaves the operator staring at a blank
+   * alternate screen with no TUI behind it — the trap this file exists to
+   * avoid, arrived at from the other end. */
+  isStopped(): boolean {
+    return this.stopped;
+  }
+
   /** Ctrl-C taps, for the two-tap exit (distinct from the three-tap kill). */
   private ctrlCTaps: number[] = [];
   private static readonly CTRL_C_EXIT_WINDOW_MS = 2_000;
@@ -414,6 +423,13 @@ export class App {
   // ---- data --------------------------------------------------------------
 
   private onPoll(): void {
+    // A tick already in flight when the operator quits resolves AFTER
+    // teardown, and this method kicks off four more remote reads. They would
+    // spawn ssh against a TUI that no longer exists — the same family as the
+    // `stopped` guard on `repaint` (an async load resolving after quit must
+    // not touch the restored terminal), one level earlier: it must not start
+    // new work either.
+    if (this.stopped) return;
     const snap = this.poller.state.snapshot;
     if (snap) {
       // Invalidate cached details the snapshot proves stale (state/head moved).

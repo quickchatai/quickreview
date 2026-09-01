@@ -38,6 +38,29 @@ function startupLog(): ExternalLog {
   return g.__qcrStartupLog as ExternalLog;
 }
 
+/**
+ * Give the next harness a FRESH recorder, and leave the old one behind a dead
+ * sink.
+ *
+ * The recorder is process-global (the mocks are), so two live TUIs would write
+ * into the same list — and a call from a TUI the previous test finished with,
+ * landing after this test reset the log, reads as "something external happened
+ * before the first frame". That is a shared-mutable-state flake, and this
+ * file carries the assertion the whole ticket exists for, so it is closed at
+ * the root (`runTui` no longer leaves work running past quit — see
+ * `assertQuiesced`) AND here, where a stray write can only reach a discarded
+ * object.
+ */
+function freshLog(): ExternalLog {
+  const log: ExternalLog = { entries: [], paintedAt: undefined };
+  (globalThis as Record<string, unknown>).__qcrStartupLog = log;
+  return log;
+}
+
+/** How long after quit we watch for stragglers. Not a timing assertion about
+ * SPEED — the property is "zero, ever", and this is how long we look. */
+const QUIESCE_WATCH_MS = 250;
+
 function note(entry: string): void {
   startupLog().entries.push(entry);
 }
@@ -115,8 +138,15 @@ vi.mock("node:fs", async (importOriginal) => {
 
 // ---- the fake terminal -------------------------------------------------------
 
-function fakeTerminal(): { out: NodeJS.WriteStream; input: NodeJS.ReadStream; written: string[] } {
+function fakeTerminal(): { out: NodeJS.WriteStream; input: NodeJS.ReadStream; written: string[]; painted: Promise<void> } {
   const written: string[] = [];
+  // An EVENT, not a poll budget. Waiting a fixed number of 10ms ticks made the
+  // centerpiece assertion depend on how loaded the machine is: on a busy box
+  // `runTui`'s ~25 dynamic imports take longer to transform than the budget,
+  // and the test failed with "never painted" while the code was fine. The
+  // only bound now is vitest's own test timeout.
+  let resolvePainted: () => void;
+  const painted = new Promise<void>((r) => (resolvePainted = r));
   const out = new EventEmitter() as unknown as NodeJS.WriteStream & { write: (s: string) => boolean };
   Object.assign(out, {
     isTTY: true,
@@ -130,13 +160,14 @@ function fakeTerminal(): { out: NodeJS.WriteStream; input: NodeJS.ReadStream; wr
       if (log.paintedAt === undefined && s.includes("\x1b[?1049h")) {
         log.paintedAt = log.entries.length;
         log.entries.push("FIRST PAINT");
+        resolvePainted();
       }
       return true;
     },
   });
   const input = new EventEmitter() as unknown as NodeJS.ReadStream;
   Object.assign(input, { isTTY: true, setRawMode: () => input, resume: () => input, pause: () => input });
-  return { out: out as NodeJS.WriteStream, input, written };
+  return { out: out as NodeJS.WriteStream, input, written, painted };
 }
 
 // ---- the harness: a real runTui against a fake terminal ----------------------
@@ -187,19 +218,21 @@ async function startTui(tmp: string, argv: string[] = ["--no-reload"], companion
     return Promise.reject(new Error("no network in tests"));
   }) as typeof fetch;
 
-  const log = startupLog();
-  log.entries.length = 0;
-  log.paintedAt = undefined;
+  const log = freshLog();
 
-  const { out, input, written } = fakeTerminal();
+  const { out, input, written, painted } = fakeTerminal();
   const startedAt = Date.now();
   const { runTui } = await import("../src/tui/index.js");
   const running = runTui(argv, { out, input, config, exit: () => {} });
-  // Wait for the FRAME, not for a duration: the assertion is about ORDER. The
-  // hard stop only keeps a regression from hanging the suite.
-  for (let i = 0; i < 400 && log.paintedAt === undefined; i++) {
-    await new Promise((r) => setTimeout(r, 10));
-  }
+  // Wait for the FRAME as an event. `running` only settles on quit, so if it
+  // settles here the TUI exited without ever painting — a real failure, and
+  // one worth naming rather than timing out over.
+  await Promise.race([
+    painted,
+    running.then(() => {
+      throw new Error("runTui exited before it painted a first frame");
+    }),
+  ]);
   const paintMs = Date.now() - startedAt;
   const press = async (bytes: string | Buffer): Promise<void> => {
     input.emit("data", typeof bytes === "string" ? Buffer.from(bytes, "utf8") : bytes);
@@ -217,7 +250,24 @@ async function startTui(tmp: string, argv: string[] = ["--no-reload"], companion
     stop: async () => {
       input.emit("data", Buffer.from([0x03]));
       input.emit("data", Buffer.from([0x03]));
-      await Promise.race([running, new Promise((r) => setTimeout(r, 15_000))]);
+      const quit = await Promise.race([running.then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), 30_000))]);
+      // Quit is bounded in `runTui` (a short grace for the in-flight bring-up),
+      // so not finishing inside 30s is a defect, not slowness — and asserting
+      // quiescence below without it would be asserting over a live TUI.
+      expect(quit, "runTui did not finish quitting within 30s").toBe(true);
+      // When `runTui` resolves, its bring-up, its `s` chain and its poll are
+      // DONE — quit waits for them. Enforced here rather than assumed: before
+      //'s quit fix this window carried ssh and docker calls for ~1.5s
+      // after the harness believed the TUI was gone, and they landed in the
+      // NEXT test's log as phantom pre-paint external work. A regression there
+      // fails right here instead of flaking one run in three.
+      const settledAt = log.entries.length;
+      await new Promise((r) => setTimeout(r, QUIESCE_WATCH_MS));
+      const late = log.entries.slice(settledAt);
+      expect(late, `runTui resolved but kept working: ${late.join(", ")}`).toEqual([]);
+      // Anything that still escapes lands in a discarded object, never in the
+      // next harness's log.
+      freshLog();
     },
   };
 }
