@@ -112,8 +112,10 @@ describe("the inventory is filled from the interview", () => {
     );
   }
 
+  const LOCAL_EMBEDDER = { provider: "local", model: "bge-small-zh-v1.5-f16", dimension: 512, keyFile: "openai_embeddings_api_key" };
+
   it("renders the example's shape: the group, the host, the group vars", () => {
-    const text = renderInventory({ host: ALIAS, ansibleUser: "deploy", pythonInterpreter: DEFAULT_PYTHON_INTERPRETER, cloudflaredEnabled: true });
+    const text = renderInventory({ host: ALIAS, ansibleUser: "deploy", pythonInterpreter: DEFAULT_PYTHON_INTERPRETER, cloudflaredEnabled: true, embedder: LOCAL_EMBEDDER });
     // The same group and the same two group vars the tracked example documents.
     expect(text).toMatch(/^\[quickreview\]$/m);
     expect(text).toMatch(/^\[quickreview:vars\]$/m);
@@ -126,9 +128,31 @@ describe("the inventory is filled from the interview", () => {
   });
 
   it("leaves ansible_user out when the ssh config already answers it", () => {
-    const text = renderInventory({ host: ALIAS, ansibleUser: "", pythonInterpreter: DEFAULT_PYTHON_INTERPRETER, cloudflaredEnabled: false });
+    const text = renderInventory({ host: ALIAS, ansibleUser: "", pythonInterpreter: DEFAULT_PYTHON_INTERPRETER, cloudflaredEnabled: false, embedder: LOCAL_EMBEDDER });
     expect(text).not.toMatch(/^ansible_user=/m);
     expect(text).toMatch(/your ~\/\.ssh\/config already decides the login user/);
+  });
+
+  it("a hosted-embeddings opt-in rides the host line as host vars; the local default writes none", () => {
+    const hosted = renderInventory({
+      host: ALIAS,
+      ansibleUser: "",
+      pythonInterpreter: DEFAULT_PYTHON_INTERPRETER,
+      cloudflaredEnabled: false,
+      embedder: { provider: "openai", model: "text-embedding-3-small", dimension: 1536, keyFile: "openai_embeddings_api_key" },
+    });
+    expect(parseInventoryHostVars(hosted)).toEqual({
+      cloudflared_enabled: "false",
+      openviking_embedding_provider: "openai",
+      openviking_embedding_model: "text-embedding-3-small",
+      openviking_embedding_dimension: "1536",
+      openviking_embedding_key_file: "openai_embeddings_api_key",
+    });
+    // deploy.sh's awk reads the same line: host first, host vars after.
+    expect(parseInventoryHost(hosted)).toBe(ALIAS);
+    const local = renderInventory({ host: ALIAS, ansibleUser: "", pythonInterpreter: DEFAULT_PYTHON_INTERPRETER, cloudflaredEnabled: false, embedder: LOCAL_EMBEDDER });
+    expect(parseInventoryHostVars(local)).toEqual({ cloudflared_enabled: "false" });
+    expect(local).not.toContain("openviking_embedding");
   });
 
   it("writes the file scripts/deploy.sh reads by default, using the alias and the resolved login user", async () => {

@@ -553,6 +553,65 @@ export async function cmdCompanion(sub: string | undefined): Promise<void> {
   }
 }
 
+/**
+ * `qcr memory reembed [--user <name>[,<name>…]]` — the operator's
+ * half of the embedder migration, run from the PC that holds the keys.
+ *
+ * The daemon re-embeds ITS OWN namespace (the reviewer's) by itself once the
+ * server is ready; it holds no other key and never will (root CLAUDE.md rule
+ * 8), so the companion's namespace — and any other provisioned user's — is
+ * rebuilt from here, over the memory forward, with the keys in the operator's
+ * keys file. Default: every provisioned user EXCEPT the daemon's own. The
+ * reindex is an idempotent upsert, so re-running it (or naming the reviewer
+ * too) is safe, only slow. Nothing but the request leaves this machine: no
+ * key ever reaches an argv or the output.
+ */
+export async function cmdMemory(rest: string[]): Promise<number> {
+  const sub = rest[0];
+  if (sub !== "reembed") throw new Error("usage: qcr memory reembed [--user <name>[,<name>…]]");
+  const cfg = loadConfig();
+  const own = cfg.openviking.user;
+  const userIdx = rest.indexOf("--user");
+  const users =
+    userIdx >= 0
+      ? String(rest[userIdx + 1] ?? "")
+          .split(/[,\s]+/)
+          .filter(Boolean)
+      : cfg.openviking.provision_users.filter((u) => u !== own);
+  if (users.length === 0) throw new Error("usage: qcr memory reembed [--user <name>[,<name>…]] — no namespace to re-embed");
+  const [{ loadReembedModule, reembedNamespaces }, { USER_KEY_ENV, keysFileReader, tuiMemoryBaseUrl }, { keysFilePath }] = await Promise.all([
+    import("./openviking/reembed.js"),
+    import("./tui/memory.js"),
+    import("./tui/companion.js"),
+  ]);
+  const keysFile = keysFilePath(process.env);
+  const readKey = keysFileReader(keysFile);
+  const base = tuiMemoryBaseUrl(process.env);
+  console.log(`re-embedding ${users.join(", ")} through ${base} with the keys in ${keysFile} (this can take minutes per namespace)`);
+  const { ok, results } = await reembedNamespaces({
+    module: await loadReembedModule(sandboxRoot()),
+    base,
+    users,
+    keyFor: (user) => {
+      const names = (USER_KEY_ENV as Record<string, readonly string[]>)[user] ?? [`OPENVIKING_${user.toUpperCase()}_KEY`];
+      for (const name of names) {
+        const v = readKey(name);
+        if (v) return v;
+      }
+      return null;
+    },
+    log: (line) => console.log(line),
+  });
+  for (const r of results) console.log(`  ${r.user}: ${r.status} — ${r.detail}`);
+  if (ok) {
+    console.log(
+      "done. The daemon's journal still lists these namespaces as awaiting you; receipt them in the container so the heartbeat stops naming them:\n" +
+        users.map((u) => `  docker exec ${cfg.tui.container} node /opt/quickreview/sandbox/scripts/openviking-reembed.mjs settle --home ${cfg.openviking.home} --user ${u}`).join("\n"),
+    );
+  }
+  return ok ? 0 : 1;
+}
+
 /** `qcr onboard` — the guided setup wizard: pi at the pinned
  * version via npx (works from a bare clone; pi stays a non-dependency), the
  * onboarding prompt + extension + a restricted tool set, then the TUI handoff
@@ -672,6 +731,10 @@ export async function main(argv: string[]): Promise<void> {
     }
     case "companion":
       return cmdCompanion(rest[0]);
+    case "memory": {
+      process.exitCode = await cmdMemory(rest);
+      return;
+    }
     case "onboard": {
       process.exitCode = await cmdOnboard();
       return;
@@ -687,7 +750,7 @@ export async function main(argv: string[]): Promise<void> {
     default:
       console.log(
         "usage: qcr <onboard|status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|tui [pr|overseer]|drain <on|off>|" +
-          "companion <up|down|status|rebuild>|backfill [--dry-run] [--limit <n>]|checklist|compare <pr...>|" +
+          "companion <up|down|status|rebuild>|memory reembed [--user <name>]|backfill [--dry-run] [--limit <n>]|checklist|compare <pr...>|" +
           "regression [--set <path>] [--clone <path>] [--change <name>] [--limit <n>] [--out <path>]>",
       );
       loadConfig(); // surface config errors early even on bad usage

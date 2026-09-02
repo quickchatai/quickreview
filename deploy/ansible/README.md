@@ -52,8 +52,12 @@ yours either way — the wizard never creates a machine.
    for the named-tunnel shape, `false` for every other one.
 3. **Local secrets dir** `~/.config/quickreview-bot/` contains:
    `app_id`, `app.pem`, `webhook_secret` (plus `openai_api_key` optional —
-   OAuth route — and `tunnel_token` when the tunnel is enabled), and
+   pi's API-key route — and `tunnel_token` when the tunnel is enabled), and
    `openviking_root_key` / `openviking_reviewer_key` for the memory engine.
+   Memory embeds LOCALLY by default (nothing but the model call leaves the
+   VM); `openai_embeddings_api_key` exists only under the hosted-embeddings
+   opt-in, written as inventory host vars beside `cloudflared_enabled`
+   ([docs/memory-embeddings.md](../../docs/memory-embeddings.md)).
    `bash deploy/collect-secrets.sh` assembles the first set interactively; the
    wizard's GitHub App and memory steps write the same files.
    (Never any personal token.)

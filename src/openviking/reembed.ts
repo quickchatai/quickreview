@@ -1,0 +1,351 @@
+// The embedder migration's DAEMON half: re-embed reviewer memory
+// after the boot's `prepare` step reset the vector collection.
+//
+// ONE IMPLEMENTATION, NOT A SECOND ONE. `scripts/openviking-reembed.mjs` owns
+// the migration — the journal, the disk reset the entrypoint runs before any
+// server starts, and the reindex call against the server. This module drives
+// its `resume` from inside the daemon once `/ready` passes and folds the
+// journal into the heartbeat. The import is DYNAMIC and by file URL on
+// purpose (the same shape as src/tui/memforward.ts): the script is
+// dependency-free, build-free ESM that the container entrypoint runs BEFORE
+// `dist/` exists, so a static import would either drag it into the build or
+// fork the logic.
+//
+// Three properties, enforced rather than documented:
+//
+//   * NOTHING HERE IS ON A ROUND'S PATH. The driver is armed on a timer seam,
+//     never awaited by the boot, and a round that runs while the reviewer's
+//     vectors are still rebuilding simply gets a thinner memory block — the
+//     standing rule for every OpenViking call site.
+//   * THE REVIEWER KEY, AND NOTHING ELSE. The reindex carries the same USER
+//     key every review session holds; the server confines it to the
+//     reviewer's namespace (a 403 for any other, verified live), so no root
+//     or admin credential exists on this path.
+//   * HONEST STATUS. `status()` is synchronous, cached and total. The journal
+//     state it reports comes from the script's own `journalStatus`; when the
+//     script cannot be loaded or read the state is `unknown`, never `none` —
+//     "could not read" is not "nothing there".
+//
+// It also carries the one check that makes `[openviking] embedding_*` in
+// config.toml mean something: the ENTRYPOINT renders the embedder (group_vars
+// or the compose environment), and a config.toml that says one thing over an
+// ov.conf that runs another is exactly the drift that turns a hosted store
+// into a reset on the next boot. The daemon cannot correct it — it reports it,
+// loudly, in the log and the heartbeat.
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { openVikingBaseUrl, type OpenVikingConfig } from "../config.js";
+import type { Schedule } from "./supervisor.js";
+import type { Embedder, ReembedJournalStatus, ReembedStatus } from "./types.js";
+
+/** One namespace's reindex outcome, as the script reports it. */
+export interface ReindexOutcome {
+  status: "completed" | "failed" | "busy" | "timeout";
+  uri: string;
+  detail?: string;
+  task_id?: string;
+  scanned_records?: number;
+  rebuilt_records?: number;
+  failed_records?: number;
+  unsupported_records?: number;
+}
+
+/** The HTTP seam the script takes — the minimum it reads. */
+export type ReembedFetch = (
+  url: string,
+  init?: { method?: string; headers?: Record<string, string>; body?: string; signal?: AbortSignal },
+) => Promise<{ status: number; json?: () => Promise<unknown> }>;
+
+/**
+ * The slice of `scripts/openviking-reembed.mjs` this module depends on.
+ * Declared structurally because the script is untyped JS: this interface IS
+ * the contract, and `tests/openviking-reembed-driver.test.ts` checks the real
+ * module still satisfies it.
+ */
+export interface ReembedModule {
+  journalStatus(home: string): ReembedJournalStatus;
+  configuredEmbedder(conf: unknown): Embedder;
+  resume(opts: {
+    home: string;
+    base: string;
+    key: string;
+    user: string;
+    fetchFn?: ReembedFetch;
+    log?: (line: string) => void;
+  }): Promise<{ action: string; state: string; detail?: string; entry?: { detail?: string } }>;
+  reindexNamespace(opts: {
+    base: string;
+    key: string;
+    user: string;
+    fetchFn?: ReembedFetch;
+    log?: (line: string) => void;
+  }): Promise<ReindexOutcome>;
+}
+
+export function loadReembedModule(repoRoot: string): Promise<ReembedModule> {
+  return import(pathToFileURL(join(repoRoot, "scripts", "openviking-reembed.mjs")).href) as Promise<ReembedModule>;
+}
+
+/** How often the driver re-checks `/ready` while a re-embed is outstanding. */
+export const REEMBED_POLL_MS = 15_000;
+/** Pause between resume attempts that did not complete (busy, timeout, a
+ * partial rebuild, a dead server). Retried forever, like the supervisor's
+ * respawn: an outstanding re-embed is worse than a periodic retry, and every
+ * attempt is on record in the journal and the heartbeat. */
+export const REEMBED_RETRY_MS = 5 * 60_000;
+
+export interface ReembedDriverDeps {
+  cfg: OpenVikingConfig;
+  /** The checkout root — where `scripts/openviking-reembed.mjs` lives. */
+  repoRoot: string;
+  /** Path of the reviewer USER key file in the secrets dir. */
+  keyPath: string;
+  /** The supervisor's cached `/ready` — the gate a resume waits for. */
+  ready: () => boolean;
+  log: (msg: string, extra?: unknown) => void;
+  schedule?: Schedule;
+  load?: () => Promise<ReembedModule>;
+  fetchFn?: ReembedFetch;
+  now?: () => Date;
+  pollMs?: number;
+  retryMs?: number;
+}
+
+const defaultSchedule: Schedule = (fn, ms) => {
+  const t = setTimeout(fn, ms);
+  t.unref?.();
+  return () => clearTimeout(t);
+};
+
+function sameEmbedder(a: Embedder, b: Embedder): boolean {
+  return a.provider === b.provider && a.model === b.model && Number(a.dimension) === Number(b.dimension);
+}
+
+export class ReembedDriver {
+  private readonly deps: ReembedDriverDeps;
+  private readonly schedule: Schedule;
+  private readonly now: () => Date;
+  private module: ReembedModule | null = null;
+  private journal: ReembedJournalStatus | null = null;
+  private unknownWhy: string | undefined;
+  private drift: ReembedStatus["config_drift"];
+  private attempts = 0;
+  private lastRunAt: string | undefined;
+  private lastError: string | undefined;
+  private inFlight = false;
+  private cancel: (() => void) | null = null;
+  private stopped = false;
+  private started = false;
+
+  constructor(deps: ReembedDriverDeps) {
+    this.deps = deps;
+    this.schedule = deps.schedule ?? defaultSchedule;
+    this.now = deps.now ?? (() => new Date());
+  }
+
+  /** Synchronous and non-blocking: loads the script and reads the journal in
+   * the background, then arms the resume loop only if a re-embed is on
+   * record. The daemon's boot never waits on it. */
+  start(): void {
+    if (this.started) return;
+    this.started = true;
+    if (!this.deps.cfg.enabled) return;
+    void this.boot();
+  }
+
+  stop(): void {
+    this.stopped = true;
+    this.cancel?.();
+    this.cancel = null;
+  }
+
+  private async boot(): Promise<void> {
+    try {
+      this.module = await (this.deps.load ?? (() => loadReembedModule(this.deps.repoRoot)))();
+    } catch (err) {
+      this.unknownWhy = `could not load scripts/openviking-reembed.mjs: ${err instanceof Error ? err.message : String(err)}`;
+      this.deps.log(`openviking: reembed driver off — ${this.unknownWhy}`);
+      return;
+    }
+    this.checkDrift();
+    if (!this.refresh()) return;
+    const state = this.journal?.state;
+    if (state === "pending" || state === "failed") {
+      this.deps.log(`openviking: reembed of ${this.deps.cfg.user} memory is outstanding (${state}) — resuming once the server is ready`);
+      this.arm(0);
+    } else if (state === "unreadable") {
+      this.deps.log(`openviking: reembed journal under ${this.deps.cfg.home} exists and cannot be parsed — an operator has to look (docs/memory-embeddings.md)`);
+    }
+  }
+
+  /** config.toml's declared embedder against the one ov.conf actually runs. */
+  private checkDrift(): void {
+    const confPath = this.deps.cfg.config_file;
+    if (!this.module || !existsSync(confPath)) return;
+    let ovConf: Embedder;
+    try {
+      ovConf = this.module.configuredEmbedder(JSON.parse(readFileSync(confPath, "utf8")));
+    } catch (err) {
+      this.deps.log(`openviking: could not read ${confPath} for the embedder check`, err);
+      return;
+    }
+    const declared: Embedder = {
+      provider: this.deps.cfg.embedding_provider,
+      model: this.deps.cfg.embedding_model,
+      dimension: this.deps.cfg.embedding_dimension,
+    };
+    if (sameEmbedder(declared, ovConf)) return;
+    this.drift = { config_toml: declared, ov_conf: ovConf };
+    this.deps.log(
+      `openviking: EMBEDDER DRIFT — config.toml [openviking] declares ${declared.provider}/${declared.model} (${declared.dimension} dims) ` +
+        `but ov.conf, rendered by the entrypoint, runs ${ovConf.provider}/${ovConf.model} (${ovConf.dimension} dims). The boot renders group_vars ` +
+        "(or the compose environment), not config.toml: align them, or the next boot resets the vector store for the wrong embedder (docs/memory-embeddings.md)",
+    );
+  }
+
+  /** Re-read the journal through the script. False when it could not be read
+   * at all (the status then says `unknown`). */
+  private refresh(): boolean {
+    if (!this.module) return false;
+    try {
+      this.journal = this.module.journalStatus(this.deps.cfg.home);
+      this.unknownWhy = undefined;
+      return true;
+    } catch (err) {
+      this.unknownWhy = `journal read failed: ${err instanceof Error ? err.message : String(err)}`;
+      this.deps.log(`openviking: reembed ${this.unknownWhy}`);
+      return false;
+    }
+  }
+
+  private arm(ms: number): void {
+    if (this.stopped) return;
+    this.cancel?.();
+    this.cancel = this.schedule(() => {
+      this.cancel = null;
+      void this.tick();
+    }, ms);
+  }
+
+  private async tick(): Promise<void> {
+    if (this.stopped || this.inFlight || !this.module) return;
+    if (!this.refresh()) return;
+    const state = this.journal?.state;
+    if (state !== "pending" && state !== "failed") return;
+    if (!this.deps.ready()) {
+      this.arm(this.deps.pollMs ?? REEMBED_POLL_MS);
+      return;
+    }
+    this.inFlight = true;
+    try {
+      const key = readKey(this.deps.keyPath);
+      this.attempts += 1;
+      this.lastRunAt = this.now().toISOString();
+      const run = await this.module.resume({
+        home: this.deps.cfg.home,
+        base: openVikingBaseUrl(this.deps.cfg),
+        key,
+        user: this.deps.cfg.user,
+        ...(this.deps.fetchFn ? { fetchFn: this.deps.fetchFn } : {}),
+        log: (line) => this.deps.log(line),
+      });
+      const detail = run.detail ?? run.entry?.detail ?? "";
+      if (run.state === "completed") {
+        this.lastError = undefined;
+        this.deps.log(`openviking: reembed of ${this.deps.cfg.user} memory completed — ${detail}`);
+      } else {
+        this.lastError = detail || run.state;
+        this.deps.log(`openviking: reembed of ${this.deps.cfg.user} memory not finished (${run.state}) — retrying in ${Math.round((this.deps.retryMs ?? REEMBED_RETRY_MS) / 1000)}s: ${detail}`);
+      }
+    } catch (err) {
+      // The script is total, but a caller-supplied fetch seam is not.
+      this.lastError = err instanceof Error ? err.message : String(err);
+      this.deps.log("openviking: reembed resume threw", err);
+    } finally {
+      this.inFlight = false;
+    }
+    this.refresh();
+    const after = this.journal?.state;
+    if (after === "pending" || after === "failed") this.arm(this.deps.retryMs ?? REEMBED_RETRY_MS);
+  }
+
+  /** The `reembed` block of the heartbeat's `openviking` entry. Total. */
+  status(): ReembedStatus {
+    const base: ReembedStatus = { state: "unknown", attempts: this.attempts };
+    try {
+      const j = this.journal;
+      return {
+        ...base,
+        ...(j
+          ? {
+              state: j.state,
+              ...(j.embedder ? { embedder: j.embedder } : {}),
+              ...(j.previous !== undefined ? { previous: j.previous } : {}),
+              ...(j.reset_at ? { reset_at: j.reset_at } : {}),
+              ...(j.moved_to ? { moved_to: j.moved_to } : {}),
+              ...(j.awaiting_operator?.length ? { awaiting_operator: j.awaiting_operator } : {}),
+              ...(j.namespaces ? { namespaces: j.namespaces } : {}),
+            }
+          : {}),
+        ...(this.lastRunAt ? { last_run_at: this.lastRunAt } : {}),
+        ...(this.lastError ?? this.unknownWhy ? { last_error: this.lastError ?? this.unknownWhy } : {}),
+        ...(this.drift ? { config_drift: this.drift } : {}),
+      };
+    } catch {
+      return base;
+    }
+  }
+}
+
+/** The reviewer key file's contents, or "" — an absent key is a degraded
+ * mode the script answers (`no reviewer key`), never a throw here. */
+function readKey(path: string): string {
+  try {
+    return readFileSync(path, "utf8").trim();
+  } catch {
+    return "";
+  }
+}
+
+// ---- the operator's side (qcr memory reembed) --------------------------------
+
+export interface OperatorReembedResult {
+  user: string;
+  status: ReindexOutcome["status"] | "no-key";
+  detail: string;
+}
+
+/**
+ * Re-embed the namespaces whose keys THIS machine holds — the operator's PC,
+ * where the companion key lives and the daemon's never will (root CLAUDE.md
+ * rule 8). Runs the script's own `reindexNamespace` per user over the memory
+ * forward; a user with no key in the keys file is reported, never skipped
+ * silently. `ok` is true only when every namespace completed with zero failed
+ * records.
+ */
+export async function reembedNamespaces(opts: {
+  module: Pick<ReembedModule, "reindexNamespace">;
+  base: string;
+  users: readonly string[];
+  keyFor: (user: string) => string | null;
+  log: (line: string) => void;
+  fetchFn?: ReembedFetch;
+}): Promise<{ ok: boolean; results: OperatorReembedResult[] }> {
+  const results: OperatorReembedResult[] = [];
+  for (const user of opts.users) {
+    const key = opts.keyFor(user);
+    if (!key) {
+      results.push({ user, status: "no-key", detail: `no ${user} key on this machine — nothing was sent` });
+      continue;
+    }
+    const run = await opts.module.reindexNamespace({ base: opts.base, key, user, ...(opts.fetchFn ? { fetchFn: opts.fetchFn } : {}), log: opts.log });
+    const detail =
+      run.status === "completed"
+        ? `${run.rebuilt_records ?? 0} vector records rebuilt from ${run.scanned_records ?? 0} sources` +
+          (run.failed_records ? ` — ${run.failed_records} FAILED (run it again)` : "")
+        : (run.detail ?? run.status);
+    results.push({ user, status: run.status, detail });
+  }
+  return { ok: results.every((r) => r.status === "completed" && !/FAILED/.test(r.detail)), results };
+}

@@ -6,7 +6,8 @@
 # `scripts/qcr onboard` writes app_id / app.pem / webhook_secret itself, from
 # the GitHub App manifest exchange, and mints the OpenViking keys — so on the
 # guided path you only reach for this script for the values it points you at
-# (the OpenAI key, a tunnel token, an ngrok authtoken). It writes the same file
+# (the OpenAI key, a tunnel token, an ngrok authtoken, the hosted-embeddings
+# key under that opt-in). It writes the same file
 # names with the same validation and the same 0600 mode; the two paths must
 # stay in step. See docs/onboarding.md.
 #
@@ -90,7 +91,7 @@ choose_shape() {
 overview() {
   local s; s="$(shape)"
   bold "quickreview secrets — $DIR  (deployment shape: ${s:-unset})"
-  for f in app_id app.pem webhook_secret tunnel_token openai_api_key openviking_root_key openviking_reviewer_key; do
+  for f in app_id app.pem webhook_secret tunnel_token openai_api_key openai_embeddings_api_key openviking_root_key openviking_reviewer_key; do
     printf '  %-24s %s\n' "$f" "$(status_of "$f")"
   done
   if [[ "$s" == "docker" ]]; then
@@ -98,7 +99,10 @@ overview() {
   else
     info "tunnel_token is required under the tunnel shape"
   fi
-  info "openai_api_key is OPTIONAL (ChatGPT-OAuth route chosen; pi /login instead)"
+  info "openai_api_key is OPTIONAL (pi's model credential on the API-key route; ChatGPT-OAuth route: pi /login instead)"
+  info "openai_embeddings_api_key is OPTIONAL and SEPARATE: memory embeds LOCALLY by default and nothing"
+  info "but the model call leaves the machine. Only a hosted-embeddings opt-in (config.toml [openviking]"
+  info "embedding_provider = \"openai\") reads it — pi's key is never used for embeddings."
   info "openviking_root_key / openviking_reviewer_key: memory. Missing root key => the"
   info "server falls back to auth_mode=dev and per-user confinement is NOT enforced."
   info "NEVER put the COMPANION key here — a review session could read it (rule 8)."
@@ -194,8 +198,20 @@ if [[ "$(shape)" == "tunnel" ]]; then
 fi
 
 if want openai_api_key; then
-  bold "openai_api_key — OPTIONAL (skip under the ChatGPT-OAuth route)"
+  bold "openai_api_key — OPTIONAL: pi's model credential on the API-key route (skip under ChatGPT OAuth)"
+  info "NOT used for memory embeddings — those run locally unless you opt into a hosted embedder below"
   prompt_hidden openai_api_key "the OpenAI API key" v_openai
+fi
+
+# the HOSTED embeddings credential, its OWN file. The shipped
+# default embeds memory locally (nothing but the model call leaves), so this
+# is needed ONLY by an operator who set config.toml [openviking]
+# embedding_provider = "openai". Kept separate from pi's key on purpose: either
+# can be set without the other.
+if want openai_embeddings_api_key; then
+  bold "openai_embeddings_api_key — OPTIONAL: only under the hosted-embeddings opt-in (skip to keep memory local)"
+  info "read by the memory engine alone; leaving it unset changes nothing about pi's credential"
+  prompt_hidden openai_embeddings_api_key "the OpenAI key for embeddings" v_openai
 fi
 
 # the memory engine's identity. Two files, and only two: the SERVER's

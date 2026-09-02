@@ -88,7 +88,7 @@ function consumerText(): string {
 
 describe("[T4] every config knob has a reader, not just a parser", () => {
   /**
-   * The eleven knobs `src/config.ts` parses and nothing consumes.
+   * The nine knobs `src/config.ts` parses and nothing consumes.
    *
    * [A10] found SIX by hand; this fence, run against the wider reader
    * search above, found twelve. Their disposition — delete the knob, or wire
@@ -97,7 +97,9 @@ describe("[T4] every config knob has a reader, not just a parser", () => {
    * somebody still wants. What this ticket owes is that the set is WRITTEN
    * DOWN and cannot grow quietly, which is what set equality below buys.
    * has since taken the first of the twelve, `awaiting_human_stale_h`,
-   * by deleting the retired park's knob outright.
+   * by deleting the retired park's knob outright; took
+   * `embedding_model` and `embedding_dimension` the other way — they gained
+   * readers (the daemon's embedder-drift check and the onboarding step).
    *
    * A note on honesty: no per-knob reason is given, because giving eleven
    * confident reasons would mean inventing ten of them. The list is the
@@ -111,8 +113,6 @@ describe("[T4] every config knob has a reader, not just a parser", () => {
     "awaiting_author_stale_h",
     "bot_token_file",
     "broadcast_verdicts",
-    "embedding_dimension",
-    "embedding_model",
     "queue_concurrency",
     "soft_exchange_limit",
     "ssh_dir",

@@ -26,6 +26,57 @@ export interface ProcSample {
   cpu_pct?: number;
 }
 
+/** An embedder identity — provider, model and dimension, never a credential.
+ * The three keys the server's own compatibility check compares. */
+export interface Embedder {
+  provider: string;
+  model: string;
+  dimension: number;
+}
+
+/** One namespace row of the re-embed journal (scripts/openviking-reembed.mjs). */
+export interface ReembedNamespace {
+  /** `operator` = a namespace whose key this host does not hold; its holder
+   * rebuilds it (`qcr memory reembed`) and receipts it (`settle`). */
+  state: "pending" | "failed" | "completed" | "operator";
+  at?: string;
+  attempts?: number;
+  detail?: string;
+  task_id?: string;
+  scanned_records?: number;
+  rebuilt_records?: number;
+  failed_records?: number;
+  unsupported_records?: number;
+  settled_by?: string;
+}
+
+/** What the script's `journalStatus` answers — the journal, read. */
+export interface ReembedJournalStatus {
+  state: "none" | "pending" | "failed" | "completed" | "unreadable";
+  embedder?: Embedder;
+  previous?: Embedder | null;
+  reset_at?: string;
+  moved_to?: string;
+  awaiting_operator?: string[];
+  namespaces?: Record<string, ReembedNamespace>;
+}
+
+/**
+ * The `reembed` block inside `openviking`: the embedder migration
+ * as the daemon sees it. `unknown` means the journal could not be read at all
+ * — never folded into `none`.
+ */
+export interface ReembedStatus extends Omit<ReembedJournalStatus, "state"> {
+  state: ReembedJournalStatus["state"] | "unknown";
+  /** Resume attempts this daemon process has made. */
+  attempts: number;
+  last_run_at?: string;
+  last_error?: string;
+  /** config.toml `[openviking] embedding_*` names a different embedder than
+   * the ov.conf the entrypoint rendered — reported, never corrected here. */
+  config_drift?: { config_toml: Embedder; ov_conf: Embedder };
+}
+
 /**
  * The `openviking` block of `state/status.json`.
  *
@@ -64,4 +115,6 @@ export interface OpenVikingStatus {
   cpu_pct?: number;
   /** ISO instant of the last health poll. */
   checked_at?: string;
+  /** The embedder migration. Absent when no driver runs. */
+  reembed?: ReembedStatus;
 }

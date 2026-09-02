@@ -113,6 +113,9 @@ describe("the registered sequence (tail)", () => {
       // patches the config the interview just wrote, and "no" (the default,
       // and the right answer for most teams) leaves everything unchanged.
       "escalation",
+      // the embedder — local by default, so calling it with no answer
+      // confirms the default; a hosted opt-in is the only thing it asks about.
+      "embeddings",
       "github_app",
       "ingress",
       "memory",

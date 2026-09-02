@@ -46,9 +46,15 @@ symlink migration, which the double mount deliberately skips.
   `~/.config/quickreview-bot`, override with `QCR_SECRETS_DIR`):
   - `app_id`, `app.pem`, `webhook_secret` — the GitHub App credential
     (required; the only credential the system ever uses).
-  - `openai_api_key` — optional; pi can instead use ChatGPT OAuth (`/login`
-    once inside a session; tokens persist on the pihome volume). Without it
-    OpenViking falls back to its local dense embedder.
+  - `openai_api_key` — optional; pi's model credential on the API-key route
+    (pi can instead use ChatGPT OAuth: `/login` once inside a session; tokens
+    persist on the pihome volume). Never read for memory embeddings.
+  - `openai_embeddings_api_key` — optional, and only under the hosted-embeddings
+    opt-in (`config.toml [openviking] embedding_provider = "openai"`, carried
+    into the container as `QCR_OPENVIKING_EMBEDDING_*` in the project `.env`).
+    By default the memory engine embeds LOCALLY inside the container and
+    nothing but the model call leaves the machine (;
+    [docs/memory-embeddings.md](../../docs/memory-embeddings.md)).
   - `openviking_root_key`, `openviking_reviewer_key` — optional; without the
     root key the memory engine degrades loudly to `auth_mode=dev` (no
     per-user confinement) rather than blocking the boot.

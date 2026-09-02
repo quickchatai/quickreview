@@ -727,10 +727,33 @@ export interface OpenVikingConfig {
   restart_backoff_ms: number[];
   /** A child that stayed up this long resets the backoff ladder. */
   restart_reset_after_s: number;
-  /** ov.conf `embedding.dense` (OpenAI embeddings ENABLED, no `vlm`). */
+  /** ov.conf `embedding.dense.provider`. `local` is the shipped
+   * default — the server's own llama-cpp embedder, in the container, so no
+   * memory text leaves the machine. `openai` is the explicit opt-in and needs
+   * `embedding_key_file` in the secrets dir. Mirrored as
+   * `openviking_embedding_provider`. */
+  embedding_provider: EmbeddingProvider;
+  /** ov.conf `embedding.dense.model` / `.dimension`. Under `local` they are
+   * pinned to the ONE model 0.4.15 ships a spec for (the server refuses any
+   * other dimension for it); under `openai` the operator names the hosted
+   * model and its dimension. */
   embedding_model: string;
   embedding_dimension: number;
+  /** Secrets-dir file name of the HOSTED embeddings credential — deliberately
+   * NOT `openai_api_key` (pi's model credential), so the two can be set
+   * independently. Read only by the ov.conf render, only under `openai`. */
+  embedding_key_file: string;
 }
+
+export const EMBEDDING_PROVIDERS = ["local", "openai"] as const;
+export type EmbeddingProvider = (typeof EMBEDDING_PROVIDERS)[number];
+
+/** The server's built-in local dense embedder — the only local model
+ * OpenViking 0.4.15 ships a spec for (`LOCAL_DENSE_MODEL_SPECS`), fixed at
+ * 512 dims. Mirrored by `LOCAL_EMBEDDER` in scripts/openviking-reembed.mjs. */
+export const LOCAL_EMBEDDING = Object.freeze({ model: "bge-small-zh-v1.5-f16", dimension: 512 });
+/** What an `openai` opt-in runs unless the operator names another model. */
+export const HOSTED_EMBEDDING = Object.freeze({ model: "text-embedding-3-small", dimension: 1536 });
 
 /** [openviking] is optional in config.toml — the defaults ARE the shipped
  * configuration, exactly like [tui]/[companion]. */
@@ -789,9 +812,39 @@ export const OPENVIKING_DEFAULTS: OpenVikingConfig = {
   health_timeout_ms: 2000,
   restart_backoff_ms: [1000, 2000, 5000, 15000, 30000, 60000],
   restart_reset_after_s: 120,
-  embedding_model: "text-embedding-3-small",
-  embedding_dimension: 1536,
+  embedding_provider: "local",
+  embedding_model: LOCAL_EMBEDDING.model,
+  embedding_dimension: LOCAL_EMBEDDING.dimension,
+  embedding_key_file: "openai_embeddings_api_key",
 };
+
+/**
+ * The [openviking] block, defaults filled and the embedder checked.
+ *
+ * The embedder is validated at LOAD time because the server validates it at
+ * BOOT time, and a server that refuses to start is a silent memory outage: an
+ * unknown provider, a non-positive dimension, or a `local` model/dimension the
+ * server's one local spec does not match are all config errors here.
+ */
+export function parseOpenViking(raw: Record<string, unknown>): OpenVikingConfig {
+  const merged = { ...OPENVIKING_DEFAULTS, ...(raw as Partial<OpenVikingConfig>) };
+  if (!(EMBEDDING_PROVIDERS as readonly string[]).includes(merged.embedding_provider)) {
+    throw new Error(`config.toml: [openviking] embedding_provider must be one of ${EMBEDDING_PROVIDERS.join(", ")} (got '${String(merged.embedding_provider)}')`);
+  }
+  if (!Number.isInteger(merged.embedding_dimension) || merged.embedding_dimension <= 0) {
+    throw new Error(`config.toml: [openviking] embedding_dimension must be a positive integer (got '${String(merged.embedding_dimension)}')`);
+  }
+  if (merged.embedding_provider === "local" && (merged.embedding_model !== LOCAL_EMBEDDING.model || merged.embedding_dimension !== LOCAL_EMBEDDING.dimension)) {
+    throw new Error(
+      `config.toml: [openviking] embedding_provider = "local" runs the server's built-in ${LOCAL_EMBEDDING.model} at ${LOCAL_EMBEDDING.dimension} dims — ` +
+        `it is the only local model OpenViking 0.4.15 ships; set embedding_model/embedding_dimension to it, or opt into a hosted provider`,
+    );
+  }
+  if (typeof merged.embedding_key_file !== "string" || merged.embedding_key_file.trim() === "" || merged.embedding_key_file.includes("/")) {
+    throw new Error("config.toml: [openviking] embedding_key_file must be a bare file name inside the secrets dir");
+  }
+  return resolveOpenVikingPaths(merged);
+}
 
 /** Derived paths: `config_file`/`workspace` default off `home`, so the three
  * never drift apart in a hand-edited config. */
@@ -1237,7 +1290,7 @@ export function parseConfig(toml: string): Config {
       ...(req(raw, "pi") as Omit<Config["pi"], "subagent_max_concurrency"> &
         Partial<Pick<Config["pi"], "subagent_max_concurrency">>),
     },
-    openviking: resolveOpenVikingPaths({ ...OPENVIKING_DEFAULTS, ...((raw.openviking ?? {}) as Partial<OpenVikingConfig>) }),
+    openviking: parseOpenViking((raw.openviking ?? {}) as Record<string, unknown>),
     memory: { ...MEMORY_DEFAULTS, ...((raw.memory ?? {}) as Partial<MemoryConfig>) },
     tui: { ...TUI_DEFAULTS, ...((raw.tui ?? {}) as Partial<TuiConfig>) },
     companion,

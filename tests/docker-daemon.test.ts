@@ -9,11 +9,13 @@
 // with the templated boot (no interactive wizard, no vlm, root key from the
 // secrets mount, degrade-never-block, the no-stall trust layers) and the
 // compose topology (webhook published, OpenViking port never).
-import { describe, expect, it } from "vitest";
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseConfig } from "../src/config.js";
+import { LOCAL_EMBEDDING, OPENVIKING_DEFAULTS, parseConfig } from "../src/config.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // The LIVE config.toml where present (the rule-7 drift tripwire); in the
@@ -139,8 +141,14 @@ describe("plain entrypoint — same invariants as the templated boot", () => {
     expect(def("QUEUE_CONCURRENCY")).toBe(String(cfg.openviking.queue_concurrency));
     expect(def("AUTH_MODE")).toBe(cfg.openviking.auth_mode);
     expect(def("AUTH_MODE")).toBe("api_key");
-    expect(def("EMBEDDING_MODEL")).toBe(cfg.openviking.embedding_model);
-    expect(def("EMBEDDING_DIMENSION")).toBe(String(cfg.openviking.embedding_dimension));
+    // the embedder defaults are the SHIPPED default (local), which
+    // every mirror carries; the live config may opt into a hosted provider.
+    expect(def("EMBEDDING_PROVIDER")).toBe("local");
+    expect(def("EMBEDDING_PROVIDER")).toBe(OPENVIKING_DEFAULTS.embedding_provider);
+    expect(def("EMBEDDING_MODEL")).toBe(OPENVIKING_DEFAULTS.embedding_model);
+    expect(def("EMBEDDING_DIMENSION")).toBe(String(OPENVIKING_DEFAULTS.embedding_dimension));
+    expect(def("EMBEDDING_KEY_FILE")).toBe(OPENVIKING_DEFAULTS.embedding_key_file);
+    expect(def("EMBEDDING_KEY_FILE")).toBe(gv("openviking_embedding_key_file"));
     expect(def("ROOT_KEY_FILE")).toBe(cfg.openviking.root_key_file);
     expect(def("REVIEWER_KEY_FILE")).toBe(cfg.openviking.reviewer_key_file);
     expect(def("PROVISION_USERS")).toBe(cfg.openviking.provision_users.join(","));
@@ -170,6 +178,19 @@ describe("plain entrypoint — same invariants as the templated boot", () => {
   it("a failed render or provisioning never fails the boot — memory degrades, the reviewer comes up", () => {
     expect(entrypoint).toMatch(/OV_CONF_RENDER' \|\| echo "openviking: ov\.conf render FAILED/);
     expect(entrypoint).toMatch(/\|\| echo "openviking: boot provisioning did not complete/);
+    expect(entrypoint).toMatch(/\|\| echo "openviking: embedder migration check did not complete/);
+  });
+
+  it("the embedding provider is an env knob, pi's key is never its credential, and the migration check runs before provisioning", () => {
+    const render = entrypoint.slice(entrypoint.indexOf("OV_CONF_RENDER"), entrypoint.lastIndexOf("OV_CONF_RENDER"));
+    expect(render).toContain("provider: process.env.QCR_OV_EMBEDDING_PROVIDER");
+    expect(render).not.toContain('provider: "openai"');
+    expect(render).not.toContain("openai_api_key");
+    expect(render).toContain("process.env.QCR_OV_EMBEDDING_KEY_FILE");
+    const reembed = entrypoint.indexOf('scripts/openviking-reembed.mjs" prepare');
+    const provision = entrypoint.indexOf('scripts/openviking-provision.mjs" \\');
+    expect(reembed).toBeGreaterThan(0);
+    expect(reembed).toBeLessThan(provision);
   });
 
   it("the COMPANION key is never provisioned into this container", () => {
@@ -205,7 +226,65 @@ describe("plain entrypoint — same invariants as the templated boot", () => {
   });
 });
 
+// the sovereignty claim, checked by EXECUTION: the render heredoc is
+// lifted out of the plain entrypoint and run with node, driven by the same env
+// knobs the shell sets, against a temp secrets dir.
+describe("the rendered ov.conf (executed)", () => {
+  let dir: string;
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** The shell's `${QCR_OPENVIKING_X:-default}` defaults, as the render's env. */
+  function shellDefaults(): Record<string, string> {
+    const env: Record<string, string> = {};
+    for (const m of entrypoint.matchAll(/^OV_(\w+)="\$\{QCR_OPENVIKING_\1:-([^}]*)\}"$/gm)) env[`QCR_OV_${m[1]}`] = m[2]!;
+    return env;
+  }
+
+  function render(overrides: Record<string, string>, secrets: Record<string, string>): Record<string, any> {
+    dir = mkdtempSync(join(tmpdir(), "qcr-ovconf-plain-"));
+    const home = join(dir, "openviking");
+    const secretsDir = join(dir, "secrets");
+    mkdirSync(home, { recursive: true });
+    mkdirSync(secretsDir, { recursive: true });
+    for (const [name, value] of Object.entries(secrets)) writeFileSync(join(secretsDir, name), value);
+    const start = entrypoint.indexOf("<<'OV_CONF_RENDER'");
+    const script = join(dir, "render.cjs");
+    writeFileSync(script, entrypoint.slice(entrypoint.indexOf("\n", start) + 1, entrypoint.lastIndexOf("\nOV_CONF_RENDER")));
+    execFileSync(process.execPath, [script], {
+      env: { ...process.env, ...shellDefaults(), ...overrides, OPENVIKING_CONF: join(home, "ov.conf"), QCR_SECRETS: secretsDir },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return JSON.parse(readFileSync(join(home, "ov.conf"), "utf8"));
+  }
+
+  it("SHIPPED DEFAULT: embeds locally with no key present and no key required — pi's key in the mount changes nothing", () => {
+    const conf = render({}, { openai_api_key: "sk-pi-model-credential", openviking_root_key: "root-key-value" });
+    expect(conf.embedding.dense).toEqual({ provider: "local", model: LOCAL_EMBEDDING.model, dimension: LOCAL_EMBEDDING.dimension, input: "text" });
+    const text = JSON.stringify(conf);
+    expect(text).not.toContain("sk-pi-model-credential");
+    expect(text).not.toContain("openai");
+    expect(conf.server.auth_mode).toBe("api_key");
+  });
+
+  it("OPT-IN: the hosted provider reads its OWN key file; without one it renders no key rather than switching embedder", () => {
+    const hosted = { QCR_OV_EMBEDDING_PROVIDER: "openai", QCR_OV_EMBEDDING_MODEL: "text-embedding-3-small", QCR_OV_EMBEDDING_DIMENSION: "1536" };
+    const withKey = render(hosted, { openai_api_key: "sk-pi", openai_embeddings_api_key: "sk-embeddings", openviking_root_key: "r" });
+    expect(withKey.embedding.dense).toMatchObject({ provider: "openai", dimension: 1536, api_key: "sk-embeddings" });
+    const without = render(hosted, { openai_api_key: "sk-pi", openviking_root_key: "r" });
+    expect(without.embedding.dense.provider).toBe("openai");
+    expect(without.embedding.dense.api_key).toBeUndefined();
+  });
+});
+
 describe("docker-compose topology", () => {
+  it("passes the embedder knobs through from the project .env, defaulting to local", () => {
+    expect(compose).toContain("QCR_OPENVIKING_EMBEDDING_PROVIDER: ${QCR_OPENVIKING_EMBEDDING_PROVIDER:-local}");
+    expect(compose).toContain(`QCR_OPENVIKING_EMBEDDING_MODEL: \${QCR_OPENVIKING_EMBEDDING_MODEL:-${OPENVIKING_DEFAULTS.embedding_model}}`);
+    expect(compose).toContain(`QCR_OPENVIKING_EMBEDDING_DIMENSION: \${QCR_OPENVIKING_EMBEDDING_DIMENSION:-${OPENVIKING_DEFAULTS.embedding_dimension}}`);
+  });
+
   it("publishes ONLY the webhook port, loopback by default", () => {
     expect(compose).toMatch(/QCR_WEBHOOK_BIND:-127\.0\.0\.1/);
     expect(compose).toContain(":8787");

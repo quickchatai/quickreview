@@ -8,6 +8,7 @@ import type { OnboardingStep } from "../engine.js";
 import { appSlugStep } from "./appslug.js";
 import { bringUpStep } from "./bringup.js";
 import { configFillStep } from "./configfill.js";
+import { embeddingsStep } from "./embeddings.js";
 import { escalationStep } from "./escalation.js";
 import { githubAppStep } from "./githubapp.js";
 import { goLiveStep } from "./golive.js";
@@ -55,6 +56,7 @@ export function defaultSteps(): OnboardingStep[] {
     llmAuthStep(),
     configFillStep(),
     escalationStep(),
+    embeddingsStep(),
     githubAppStep(),
     ingressStep(),
     memoryStep(),

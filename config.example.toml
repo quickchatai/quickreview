@@ -39,7 +39,8 @@ in_progress_label = "AI review in progress"
 reviewed_label = "Automatic Review"
 improvement_label = "Bot improvement"
 issue_label = "bot-filed"
-# secrets dir: app_id, app.pem, openai_api_key, webhook_secret, tunnel_token
+# secrets dir: app_id, app.pem, webhook_secret, tunnel_token; optional openai_api_key (pi, API-key
+# route) and openai_embeddings_api_key (only with embedding_provider = "openai" in the openviking table)
 secrets_dir = "~/.config/quickreview-bot"      # ← FILL (5): dir holding app_id, app.pem, webhook_secret, …
 # The repo's default branch: the improvement filer's PR base, the
 # replay diff base, the CLI-ops fixture base. PR review rounds always use each
@@ -329,10 +330,24 @@ health_timeout_ms = 2000
 # a slow retry, and every call site already degrades memory-less.
 restart_backoff_ms = [1000, 2000, 5000, 15000, 30000, 60000]
 restart_reset_after_s = 120       # an uptime this long resets the ladder
-# OpenAI embeddings ENABLED; ov.conf carries NO `vlm` section, so extraction,
-# summaries and digest are off — memories are authored, never extracted.
-embedding_model = "text-embedding-3-small"
-embedding_dimension = 1536
+# The embedder. LOCAL is the shipped default: the server's own
+# llama-cpp dense embedder runs INSIDE the container, so nothing but the model
+# call ever leaves the machine — memory text included. Hosted embeddings are an
+# explicit opt-in: embedding_provider = "openai" with model
+# "text-embedding-3-small" / dimension 1536, and the credential in the secrets
+# dir under `embedding_key_file` — a SEPARATE file from pi's `openai_api_key`,
+# so either can be set without the other. ov.conf carries NO `vlm` section
+# either way: extraction, summaries and digest are off (memories are authored,
+# never extracted).
+# Changing the provider changes the vector space: the boot detects it, resets
+# the vector collection and re-embeds reviewer memory (docs/memory-embeddings.md).
+# MIRRORED into group_vars (openviking_embedding_*), whose value the VM boot
+# renders — on the VM route an opt-in is written as inventory host vars beside
+# these keys; tests/openviking.test.ts pins the SHIPPED default to local.
+embedding_provider = "local"
+embedding_model = "bge-small-zh-v1.5-f16"
+embedding_dimension = 512
+embedding_key_file = "openai_embeddings_api_key"
 
 [companion]
 # The local companion container — an ambient pi session on the owner's

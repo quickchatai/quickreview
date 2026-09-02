@@ -25,6 +25,7 @@ import { join } from "node:path";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 import { ingressOptionOf, readConfigText, readTextOrNull, rootOf, writeAtomic } from "./compose.js";
 import { assertNoDryRunEdit, patchToml, tomlString, type TomlEdit } from "./configfill.js";
+import { declaredEmbedderOf, embedderHostVars, type DeclaredEmbedder } from "./embeddings.js";
 import { readTomlKey } from "./ingress.js";
 import { SSH_USER_CHOICE_KEY } from "./ssh.js";
 import { SSH_ALIAS_RE, TOPOLOGY_STEP_ID, sshAliasOf, topologyOf } from "./topology.js";
@@ -49,6 +50,10 @@ export interface InventoryFacts {
   pythonInterpreter: string;
   /** false ⇒ the playbook installs no cloudflared and depends on no token. */
   cloudflaredEnabled: boolean;
+  /**: the embedder config.toml declares. A hosted opt-in rides the
+   * host line as host vars (the tracked group_vars say local); the local
+   * default writes nothing. */
+  embedder: DeclaredEmbedder;
 }
 
 export const DEFAULT_PYTHON_INTERPRETER = "/usr/bin/python3";
@@ -64,9 +69,11 @@ export function renderInventory(f: InventoryFacts): string {
     "# cloudflared_enabled rides the HOST line as a host var on purpose: host",
     "# vars outrank the tracked group_vars/all.yml, so your ingress choice wins",
     "# without editing a committed file (a dirty tree is a deploy refusal).",
+    "# A hosted-embeddings opt-in (config.toml [openviking] embedding_provider)",
+    "# rides the same line the same way; the local default needs no host var.",
     "",
     `[${INVENTORY_GROUP}]`,
-    `${f.host} cloudflared_enabled=${f.cloudflaredEnabled ? "true" : "false"}`,
+    [`${f.host} cloudflared_enabled=${f.cloudflaredEnabled ? "true" : "false"}`, ...embedderHostVars(f.embedder).map(([k, v]) => `${k}=${v}`)].join(" "),
     "",
     `[${INVENTORY_GROUP}:vars]`,
   ];
@@ -218,6 +225,7 @@ export function vmInventoryStep(opts: VmInventoryOptions = {}): OnboardingStep {
       ansibleUser: typedUser !== "" ? typedUser : recordedUser,
       pythonInterpreter: typeof ctx.input.python === "string" && ctx.input.python.trim() !== "" ? ctx.input.python.trim() : pythonInterpreter,
       cloudflaredEnabled: cloudflaredEnabledFor(ingressOptionOf(ctx.choices)?.id ?? null),
+      embedder: declaredEmbedderOf(readConfigText(_root) ?? ""),
     };
   }
 
@@ -324,5 +332,9 @@ export function vmInventoryStep(opts: VmInventoryOptions = {}): OnboardingStep {
 
 function cloudflaredNote(text: string): string {
   const vars = parseInventoryHostVars(text);
-  return vars.cloudflared_enabled === undefined ? "" : ` with cloudflared_enabled=${vars.cloudflared_enabled}`;
+  const parts = [
+    ...(vars.cloudflared_enabled === undefined ? [] : [`cloudflared_enabled=${vars.cloudflared_enabled}`]),
+    ...(vars.openviking_embedding_provider === undefined ? [] : [`the ${vars.openviking_embedding_provider} embedder opt-in`]),
+  ];
+  return parts.length ? ` with ${parts.join(" and ")}` : "";
 }

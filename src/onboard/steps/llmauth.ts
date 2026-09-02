@@ -16,10 +16,11 @@
 //     idempotent, and reversible, so switching routes later re-runs cleanly in
 //     either direction.
 //
-// Either route wants the embeddings key: OpenViking embeds memory entries with
-// an OpenAI embedding model and reads the SAME `openai_api_key` file. OAuth
-// covers the review models only, never embeddings — so the recommendation is
-// surfaced on the OAuth route too, as a note, never as a blocker.
+// Neither route needs anything for memory embeddings: the memory
+// engine embeds LOCALLY by default, and `openai_api_key` is pi's credential
+// alone — the hosted-embeddings opt-in is the embeddings step (38) with its
+// OWN key file. This step says so once, as a note, so an operator on the OAuth
+// route is not left wondering what the key file would have covered.
 //
 // House rule, structural here: NO credential value ever reaches an argv. The
 // key is written straight to the secrets file (0600, dir 0700) by this module,
@@ -389,11 +390,11 @@ export const ROUTE_QUESTION =
 export const KEY_QUESTION =
   `paste the OpenAI API key (it is written straight to the ${OPENAI_KEY_FILE} secrets file, 0600, never to a command line):`;
 
-export const EMBEDDINGS_RECOMMENDATION =
-  "worth providing even on the OAuth route: OpenViking (the memory engine) embeds every entry with an OpenAI " +
-  "embedding model and reads the same openai_api_key file. OAuth covers the review models only, never embeddings — " +
-  "without the key it falls back to a local dense embedder (functional, slower, lower quality). Usage is fractions " +
-  "of a cent a day. Add it any time with: bash deploy/collect-secrets.sh";
+export const EMBEDDINGS_NOTE =
+  "memory embeddings need nothing from this step: the memory engine embeds LOCALLY by default, inside the daemon " +
+  "container, so no memory text leaves the machine on either route. openai_api_key is pi's model credential alone and " +
+  "is never read for embeddings; a hosted embedder is a separate, explicit opt-in (the embeddings step, order 38) with " +
+  "its own openai_embeddings_api_key file.";
 
 export const STEP_EXPLAIN =
   "Chooses how the review sessions talk to OpenAI, and makes the whole installation consistent with that choice. " +
@@ -402,8 +403,8 @@ export const STEP_EXPLAIN =
   "and a container; each login is guided where it happens and verified to have landed on that container's persistent " +
   "pi-home volume, so a recreate never silently costs it. An API key is one paste that covers all three immediately, " +
   "and the wizard then rewrites all six model strings in config.toml from the openai-codex/ provider prefix to " +
-  "openai/ (comment-preserving and reversible — switching routes later just re-runs this step). Either way, an " +
-  "embeddings key is recommended: OAuth does not cover the memory engine's embeddings.";
+  "openai/ (comment-preserving and reversible — switching routes later just re-runs this step). Neither route has " +
+  "anything to do with memory embeddings: those run locally by default, and pi's key is never used for them.";
 
 // ---- route decision ---------------------------------------------------------
 
@@ -488,19 +489,8 @@ function loadConfig(stateDir: string, allowSeed: boolean): ConfigState {
 
 // ---- checks -----------------------------------------------------------------
 
-function embeddingsCheck(keyFile: KeyFileState, route: AuthRoute): CheckResult {
-  if (keyFile.valid) {
-    return {
-      name: "embeddings",
-      ok: true,
-      detail: `${OPENAI_KEY_FILE} is present — it also feeds the memory engine's embeddings (OpenViking reads the same file)`,
-    };
-  }
-  if (keyFile.present) {
-    return { name: "embeddings", ok: true, detail: `${keyFile.path} exists but does not look like an OpenAI key — memory falls back to the local embedder. ${EMBEDDINGS_RECOMMENDATION}` };
-  }
-  const lead = route === "oauth" ? "no embeddings key: " : "no embeddings key yet: ";
-  return { name: "embeddings", ok: true, detail: `${lead}${EMBEDDINGS_RECOMMENDATION}` };
+function embeddingsCheck(): CheckResult {
+  return { name: "embeddings", ok: true, detail: EMBEDDINGS_NOTE };
 }
 
 function modelsCheck(audit: ModelAudit[], route: AuthRoute, note: string): CheckResult {
@@ -656,7 +646,7 @@ export function llmAuthStep(): OnboardingStep {
       // --- the logins ------------------------------------------------------
       if (route === "oauth") checks.push(...(await oauthLoginChecks(ctx, configText, home)));
 
-      checks.push(embeddingsCheck(keyFile, route));
+      checks.push(embeddingsCheck());
 
       const ok = checks.every((c) => c.ok);
       if (ok) {
@@ -704,7 +694,7 @@ export function llmAuthStep(): OnboardingStep {
 
       checks.push(modelsCheck(auditModelStrings(cfg.text), route, companionModelNote(cfg.text, route)));
       if (route === "oauth") checks.push(...(await oauthLoginChecks(ctx, cfg.text, home)));
-      checks.push(embeddingsCheck(keyFile, route));
+      checks.push(embeddingsCheck());
 
       return { ok: checks.every((c) => c.ok), checks };
     },

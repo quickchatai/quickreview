@@ -103,15 +103,28 @@ model for the `terra-med` tier, and fill in `[models.pricing]`
 (`input_per_mtok` / `output_per_mtok` per bare model id) so `qcr spend`
 reports real dollars instead of raw token counts.
 
-## Either route: the embeddings key
+## Either route: memory embeddings need nothing here
 
-The memory engine (OpenViking) embeds entries with an OpenAI embedding model
-(`config.toml [openviking] embedding_model`, default
-`text-embedding-3-small`) and reads its credential from the same
-`openai_api_key` file. Without that file it falls back to a local dense
-embedder — functional, but slower and lower quality. Embedding usage is tiny
-(fractions of a cent per day), so providing the key file is worthwhile **even
-on the OAuth route**: OAuth covers the review models only, never embeddings.
+The memory engine (OpenViking) embeds every memory entry — and every search
+query — to store and find it. **By default it does that locally**, with its
+own llama-cpp embedder inside the daemon container
+(`config.toml [openviking] embedding_provider = "local"`, the shipped value):
+no key, no account, and no memory text ever leaves your machine. Nothing but
+the model call does. Neither route above changes that, and **`openai_api_key`
+is pi's model credential alone — it is never read for embeddings.**
+
+A hosted embedder is an explicit opt-in, not a fallback and not an upgrade the
+wizard suggests: `embedding_provider = "openai"` (with the model and its
+dimension, e.g. `text-embedding-3-small` / `1536`) sends every memory entry's
+text to OpenAI, and reads **its own** credential file,
+`<secrets dir>/openai_embeddings_api_key` (`deploy/collect-secrets.sh` has the
+prompt; `embedding_key_file` names it). The onboarding wizard's embeddings
+step (order 38) writes the opt-in for you and refuses to go green without that
+file. Either file can exist without the other.
+
+Changing the embedder changes the vector space, and an existing store is
+migrated rather than abandoned — see
+[docs/memory-embeddings.md](memory-embeddings.md).
 
 ## Quick reference
 
@@ -119,6 +132,7 @@ on the OAuth route**: OAuth covers the review models only, never embeddings.
 |---|---|---|
 | Provider prefix in `[models]` | `openai-codex/` (shipped default) | `openai/` |
 | Credential | `/login` once in any pi session | `openai_api_key` file → `OPENAI_API_KEY` |
+| Memory embeddings | local, no key (hosted = separate opt-in + `openai_embeddings_api_key`) | same |
 | Survives restarts via | `pihome` volume (`auth.json`) | secrets dir file |
 | Cost | plan-flat, plan-limited | per-token, effectively unlimited |
 | Spend visibility | plan dashboard only | `qcr spend` with `[models.pricing]` filled |

@@ -55,10 +55,29 @@ openviking_port: 1933                 # loopback only — NEVER a published port
 openviking_home: /opt/quickreview/state/openviking
 openviking_workers: 1                 # ov.conf server.workers (2-CPU cap)
 openviking_queue_concurrency: 2       # ov.conf queue_workers.* (defaults 4/4/8)
-# OpenAI embeddings ENABLED; ov.conf carries NO `vlm` section (extraction,
-# summaries and digest are off — memories are authored, never extracted).
-openviking_embedding_model: "text-embedding-3-small"
-openviking_embedding_dimension: 1536
+# The embedder. LOCAL is the shipped default: the server's own
+# llama-cpp dense embedder (the pinned llama_cpp_python above) runs INSIDE the
+# container, so no memory text ever leaves the machine — nothing but the model
+# call does. A HOSTED embedder is an explicit opt-in, written as INVENTORY HOST
+# VARS on the host line (host vars outrank this file, and this file stays
+# tracked and clean):
+#     openviking_embedding_provider=openai openviking_embedding_model=text-embedding-3-small openviking_embedding_dimension=1536
+# plus the credential in <secrets_src>/<openviking_embedding_key_file> — a
+# SEPARATE file from pi's openai_api_key, so either can be set without the
+# other. The entrypoint renders these into ov.conf `embedding.dense`; ov.conf
+# carries NO `vlm` section either way (extraction, summaries and digest are
+# off — memories are authored, never extracted).
+# MIRRORS config.toml [openviking] embedding_provider / embedding_model /
+# embedding_dimension / embedding_key_file; scripts/deploy.sh's preflight
+# refuses on drift between config.toml and the EFFECTIVE ansible value (host
+# var, else this file) — a config.toml that says "openai" over a boot that
+# renders "local" would reset the vector store on the next start.
+# Under "local" the model/dimension are the ONE local spec 0.4.15 ships
+# (bge-small-zh-v1.5-f16, 512 dims); the server refuses any other.
+openviking_embedding_provider: "local"
+openviking_embedding_model: "bge-small-zh-v1.5-f16"
+openviking_embedding_dimension: 512
+openviking_embedding_key_file: "openai_embeddings_api_key"
 # Server-side confinement. `api_key` makes every request carry a USER
 # key the server confines to that user's tree; `dev` bypasses authentication
 # and makes the two-user design nominal — it was the deployed value until
@@ -104,7 +123,8 @@ cloudflared_enabled: true
 # Controller-side sources
 secrets_src: "{{ lookup('env', 'HOME') }}/.config/quickreview-bot"
 # Expected files there: app_id, app.pem, webhook_secret; openai_api_key
-# optional (OAuth route); tunnel_token only when cloudflared_enabled.
+# optional (pi's API-key route); tunnel_token only when cloudflared_enabled;
+# openai_embeddings_api_key only under the hosted-embedder opt-in above.
 
 # The local sandbox working copy (daemon, extensions, prompts, the seed
 # content — prompts/ and agents/ ride this rsync; there is no separate seed

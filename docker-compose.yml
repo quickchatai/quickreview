@@ -4,7 +4,9 @@
 #
 # Prerequisites: a secrets dir (default ~/.config/quickreview-bot — override
 # with QCR_SECRETS_DIR) holding at least app_id, app.pem, webhook_secret;
-# optional openai_api_key, openviking_root_key, openviking_reviewer_key.
+# optional openai_api_key (pi's API-key route), openviking_root_key,
+# openviking_reviewer_key, and openai_embeddings_api_key (only under the
+# hosted-embeddings opt-in — memory embeds locally by default).
 # Ingress is the operator's choice, and the wizard's ingress step
 # makes it for you. Four shapes, three of them a SIDECAR in this file, each
 # behind its own compose profile — with no profile selected you get the daemon
@@ -93,6 +95,15 @@ services:
     environment:
       TZ: ${TZ:-Europe/Warsaw}
       QC_REVIEW_PORT: "8787"
+      # The memory engine's embedder: local by default, so nothing
+      # but the model call leaves the machine. A hosted opt-in is these four
+      # in the project .env (the onboarding bring-up step mirrors them from
+      # config.toml [openviking] embedding_*) plus <secrets>/<key file> — its
+      # OWN file, never pi's openai_api_key. Defaults mirror config.toml.
+      QCR_OPENVIKING_EMBEDDING_PROVIDER: ${QCR_OPENVIKING_EMBEDDING_PROVIDER:-local}
+      QCR_OPENVIKING_EMBEDDING_MODEL: ${QCR_OPENVIKING_EMBEDDING_MODEL:-bge-small-zh-v1.5-f16}
+      QCR_OPENVIKING_EMBEDDING_DIMENSION: ${QCR_OPENVIKING_EMBEDDING_DIMENSION:-512}
+      QCR_OPENVIKING_EMBEDDING_KEY_FILE: ${QCR_OPENVIKING_EMBEDDING_KEY_FILE:-openai_embeddings_api_key}
       # In-container bind must be 0.0.0.0 — the published port targets the
       # container's eth0; host exposure stays loopback-only above.
       QC_BIND_HOST: "0.0.0.0"

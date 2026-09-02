@@ -31,7 +31,7 @@ import { PASS_ADDENDA, buildAgents, identityVars } from "./include.js";
 import { ecosystemFor } from "./ecosystem.js";
 import { loadProfileAddenda, loadProfileEcosystem, loadProfileHeuristics } from "./profiles.js";
 import { fileImprovementPr, fileIssue, type Run } from "./improvements.js";
-import { OpenVikingClient, OpenVikingSupervisor, keyFromFile, openVikingContextAssembler, openVikingStore } from "./openviking/index.js";
+import { OpenVikingClient, OpenVikingSupervisor, ReembedDriver, keyFromFile, openVikingContextAssembler, openVikingStore } from "./openviking/index.js";
 import { OV_REVIEWER_KEY_SECRET, openVikingSessionLifecycle } from "./memory/ovsession.js";
 import type { ContextAssembler, RoundMemory } from "./memory/context.js";
 import { recoverPrForOperator } from "./operator-recovery.js";
@@ -451,6 +451,11 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // awaited: there is deliberately NO boot ordering, and rounds run
   // memory-less until `/ready` passes.
   let openviking: OpenVikingSupervisor | null = null;
+  // the embedder migration's daemon half — resumes the re-embed of
+  // reviewer memory the entrypoint's `prepare` journalled, once /ready passes.
+  // Timer-armed, never awaited; its block rides inside the heartbeat's
+  // `openviking` entry.
+  let reembed: ReembedDriver | null = null;
   // the webhook-URL self-heal. Only ever constructed when [ingress]
   // shape = "tunnel-file" — a daemon without the tunnel shape configured
   // never starts the watcher.
@@ -524,7 +529,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     piSessionsDir: join(homedir(), ".pi", "agent", "sessions"),
     // The memory engine's heartbeat block — a cached, synchronous
     // read of the supervisor's last health + /proc sample.
-    openvikingStatus: () => openviking?.status(),
+    openvikingStatus: () => {
+      const status = openviking?.status();
+      return status && reembed ? { ...status, reembed: reembed.status() } : status;
+    },
 
     // The [feedback] tuning loop.
     onFeedback: async (e: FeedbackEvent) => {
@@ -542,6 +550,15 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       // crash is respawned on a capped backoff ladder, forever.
       openviking = new OpenVikingSupervisor({ cfg: cfg.openviking, log });
       openviking.start();
+      const supervisor = openviking;
+      reembed = new ReembedDriver({
+        cfg: cfg.openviking,
+        repoRoot: root,
+        keyPath: join(cfg.github.secrets_dir, OV_REVIEWER_KEY_SECRET),
+        ready: () => supervisor.status().ready,
+        log,
+      });
+      reembed.start();
 
       // Bind the daemon's durable command slot before any PR session is
       // adopted or born. Pending rows reconstruct their exact inject bytes;
@@ -845,6 +862,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       commands?.stop();
       webhookHeal?.stop();
       webhookHeal = null;
+      reembed?.stop();
+      reembed = null;
       // SIGTERM then SIGKILL after a bounded grace — a memory engine must not
       // be able to hold the daemon's exit open.
       if (openviking) {
