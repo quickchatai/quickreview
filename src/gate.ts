@@ -105,16 +105,19 @@ export type AppSelfConfigKind = (typeof APP_SELF_CONFIG_KINDS)[number];
  * from guard 2 — so a purpose riding an APPROVE would be an approval that
  * skips the no-new-evidence guard AND never marks the head it approved.
  * `execute()` therefore refuses any purposed intent that is not a
- * `create_review` with `event: "COMMENT"`, before and after the guards.
+ * `create_review` with `event: "COMMENT"` — on the caller's intent at entry,
+ * and again on the detached copy that executes (see `snapshot`), so the
+ * `event` this check reads is the `event` the executor sends.
  */
 export type ReviewPurpose = "migration_precheck" | "escalation";
 
 /**
- * The identity fields are `readonly` for the same reason the gate freezes the
- * snapshot it hands a guard (see `execute`): a guard's authority ends at
- * `body` and `note` (GUARD_REWRITABLE_FIELDS), and a first-party guard that
- * assigns to `intent.kind` should fail to compile before it fails at runtime.
- * Rewrites are spreads into a new object, which is what the shipped guards do.
+ * The identity fields are `readonly` for the same reason the gate hands a
+ * guard a frozen, detached snapshot (see `snapshot` and `execute`): a guard's
+ * authority ends at `body` and `note` (GUARD_REWRITABLE_FIELDS), and a
+ * first-party guard that assigns to `intent.kind` should fail to compile
+ * before it fails at runtime. Rewrites are spreads into a new object, which is
+ * what the shipped guards do.
  */
 export interface MutationIntent {
   readonly kind: MutationKind;
@@ -177,9 +180,10 @@ export type GitPerformer = () => Promise<unknown>;
  * rewritten intent (the human-approval downgrade posts a COMMENT instead of a
  * REQUEST_CHANGES). Returning `{}` means "no opinion". The intent a guard
  * receives is a FROZEN snapshot (in-place edits throw); the intent that goes
- * on is a fresh copy of whatever the guard returned (or the snapshot itself),
- * and it may differ from the snapshot in `body` and `note` ONLY
- * (GUARD_REWRITABLE_FIELDS) — the gate refuses any other difference. */
+ * on is a fresh copy (`snapshot`) of whatever the guard returned — or of the
+ * snapshot it was handed, body included, when it returned none — and it may
+ * differ from that snapshot in `body` and `note` ONLY (GUARD_REWRITABLE_FIELDS);
+ * the gate refuses any other difference. */
 export interface GuardDecision {
   block?: string;
   intent?: MutationIntent;
@@ -201,8 +205,11 @@ export interface GuardDecision {
  * `kind: "update_own_webhook_url"` executed FOR REAL in dry-run, and one that
  * added `forceLive` to a `create_review` did the same. No shipped guard did
  * any of that — guards 1 and 4 rewrite `body` and `note` and nothing else,
- * which is the whole of what a guard is for: soften WHAT IS SAID and how the
- * record describes it, never WHAT IS DONE — but rule 2 is meant to be
+ * which is the whole of what a guard is for: it may change the PAYLOAD
+ * (`body` — and for a review, a label, a reviewer request or a pull that IS
+ * the verdict, the labels, the logins, the branches; softening is the shipped
+ * use, not the limit) and the RECORD (`note`), never the ROUTE — `kind`,
+ * `method`, `path`, `pr` — nor the two exemptions. Rule 2 is meant to be
  * structural, and a re-check that enumerates the fields it thought of is the
  * shape that left this seam open. So a guard's authority is stated positively
  * and exhaustively. A field added to MutationIntent later is identity by
@@ -212,31 +219,53 @@ export interface GuardDecision {
  * check on what a guard RETURNS is only a check if the guard cannot change the
  * object it was HANDED — `MutationIntent` is a plain object, and a guard that
  * assigned `intent.kind = …` and returned `{}` (or returned that same object)
- * executed the assigned kind through the compiled gate. So `execute` snapshots
- * the admitted intent into a FROZEN shallow copy before any guard sees it
- * (strict-mode ESM: the assignment throws inside the guard), snapshots the
- * returned intent again into a plain copy (so a getter cannot answer one thing
- * to this check and another to the executor), compares the two, and
+ * executed the assigned kind through the compiled gate. So `execute` hands the
+ * guard a `snapshot` of the admitted intent — frozen, with its own copy of
+ * `body` (strict-mode ESM: an assignment to an identity field throws inside
+ * the guard, and an edit to the body reaches the guard's copy, never the
+ * caller's) — takes a second `snapshot` of what came back (so a getter on any
+ * field, `body`'s contents included, is read exactly once and cannot answer
+ * one thing to this check and another to the executor), compares the two, and
  * re-admits the copy that will execute — unconditionally, whether or not the
- * guard returned an intent. The snapshot is shallow on purpose: `body` is the
- * guard's to rewrite, and re-admission reads it by value after the guard.
+ * guard returned an intent.
  */
 export const GUARD_REWRITABLE_FIELDS = ["body", "note"] as const satisfies readonly (keyof MutationIntent)[];
 
-/** See GUARD_REWRITABLE_FIELDS: every field outside that list must be
- * identical (`===`) before and after the guard, presence included — a guard
- * that ADDS `forceLive: true` differs from one that left it absent. */
+/** See GUARD_REWRITABLE_FIELDS: every field outside that list must be the
+ * same value (`Object.is`, so a `NaN` the guard never touched is not blamed on
+ * it) before and after the guard, presence included — a guard that ADDS
+ * `forceLive: true` differs from one that left it absent. The keys are walked
+ * as strings on purpose: a field the type does not declare is exactly what
+ * this check must not assume away. */
 function guardRewriteCheck(before: MutationIntent, after: MutationIntent): void {
-  const fields = new Set([...Object.keys(before), ...Object.keys(after)] as (keyof MutationIntent)[]);
-  for (const field of fields) {
+  // Viewed as bags of fields, deliberately: `keyof MutationIntent` is the one
+  // thing an unknown added key is not.
+  const b = before as unknown as Record<string, unknown>;
+  const a = after as unknown as Record<string, unknown>;
+  for (const field of new Set([...Object.keys(b), ...Object.keys(a)])) {
     if ((GUARD_REWRITABLE_FIELDS as readonly string[]).includes(field)) continue;
-    if (before[field] !== after[field]) {
+    if (!Object.is(b[field], a[field])) {
       throw new Error(
         `gate: a guard may rewrite only ${GUARD_REWRITABLE_FIELDS.join(" and ")}; it changed "${field}" on ${before.kind} `
-          + `(${JSON.stringify(before[field])} → ${JSON.stringify(after[field])}) — refusing to execute or record it`,
+          + `(${JSON.stringify(b[field])} → ${JSON.stringify(a[field])}) — refusing to execute or record it`,
       );
     }
   }
+}
+
+/**
+ * A frozen copy of an intent with its OWN `body` — the object `execute` hands
+ * a guard, and the object it compares, re-admits and executes. Shallow
+ * everywhere but `body`, because `body` is the one nested field: a body is
+ * plain data (the REST executor JSON-encodes it; the push body is three
+ * strings), so `structuredClone` detaches it, reads any getter in it once and
+ * throws on anything that is not data — a body the executor could not have
+ * sent faithfully either.
+ */
+function snapshot(intent: MutationIntent): MutationIntent {
+  const copy = { ...intent };
+  if (copy.body !== undefined) copy.body = structuredClone(copy.body);
+  return Object.freeze(copy);
 }
 
 /**
@@ -335,12 +364,12 @@ export class MutationGate {
 
   async execute(intentIn: MutationIntent, perform?: GitPerformer): Promise<GateResult> {
     admit(intentIn, perform);
-    // What was admitted, as a FROZEN shallow snapshot. The guards see this
-    // object and nothing else: an in-place assignment to it throws (strict-mode
-    // ESM), so the only way a guard can change anything is to RETURN a new
-    // intent, and that is the one thing the gate checks. The caller's object
-    // is neither handed on nor executed.
-    let intent: MutationIntent = Object.freeze({ ...intentIn });
+    // What was admitted, as a frozen snapshot with its own body. The guards
+    // see this object and nothing else: an assignment to one of its identity
+    // fields throws (strict-mode ESM), and an edit inside its body lands on the
+    // snapshot's copy. The caller's object — its body included — is neither
+    // handed to a guard nor executed.
+    let intent: MutationIntent = snapshot(intentIn);
     // Posting-time guards run BEFORE the dry-run branch: a mutation a guard
     // refuses is neither executed nor recorded, so the dry-run evidence shows
     // the same behaviour the live path would have had.
@@ -352,13 +381,14 @@ export class MutationGate {
         return blocked;
       }
       // Whatever came back — a rewrite, or the snapshot itself when the guard
-      // had no opinion — is copied ONCE into a plain object, and that copy is
-      // what is compared, admitted and executed. Copying is what makes the
-      // comparison final: a returned object with a getter (or a proxy) could
-      // otherwise answer this check with one value and the executor with
-      // another. Both checks run unconditionally; `return {}` is not a way
-      // around them.
-      const post: MutationIntent = Object.freeze({ ...(decision.intent ?? intent) });
+      // had no opinion — is snapshotted ONCE, body included, and that copy is
+      // what is compared, admitted and executed. Copying is what makes both
+      // checks final: a getter on a returned field, or inside its body, is
+      // read here and never again, so it cannot answer this check with one
+      // value (`event: COMMENT` to the reviewPurpose leg) and the executor
+      // with another. Both checks run unconditionally; `return {}` is not a
+      // way around them.
+      const post = snapshot(decision.intent ?? intent);
       // A guard may soften the mutation (guards 1 and 4 rewrite the review
       // body and the note), never change which mutation it is: every field
       // outside GUARD_REWRITABLE_FIELDS must be identical to the snapshot.

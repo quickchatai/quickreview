@@ -501,7 +501,11 @@ describe("MutationGate — git pushes", () => {
  * executed through the compiled gate. The gate now hands the guard a FROZEN
  * snapshot and copies what comes back before comparing; the "in place" and
  * "read once" cases below pin that, and removing the `Object.freeze` / the
- * spread copy in `execute` turns them red.
+ * spread copy in `execute` turns them red. The re-review of that fix found the
+ * snapshot's `body` was still the caller's object by reference, so a getter
+ * inside a returned body answered the reviewPurpose check with COMMENT and the
+ * executor with APPROVE; `snapshot` now clones the body too, and the two
+ * "body" cases below go red without the clone.
  */
 describe("a guard may rewrite only body and note", () => {
   const review: MutationIntent = {
@@ -661,5 +665,67 @@ describe("a guard may rewrite only body and note", () => {
     expect(sent.path).toBe(review.path);
     expect(sent.path).toBe(review.path); // still, on the second read
     expect(Object.getOwnPropertyDescriptor(sent, "path")).toMatchObject({ value: review.path });
+  });
+
+  it("…and so is the returned BODY: a getter inside it cannot say COMMENT to the reviewPurpose check and APPROVE to the executor", async () => {
+    // Re-review of round 1: the body was copied by reference, so this shape
+    // executed a purposed APPROVE — an approval exempt from guard 2 that never
+    // claims the head. Without the body clone in `snapshot` the executor sees
+    // APPROVE here.
+    const purposed: MutationIntent = { ...review, reviewPurpose: "escalation", body: { commit_id: "abc1234", event: "COMMENT", body: "x" } };
+    const executor = vi.fn(async (_i: MutationIntent) => ({}));
+    const gate = new MutationGate(false, join(dir, "dryrun"), executor);
+    gate.setGuard({
+      before: async (i) => {
+        let reads = 0;
+        const body: Record<string, unknown> = { ...(i.body as object) };
+        Object.defineProperty(body, "event", { enumerable: true, get: () => (reads++ === 0 ? "COMMENT" : "APPROVE") });
+        return { intent: { ...i, body } };
+      },
+    });
+    await gate.execute(purposed);
+    expect(executor).toHaveBeenCalledOnce();
+    const sentBody = (executor.mock.calls[0]![0] as MutationIntent).body as Record<string, unknown>;
+    expect(sentBody.event).toBe("COMMENT");
+    expect(sentBody.event).toBe("COMMENT"); // still, on the second read
+    expect(Object.getOwnPropertyDescriptor(sentBody, "event")).toMatchObject({ value: "COMMENT" });
+  });
+
+  it("the caller's body is never on the table: a guard's in-place body edit reaches the executor and not the caller", async () => {
+    // Body is the guard's to rewrite — in place on its own copy or by return,
+    // the executor gets what the guard left. What it must never be is the
+    // caller's object: without the clone in the pre-guard `snapshot` this
+    // edit lands on `mine.body`.
+    const mine: MutationIntent = { ...review, body: { ...(review.body as object) } };
+    const executor = vi.fn(async (_i: MutationIntent) => ({}));
+    const gate = new MutationGate(false, join(dir, "dryrun"), executor);
+    gate.setGuard({ before: async (i) => { (i.body as Record<string, unknown>).event = "COMMENT"; return {}; } });
+    const result = await gate.execute(mine);
+    expect(result.executed).toBe(true);
+    expect(((executor.mock.calls[0]![0] as MutationIntent).body as Record<string, unknown>).event).toBe("COMMENT");
+    expect((mine.body as Record<string, unknown>).event).toBe("REQUEST_CHANGES");
+    expect((review.body as Record<string, unknown>).event).toBe("REQUEST_CHANGES");
+  });
+
+  it("the comparison is SameValue: a field the guard never touched is not blamed on it, NaN included", async () => {
+    // `!==` reads NaN as changed and refused an honest no-op guard with
+    // '"pr" … (null → null)'. No live path produces a NaN pr; the primitive is
+    // simply the right one for "did the guard change this".
+    const executor = vi.fn(async (_i: MutationIntent) => ({}));
+    const gate = new MutationGate(false, join(dir, "dryrun"), executor);
+    gate.setGuard({ before: async () => ({}) });
+    const result = await gate.execute({ ...review, pr: NaN });
+    expect(result.executed).toBe(true);
+    expect((executor.mock.calls[0]![0] as MutationIntent).pr).toBeNaN();
+  });
+
+  it("a field the type does not declare is identity by default: adding one is refused by name", async () => {
+    // The check walks the returned object's own keys as strings, so a field
+    // `MutationIntent` has never heard of is caught, not assumed absent.
+    const executor = vi.fn(async () => ({}));
+    const gate = new MutationGate(false, join(dir, "dryrun"), executor);
+    gate.setGuard({ before: async (i) => ({ intent: { ...i, extra: 1 } as MutationIntent }) });
+    await expect(gate.execute(review)).rejects.toThrow(/a guard may rewrite only body and note.*"extra".*undefined → 1/);
+    nothingHappened(executor);
   });
 });
