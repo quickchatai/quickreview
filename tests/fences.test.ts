@@ -163,24 +163,20 @@ describe("[T3] union members have producers", () => {
     }
 
     /**
-     * A SELF-RETIRING record, not an exemption.
+     * A SELF-RETIRING record, not an exemption — and it is EMPTY, so the
+     * fence below demands a clean union outright.
      *
-     * `awaiting_human` is unreachable and that is correct — it is what this
-     * fence is for. Its removal is, in flight in a parallel worktree
-     * as this lands, so the two would collide if this fence simply demanded
-     * the union be clean today.
+     * It held one entry, `awaiting_human`, while (retire the park
+     * surface) was in flight in a parallel worktree. That entry was
+     * deliberately intolerant of its own ticket landing: the state left the
+     * union, this test went red, and the fix was to delete it. That is the
+     * point — an entry that quietly kept passing after its ticket closed is
+     * how the surface it describes becomes invisible again.
      *
-     * The entry is deliberately INTOLERANT of the removal landing: when
-     * merges, the state leaves the union, this test goes RED, and the
-     * fix is to delete these three lines. That is the point — an entry that
-     * quietly kept passing after its ticket closed is how the surface it
-     * describes becomes invisible again. Whoever merges second re-runs the
-     * suite anyway (the worktree rule says so), and gets a one-line deletion
-     * with a message naming it.
+     * The mechanism stays for the next such removal. An entry needs a ticket
+     * id, and it retires itself the moment that ticket lands.
      */
-    const UNREACHABLE_PENDING_REMOVAL: ReadonlyArray<{ state: string; ticket: string }> = [
-      { state: "awaiting_human", ticket: "(retire the park surface)" },
-    ];
+    const UNREACHABLE_PENDING_REMOVAL: ReadonlyArray<{ state: string; ticket: string }> = [];
     for (const e of UNREACHABLE_PENDING_REMOVAL) {
       if (!declared.includes(e.state)) {
         throw new Error(

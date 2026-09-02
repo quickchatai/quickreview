@@ -5,20 +5,27 @@
 // transitions into `awaiting_human`, and reconcile's migration of legacy rows
 // is meant to be its one remaining reader.
 //
-// It is not. Thirty-one mentions survive across eleven modules: a metrics count
-// that is structurally always zero and reported as a measurement, a digest
-// panel that renders permanently empty, a Slack cause that TELLS an operator a
-// PR is parked, a theme colour, two config knobs. That is MC-11/12/13 and
-// [A1]/[B1]-[B4]/[D1]-[D3], and removing them is.
+// It was not. Thirty-one mentions survived across eleven modules: a metrics
+// count that is structurally always zero and reported as a measurement, a
+// digest panel that renders permanently empty, a Slack cause that TELLS an
+// operator a PR is parked, a theme colour, two config knobs. That is
+// MC-11/12/13 and [A1]/[B1]-[B4]/[D1]-[D3], and removing them was
+// LANDED. Three mentions remain and all three are TOMBSTONES: two
+// comments recording what went and why, and the `RETIRED_STATES` marker that
+// keeps a legacy row from an older daemon rendering blank. Not the audit's
+// proposed end state (that was reconcile's migration, itself now gone), but
+// the same thing it was after: nothing left that a reader could mistake for a
+// live park.
 //
 // So this fence does not assert the end state — it PINS THE CURRENT SURFACE by
 // exact count, per file. Which makes it two useful things at once:
 //
 //   * a ratchet: a new `awaiting_human` reader anywhere fails here;
-//   * and's checklist, which goes red the moment that ticket starts
-//     and names, file by file, exactly what is left. Landing order is
-//     → →, so this is red BY DESIGN on that merge,
-//     and the fix is to edit the numbers down to zero as the surfaces go.
+//   * and's checklist, which went red the moment that ticket landed
+//     and named, file by file, exactly what was left. Landing order was
+//     → →, so it was red BY DESIGN on that merge and
+//     the numbers were edited down as the surfaces went. The ratchet is what
+//     the record is for now.
 //
 // [T3] in tests/fences.test.ts covers the union member itself; this covers the
 // readers, which is where the findings actually live.
@@ -38,7 +45,10 @@ describe("[#10] the retired park's readers are counted, not assumed gone", () =>
   /**
    * file → mentions, and what they are. Counts include comments deliberately:
    * a comment that describes the park as live is MC-43-class stale prose and
-   * is part of what removes, so hiding it would understate the job.
+   * was part of what removed, so hiding it would have understated the
+   * job. All three survivors are the other kind — a tombstone, which says the
+   * park is GONE. Keeping them counted is the point: a tombstone that quietly
+   * turns back into live prose is caught here.
    *
    * MUTATION: add one `awaiting_human` reference to any listed file, or to a
    * file not listed — either fails, naming the file and both counts.
@@ -46,19 +56,19 @@ describe("[#10] the retired park's readers are counted, not assumed gone", () =>
   const PARK_READERS: ReadonlyArray<{ file: string; n: number; what: string }> = [
     {
       file: "src/reconcile.ts",
-      n: 9,
-      what: "the ONE legitimate reader: migrating legacy rows out of the retired state, and logging each one. Survives.",
+      n: 1,
+      what: "a TOMBSTONE comment: the legacy-row migration that used to run here is gone, and it records when it last fired.",
     },
-    { file: "src/slack/messages.ts", n: 4, what: "MC-12 — live operator-facing text asserting a handover that cannot happen." },
-    { file: "src/config.ts", n: 4, what: "the `awaiting_human_stale` Slack cause and its `_h` knob — parsed, disabled by default, inert." },
-    { file: "src/tui/theme.ts", n: 3, what: "a colour for a state nothing can enter." },
-    { file: "src/tui/model.ts", n: 3, what: "board model plumbing for the dead state." },
-    { file: "src/tui/metricstab.ts", n: 2, what: "the `⚑ n awaiting you` stat — [D2], structurally always zero." },
-    { file: "src/metrics.ts", n: 2, what: "MC-11 — an `awaitingYou` count reported as a measurement and structurally always zero." },
-    { file: "src/types.ts", n: 1, what: "MC-43 — the `Verdict` doc comment still describing the park." },
-    { file: "src/state.ts", n: 1, what: "the `PrLifecycleState` union member itself — [T3] in fences.test.ts owns this one." },
-    { file: "src/statemachine.ts", n: 1, what: "the transition table's comment recording that nothing returns it." },
-    { file: "src/slack/announce.ts", n: 1, what: "the announce path's cause plumbing for the dead Slack cause." },
+    {
+      file: "src/tui/digesttab.ts",
+      n: 1,
+      what: "a TOMBSTONE comment recording why the AWAITING YOU list went: its filter named a state nothing can enter.",
+    },
+    {
+      file: "src/tui/model.ts",
+      n: 1,
+      what: "the `RETIRED_STATES` tombstone, so a legacy row arriving from an older daemon still renders marked rather than blank.",
+    },
   ];
 
   it("no module reads awaiting_human that is not on the record, and none reads it more often", () => {
@@ -88,6 +98,6 @@ describe("[#10] the retired park's readers are counted, not assumed gone", () =>
       (n, f) => n + (readFileSync(f, "utf8").match(/awaiting_human/g) ?? []).length,
       0,
     );
-    expect(total, "thirty-one mentions across eleven modules, for a state nothing can transition into").toBe(31);
+    expect(total, "three mentions across three modules, every one of them a tombstone — cut the other 28").toBe(3);
   });
 });

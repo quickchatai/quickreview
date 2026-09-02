@@ -64,14 +64,20 @@ describe("[T11] the shipped configs describe the system that exists", () => {
   ];
 
   /**
-   * The remnants that are CODE, not prose: a knob the config parses and a
-   * Slack cause keyed on a state nothing can enter. Removing them means
-   * editing `src/config.ts` and `src/slack/`, which is's [A10]/[P50]
-   * cut and not a comment fix. Both ship DISABLED, so they are inert —
-   * recorded so a reader can tell them from an oversight, and so a THIRD one
-   * cannot appear quietly.
+   * EMPTY, and that is the end state this record was written to reach.
+   *
+   * It held the two remnants that were CODE rather than prose: the
+   * `awaiting_human_stale_h` knob the config parsed and the
+   * `pr.awaiting_human_stale` Slack cause keyed on a state nothing can enter.
+   * Both shipped DISABLED and were recorded so a reader could tell them from
+   * an oversight — and so a THIRD could not appear quietly. cut both
+   * from `src/config.ts` and `src/slack/`, and the shipped configs with them.
+   *
+   * With the list empty the assertion below is now absolute: NO
+   * `awaiting_human` reference of any kind survives in a shipped config. The
+   * exemption mechanism stays for the next remnant that needs recording.
    */
-  const RETIRED_KNOBS_PENDING_REMOVAL = ["awaiting_human_stale_h", "pr.awaiting_human_stale"];
+  const RETIRED_KNOBS_PENDING_REMOVAL: readonly string[] = [];
 
   for (const file of ["config.toml", "config.example.toml"]) {
     it(`${file} carries no present-tense park`, () => {
@@ -90,7 +96,7 @@ describe("[T11] the shipped configs describe the system that exists", () => {
     });
   }
 
-  it("the only awaiting_human remnants in the shipped configs are the two recorded knobs", () => {
+  it("no awaiting_human remnant survives in the shipped configs", () => {
     const found = new Set<string>();
     for (const file of ["config.toml", "config.example.toml"]) {
       for (const line of readFileSync(join(ROOT, file), "utf8").split("\n")) {
@@ -101,9 +107,9 @@ describe("[T11] the shipped configs describe the system that exists", () => {
     }
     expect(
       [...found].sort(),
-      "the shipped configs' awaiting_human references no longer match the record. MORE than the two recorded "
-        + "knobs means a new reference appeared; FEWER means one was removed and its RETIRED_KNOBS_PENDING_REMOVAL "
-        + "entry should go with it (that removal is [A10]/[P50]).",
+      "the shipped configs' awaiting_human references no longer match the record, which is now EMPTY. Any hit at "
+        + "all means a reference to the retired park reappeared in a config we ship — delete it, or record it in "
+        + "RETIRED_KNOBS_PENDING_REMOVAL with the ticket that removes it.",
     ).toEqual([...RETIRED_KNOBS_PENDING_REMOVAL].sort());
   });
 });

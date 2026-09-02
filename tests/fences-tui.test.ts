@@ -338,14 +338,13 @@ describe("[T1] every registered key is answerable", () => {
         + "each steals the keystroke from the companion column. This is now the inventory's EXACT list, "
         + "`t e p x n A R` — `e` joined it when the effect bar stopped accepting a bare hook return.",
     })),
-    ...(["m", "w"] as const).map((key) => ({
-      tab: "digest" as Tab,
-      key,
-      why:
-        "[C4]: registered on tab [2] and silently swallowed — the memory-view half of the same tab-[2] "
-        + "confusion, relocated. (`g` and `o` of that group do act, so the finding is narrower than "
-        + "the inventory's `m w g o M`.)",
-    })),
+    // [C4]'s `m` and `w` were here — registered on tab [2] and
+    // silently swallowed, the memory-view half of the same tab-[2] confusion.
+    // UNREGISTERED them (with `a g o M`) along with the AWAITING YOU
+    // list whose ⏎/w/m verbs they served: an unregistered printable reaches
+    // the companion column instead of vanishing. They are no longer registered
+    // on this tab, so they cannot be swallowed by it, and set equality here
+    // refuses an entry for a key that is no longer registered at all.
   ];
 
   const NOT_OBSERVABLE_HEADLESS = [...NO_OP_BY_DESIGN, ...DEAD_PENDING_TICKET];
