@@ -1033,20 +1033,15 @@ describe("honest unknowns on the other surfaces", () => {
     expect(view.deploy?.dirty_files).toBeNull();
   });
 
-  it("AWAITING YOU is (?) until a snapshot has arrived", async () => {
-    const { renderDigestTab } = await import("../src/tui/digesttab.js");
-    const st = { files: [], back: 0, scroll: 0, awaitingSelected: 0, loaded: true };
-    const blind = stripAnsi(renderDigestTab(st, undefined, undefined, "2026-08-31", 120, 20).lines.join("\n"));
-    expect(blind).toContain("AWAITING YOU (?)");
-    expect(blind).not.toContain("AWAITING YOU (0)");
-    const known = stripAnsi(renderDigestTab(st, [], undefined, "2026-08-31", 120, 20).lines.join("\n"));
-    expect(known).toContain("AWAITING YOU (0)");
-  });
+  // The "AWAITING YOU is (?) until a snapshot arrives" honesty fix went
+  // away with the panel itself: the count could only ever be zero,
+  // and an honest rendering of a number nobody needs is still a panel nobody
+  // needs. `tests/tui-msg-digest.test.ts` pins the full-width replacement.
 
   it("metrics say a field an older daemon omits is UNKNOWN, not zero", async () => {
     const { cancellationLines, statStrip } = await import("../src/tui/metricstab.js");
     const win = {
-      header: { prs_triggered: 1, prs_reviewed: 1, approvals: 1, request_changes: 0, rounds: 1, spend_usd: 1, overruns: 0, awaiting_you: 0 },
+      header: { prs_triggered: 1, prs_reviewed: 1, approvals: 1, request_changes: 0, rounds: 1, spend_usd: 1, overruns: 0 },
     } as never;
     expect(stripAnsi(statStrip(win, 200))).toContain("stopped ?");
     expect(stripAnsi(cancellationLines(win, 60).join("\n"))).toContain("not reported by the daemon build");

@@ -389,8 +389,9 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
 
   // ---- unprompted causes -------------------------------------------------
 
-  /** Overdue / malformed: both park the PR on awaiting_human, neither implies
-   * an approval. A round-less anomaly has nothing to say and stays silent. */
+  /** Overdue / malformed: both return the PR to its standing-verdict state
+   * (never a park) and neither implies an approval. A
+   * round-less anomaly has nothing to say and stays silent. */
   async anomaly(a: AnomalyAnnouncement): Promise<void> {
     if (a.round_no === null) return;
     const cause = a.kind === "overdue" ? "round.overdue" : a.kind === "failed_loud" ? "review.failed_loud" : "round.malformed_verdict";

@@ -498,6 +498,7 @@ export const HELP_LINES = [
   "the companion sidebar down the right edge is on every tab:",
   "               type any key no tab claims (or /) — it is a terminal, every byte reaches pi; Ctrl-q releases",
   "               wheel over the column (or PgUp/PgDn while focused) walks its scrollback · \\ collapses it to a spine",
+  "on the board [1] only — these verbs act on the SELECTED PR, so off the board they do nothing:",
   "j/k ↓/↑        select PR (mouse: click a row; click again to attach)",
   "⏎ / a          attach selected PR full-screen (the takeover; Ctrl-q back)",
   "click the PI pane below the list — it is a live terminal, not a picture:",

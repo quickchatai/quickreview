@@ -45,7 +45,7 @@ const emptyDist = dist(0, null, null, [
 ]);
 
 const fullWindow = {
-  header: { prs_triggered: 12, prs_reviewed: 9, approvals: 5, request_changes: 4, rounds: 21, spend_usd: 31.5, overruns: 2, awaiting_you: 3 },
+  header: { prs_triggered: 12, prs_reviewed: 9, approvals: 5, request_changes: 4, rounds: 21, spend_usd: 31.5, overruns: 2 },
   ttfv: {
     ...dist(9, 900, 3600, [
       { label: "<5m", count: 2 },
@@ -60,7 +60,6 @@ const fullWindow = {
     { state: "queued", median_s: 120, total_s: 2400 },
     { state: "reviewing", median_s: 780, total_s: 9000 },
     { state: "awaiting_author", median_s: 26_000, total_s: 90_000 },
-    { state: "awaiting_human", median_s: null, total_s: 0 },
   ],
   verdict_mix: [
     { verdict: "APPROVE", count: 5 },
@@ -288,7 +287,7 @@ describe("chart primitives", () => {
 // ---- dashboard --------------------------------------------------------------
 
 describe("metrics dashboard", () => {
-  it("stat strip carries the window header with verdict + awaiting-you counts", () => {
+  it("stat strip carries the window header counts, and no retired awaiting-you tile", () => {
     const text = stripAnsi(statStrip(fullWindow, 200));
     expect(text).toContain("triggered 12");
     expect(text).toContain("reviewed 9");
@@ -297,7 +296,9 @@ describe("metrics dashboard", () => {
     expect(text).toContain("rounds 21");
     expect(text).toContain("$31.50");
     expect(text).toContain("overruns 2");
-    expect(text).toContain("⚑ 3 awaiting you");
+    // the always-zero "awaiting you" tile is gone with the park.
+    expect(text).not.toContain("awaiting you");
+    expect(text).not.toContain("⚑");
     // the strip carries the LOUD count only. Six redeploy orphans do
     // not light a tile — a tile that lights after every deploy is unreadable.
     expect(text).toContain("stopped 2");

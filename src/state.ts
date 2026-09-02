@@ -7,13 +7,12 @@ import { dirname, join } from "node:path";
 import type { OpenVikingStatus } from "./openviking/types.js";
 import type { PassPlanEntry, VerdictPassEntry } from "./types.js";
 
-export type PrLifecycleState =
-  | "tracked"
-  | "queued"
-  | "reviewing"
-  | "awaiting_author"
-  | "awaiting_human"
-  | "closed";
+/** The lifecycle states a PR can occupy. There is no "awaiting human" member:
+ * the park was retired on 2026-08-19 (the review is never handed to
+ * a human) and its last legacy rows were drained by the reconcile migration on
+ * the same day, so nothing can produce or hold that state any more.
+ * Adding one back would need the owner, not a commit. */
+export type PrLifecycleState = "tracked" | "queued" | "reviewing" | "awaiting_author" | "closed";
 
 /** Who asked for the queued round. `human` = a fresh label add, a
  * fresh team re-review request, an overseer/manual trigger, or an author reply

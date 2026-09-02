@@ -74,9 +74,18 @@ const GLOBAL_KEYS = ["q", "r", "s", "?", "1", "2", "3", "4", "5", "j", "k"];
 /** Printable keys a tab's own handler consumes BEYOND its row-B buttons. */
 const TAB_EXTRA_KEYS: Record<Tab, string[]> = {
   board: ["a", "F"], // ⏎'s pi-pane-focus twin; F clears the board filter
-  // memory & learning row verbs; F clears the memory filter, W opens the
-  // OpenViking Studio web UI through the memory forward.
-  digest: ["a", "m", "w", "g", "o", "M", "F", "W"],
+  // F clears the memory filter, W opens the OpenViking Studio web UI through
+  // the memory forward.
+  //
+  // `a m w g o M` used to be registered here for the awaiting-you
+  // list's ⏎/w/m verbs and their board-verb neighbours. That list could only
+  // ever be empty, and a registered key is SWALLOWED rather than offered to
+  // the companion column — so all six silently ate a keystroke, and `a` went
+  // further and focused the BOARD's pi pane from this tab. They are gone.
+  // (`a` still means "toggle archived" inside a #feedback timeline; memtab's
+  // handler claims it there and returns false everywhere else, which is why it
+  // does not need to be registered.)
+  digest: ["F", "W"],
   deploy: [],
   metrics: [],
   // `y` confirms an armed revert. It MUST be registered — an

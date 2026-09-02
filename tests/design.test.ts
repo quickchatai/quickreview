@@ -175,7 +175,7 @@ const boardView: BoardView = {
 
 const memState: MemTabState = {
   view: "memory",
-  digest: { files: ["2026-08-19.md"], back: 0, scroll: 0, awaitingSelected: 0, loaded: true, content: "# Digest\n- fine" },
+  digest: { files: ["2026-08-19.md"], back: 0, scroll: 0, loaded: true, content: "# Digest\n- fine" },
   entries: [
     { ts: "2026-08-19T10:00:00", id: "abc", block: 0, day: "2026-08-19", text: "#pinned always check anchors", pinned: true, tags: ["pinned"], links: [] },
     { ts: "2026-08-20T09:00:00", id: "def", block: 1, day: "2026-08-20", text: "#bug missed a migration collision", pinned: false, tags: ["bug"], links: [] },
@@ -215,7 +215,7 @@ function frames(): Array<[string, Frame]> {
     ["board", renderBoard(boardView, 120, 40)],
     ["board-help", renderBoard({ ...boardView, help: true, eventsFocus: false }, 120, 40)],
     ["memory", renderMemoryView(memState, false, "2026-08-19", 120, 40, "exampleorg/example-app")],
-    ["digest", renderDigestTab(memState.digest, [], false, "2026-08-20", 120, 40)],
+    ["digest", renderDigestTab(memState.digest, false, "2026-08-20", 120, 40)],
     ["deploy", renderDeployTab(deployState, false, 120, 40)],
     ["metrics", renderMetrics(metricsView, 120, 40)],
   ];

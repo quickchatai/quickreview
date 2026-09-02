@@ -9,7 +9,11 @@ export const FG = {
   reviewing: rgb(97, 175, 239), // blue — the daemon is on it
   queued: rgb(140, 148, 160), // grey — waiting its turn
   awaiting_author: rgb(229, 192, 123), // yellow — ball with the author
-  awaiting_human: rgb(198, 120, 221), // magenta — needs YOU
+  // Magenta belongs to the NEEDS_HUMAN *verdict* spelling, which rounds
+  // recorded before 2026-08-18 still carry. It is not a lifecycle state:
+  // the park was retired in and removed, so `stateColor`
+  // can never reach this key.
+  needs_human: rgb(198, 120, 221),
   tracked: rgb(92, 99, 112), // dim grey — known, no live trigger
   closed: rgb(92, 99, 112),
   approve: rgb(152, 195, 121), // green
@@ -31,7 +35,7 @@ export function verdictColor(verdict: string | null | undefined): string {
   if (verdict === "APPROVE") return FG.approve;
   if (verdict === "REQUEST_CHANGES") return FG.request_changes;
   // "ESCALATE" persists in rounds recorded before 2026-08-18.
-  if (verdict === "NEEDS_HUMAN" || verdict === "ESCALATE") return FG.awaiting_human;
+  if (verdict === "NEEDS_HUMAN" || verdict === "ESCALATE") return FG.needs_human;
   return FG.dim;
 }
 
@@ -64,7 +68,6 @@ export function legendLine(): string {
   const parts: Array<[string, string, string]> = [
     ["▶", "reviewing", FG.reviewing],
     ["●", "queued", FG.queued],
-    ["⚑", "needs-you", FG.awaiting_human],
     ["✎", "author", FG.awaiting_author],
     ["·", "tracked", FG.tracked],
     ["↻", "stale", FG.accent],

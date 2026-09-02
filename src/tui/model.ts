@@ -9,7 +9,6 @@ export const STATE_GLYPHS: Record<PrLifecycleState, string> = {
   queued: "●",
   reviewing: "▶",
   awaiting_author: "✎",
-  awaiting_human: "⚑",
   tracked: "·",
   closed: " ", // closed PRs never render — they drop off the list
 };
@@ -20,7 +19,48 @@ export function glyphFor(pr: Pick<SnapshotPr, "state" | "stale_recheck">): strin
   return pr.stale_recheck ? `↻${base}` : base;
 }
 
-const SORT_ORDER: PrLifecycleState[] = ["reviewing", "queued", "awaiting_human", "awaiting_author", "tracked"];
+/**
+ * States the daemon USED to write, and the date it stopped.
+ *
+ * A key here is NOT a `PrLifecycleState`: nothing can produce it and no LIVE
+ * surface renders it. It exists for exactly one reader — the metrics tab's
+ * `TIME IN STATE` card, which is derived from the `pr_transition` event log
+ * and therefore keeps reporting real dwell for states the machine has since
+ * retired (75 such rows on the live install, and they are true history:
+ * deleting them would be falsifying the record, not retiring a state).
+ *
+ * Without this, a retired state renders in that card as a bare label
+ * indistinguishable from a current one — which is how could otherwise
+ * claim "no surface renders a retired state" while one still did.
+ * `tests/park-retired.test.ts` pins both halves: a key here must be absent
+ * from the union and from `STATE_GLYPHS`, and must render marked.
+ */
+export const RETIRED_STATES: Record<string, string> = {
+  awaiting_human: "retired 2026-08-19",
+};
+
+/**
+ * The mark a retired state carries in a historical series.
+ *
+ * A PREFIX, deliberately: the metrics bar fits its label into ~16 cells, so a
+ * `(retired …)` suffix is the first thing truncation eats — a marker that
+ * disappears at the widths people actually run is not a marker. The date rides
+ * the bar's value column, where there is room, and the card's subtitle
+ * explains the glyph.
+ */
+export const RETIRED_STATE_MARK = "†";
+
+/**
+ * How a state reads in a HISTORICAL series, where the event log can still
+ * carry something the machine can no longer produce. Live surfaces (the board
+ * list, its legend, the detail pane) must never call this — they render
+ * `STATE_GLYPHS`, which has no retired members at all.
+ */
+export function historicalStateLabel(state: string): string {
+  return state in RETIRED_STATES ? `${RETIRED_STATE_MARK} ${state}` : state;
+}
+
+const SORT_ORDER: PrLifecycleState[] = ["reviewing", "queued", "awaiting_author", "tracked"];
 
 /** Board order: lifecycle groups per the mockup, stable by PR number within
  * a group; closed PRs are dropped entirely. */
@@ -61,18 +101,6 @@ export function formatEvent(e: { ts: string; kind: string; pr: number | null; pa
   const anomaly = /anomal|reject|error|fail|overdue/i.test(e.kind);
   const kind = anomaly ? e.kind.toUpperCase() : e.kind;
   return { ts: hhmmss, text: `${hhmmss} ${kind}${e.pr ? ` #${e.pr}` : ""}${detail}`, anomaly };
-}
-
-/** Awaiting-you rows: parked PRs oldest-first with age in whole days. */
-export function awaitingRows(prs: SnapshotPr[], now: Date): Array<{ pr: SnapshotPr; ageDays: number }> {
-  return prs
-    .filter((p) => p.state === "awaiting_human")
-    .map((pr) => {
-      const since = pr.trigger_ts ?? pr.updated_at;
-      const ageDays = since ? Math.max(0, Math.floor((now.getTime() - new Date(since).getTime()) / 86_400_000)) : 0;
-      return { pr, ageDays };
-    })
-    .sort((a, b) => b.ageDays - a.ageDays || a.pr.number - b.pr.number);
 }
 
 export function moveSelection(current: number, delta: number, length: number): number {

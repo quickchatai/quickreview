@@ -31,7 +31,6 @@ export interface MetricsWindow {
     rounds: number;
     spend_usd: number;
     overruns: number;      // finished_at > deadline_at
-    awaiting_you: number;  // current awaiting_human count (same in all windows)
   };
   // time-to-first-verdict: trigger_ts -> first round finished_at, seconds
   ttfv: Dist & { queue_median_s: number | null; review_median_s: number | null };
@@ -336,7 +335,6 @@ export interface WindowInput {
   comments: CommentRow[];
   threads: ThreadRow[];
   intervals: StateInterval[];
-  awaitingYou: number;
   resolvedPrs: Map<number, number>; // pr -> rounds until resolution
   /** Every event kind/ts (all kinds, not just the metric ones). */
   allEvents?: Array<{ ts: string; kind: string }>;
@@ -522,7 +520,6 @@ export function computeWindow(input: WindowInput): MetricsWindow {
       rounds: rounds.length,
       spend_usd: spendTotal,
       overruns,
-      awaiting_you: input.awaitingYou,
     },
     ttfv: {
       ...dist([...ttfv.values()]),
@@ -627,10 +624,9 @@ export function computeMetrics(store: StateStore, opts: MetricsOptions = {}): Me
   const comments = store.db.prepare("SELECT pr, round_no, posted_at FROM bot_comments").all() as CommentRow[];
   const threads = readThreads(store);
   const intervals = stateIntervals(events, nowIso);
-  const awaitingYou = store.allPrs().filter((p) => p.state === "awaiting_human").length;
   const resolvedPrs = resolutionByPr(store, rounds, events);
 
-  const base = { rounds, events, allEvents, comments, threads, intervals, awaitingYou, resolvedPrs, nowIso };
+  const base = { rounds, events, allEvents, comments, threads, intervals, resolvedPrs, nowIso };
   const iso = (daysAgo: number): string => new Date(now.getTime() - daysAgo * 86_400_000).toISOString();
 
   const backfilled = rounds.filter(isBackfilled);
@@ -816,7 +812,6 @@ export function renderMetrics(payload: MetricsPayload): string {
     );
   }
   lines.push("");
-  lines.push(`awaiting you: ${w.header.awaiting_you}`);
   lines.push(
     `ttfv (7d): median ${fmtSecs(w.ttfv.median)} p90 ${fmtSecs(w.ttfv.p90)} ` +
       `(queue ${fmtSecs(w.ttfv.queue_median_s)}, review ${fmtSecs(w.ttfv.review_median_s)}) n=${w.ttfv.n}`,

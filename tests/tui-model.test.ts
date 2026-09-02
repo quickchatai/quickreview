@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { awaitingRows, formatEvent, glyphFor, moveSelection, reselect, sortPrs } from "../src/tui/model.js";
+import { formatEvent, glyphFor, moveSelection, reselect, sortPrs } from "../src/tui/model.js";
 
 const pr = (number: number, state: string, extra: Record<string, unknown> = {}) =>
   ({ number, state, title: `t${number}`, head_sha: "abc123", stale_recheck: 0, ...extra }) as any;
@@ -9,7 +9,6 @@ describe("glyphFor", () => {
     expect(glyphFor(pr(1, "queued"))).toBe("●");
     expect(glyphFor(pr(1, "reviewing"))).toBe("▶");
     expect(glyphFor(pr(1, "awaiting_author"))).toBe("✎");
-    expect(glyphFor(pr(1, "awaiting_human"))).toBe("⚑");
     expect(glyphFor(pr(1, "tracked"))).toBe("·");
   });
 
@@ -30,10 +29,9 @@ describe("sortPrs", () => {
       pr(7, "queued"),
       pr(2, "awaiting_author"),
       pr(8, "reviewing"),
-      pr(1, "awaiting_human"),
       pr(3, "reviewing"),
     ];
-    expect(sortPrs(input).map((p) => p.number)).toEqual([3, 8, 7, 1, 2, 9]);
+    expect(sortPrs(input).map((p) => p.number)).toEqual([3, 8, 7, 2, 9]);
   });
 
   it("does not mutate its input", () => {
@@ -59,30 +57,6 @@ describe("formatEvent", () => {
   it("survives non-JSON payloads", () => {
     const line = formatEvent({ ts: "2026-08-13T10:00:00.000Z", kind: "note", pr: null, payload: "not json" });
     expect(line.text).toBe("10:00:00 note");
-  });
-});
-
-describe("awaitingRows", () => {
-  it("lists awaiting_human oldest-first with ages in days", () => {
-    const now = new Date("2026-08-13T12:00:00Z");
-    const rows = awaitingRows(
-      [
-        pr(4820, "awaiting_human", { trigger_ts: "2026-08-01T12:00:00Z" }),
-        pr(4993, "awaiting_human", { trigger_ts: "2026-08-10T12:00:00Z" }),
-        pr(5012, "reviewing"),
-      ],
-      now,
-    );
-    expect(rows.map((r) => [r.pr.number, r.ageDays])).toEqual([
-      [4820, 12],
-      [4993, 3],
-    ]);
-  });
-
-  it("falls back to updated_at when trigger_ts is absent", () => {
-    const now = new Date("2026-08-13T12:00:00Z");
-    const rows = awaitingRows([pr(1, "awaiting_human", { trigger_ts: null, updated_at: "2026-08-12T11:00:00Z" })], now);
-    expect(rows[0]?.ageDays).toBe(1);
   });
 });
 

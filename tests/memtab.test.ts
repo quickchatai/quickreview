@@ -105,11 +105,11 @@ describe("body-row width contract (review P2: rows were cols+1 wide)", () => {
   for (const cols of [100, 111]) {
     it(`digest view + memory view render every line at EXACTLY ${cols} cells`, () => {
       const rows = 28;
-      const digest = renderDigestTab({ files: ["2026-08-19.md"], back: 0, content: "# d", scroll: 0, awaitingSelected: 0, loaded: true }, [], true, "2026-08-19", cols, rows);
+      const digest = renderDigestTab({ files: ["2026-08-19.md"], back: 0, content: "# d", scroll: 0, loaded: true }, true, "2026-08-19", cols, rows);
       for (const line of digest.lines) expect(displayWidth(line)).toBe(cols);
       const st: MemTabState = {
         view: "memory",
-        digest: { files: [], back: 0, scroll: 0, awaitingSelected: 0, loaded: true },
+        digest: { files: [], back: 0, scroll: 0, loaded: true },
         entries: parseMemory(SAMPLE),
         memLoaded: true,
         focus: "timeline",
@@ -131,14 +131,7 @@ describe("body-row width contract (review P2: rows were cols+1 wide)", () => {
     // top bar (0) + body 1..rows-4 + command bar rows-3..rows-2 + border rows-1.
     const rows = 40;
     const content = Array.from({ length: 60 }, (_, i) => `digest line ${i}`).join("\n");
-    const digest = renderDigestTab(
-      { files: ["2026-08-19.md"], back: 0, content, scroll: 0, awaitingSelected: 0, loaded: true },
-      [],
-      true,
-      "2026-08-19",
-      120,
-      rows,
-    );
+    const digest = renderDigestTab({ files: ["2026-08-19.md"], back: 0, content, scroll: 0, loaded: true }, true, "2026-08-19", 120, rows);
     // bodyRows = rows - 4 = 36 lines painted from frame row 1, so the last
     // body row carries the 36th digest line (index 35).
     expect(stripAnsi(digest.lines[rows - 4]!)).toContain("digest line 35");
@@ -146,7 +139,7 @@ describe("body-row width contract (review P2: rows were cols+1 wide)", () => {
 
     const st: MemTabState = {
       view: "memory",
-      digest: { files: [], back: 0, scroll: 0, awaitingSelected: 0, loaded: true },
+      digest: { files: [], back: 0, scroll: 0, loaded: true },
       entries: parseMemory(SAMPLE),
       memLoaded: true,
       focus: "timeline",
@@ -237,7 +230,7 @@ describe("feedback adjudication inbox", () => {
   it("renders date + generated title on the left and the structured card on the right", () => {
     const st: MemTabState = {
       view: "memory",
-      digest: { files: [], back: 0, scroll: 0, awaitingSelected: 0, loaded: true },
+      digest: { files: [], back: 0, scroll: 0, loaded: true },
       entries: [raw],
       memLoaded: true,
       focus: "timeline",
@@ -263,7 +256,7 @@ describe("feedback adjudication inbox", () => {
   it("renders reviewed feedback needing the owner separately from settled feedback", () => {
     const st: MemTabState = {
       view: "memory",
-      digest: { files: [], back: 0, scroll: 0, awaitingSelected: 0, loaded: true },
+      digest: { files: [], back: 0, scroll: 0, loaded: true },
       entries: [raw, needsAttention],
       memLoaded: true,
       focus: "timeline",
@@ -286,7 +279,7 @@ describe("feedback adjudication inbox", () => {
     const body = `# Adjudicate one real episode\n\nId: FT-0227\nStatus: open\nRole: ready-for-human\nUpdated: 2026-08-25T18:00:00Z\n\n## Question\n\nSettle the complaint against all three evidence sources.`;
     const st: MemTabState = {
       view: "memory",
-      digest: { files: [], back: 0, scroll: 0, awaitingSelected: 0, loaded: true },
+      digest: { files: [], back: 0, scroll: 0, loaded: true },
       entries: [raw],
       memLoaded: true,
       focus: "tickets",
@@ -340,7 +333,7 @@ describe("renderMemoryView", () => {
     expect(pinnedBudget(entries).over).toBe(true);
     const st: MemTabState = {
       view: "memory",
-      digest: { files: [], back: 0, scroll: 0, awaitingSelected: 0, loaded: true },
+      digest: { files: [], back: 0, scroll: 0, loaded: true },
       entries,
       memLoaded: true,
       focus: "timeline",
@@ -727,7 +720,7 @@ describe("memory unreachable (FT-0164)", () => {
   it("the error state still renders every row at exactly `cols` cells", () => {
     const st: MemTabState = {
       view: "memory",
-      digest: { files: [], back: 0, scroll: 0, awaitingSelected: 0, loaded: true },
+      digest: { files: [], back: 0, scroll: 0, loaded: true },
       entries: [],
       memLoaded: true,
       memError: DEAD,
@@ -775,7 +768,7 @@ describe("memory forward on the tab", () => {
 
   const memoryState = (forward?: typeof UP | typeof DOWN): MemTabState => ({
     view: "memory",
-    digest: { files: [], back: 0, scroll: 0, awaitingSelected: 0, loaded: true },
+    digest: { files: [], back: 0, scroll: 0, loaded: true },
     entries: parseMemory(SAMPLE),
     memLoaded: true,
     focus: "timeline",

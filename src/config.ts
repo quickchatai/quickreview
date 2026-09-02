@@ -119,7 +119,7 @@ export interface CompanionConfig {
   overdue_grace_min: number;
   /** status.json older than this counts as a stale-daemon alert. */
   stale_alert_s: number;
-  /** awaiting_author/awaiting_human older than this is nag-worthy. */
+  /** A PR sitting in awaiting_author longer than this is nag-worthy. */
   awaiting_age_h: number;
   /** Minimum gap between two alerts about the same subject. */
   cooldown_min: number;
@@ -179,7 +179,6 @@ export interface SlackPolicyConfig {
   heartbeat_interval_min: number;
   storm_corrections: number;
   awaiting_author_stale_h: number;
-  awaiting_human_stale_h: number;
   /** RATIFIED "never": verdicts stay in-thread, never reply_broadcast. */
   broadcast_verdicts: "never" | "always";
   causes: Record<string, SlackCausePolicy>;
@@ -217,7 +216,6 @@ export const SLACK_CAUSE_DEFAULTS: Record<string, SlackCausePolicy> = {
   "reconcile.storm": { enabled: false, cooldown_min: 180 },
   "digest.eod": { enabled: false, cooldown_min: 0 },
   "pr.awaiting_author_stale": { enabled: false, cooldown_min: 1440 },
-  "pr.awaiting_human_stale": { enabled: false, cooldown_min: 1440 },
 };
 
 export const SLACK_POLICY_DEFAULTS: SlackPolicyConfig = {
@@ -236,7 +234,6 @@ export const SLACK_POLICY_DEFAULTS: SlackPolicyConfig = {
   heartbeat_interval_min: 5,
   storm_corrections: 5,
   awaiting_author_stale_h: 48,
-  awaiting_human_stale_h: 72,
   broadcast_verdicts: "never",
   causes: SLACK_CAUSE_DEFAULTS,
 };

@@ -2,42 +2,46 @@ import { describe, expect, it } from "vitest";
 import { StateStore, type PrLifecycleState } from "../src/state.js";
 import { applyEvent, isBotAuthor, transition, type SmEvent } from "../src/statemachine.js";
 
-const STATES: PrLifecycleState[] = ["tracked", "queued", "reviewing", "awaiting_author", "awaiting_human", "closed"];
+// `awaiting_human` is no longer a member of the union, so the table
+// below is five columns wide, not six. The rows it used to carry were an
+// exact copy of the awaiting_author/idempotent column and pinned nothing the
+// rest of the table did not already say.
+const STATES: PrLifecycleState[] = ["tracked", "queued", "reviewing", "awaiting_author", "closed"];
 
 // The transition table from src/statemachine.ts, transcribed independently:
 // rows are events, columns follow STATES order.
 const TABLE: Array<[SmEvent, PrLifecycleState[]]> = [
-  [{ type: "track" }, ["tracked", "queued", "reviewing", "awaiting_author", "awaiting_human", "closed"]],
-  [{ type: "trigger", source: "label" }, ["queued", "queued", "reviewing", "queued", "queued", "closed"]],
-  [{ type: "stale_detected" }, ["queued", "queued", "reviewing", "queued", "queued", "closed"]],
-  [{ type: "dispatched" }, ["reviewing", "reviewing", "reviewing", "reviewing", "reviewing", "closed"]],
+  [{ type: "track" }, ["tracked", "queued", "reviewing", "awaiting_author", "closed"]],
+  [{ type: "trigger", source: "label" }, ["queued", "queued", "reviewing", "queued", "closed"]],
+  [{ type: "stale_detected" }, ["queued", "queued", "reviewing", "queued", "closed"]],
+  [{ type: "dispatched" }, ["reviewing", "reviewing", "reviewing", "reviewing", "closed"]],
   [
     { type: "verdict", verdict: "APPROVE" },
-    ["tracked", "tracked", "tracked", "tracked", "tracked", "closed"],
+    ["tracked", "tracked", "tracked", "tracked", "closed"],
   ],
   [
     { type: "verdict", verdict: "REQUEST_CHANGES" },
-    ["awaiting_author", "awaiting_author", "awaiting_author", "awaiting_author", "awaiting_author", "closed"],
+    ["awaiting_author", "awaiting_author", "awaiting_author", "awaiting_author", "closed"],
   ],
   [
     { type: "verdict", verdict: "NEEDS_HUMAN" },
     // Legacy input only (retired 2026-08-19): review posted, no approval, no park.
-    ["tracked", "tracked", "tracked", "tracked", "tracked", "closed"],
+    ["tracked", "tracked", "tracked", "tracked", "closed"],
   ],
   [
     { type: "round_overdue" },
     // No standing verdict on the event ⇒ tracked everywhere (no park, never an approve).
-    ["tracked", "tracked", "tracked", "tracked", "tracked", "closed"],
+    ["tracked", "tracked", "tracked", "tracked", "closed"],
   ],
-  [{ type: "author_reply" }, ["tracked", "queued", "reviewing", "awaiting_author", "awaiting_human", "closed"]],
-  [{ type: "synchronize" }, ["tracked", "queued", "reviewing", "awaiting_author", "awaiting_human", "closed"]],
+  [{ type: "author_reply" }, ["tracked", "queued", "reviewing", "awaiting_author", "closed"]],
+  [{ type: "synchronize" }, ["tracked", "queued", "reviewing", "awaiting_author", "closed"]],
   [
     { type: "human_requested" },
     // Noted, never a handover (2026-08-19): the AI keeps working.
-    ["tracked", "queued", "reviewing", "awaiting_author", "awaiting_human", "closed"],
+    ["tracked", "queued", "reviewing", "awaiting_author", "closed"],
   ],
-  [{ type: "closed" }, ["closed", "closed", "closed", "closed", "closed", "closed"]],
-  [{ type: "reopened" }, ["tracked", "queued", "reviewing", "awaiting_author", "awaiting_human", "tracked"]],
+  [{ type: "closed" }, ["closed", "closed", "closed", "closed", "closed"]],
+  [{ type: "reopened" }, ["tracked", "queued", "reviewing", "awaiting_author", "tracked"]],
 ];
 
 describe("transition table", () => {
@@ -59,34 +63,45 @@ describe("invariants", () => {
     }
   });
 
-  it("a verdict drains a legacy awaiting_human row into normal flow (park retired 2026-08-19)", () => {
-    expect(transition("awaiting_human", { type: "verdict", verdict: "APPROVE" })).toBe("tracked");
-    expect(transition("awaiting_human", { type: "verdict", verdict: "REQUEST_CHANGES" })).toBe("awaiting_author");
-  });
-
-  it("nothing transitions INTO awaiting_human any more", () => {
-    const events: SmEvent[] = [
-      { type: "track" },
-      { type: "trigger", source: "label" },
-      { type: "stale_detected" },
-      { type: "dispatched" },
-      { type: "verdict", verdict: "APPROVE" },
-      { type: "verdict", verdict: "REQUEST_CHANGES" },
-      { type: "verdict", verdict: "NEEDS_HUMAN" },
-      { type: "round_overdue" },
-      { type: "round_overdue", standing: "REQUEST_CHANGES" },
-      { type: "author_reply" },
-      { type: "synchronize" },
-      { type: "human_requested" },
-      { type: "closed" },
-      { type: "reopened" },
-    ];
-    for (const state of STATES.filter((st) => st !== "awaiting_human")) {
-      for (const event of events) {
-        expect(transition(state, event), `${state} + ${event.type}`).not.toBe("awaiting_human");
-      }
+  // THE ONE RESIDUAL SCENARIO LEAVES OPEN, named so it is not a
+  // surprise. The park's rows were drained on the live install on
+  // 2026-08-19T17:04Z and the reconcile migration that drained them is gone,
+  // so the only way a `pr_state` row can hold the string again is a RESTORE
+  // from a backup older than that date. `state` is a TEXT column — SQLite does
+  // not know about the union — so the cast below is not a trick, it is what a
+  // restored row would really look like coming out of the store.
+  //
+  // Why it is BENIGN, stated precisely: the VERDICT branch ignores `current`
+  // entirely and maps the verdict straight to a state, so a restored row
+  // rejoins normal flow on its first verdict with no migration and no special
+  // case. That is the narrow claim, and it is the one the migration's deletion
+  // rests on. `transition` does read `current` elsewhere — the `closed` early
+  // return, `trigger`, `stale_detected` and `reopened` all branch on it — so
+  // "it never looks at the current state" would be false, and false in the
+  // half that licenses the deletion.
+  //
+  // The honest caveat, which the runbook also carries: a restored row that is
+  // only ever hit by `track`/`author_reply`/`synchronize`/`human_requested`
+  // STAYS in the retired state, because those return `current` unchanged. It
+  // is inert while it sits there (the board paints glyph `?`, `sortPrs` ranks
+  // it last, no live surface names it), and the next verdict moves it.
+  it("a restored pre-2026-08-19 row rejoins normal flow on its first verdict, with no migration", () => {
+    const restored = "awaiting_human" as unknown as PrLifecycleState;
+    expect(transition(restored, { type: "verdict", verdict: "APPROVE" })).toBe("tracked");
+    expect(transition(restored, { type: "verdict", verdict: "REQUEST_CHANGES" })).toBe("awaiting_author");
+    // …and the caveat above is a real property, not a hedge: these leave it be.
+    for (const ev of [{ type: "track" }, { type: "author_reply" }, { type: "synchronize" }, { type: "human_requested" }] as const) {
+      expect([ev.type, transition(restored, ev)]).toEqual([ev.type, "awaiting_human"]);
     }
   });
+
+  // The old "nothing transitions INTO awaiting_human any more" test is DELETED
+  //, not narrowed. It became structurally vacuous the moment the
+  // union lost the member — `transition` returns `PrLifecycleState`, so the
+  // comparison had no type overlap and could not fail. The stronger successor
+  // is `tests/park-retired.test.ts`, which asserts the general property the
+  // old test was one instance of: every member of the union is REACHABLE from
+  // the initial state, so a writerless member fails rather than hiding.
 
   it("an overdue round returns to the standing-verdict state and can never land on an approve state", () => {
     for (const state of STATES) {

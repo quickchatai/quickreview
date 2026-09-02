@@ -97,7 +97,7 @@ function seed(s: StateStore): void {
     trigger_ts: null, stale_recheck: 0, migration_gate: 0,
   });
   s.upsertPr({
-    number: 101, state: "awaiting_human", head_sha: "bbb1", title: "PR 101", author: "bob",
+    number: 101, state: "tracked", head_sha: "bbb1", title: "PR 101", author: "bob",
     trigger_ts: null, stale_recheck: 0, migration_gate: 0,
   });
 
@@ -201,7 +201,6 @@ describe("computeMetrics", () => {
       rounds: 3,
       spend_usd: 4,
       overruns: 1,
-      awaiting_you: 1,
     });
     // The backfilled round joins the 30-day/all windows: one more round, one
     // more APPROVE, no extra dollar.

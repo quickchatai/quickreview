@@ -5,12 +5,11 @@ import type { MigrationCollision } from "./migrations.js";
 export type RoundType = "first" | "re-review" | "staleness";
 
 /**
- * Round outcomes. The escalation mechanics were scrapped on 2026-08-18
- * (the owner): the daemon no longer scores PRs for "escalation-worthiness" and
- * never requests a human reviewer on GitHub. What survives is the park:
- * NEEDS_HUMAN means the session could not decide, so the PR stops on
- * `awaiting_human` and waits for a person. No GitHub mutation is involved —
- * the state is daemon-side only, surfaced through the TUI and Slack.
+ * Round outcomes. `NEEDS_HUMAN` is a legacy INPUT spelling only: the park it
+ * once named was retired on 2026-08-19 (the review is never handed
+ * to a human) and removed the lifecycle state itself. A verdict file
+ * that still says NEEDS_HUMAN lands the PR on `tracked`: the review is posted,
+ * no approval is implied, and the AI keeps driving. Nothing waits for a person.
  */
 export type Verdict = "APPROVE" | "REQUEST_CHANGES" | "NEEDS_HUMAN";
 
@@ -19,11 +18,10 @@ export const VERDICTS: readonly Verdict[] = ["APPROVE", "REQUEST_CHANGES", "NEED
 /**
  * Accept a verdict string, tolerating the retired `ESCALATE` spelling.
  *
- * This alias is load-bearing, not just rollout slack: `prompts/
- * conversation-system.md` is frozen seeded content (CLAUDE.md rule 6) and its
- * steps 5/7 still say ESCALATE. Until the owner ratifies a reseed, a session
- * following its system prompt writes ESCALATE and must still park correctly.
- * Returns null for anything else.
+ * The alias survives the hard cut because escalation came back as a
+ * real (default-off) feature, so the vocabulary is live rather than
+ * dead. It never parks: ESCALATE folds to NEEDS_HUMAN, which the state machine
+ * lands on `tracked`. Returns null for anything else.
  */
 export function normalizeVerdict(raw: unknown): Verdict | null {
   if (typeof raw !== "string") return null;

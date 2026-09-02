@@ -10,14 +10,14 @@
 //   queued          a trigger is outstanding; waiting for a dispatch slot
 //   reviewing       a round is running (trigger already consumed)
 //   awaiting_author REQUEST_CHANGES posted; the author owes a push/reply
-//   awaiting_human  RETIRED (the owner, 2026-08-19): the review is never handed
-//                   to a human — the AI decides on the merits and keeps
-//                   driving, attaching a "for a human to double-check" list
-//                   where it is unsure. The enum value remains valid only for
-//                   legacy rows; NOTHING transitions into it any more, and the
-//                   reconcile poll migrates lingering rows to their
-//                   verdict-implied state.
 //   closed          merged or closed; session archived, worktree dropped
+//
+// There is no "awaiting human" state. The park was retired on 2026-08-19
+// (the review is never handed to a human — the AI decides on the
+// merits and keeps driving, attaching a "for a human to double-check" list
+// where it is unsure), the reconcile migration drained the last legacy rows
+// the same day, and removed the enum member, its glyph, its metric and
+// its panel. NOTHING here can produce it.
 // `stale_recheck` remains as legacy state for old rows/rounds; ordinary pushes
 // never set it or queue work. Only an explicit review re-request starts a round.
 // `stale_recheck` + `trigger_ts` are cleared on dispatch AND on verdict/
@@ -25,24 +25,24 @@
 // reconcile poll sweeps any legacy residue (a tracked/awaiting_author PR with
 // no round running never legitimately holds either).
 //
-// ┌─────────────────┬──────────────────────────────────────────────────────────┐
-// │ event \ state   │ tracked   queued   reviewing  awaiting_  (legacy)  closed │
-// │                 │                                author    aw_human         │
-// ├─────────────────┼──────────────────────────────────────────────────────────┤
-// │ track           │ tracked   queued   reviewing  aw_author  aw_human  closed │  (idempotent adopt)
-// │ trigger         │ queued    queued   reviewing¹ queued     queued    closed²│
-// │ stale_detected  │ queued    queued   reviewing¹ queued     queued    closed │
-// │ dispatched      │ reviewing reviewing reviewing reviewing  reviewing closed³│
-// │ verdict APPROVE │ tracked   tracked  tracked    tracked    tracked   closed │
-// │ verdict R_C     │ aw_author aw_author aw_author aw_author  aw_author closed │
-// │ verdict N_HUMAN │ tracked   tracked  tracked    tracked    tracked   closed │  (legacy input: review posted, no approval — AI keeps driving)
-// │ round_overdue   │ standing⁴ standing⁴ standing⁴ standing⁴  standing⁴ closed │  (never an approve path)
-// │ author_reply    │ tracked   queued   reviewing  aw_author  aw_human  closed │  (ping-pong: no lifecycle change)
-// │ synchronize     │ tracked   queued   reviewing  aw_author  aw_human  closed │
-// │ human_requested │ tracked   queued   reviewing  aw_author  aw_human  closed │  (noted, never a handover — AI keeps working)
-// │ closed          │ closed    closed   closed     closed     closed    closed │
-// │ reopened        │ tracked   queued   reviewing  aw_author  aw_human  tracked│
-// └─────────────────┴──────────────────────────────────────────────────────────┘
+// ┌─────────────────┬────────────────────────────────────────────────┐
+// │ event \ state   │ tracked   queued   reviewing  awaiting_  closed │
+// │                 │                                author           │
+// ├─────────────────┼────────────────────────────────────────────────┤
+// │ track           │ tracked   queued   reviewing  aw_author  closed │  (idempotent adopt)
+// │ trigger         │ queued    queued   reviewing¹ queued     closed²│
+// │ stale_detected  │ queued    queued   reviewing¹ queued     closed │
+// │ dispatched      │ reviewing reviewing reviewing reviewing  closed³│
+// │ verdict APPROVE │ tracked   tracked  tracked    tracked    closed │
+// │ verdict R_C     │ aw_author aw_author aw_author aw_author  closed │
+// │ verdict N_HUMAN │ tracked   tracked  tracked    tracked    closed │  (legacy input: review posted, no approval — AI keeps driving)
+// │ round_overdue   │ standing⁴ standing⁴ standing⁴ standing⁴  closed │  (never an approve path)
+// │ author_reply    │ tracked   queued   reviewing  aw_author  closed │  (ping-pong: no lifecycle change)
+// │ synchronize     │ tracked   queued   reviewing  aw_author  closed │
+// │ human_requested │ tracked   queued   reviewing  aw_author  closed │  (noted, never a handover — AI keeps working)
+// │ closed          │ closed    closed   closed     closed     closed │
+// │ reopened        │ tracked   queued   reviewing  aw_author  tracked│
+// └─────────────────┴────────────────────────────────────────────────┘
 // ¹ a trigger arriving mid-round is not lost: the round in flight covers the
 //   current head, and the reconcile poll re-derives the triggered set after it
 //   finishes (GitHub truth wins — spec §3).

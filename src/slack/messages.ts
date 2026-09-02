@@ -198,8 +198,7 @@ export type CauseMessageInput =
   | { cause: "slack.cap_reached"; cap: number }
   | { cause: "reconcile.storm"; corrections: number; window_min: number }
   | { cause: "digest.eod"; headline: string; url?: string }
-  | { cause: "pr.awaiting_author_stale"; pr: number; hours: number }
-  | { cause: "pr.awaiting_human_stale"; pr: number; hours: number };
+  | { cause: "pr.awaiting_author_stale"; pr: number; hours: number };
 
 export type Cause = CauseMessageInput["cause"];
 
@@ -208,10 +207,10 @@ export function causeMessage(cfg: Config, m: CauseMessageInput): string {
     case "round.overdue":
       return (
         `⏱ #${m.pr} round ${m.round_no} blew its ${m.deadline_min}-min deadline — ` +
-        `parked on awaiting_human for ${ownerRef(cfg)}. No verdict was posted.`
+        `no verdict was posted, and no approval was implied. ${ownerRef(cfg)}`
       );
     case "round.malformed_verdict":
-      return `⚠️ #${m.pr} round ${m.round_no} ended without a usable verdict — parked on awaiting_human, no approval was implied.`;
+      return `⚠️ #${m.pr} round ${m.round_no} ended without a usable verdict — nothing was posted and no approval was implied.`;
     case "pr.not_picked_up":
       return (
         `🐢 #${m.pr} has been waiting ${m.age_min} min for a review slot ` +
@@ -238,8 +237,6 @@ export function causeMessage(cfg: Config, m: CauseMessageInput): string {
         : `📋 end of day — ${escapeMrkdwn(m.headline)}`;
     case "pr.awaiting_author_stale":
       return `😴 #${m.pr} has been waiting on its author for ${m.hours} h — no action from me until a new push lands.`;
-    case "pr.awaiting_human_stale":
-      return `😴 #${m.pr} has been waiting on a human reviewer for ${m.hours} h — the merge decision is still theirs.`;
   }
 }
 

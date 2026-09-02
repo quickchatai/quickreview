@@ -21,8 +21,15 @@ import type { App } from "./app.js";
 import { paintCmdBar } from "./cmdbar.js";
 import { HEAD_ARGV, logArgv, type LocalRunner } from "./deploytab.js";
 import type { BoardKey } from "./keys.js";
-import { ACCENT, ACCENT_BG, BAD, HEADING, OK, RESET as DRESET, SEP, STRONG, WARN, modeBadge, sectionTitle } from "./design.js";
+// `MUTED` is LOAD-BEARING as of — it paints the TIME IN STATE card's
+// retired-state rows (see that card below). It was an unused import for a
+// while and reads like one at a glance, so: removing it is a compile error,
+// not a cleanup. Flagged here because the unused-symbol sweep
+// removed it independently, and a merge of the two auto-applies cleanly into
+// `TS2304: Cannot find name 'MUTED'` — a semantic conflict git cannot see.
+import { ACCENT, ACCENT_BG, BAD, HEADING, MUTED, OK, RESET as DRESET, SEP, STRONG, WARN, modeBadge, sectionTitle } from "./design.js";
 import { Frame, displayWidth, fit, rule, sanitizeText, truncate } from "./paint.js";
+import { RETIRED_STATES, RETIRED_STATE_MARK, historicalStateLabel } from "./model.js";
 import { metricsArgv, metricsPrArgv, type SshRunner } from "./remote.js";
 import { FG, RESET, fmtAge, stateColor, verdictColor } from "./theme.js";
 
@@ -485,14 +492,30 @@ export function metricsCards(win: MetricsWindow, daily: DailyRow[], rows = 24, e
         ),
     },
     {
+      // HISTORY, not current state: these buckets come from the
+      // `pr_transition` event log, so they can name a state the daemon has
+      // since retired. Such a row is MARKED `†`, carries its
+      // retirement date in the value column, and is painted MUTED — a
+      // deliberate choice, not the accident of a lookup miss. It used to be
+      // magenta purely because the park's state owned a colour, and when that
+      // colour was renamed to the verdict it belongs to, the row silently
+      // degraded to ordinary text and read like any other state.
       title: "TIME IN STATE",
-      subtitle: "median dwell per state",
+      subtitle: `median dwell per state · ${RETIRED_STATE_MARK} = retired state, history only`,
       accent: ACCENTS.magenta,
       body: (w) =>
         barList(
           win.time_in_state
             .filter((r) => r.total_s > 0 || r.median_s !== null)
-            .map((r) => ({ label: r.state, value: r.median_s ?? 0, text: fmtDur(r.median_s), color: stateColor(r.state) })),
+            .map((r) => {
+              const retired = RETIRED_STATES[r.state];
+              return {
+                label: historicalStateLabel(r.state),
+                value: r.median_s ?? 0,
+                text: retired === undefined ? fmtDur(r.median_s) : `${fmtDur(r.median_s)} · ${retired}`,
+                color: retired === undefined ? stateColor(r.state) : MUTED,
+              };
+            }),
           w,
           ACCENTS.magenta,
         ),
@@ -625,7 +648,6 @@ export function statStrip(win: MetricsWindow, width: number): string {
     win.cancellations === undefined
       ? `${FG.dim}stopped ?${RESET}`
       : `${win.cancellations.loud > 0 ? WARN : FG.dim}stopped ${win.cancellations.loud}${RESET}`,
-    `${FG.awaiting_human}⚑ ${h.awaiting_you} awaiting you${RESET}`,
   ];
   return truncate(bits.join(SEP), width);
 }
@@ -656,7 +678,7 @@ const KIND_GLYPHS: Array<[RegExp, string, string]> = [
   [/push|synchron/i, "↑", FG.awaiting_author],
   [/merge/i, "⇢", FG.approve],
   [/close/i, "✖", FG.closed],
-  [/state|transition/i, "→", FG.awaiting_human],
+  [/state|transition/i, "→", FG.needs_human],
 ];
 
 export function kindGlyph(kind: string): string {

@@ -14,7 +14,7 @@ import {
 import { retryWithheldApproval, type CheckSummary } from "./cigate.js";
 import { auditUngatedReviews, hasUngatedApproval, ungatedReviewMessage } from "./execboundary.js";
 import { recheckFingerprint } from "./recheck.js";
-import { normalizeVerdict, recheckPromptMarker } from "./types.js";
+import { recheckPromptMarker } from "./types.js";
 import { DEFAULT_ROUND_STALL_GRACE_MIN, type Config } from "./config.js";
 import type { IssueCommentFull, PrRef, ReviewCommentFull, ReviewFull } from "./github.js";
 import { applyEvent, isBotAuthor } from "./statemachine.js";
@@ -104,7 +104,6 @@ export interface ReconcileReport {
   open_prs: number;
   triggered: number[];
   closed: number[];
-  awaiting_human: number[];
   backfilled_comments: number;
   /** Human comments the sweep captured that the webhook had missed.
    * A rising number is the same webhook-health signal `corrections` is. */
@@ -173,7 +172,6 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
     open_prs: 0,
     triggered: [],
     closed: [],
-    awaiting_human: [],
     backfilled_comments: 0,
     captured_comments: 0,
     corrections: 0,
@@ -624,28 +622,15 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
     });
   }
 
-  // ---- 6. retired-park migration -------------------------------------------
-  // awaiting_human was RETIRED on 2026-08-19 (the owner: the review is never
-  // handed to a human — the AI keeps driving). Nothing transitions into it any
-  // more; any lingering legacy row is migrated here to the state its standing
-  // verdict implies (REQUEST_CHANGES ⇒ awaiting_author, else tracked — never
-  // an approval that was not posted). Idempotent: after one pass the census
-  // stays empty.
-  for (const parked of store.allPrs().filter((p) => p.state === "awaiting_human")) {
-    const standing = normalizeVerdict(store.reviewedHead(parked.number)?.verdict);
-    const to = standing === "REQUEST_CHANGES" ? ("awaiting_author" as const) : ("tracked" as const);
-    store.upsertPr({ ...parked, state: to });
-    store.logEvent("unparked_retired_state", parked.number, { from: "awaiting_human", to, standing: standing ?? null });
-    report.corrections += 1;
-    (deps.log ?? (() => {}))(`reconcile: unparked #${parked.number} (awaiting_human retired) → ${to}`);
-    report.awaiting_human.push(parked.number);
-  }
+  // The retired-park migration that used to run here is GONE. It
+  // drained the last five `awaiting_human` rows on the live install on
+  // 2026-08-19T17:04Z and never fired again; the state is no longer a member
+  // of `PrLifecycleState`, so nothing can write one for it to find.
 
   store.logEvent("reconcile_pass", null, {
     open_prs: report.open_prs,
     triggered: report.triggered.length,
     closed: report.closed.length,
-    awaiting_human: report.awaiting_human.length,
     captured_comments: report.captured_comments,
     corrections: report.corrections,
     errors: report.errors.length,
