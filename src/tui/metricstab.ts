@@ -21,6 +21,12 @@ import type { App } from "./app.js";
 import { paintCmdBar } from "./cmdbar.js";
 import { HEAD_ARGV, logArgv, type LocalRunner } from "./deploytab.js";
 import type { BoardKey } from "./keys.js";
+// `MUTED` is LOAD-BEARING as of — it paints the TIME IN STATE card's
+// retired-state rows (see that card below). It was an unused import for a
+// while and reads like one at a glance, so: removing it is a compile error,
+// not a cleanup. Flagged here because the unused-symbol sweep
+// removed it independently, and a merge of the two auto-applies cleanly into
+// `TS2304: Cannot find name 'MUTED'` — a semantic conflict git cannot see.
 import { ACCENT, ACCENT_BG, BAD, HEADING, MUTED, OK, RESET as DRESET, SEP, STRONG, WARN, modeBadge, sectionTitle } from "./design.js";
 import { Frame, displayWidth, fit, rule, sanitizeText, truncate } from "./paint.js";
 import { RETIRED_STATES, RETIRED_STATE_MARK, historicalStateLabel } from "./model.js";

@@ -65,29 +65,30 @@ const ALL_EVENTS: SmEvent[] = [
 ];
 
 /**
- * The states a real PR can actually end up in — a BFS from `INITIAL_STATE`
- * over the real transition function, DERIVED and not asserted.
+ * THE WALK. A BFS from `INITIAL_STATE` over whatever step function it is
+ * given — parameterized so the island test below can drive THIS code rather
+ * than a copy of it. That distinction is not pedantry: an earlier version
+ * inlined its own BFS in the island test, so reverting this function to the
+ * weak "does any arrow point at S" form left the whole file green. The island
+ * test was guarding a hand-written walk, not the fence.
  *
  * Reachability, not "is any arrow pointing at it". The weaker question passes
  * for a pair of writerless states that only produce each other: `limbo_a ⇄
- * limbo_b` both have an incoming arrow, and no PR can ever be in either. A
- * newly tracked PR starts at `INITIAL_STATE` (imported, so this cannot drift
- * from the daemon), and every state after that is somewhere a sequence of real
- * events can walk to.
+ * limbo_b` both have an incoming arrow, and no PR can ever be in either.
  *
- * Identity results still do not count as *discovery* — they are simply the
- * `to === from` case that adds nothing to the frontier — which is what killed
- * the first version of this fence: `awaiting_human` answered `track`,
- * `author_reply` and `synchronize` with itself for the entire two weeks it was
- * unreachable, so counting self-arrows made it look produced.
+ * Identity results do not count as *discovery* — they are the `to === from`
+ * case that adds nothing to the frontier — which is what killed the FIRST
+ * version of this fence: `awaiting_human` answered `track`, `author_reply` and
+ * `synchronize` with itself for the entire two weeks it was unreachable, so
+ * counting self-arrows made it look produced.
  */
-function producibleStates(): Set<string> {
+function reachableFrom(step: (from: string, ev: SmEvent) => string): Set<string> {
   const seen = new Set<string>([INITIAL_STATE]);
   const frontier: string[] = [INITIAL_STATE];
   while (frontier.length > 0) {
     const from = frontier.pop()!;
     for (const ev of ALL_EVENTS) {
-      const to = transition(from as PrLifecycleState, ev);
+      const to = step(from, ev);
       if (!seen.has(to)) {
         seen.add(to);
         frontier.push(to);
@@ -95,6 +96,12 @@ function producibleStates(): Set<string> {
     }
   }
   return seen;
+}
+
+/** The states a real PR can end up in, walked over the REAL transition
+ * function. `INITIAL_STATE` is imported, so this cannot drift from the daemon. */
+function producibleStates(): Set<string> {
+  return reachableFrom((from, ev) => transition(from as PrLifecycleState, ev));
 }
 
 describe("the lifecycle union has no unreachable member", () => {
@@ -109,31 +116,28 @@ describe("the lifecycle union has no unreachable member", () => {
     for (const state of ALL_STATES) expect([state, producible.has(state)]).toEqual([state, true]);
   });
 
-  // The fence walks a graph, so it has to be shown to reject an unreachable
+  // The fence walks a graph, so it has to be shown to REJECT an unreachable
   // one — otherwise "everything is reachable" could just mean the walk is
   // wrong. Two states that only produce EACH OTHER have incoming arrows and
   // are still unreachable; the weaker "does anything point at it" question
-  // passes them, which is the gap this version closes.
+  // passes them.
+  //
+  // This drives `reachableFrom` — the same function `producibleStates()` uses.
+  // Weakening the walk turns this test red, which is the whole point: a copy
+  // of the algorithm asserting things about itself proves nothing about the
+  // fence.
   it("rejects a mutually-producing pair that no PR can reach", () => {
     const island = (from: string, ev: SmEvent): string => {
       if (from === "limbo_a") return ev.type === "track" ? "limbo_b" : "limbo_a";
       if (from === "limbo_b") return ev.type === "track" ? "limbo_a" : "limbo_b";
       return from; // the real states never leave home in this toy machine
     };
-    const seen = new Set<string>([INITIAL_STATE]);
-    const frontier: string[] = [INITIAL_STATE];
-    while (frontier.length > 0) {
-      const from = frontier.pop()!;
-      for (const ev of ALL_EVENTS) {
-        const to = island(from, ev);
-        if (!seen.has(to)) {
-          seen.add(to);
-          frontier.push(to);
-        }
-      }
-    }
+    const seen = reachableFrom(island);
     expect(seen.has("limbo_a")).toBe(false);
     expect(seen.has("limbo_b")).toBe(false);
+    // …and the walk did do its job on the reachable side, so an empty result
+    // cannot be what made the two assertions above pass.
+    expect(seen.has(INITIAL_STATE)).toBe(true);
   });
 
   it("reads a non-empty union, so the fence cannot pass by finding nothing", () => {
@@ -192,7 +196,7 @@ describe("no LIVE state surface renders a state the state machine cannot produce
     expect(filter("awaiting_human")).toBe(false);
   });
 
-  it("no live surface module mentions the retired state at all", () => {
+  it("no live surface module in this list mentions the retired state", () => {
     for (const file of [
       "src/metrics.ts",
       "src/slack/messages.ts",
@@ -204,9 +208,16 @@ describe("no LIVE state surface renders a state the state machine cannot produce
       const src = readFileSync(resolve(process.cwd(), file), "utf8");
       expect([file, src.includes("awaiting_human")]).toEqual([file, false]);
     }
+    // Hand-listed on purpose, and therefore NOT a claim about every module.
+    // Two live files legitimately carry the string and are absent above:
+    // `src/tui/digesttab.ts` (a tombstone comment saying what the panel was)
+    // and `src/reconcile.ts` (the same, for the deleted migration). Prose that
+    // says a thing is GONE is not a surface that renders it — but a title
+    // claiming "no module anywhere" would have been false, which is how a
+    // green test starts meaning less than it says.
   });
 
-  it("`RETIRED_STATES` is the ONE place the name survives in code, and it is a lookup table", () => {
+  it("`model.ts` carries the name exactly once, inside the RETIRED_STATES table", () => {
     // `model.ts` is exempt from the sweep above only because it declares the
     // registry the metrics card reads. Exempting a file is cheap; exempting it
     // for a SECOND reason is how this rots — so the exemption is bounded to
@@ -275,9 +286,16 @@ describe("historical dwell is kept, and reads as history", () => {
     // The card explains the glyph on its own subtitle — the mark is useless
     // if the reader has to guess what it means.
     expect(card.subtitle).toContain("† = retired state, history only");
-    // And the mark survives a NARROW card, which is the case that broke the
-    // first attempt at this (a `(retired …)` suffix was truncated off).
-    expect(card.body(34).map(stripAnsi).join("\n")).toContain("† awaiting");
+    // And the mark survives the TRUNCATING path, which is the case that broke
+    // the first attempt at this (a `(retired …)` suffix was cut off). 45 is
+    // chosen deliberately: below ~40 `hbar`'s `avail < 3` fallback fires and
+    // returns `fit(label + " " + value)` with no label column at all, so a
+    // narrower pin would not exercise the truncation it claims to.
+    const narrow = card.body(45).map(stripAnsi);
+    const narrowRow = narrow.find((l) => l.includes("†"))!;
+    expect(narrowRow).toContain("awaiting_h"); // …the retired row, still named
+    expect(narrowRow).toContain("…"); // proof the label column really truncated
+    expect(narrowRow).toContain("retired 2026-08-19");
   });
 });
 

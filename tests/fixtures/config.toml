@@ -54,7 +54,8 @@ round_deadline_min = 75
 overseer_rotation_days = 7
 # a round overdue with no verdict whose session is dead is
 # self-requeued by the daemon (fresh dispatch to the PR's own session) at most
-# this many times per PR head; past the cap the round parks as an anomaly.
+# this many times per PR head. Past the cap the round is abandoned as an
+# anomaly and the PR RETURNS TO ITS STANDING-VERDICT STATE — never a park.
 max_self_requeues = 2
 # lost-prompt net: a running round whose inject file was consumed but
 # whose session shows NO activity since the round started is re-queued (once
@@ -382,9 +383,9 @@ on_base_advance = true   # the base branch moved; no PR-owned file changed => no
 [review]
 # a first-party agent-directive edit (.claude/**, prompts/**,
 # AGENTS.md/CLAUDE.md in the reviewed repo) never auto-blocks on `kind:
-# injection` — the round parks (NEEDS_HUMAN) and the review carries ONE short
-# escalation comment @-mentioning the most recent human author of the touched
-# directive files. This is the fallback mention when git history yields no
+# injection` — the round still decides on the merits (there is no park) and
+# the review carries ONE short escalation comment @-mentioning the most recent
+# human author of the touched directive files. This is the fallback mention when git history yields no
 # attributable human login. It is a comment @-mention through the gated review
 # — never a GitHub reviewer nomination (rule 10 amendment, the owner 2026-08-19).
 escalation_mention_default = "example-maintainer"

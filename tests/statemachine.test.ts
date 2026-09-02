@@ -71,14 +71,28 @@ describe("invariants", () => {
   // not know about the union — so the cast below is not a trick, it is what a
   // restored row would really look like coming out of the store.
   //
-  // The point is that it is BENIGN: `transition` switches on the EVENT, never
-  // on `current`, so the row rejoins normal flow on its first verdict with no
-  // migration and no special case. That is why the migration was deleted
-  // rather than kept — this is not a reason to bring it back.
+  // Why it is BENIGN, stated precisely: the VERDICT branch ignores `current`
+  // entirely and maps the verdict straight to a state, so a restored row
+  // rejoins normal flow on its first verdict with no migration and no special
+  // case. That is the narrow claim, and it is the one the migration's deletion
+  // rests on. `transition` does read `current` elsewhere — the `closed` early
+  // return, `trigger`, `stale_detected` and `reopened` all branch on it — so
+  // "it never looks at the current state" would be false, and false in the
+  // half that licenses the deletion.
+  //
+  // The honest caveat, which the runbook also carries: a restored row that is
+  // only ever hit by `track`/`author_reply`/`synchronize`/`human_requested`
+  // STAYS in the retired state, because those return `current` unchanged. It
+  // is inert while it sits there (the board paints glyph `?`, `sortPrs` ranks
+  // it last, no live surface names it), and the next verdict moves it.
   it("a restored pre-2026-08-19 row rejoins normal flow on its first verdict, with no migration", () => {
     const restored = "awaiting_human" as unknown as PrLifecycleState;
     expect(transition(restored, { type: "verdict", verdict: "APPROVE" })).toBe("tracked");
     expect(transition(restored, { type: "verdict", verdict: "REQUEST_CHANGES" })).toBe("awaiting_author");
+    // …and the caveat above is a real property, not a hedge: these leave it be.
+    for (const ev of [{ type: "track" }, { type: "author_reply" }, { type: "synchronize" }, { type: "human_requested" }] as const) {
+      expect([ev.type, transition(restored, ev)]).toEqual([ev.type, "awaiting_human"]);
+    }
   });
 
   // The old "nothing transitions INTO awaiting_human any more" test is DELETED
