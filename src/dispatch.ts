@@ -1043,6 +1043,11 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         base_ref: order.base_ref,
         base_sha: order.base_sha,
         triggers_consumed: consumed,
+        // `row` is the pre-dispatch snapshot; `dispatched` has just
+        // cleared these on the live row, and a late guard-2 settlement needs
+        // to explain which trigger paid for the round.
+        trigger_ts: row.trigger_ts,
+        trigger_provenance: row.trigger_provenance,
       });
       // Slack (S4): the PR's thread root on the first round we see, a
       // 🔄 line in-thread on later ones. The announcer swallows its own
