@@ -769,7 +769,13 @@ export class App {
     // would SUBMIT the draft (a live memory edit or quick-message).
     if (ev.kind === "click" && !this.view.inputBox) {
       const rows = this.out.rows ?? 24;
-      const k = barHitKey(this.tab, ev.x, ev.y, cols, rows, this.liveKeys().bar);
+      // Hit-test at the width the bar was PAINTED at — the tab's inner width
+      // beside the companion column, not the terminal's. The bar wraps, so its
+      // row count depends on the width: tested at the full width, a click on
+      // the painted [r refresh] decoded as a nav slot one row up, and the
+      // phantom slots extended into the column (terminal x is inner-frame x
+      // because the tab is on the left).
+      const k = barHitKey(this.tab, ev.x, ev.y, this.innerWidth(cols), rows, this.liveKeys().bar);
       if (k !== undefined) {
         // A focused pi pane would swallow the synthesized key as text.
         if (this.view.piFocus) {
@@ -1239,6 +1245,14 @@ export class App {
     return sidebarWidth(cols, { preferredWidth: this.sidebar.preferredWidth });
   }
 
+  /** The tab's own width: everything left of the companion column, the
+   * shared border cell included — the width every tab renders and lays its
+   * command bar out at. */
+  innerWidth(cols: number): number {
+    const sw = this.sidebarWidth(cols);
+    return sw === 0 ? cols : cols - sw + 1;
+  }
+
   /** Compose the companion column onto a tab's frame. The tab was rendered at
    * the REDUCED width, so this only ever appends — no coordinate inside the
    * frame moves, and the tab renderers stay ignorant of the sidebar. */
@@ -1374,7 +1388,7 @@ export class App {
     // otherwise survives forever. Feed the exact painted rectangle back to
     // the mirror; its next refresh atomically resizes then captures the pane.
     this.sidebar?.setViewport(sw, rows);
-    const inner = sw === 0 ? cols : cols - sw + 1;
+    const inner = this.innerWidth(cols);
     const paint = (screen: Frame | undefined, fallback: string): void => {
       // An unwired tab (a harness, or a hook that failed to install) paints
       // its one-line notice INSIDE the layout, never as a bare full-width
