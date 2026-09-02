@@ -25,6 +25,8 @@ export interface LiveAgentProgress {
   error?: string;
 }
 
+export type RoundExecutionStage = "unknown" | "accepted" | "preparing" | "fanout-started" | "passes-complete" | "finalized";
+
 export interface RoundProgressSnapshot {
   /** v2 adds immutable execution milestones. v1 remains readable for the TUI
    * and for settlement evidence, but cannot drive early pass-stage recovery. */
@@ -40,11 +42,52 @@ export interface RoundProgressSnapshot {
   command_id?: string;
   command_sha256?: string;
   command_accepted_at?: string;
+  /** Prompt-derived immutable review identity. Together with command id/hash,
+   * this prevents a neighboring accepted run from impersonating this round. */
+  round_no?: number;
+  head_sha?: string;
+  /** named parent milestones. `preparing_at` is stamped with exact
+   * command acceptance; `fanout_started_at` is the first subagent execution.
+   * `first_lens_started_at` remains the backwards-compatible spelling. */
+  preparing_at?: string;
   first_lens_started_at?: string;
+  fanout_started_at?: string;
   last_activity_at: string;
   last_activity: string;
   active_tool?: string;
   agents: LiveAgentProgress[];
+}
+
+/** Built pass agents append their model tier to the lens identity. SQLite's
+ * authoritative plan stores the lens, while Pi progress reports the invoked
+ * agent, so every comparison crosses this one normalization seam. */
+export function lensForAgent(agent: string): string {
+  return agent.replace(/--(?:terra-med|sol-med|sol-high)$/, "");
+}
+
+/** Classify the current parent stage from immutable milestones plus the
+ * authoritative round plan. Activity text and heartbeat age are deliberately
+ * absent: they can describe a stage but can never renew it. */
+export function roundExecutionStage(
+  progress: RoundProgressSnapshot,
+  planned: readonly string[],
+): RoundExecutionStage {
+  if (progress.version !== 2 || !progress.command_id || !progress.command_sha256) return "unknown";
+  if (progress.parent_status === "settled") return "finalized";
+  const discovery = planned.filter((name) => name !== "pass-validate");
+  const plannedFanout = progress.agents.some((agent) =>
+    discovery.includes(lensForAgent(agent.agent)) && agent.started_at !== undefined,
+  );
+  if (!plannedFanout) return progress.preparing_at ? "preparing" : "accepted";
+  const terminal = (status: LiveAgentStatus): boolean => status === "completed" || status === "failed";
+  const plannedComplete = planned.every((name) => {
+    const executions = progress.agents.filter((agent) => lensForAgent(agent.agent) === name);
+    return executions.length > 0 && executions.every((agent) => terminal(agent.status));
+  });
+  const addedComplete = progress.agents
+    .filter((agent) => !planned.includes(lensForAgent(agent.agent)))
+    .every((agent) => terminal(agent.status));
+  return plannedComplete && addedComplete ? "passes-complete" : "fanout-started";
 }
 
 function instant(value: unknown): number | undefined {
@@ -67,6 +110,8 @@ export function parseRoundProgress(raw: string): RoundProgressSnapshot | undefin
       ((value.command_id === undefined) !== (value.command_sha256 === undefined)) ||
       (value.command_id !== undefined && typeof value.command_id !== "string") ||
       (value.command_sha256 !== undefined && (typeof value.command_sha256 !== "string" || !/^[a-f0-9]{64}$/.test(value.command_sha256))) ||
+      (value.round_no !== undefined && (!Number.isInteger(value.round_no) || value.round_no < 1)) ||
+      (value.head_sha !== undefined && (typeof value.head_sha !== "string" || value.head_sha.length === 0)) ||
       instant(value.last_activity_at) === undefined ||
       typeof value.last_activity !== "string" ||
       !Array.isArray(value.agents)
@@ -74,16 +119,23 @@ export function parseRoundProgress(raw: string): RoundProgressSnapshot | undefin
 
     const runStarted = instant(value.run_started_at)!;
     const accepted = value.command_accepted_at === undefined ? undefined : instant(value.command_accepted_at);
+    const preparing = value.preparing_at === undefined ? undefined : instant(value.preparing_at);
     const firstLens = value.first_lens_started_at === undefined ? undefined : instant(value.first_lens_started_at);
+    const fanout = value.fanout_started_at === undefined ? undefined : instant(value.fanout_started_at);
     if (
       (value.command_accepted_at !== undefined && accepted === undefined) ||
+      (value.preparing_at !== undefined && preparing === undefined) ||
       (value.first_lens_started_at !== undefined && firstLens === undefined) ||
+      (value.fanout_started_at !== undefined && fanout === undefined) ||
       (accepted !== undefined && accepted < runStarted) ||
-      (accepted !== undefined && firstLens !== undefined && firstLens < accepted)
+      (accepted !== undefined && preparing !== undefined && preparing < accepted) ||
+      (accepted !== undefined && firstLens !== undefined && firstLens < accepted) ||
+      (preparing !== undefined && fanout !== undefined && fanout < preparing) ||
+      (firstLens !== undefined && fanout !== undefined && firstLens !== fanout)
     ) return undefined;
     if (value.version === 2 && value.command_id !== undefined && accepted === undefined) return undefined;
 
-    if (value.version === 2 && value.agents.length > 0 && firstLens === undefined) return undefined;
+    if (value.version === 2 && value.agents.length > 0 && firstLens === undefined && fanout === undefined) return undefined;
     for (const rawAgent of value.agents) {
       if (rawAgent === null || typeof rawAgent !== "object" || Array.isArray(rawAgent)) return undefined;
       const agent = rawAgent as Partial<LiveAgentProgress>;

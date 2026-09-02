@@ -67,16 +67,23 @@ get "/repos/$REPO/commits/$HEAD_SHA/check-runs?per_page=100"
 python3 - "$OUT" <<'PY'
 import json, sys
 runs = json.load(open(sys.argv[1])).get("check_runs", [])
-# Latest-run-per-name (the owner, 2026-08-19; mirrors src/cigate.ts classifyCi):
-# GitHub auto-cancels superseded runs — only the most recent run of each check
-# name counts. Superseded husks are shown, marked, and excluded from the tally.
-latest = {}
+# Latest-run-per-name (the owner, 2026-08-19; mirrors src/cigate.ts
+# latestRunPerName, rule stated exactly there): GitHub auto-cancels
+# superseded runs — only the most recent run of each check name counts.
+# Recency collapses ONLY runs that carry a started_at (latest wins, an equal
+# start resolves to the later list position); a run WITHOUT one never competes
+# with a timestamped one — it is kept beside it and counts on its own, the last
+# such per name. Superseded husks are shown, marked, and excluded from the tally.
+timed, untimed = {}, {}
 for c in runs:
     key = c.get("name") or "check"
-    prev = latest.get(key)
-    if prev is None or (c.get("started_at") or "") >= (prev.get("started_at") or ""):
-        latest[key] = c
-current = set(id(c) for c in latest.values())
+    at = c.get("started_at") or None
+    if at is None:
+        untimed[key] = c
+    elif key not in timed or at >= timed[key].get("started_at"):
+        timed[key] = c
+latest = list(timed.values()) + list(untimed.values())
+current = set(id(c) for c in latest)
 passed = failed = pending = 0
 for c in runs:
     concl = c.get("conclusion")
@@ -101,6 +108,6 @@ elif pending:
 elif failed:
     print("CLASSIFIED: red")
 else:
-    succeeded = any((c.get("conclusion") == "success") for c in latest.values())
+    succeeded = any((c.get("conclusion") == "success") for c in latest)
     print("CLASSIFIED: green" if succeeded else "CLASSIFIED: red")
 PY

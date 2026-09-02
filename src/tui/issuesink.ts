@@ -12,7 +12,7 @@
 //   * `github`    — defects filed as ISSUES on the reviewed repo. The TUI has
 //     no MutationGate and must never grow one, so this sink executes nothing
 //     itself: it writes a `file-issue` COMMAND file into the daemon's
-//     existing commands/ channel (the same ssh idiom as src/tui/unwedge.ts)
+//     operator command channel, commands/operator/ (the same ssh idiom as src/tui/unwedge.ts)
 //     and reads back the daemon's verdict. The daemon's whitelist re-validates
 //     the payload, and `fileIssue` (src/improvements.ts) enforces the day cap,
 //     the jaccard title dedup and the bot label behind the ONE gate — in

@@ -5,7 +5,7 @@
 > `{{n}} {{title}} {{worktree}} {{head_sha}} {{base_ref}} {{base_sha}}
 > {{merge_base}} {{lenses}} {{pass_plan}} {{addable_lenses}}
 > {{migration_gate_note}} {{settled_digest}} {{round_type}} {{round_no}}
-> {{intent_note}}`, plus the two memory sections `pinned_head` and
+> `intent_note` and `recovery_note`, plus the two memory sections `pinned_head` and
 > `context_block` (written without braces here so this doc line
 > does not render a second copy of the memory seed), and the identity
 > variables `owner_name`/`repo`/`bot_login` (same braceless
@@ -19,6 +19,7 @@
 **Lenses this round**: {{lenses}}
 
 {{pinned_head}}
+{{recovery_note}}
 
 Run the full 7-step round from your system prompt. This is the **first** review
 of this PR: there is no prior ledger to verify, so step 1 is pure fact-gathering

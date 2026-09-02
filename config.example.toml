@@ -562,6 +562,22 @@ max_per_pr = 2
 # paths = ["billing/**"]
 # min_severity = "P1"
 
+# Bounds on a SESSION-issued `drain` / `pause-pr`. A pi session
+# (the overseer, or a PR's session on the owner's behalf in Slack) may hold
+# either lever only for a bounded time, drawn from a per-day minute budget —
+# so a session can stop review work for a reason, never indefinitely. The
+# OPERATOR's own levers (`qcr drain on`, the deploy tab's D) are NOT bounded
+# here: the deploy-window drain stands until the new boot's first healthy
+# reconcile lifts it, exactly as before. Which of the two a command is comes
+# from the channel it arrived on (the operator's is the root-owned
+# `commands/operator/` directory a session cannot write into), never from a
+# field in the file. All values are minutes; budgets count per [ops] timezone day.
+[levers]
+session_drain_max_min = 30                 # longest single session drain
+session_drain_budget_min_per_day = 90      # total session-drain minutes per day (>= the cap)
+session_pause_max_min = 240                # longest single session pause of one PR
+session_pause_budget_min_per_day = 480     # total session-pause minutes per PR per day (>= the cap)
+
 [slack]
 # The Slack concierge — ONE channel, one thread per PR. Tokens are
 # NEVER here: bot_token_file / app_token_file name flat files under

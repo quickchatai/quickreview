@@ -13,7 +13,7 @@ import { ACCENT, ACCENT_BG, HEADING, MUTED, RESET as DRESET, STRONG, WARN, modeB
 import { Frame, displayWidth, fit, rule, sanitizeText, stripAnsi, truncate, wrap } from "./paint.js";
 import type { PiPaneView } from "./pipane.js";
 import type { Health } from "./poll.js";
-import type { LiveAgentProgress, RoundProgressSnapshot } from "../round-progress.js";
+import { lensForAgent, roundExecutionStage, type LiveAgentProgress, type RoundProgressSnapshot } from "../round-progress.js";
 import type { ConnectionDiagnosis } from "./sshtriage.js";
 import { FG, RESET, fmtAge, legendLine, osc8, prUrl, stateColor, verdictChip } from "./theme.js";
 
@@ -78,6 +78,22 @@ export interface BoardView {
 
 // ---- layout ----------------------------------------------------------------
 
+/** "held by the operator" / "held by a session, lapses 12:30:00Z";
+ * an older daemon reports no holder, and that is said rather than guessed. */
+export function leverHolderLabel(by: "operator" | "session" | undefined, until: string | undefined): string {
+  if (by === undefined) return "holder unknown (older daemon)";
+  const who = by === "operator" ? "held by the operator" : "held by a session";
+  return until ? `${who}, lapses ${until.slice(11, 19)}Z` : `${who} until lifted`;
+}
+
+/** The pause chip on a PR row: `⏸op` for the operator's hold, `⏸` + the lapse time for a session's. */
+function pauseChip(pr: SnapshotPr): string {
+  if (!pr.paused) return "";
+  if (!pr.pause) return "⏸";
+  if (pr.pause.issuer === "operator") return "⏸op";
+  return pr.pause.expires_at ? `⏸→${pr.pause.expires_at.slice(11, 16)}Z` : "⏸";
+}
+
 function rowPlain(pr: SnapshotPr, now: Date): string {
   // "ESCALATE" still appears in rounds recorded before 2026-08-18.
   const chip =
@@ -89,7 +105,7 @@ function rowPlain(pr: SnapshotPr, now: Date): string {
           ? "⚑H"
           : "";
   const rounds = pr.rounds ? `r${pr.rounds}` : "";
-  return [glyphFor(pr), `#${pr.number}`, pr.author ?? "", fmtAge(pr.updated_at, now), rounds, chip, pr.title].filter((s) => s !== "").join(" ");
+  return [glyphFor(pr), `#${pr.number}`, pr.author ?? "", fmtAge(pr.updated_at, now), rounds, chip, pauseChip(pr), pr.title].filter((s) => s !== "").join(" ");
 }
 
 /** Left column sized to the longest PR row so titles aren't cropped while
@@ -230,8 +246,11 @@ function barSegments(view: BoardView, alerts: boolean): string[] {
   // Deploy-window drain (2026-08-25): while the daemon drains, the bar says
   // so loudly, with how many rounds still have to finish before a deploy is
   // safe and how many webhook deliveries were dropped so far.
+  // and by WHOM, and when it lapses — an operator's drain holds
+  // until lifted, a session's always has an expiry. An older daemon that
+  // reports neither is shown as such rather than guessed at.
   const drainSeg = s?.draining
-    ? `${FG.anomaly}⛔ DRAINING — ${s.running_rounds} round${s.running_rounds === 1 ? "" : "s"} finishing · ${s.drain_failed_loud ?? 0} failed loud · ${s.drained_deliveries ?? 0} dropped${RESET}`
+    ? `${FG.anomaly}⛔ DRAINING — ${s.running_rounds} round${s.running_rounds === 1 ? "" : "s"} finishing · ${s.drain_failed_loud ?? 0} failed loud · ${s.drained_deliveries ?? 0} dropped · ${leverHolderLabel(s.draining_by, s.draining_until)}${RESET}`
     : "";
   const td = s?.thread_decisions;
   const breakerSeg = td && (td.breaker_state !== "closed" || td.failed > 0)
@@ -268,8 +287,9 @@ function styledRow(pr: SnapshotPr, selected: boolean, width: number, now: Date, 
     ? `${FG.anomaly}FAILED_LOUD${RESET}`
     : verdictChip(pr.last_verdict);
   const rounds = pr.rounds ? `${FG.dim}r${pr.rounds}${RESET}` : "";
+  const paused = pr.paused ? `${WARN}${pauseChip(pr)}${DRESET}` : "";
   const head = `${color}${glyphFor(pr)} ${STRONG}#${pr.number}${RESET}`;
-  const meta = [`${FG.author}${pr.author ?? ""}${RESET}`, `${FG.dim}${fmtAge(pr.updated_at, now)}${RESET}`, rounds, chip]
+  const meta = [`${FG.author}${pr.author ?? ""}${RESET}`, `${FG.dim}${fmtAge(pr.updated_at, now)}${RESET}`, rounds, chip, paused]
     .filter((s) => stripAnsi(s) !== "")
     .join(" ");
   const used = displayWidth(`${stripAnsi(head)} ${stripAnsi(meta)} `);
@@ -299,7 +319,16 @@ function oneLine(value: string): string {
   return sanitizeText(value).replace(/\s+/g, " ").trim();
 }
 
-type CurrentRound = Pick<WhyPayload["rounds"][number], "round_no" | "status" | "started_at" | "deadline_at" | "lenses" | "validate_tier">;
+type CurrentRound = Pick<WhyPayload["rounds"][number], "round_no" | "status" | "started_at" | "deadline_at" | "lenses" | "validate_tier"> & {
+  command_id?: string;
+  command_sha256?: string;
+  head_sha?: string;
+  stage_deadlines?: {
+    first_pass_start: string;
+    passes_complete: string;
+    running_hard_bound: string;
+  };
+};
 
 function currentProgressLines(
   round: CurrentRound,
@@ -319,13 +348,18 @@ function currentProgressLines(
     : "deadline unavailable";
   lines.push(truncate(section("CURRENT REVIEW", `round ${round.round_no} · ${elapsed} elapsed · ${deadlineText}`), width));
 
-  // A sticky session may have processed another wake before this round. Only a
-  // run born at/after the round start is evidence about THIS round.
-  const current = progress && progress.pr > 0 && Number.isFinite(started) && Date.parse(progress.run_started_at) >= started - 2_000
+  // A sticky session may process neighboring wakes at nearly identical times.
+  // Only the exact durable delivery + prompt-derived round/head identity may
+  // paint THIS round; timestamp proximity is not identity.
+  const current = progress?.version === 2
+    && round.command_id !== undefined && progress.command_id === round.command_id
+    && round.command_sha256 !== undefined && progress.command_sha256 === round.command_sha256
+    && round.head_sha !== undefined && progress.head_sha === round.head_sha
+    && progress.round_no === round.round_no
     ? progress
     : undefined;
   const planned = round.lenses.split(",").map((x) => x.trim()).filter(Boolean);
-  const byName = new Map((current?.agents ?? []).map((agent) => [agent.agent, agent]));
+  const byName = new Map((current?.agents ?? []).map((agent) => [lensForAgent(agent.agent), agent]));
 
   if (!current) {
     lines.push(truncate(`  ${FG.dim}? parent · live progress unavailable${RESET}`, width));
@@ -341,7 +375,16 @@ function currentProgressLines(
   const signal = signalAge >= 60_000 ? `SILENT ${durationLabel(signalAge)}` : `signal ${durationLabel(signalAge)} ago`;
   const parentColor = signalAge >= 120_000 ? FG.anomaly : current.parent_status === "active" ? FG.accent : FG.dim;
   const active = current.active_tool ? ` · ${oneLine(current.active_tool)}` : "";
-  lines.push(truncate(`  ${parentColor}parent ${current.parent_status.toUpperCase()} · ${signal}${active}${RESET}`, width));
+  const stage = roundExecutionStage(current, planned);
+  const stageDeadline = stage === "accepted" || stage === "preparing"
+    ? round.stage_deadlines?.first_pass_start
+    : stage === "fanout-started"
+      ? round.stage_deadlines?.passes_complete
+      : undefined;
+  const due = stageDeadline
+    ? ` · stage ${Date.parse(stageDeadline) >= nowMs ? `due in ${durationLabel(Date.parse(stageDeadline) - nowMs)}` : `OVERDUE ${durationLabel(nowMs - Date.parse(stageDeadline))}`}`
+    : "";
+  lines.push(truncate(`  ${parentColor}parent ${current.parent_status.toUpperCase()} · ${stage}${due} · ${signal}${active}${RESET}`, width));
 
   const agentLine = (name: string, agent: LiveAgentProgress | undefined): string => {
     const tier = name === "pass-validate" && round.validate_tier ? ` · ${round.validate_tier}` : "";
@@ -359,7 +402,7 @@ function currentProgressLines(
   for (const name of planned) lines.push(truncate(agentLine(name, byName.get(name)), width));
   // The parent may justify and add a lens outside the dispatch plan. Those
   // agents are real work too; omitting them would make "all agents" false.
-  for (const agent of current.agents.filter((item) => !planned.includes(item.agent))) {
+  for (const agent of current.agents.filter((item) => !planned.includes(lensForAgent(item.agent)))) {
     const rendered = agentLine(agent.agent, agent).replace(`${RESET}`, ` · added${RESET}`);
     lines.push(truncate(rendered, width));
   }
@@ -396,6 +439,12 @@ export function detailLines(
   if (detail.labels && detail.labels.length > 0) {
     lines.push(truncate(detail.labels.map((l) => `${FG.accent}[${sanitizeText(l)}]${RESET}`).join(" "), width));
   }
+  if (pr.paused) {
+    // a held PR says who holds it and when the hold lapses.
+    const hold = pr.pause;
+    const why = hold?.reason ? ` · ${oneLine(sanitizeText(hold.reason))}` : "";
+    lines.push(truncate(`${WARN}${STRONG}PAUSED${DRESET}${WARN} · ${leverHolderLabel(hold?.issuer, hold?.expires_at ?? undefined)}${why}${DRESET}`, width));
+  }
   if (pr.review_failure) {
     const command = pr.review_failure.command_id ? ` · ${pr.review_failure.command_id}` : "";
     const round = pr.review_failure.round_no !== null ? ` · round ${pr.review_failure.round_no}` : "";
@@ -403,7 +452,10 @@ export function detailLines(
       `${FG.anomaly}${STRONG}FAILED_LOUD${RESET}${FG.anomaly} · ${pr.review_failure.stage}${command}${round} · attempt ${pr.review_failure.attempts}/${pr.review_failure.retry_cap} · ${fmtAge(pr.review_failure.failed_at, now)} old${RESET}`,
       width,
     ));
-    lines.push(truncate(`${FG.anomaly}${oneLine(pr.review_failure.detail)} · press u to recover${RESET}`, width));
+    const retry = pr.review_failure.next_action === "retry_wait" && pr.review_failure.next_retry_at
+      ? `auto retry ${pr.review_failure.next_retry_at.slice(11, 16)}Z · epoch ${pr.review_failure.retry_epoch} · u now`
+      : "press u to recover";
+    lines.push(truncate(`${FG.anomaly}${oneLine(pr.review_failure.detail)} · ${retry}${RESET}`, width));
   }
   lines.push(`${FG.dim}${"─".repeat(Math.max(0, width))}${RESET}`);
   // status.json advances every poll and therefore owns CURRENT timing/plan;

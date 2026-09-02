@@ -73,6 +73,7 @@ export {
   validEntryId,
   withTag,
   withoutTag,
+  type MemorySweep,
   type OpenVikingStoreOptions,
 } from "./store.js";
 export {

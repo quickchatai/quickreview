@@ -14,6 +14,7 @@ import {
 } from "./state.js";
 import { computeMetrics, computeTimeline, readOps, renderMetrics, renderTimeline } from "./metrics.js";
 import { CommandDrainSender, drainPayload } from "./tui/deploy-drain.js";
+import { operatorCommandWriteScript } from "./tui/unwedge.js";
 
 export { drainPayload } from "./tui/deploy-drain.js";
 
@@ -33,7 +34,7 @@ export function renderStatus(snapshot: StatusSnapshot): string {
   lines.push(`rounds running: ${snapshot.running_rounds}   total spend: $${snapshot.total_spend_usd.toFixed(2)}`);
   if (snapshot.draining) {
     lines.push(
-      `DRAINING${snapshot.draining_since ? ` since ${snapshot.draining_since}` : ""} — ` +
+      `DRAINING${snapshot.draining_since ? ` since ${snapshot.draining_since}` : ""} — ${drainHolderLine(snapshot)} — ` +
         `webhook deliveries dropped: ${snapshot.drained_deliveries ?? 0}; ` +
         `deploy when rounds running hits 0 (auto-lifts on the next boot's first healthy reconcile; qcr drain off to lift now)`,
     );
@@ -48,8 +49,33 @@ export function renderStatus(snapshot: StatusSnapshot): string {
         `#${String(pr.number).padEnd(5)} ${pr.state.padEnd(17)} ${(pr.stale_recheck ? "yes" : "-").padEnd(6)} ${pr.head_sha.slice(0, 10).padEnd(11)} ${pr.title.slice(0, 60)}`,
       );
     }
+    // every held PR says who holds it and when the hold lapses.
+    const held = snapshot.prs.filter((pr) => pr.paused);
+    if (held.length > 0) {
+      lines.push("");
+      for (const pr of held) {
+        const hold = pr.pause;
+        const who = hold
+          ? hold.issuer === "operator"
+            ? "paused by the operator until resumed"
+            : `paused by a session${hold.expires_at ? `, lapses ${hold.expires_at}` : ""}`
+          : "paused (holder unknown — older daemon)";
+        // The reason is a SESSION's free text headed for a terminal: one line,
+        // no control bytes (the board's sanitizeText does the same).
+        const reason = hold?.reason?.replace(/[\u0000-\u001f\u007f]+/g, " ").trim();
+        lines.push(`#${pr.number} ${who}${reason ? ` — ${reason}` : ""}`);
+      }
+    }
   }
   return lines.join("\n");
+}
+
+function drainHolderLine(snapshot: StatusSnapshot): string {
+  if (snapshot.draining_by === undefined) return "holder unknown (older daemon)";
+  if (snapshot.draining_by === "operator") {
+    return snapshot.draining_until ? `held by the operator, lapses ${snapshot.draining_until}` : "held by the operator until lifted";
+  }
+  return `held by a SESSION, lapses ${snapshot.draining_until ?? "(no expiry recorded)"}`;
 }
 
 function cmdStatus(): void {
@@ -420,12 +446,20 @@ export async function cmdRegression(rest: string[], json: boolean): Promise<numb
 
 /** The documented manual fallback: the exact ssh one-liner that writes the
  * same command file by hand when the runner path fails. */
-export function drainManualSshCommand(tui: TuiConfig, on: boolean): string {
-  const dir = `${tui.remote_sandbox_root}/commands`;
-  const docker = `${tui.sudo_docker ? "sudo " : ""}docker exec -i ${tui.container}`;
+export function drainManualSshCommand(tui: TuiConfig, on: boolean, now: Date): string {
+  // Same root-owned operator directory the runner path writes: a
+  // fallback that wrote into the session dir would be a bounded session drain.
+  const docker = `${tui.sudo_docker ? "sudo " : ""}docker exec -i -u 0 ${tui.container}`;
+  // A fresh name each time the fallback is printed, so the `off` after an
+  // `on` (or the next deploy's `on`) never lands on a result file that already
+  // holds an answer. The daemon's handled-ledger is keyed by file VERSION, so
+  // a re-used name (an operator editing an old line) still executes — the
+  // fresh name is what keeps its result readable.
+  const name = `${now.toISOString().replace(/[:.]/g, "-")}-manual-drain.json`;
+  const script = operatorCommandWriteScript(tui, name).replace(/'/g, "'\\''");
   return (
     `printf '%s' '${JSON.stringify({ command: "drain", on })}' | ` +
-    `ssh ${tui.ssh_host} "${docker} sh -c 'cat > ${dir}/drain-manual.json'"`
+    `ssh ${tui.ssh_host} "${docker} sh -c '${script}'"`
   );
 }
 
@@ -448,6 +482,13 @@ export async function runDrain(on: boolean, deps: DrainRunDeps): Promise<number>
   if (result.ok) {
     if (on) {
       deps.log(`✓ draining — ${result.running_rounds ?? 0} round(s) still finishing; deploy when \`qcr status\` shows rounds running: 0`);
+      if (result.issuer === "session") {
+        // The daemon did not see the operator seal on commands/operator/ (the
+        // directory was writable by its own uid), so it bounded this drain
+        // like a session's. Saying so beats a drain that lifts mid-deploy.
+        deps.log(`  ⚠ NOT an operator drain: the daemon found commands/operator/ unsealed and bounded it — lapses ${result.expires_at ?? "(unknown)"}`);
+        deps.log("    check the directory is root-owned and 0755 in the container before deploying");
+      }
       deps.log("  (auto-lifts on the new boot's first healthy reconcile — re-drain before each step of a multi-deploy window)");
     } else {
       deps.log(`✓ drain lifted — ${result.dropped_deliveries ?? 0} webhook delivery(ies) were dropped; the reconcile poll recovers them`);
@@ -456,7 +497,7 @@ export async function runDrain(on: boolean, deps: DrainRunDeps): Promise<number>
   }
   deps.log(`✖ drain refused: ${result.reason ?? "no reason given"}`);
   deps.log("manual fallback — run:");
-  deps.log(`  ${drainManualSshCommand(tui, on)}`);
+  deps.log(`  ${drainManualSshCommand(tui, on, (deps.now ?? (() => new Date()))())}`);
   return 1;
 }
 
@@ -464,12 +505,15 @@ export async function runDrain(on: boolean, deps: DrainRunDeps): Promise<number>
  * sandbox commands/ dir (in-container use; no ssh). Fire-and-forget — the
  * local watcher's result lands in commands/results/. */
 function runDrainLocal(on: boolean): number {
-  const dir = join(sandboxRoot(), "commands");
+  const dir = join(sandboxRoot(), "commands", "operator");
   mkdirSync(dir, { recursive: true });
   const name = `${new Date().toISOString().replace(/[:.]/g, "-")}-cli-drain.json`;
   writeFileSync(join(dir, `.${name}.tmp`), drainPayload(on));
   renameSync(join(dir, `.${name}.tmp`), join(dir, name));
   console.log(`drain ${on ? "on" : "off"} command written to ${join(dir, name)} — result lands in commands/results/`);
+  console.log(
+    "note: written as THIS user, so unless commands/operator/ is root-owned the daemon sees no operator seal and bounds the drain like a session's",
+  );
   return 0;
 }
 

@@ -52,6 +52,7 @@ function seedRoundCommand(opts: {
     migration_gate: 0,
   });
   const roundId = store.startRound(pr, "first", opts.lenses ?? ["pass-baseline"], baseCfg.daemon.round_deadline_min);
+  store.stampPostingKey(roundId, `v1:${pr}:1:abc123`);
   const round = store.roundsFor(pr)[0]!;
   store.createSessionCommand({
     id,
@@ -128,12 +129,18 @@ function hooks(overrides: Partial<SessionHooks> = {}): SessionHooks {
   };
 }
 
+type RoundFailureHandler = (
+  pr: number,
+  roundNo: number,
+  stage: string,
+  detail: string,
+) => Promise<RoundRecoveryDisposition>;
+
 function supervisor(
   h: SessionHooks,
-  // Typed by the REAL disposition union, not inferred from the default's one
-  // literal — inference pinned this parameter to `"requeued"` and made every
-  // other disposition uncompilable at a call site.
-  onRoundFailure: ReturnType<typeof vi.fn<() => Promise<RoundRecoveryDisposition>>> = vi.fn(async () => "requeued" as const),
+  // Typed by the REAL callback shape and disposition union, not inferred from
+  // the default's one literal.
+  onRoundFailure: ReturnType<typeof vi.fn<RoundFailureHandler>> = vi.fn<RoundFailureHandler>(async () => "requeued"),
   cfg = baseCfg,
   progress?: () => import("../src/round-progress.js").RoundProgressSnapshot | undefined,
 ) {
@@ -507,6 +514,60 @@ describe("bounded round-stage supervision", () => {
     expect(onRoundFailure).toHaveBeenCalledWith(pr, round.round_no, "first_pass_start", expect.stringContaining("no planned pass started"));
   });
 
+  it("does not reopen exhausted debt when operator u wins while the recovery callback returns", async () => {
+    clock = new Date("2026-08-27T20:00:00.000Z");
+    const seeded = seedRoundCommand({ status: "running", started: true, nextCheckAt: "2026-08-27T20:45:00.000Z" });
+    clock = new Date("2026-08-27T20:05:00.000Z");
+    const onRoundFailure = vi.fn(async (_pr: number, _roundNo: number, stage: string, detail: string) => {
+      const failure = store.terminalizeInfrastructureReviewFailure({
+        pr: seeded.pr, round_id: seeded.round.id, round_no: seeded.round.round_no,
+        command_id: seeded.id, head_sha: store.getPr(seeded.pr)!.head_sha,
+        stage, detail, attempts: 2, retry_cap: 2, summary: "pre-fanout recovery exhausted",
+      });
+      expect(failure?.work_owed).toBe(1);
+      expect(store.recoverReviewFailure(seeded.pr, "operator-rerun")?.work_owed).toBe(0);
+      return "exhausted" as const;
+    });
+    const progress = () => ({
+      version: 2 as const, pr: seeded.pr, session: `pr-${seeded.pr}`,
+      run_started_at: "2026-08-27T20:00:00.000Z", updated_at: clock.toISOString(), parent_status: "active" as const,
+      command_id: seeded.id, command_sha256: "a".repeat(64), command_accepted_at: "2026-08-27T20:00:01.000Z",
+      last_activity_at: clock.toISOString(), last_activity: "preparing", agents: [],
+    });
+
+    await supervisor(hooks({ killSession: async () => {} }), onRoundFailure, baseCfg, progress).supervisor.scan();
+
+    expect(store.openReviewFailure(seeded.pr)).toBeUndefined();
+    expect(store.reviewFailureForCommand(seeded.id)).toMatchObject({ work_owed: 0, recovery: "operator-rerun" });
+    expect(store.getPr(seeded.pr)?.state).toBe("queued");
+    expect((store.db.prepare(
+      "SELECT COUNT(*) AS c FROM events WHERE kind='round_stage_recovery_already_resolved' AND pr=?",
+    ).get(seeded.pr) as { c: number }).c).toBe(1);
+  });
+
+  it("does not accept validator-first or foreign subagents as planned discovery fanout", async () => {
+    clock = new Date("2026-08-27T20:00:00.000Z");
+    const { id, pr, round } = seedRoundCommand({
+      status: "running", started: true, nextCheckAt: "2026-08-27T20:45:00.000Z",
+      lenses: ["pass-baseline", "pass-security", "pass-validate"],
+    });
+    clock = new Date("2026-08-27T20:05:00.000Z");
+    const onRoundFailure = vi.fn(async () => "requeued" as const);
+    const progress = () => ({
+      version: 2 as const, pr, session: `pr-${pr}`,
+      run_started_at: "2026-08-27T20:00:00.000Z", updated_at: clock.toISOString(), parent_status: "active" as const,
+      command_id: id, command_sha256: "a".repeat(64), command_accepted_at: "2026-08-27T20:00:01.000Z",
+      fanout_started_at: "2026-08-27T20:01:00.000Z", last_activity_at: clock.toISOString(),
+      last_activity: "validator-first",
+      agents: [{ execution_id: "foreign", agent: "pass-validate--sol-high", status: "running" as const,
+        duration_ms: 1, tool_count: 0, started_at: "2026-08-27T20:01:00.000Z" }],
+    });
+
+    await supervisor(hooks({ killSession: async () => {} }), onRoundFailure, baseCfg, progress).supervisor.scan();
+
+    expect(onRoundFailure).toHaveBeenCalledWith(pr, round.round_no, "first_pass_start", expect.stringContaining("no planned pass started"));
+  });
+
   it("does not infer a missing first pass from legacy or uncorrelated telemetry", async () => {
     clock = new Date("2026-08-27T19:59:00.000Z");
     const { id, pr } = seedRoundCommand({ status: "running", started: true, nextCheckAt: "2026-08-27T20:44:00.000Z" });
@@ -556,8 +617,8 @@ describe("bounded round-stage supervision", () => {
       last_activity_at: clock.toISOString(),
       last_activity: "validator never launched",
       agents: [{
-        execution_id: "lens-1:pass-baseline",
-        agent: "pass-baseline",
+        execution_id: "lens-1:pass-baseline--sol-med",
+        agent: "pass-baseline--sol-med",
         status: "completed" as const,
         duration_ms: 60_000,
         tool_count: 1,
@@ -569,6 +630,7 @@ describe("bounded round-stage supervision", () => {
     await supervisor(hooks({ killSession: async () => {} }), onRoundFailure, baseCfg, progress).supervisor.scan();
 
     expect(onRoundFailure).toHaveBeenCalledWith(pr, round.round_no, "passes_incomplete", expect.stringContaining("pass-validate"));
+    expect(store.roundsFor(pr).find((item) => item.id === round.id)?.fanout_started_at).toBe("2026-08-27T20:01:00.000Z");
   });
 
   it("bounds parent finalization after every planned and added pass is terminal", async () => {

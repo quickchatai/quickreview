@@ -60,6 +60,12 @@ export interface SupervisorDeps {
   exists?: (path: string) => boolean;
   sampler?: ProcSampler;
   schedule?: Schedule;
+  /** Fired by the health loop each time `/ready` turns from not-ready to
+   * ready — the first pass after boot and again after every restart. The one
+   * hook for work that needs a LIVE server and must not be awaited at boot
+   * (the daemon materializes the memory root here). A throw is logged and
+   * swallowed: a callback cannot take the health loop down. */
+  onReady?: () => void;
 }
 
 const defaultSchedule: Schedule = (fn, ms) => {
@@ -77,6 +83,7 @@ export class OpenVikingSupervisor {
   private readonly exists: (path: string) => boolean;
   private readonly sampler: ProcSampler;
   private readonly schedule: Schedule;
+  private readonly onReady: (() => void) | undefined;
 
   private child: SupervisedChild | null = null;
   private childPid: number | undefined;
@@ -104,6 +111,7 @@ export class OpenVikingSupervisor {
     this.exists = deps.exists ?? existsSync;
     this.sampler = deps.sampler ?? new ProcSampler();
     this.schedule = deps.schedule ?? defaultSchedule;
+    this.onReady = deps.onReady;
   }
 
   /** Spawn the server and arm the health loop. Synchronous and non-blocking:
@@ -214,6 +222,7 @@ export class OpenVikingSupervisor {
 
   /** One health + resource sample into the cache. Never rejects. */
   async poll(): Promise<void> {
+    const wasReady = this.health?.ready ?? false;
     try {
       this.health = await probeHealth({
         baseUrl: openVikingBaseUrl(this.cfg),
@@ -226,6 +235,13 @@ export class OpenVikingSupervisor {
       this.health = { reachable: false, ready: false, error: err instanceof Error ? err.message : String(err), at: this.now().toISOString() };
     }
     this.proc = this.childPid !== undefined ? this.sampler.sample(this.childPid) : undefined;
+    if (this.health.ready && !wasReady) {
+      try {
+        this.onReady?.();
+      } catch (err) {
+        this.log("openviking: onReady callback threw", err);
+      }
+    }
   }
 
   /** The `openviking` block of status.json. Synchronous, cached, total. */

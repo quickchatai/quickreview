@@ -11,13 +11,21 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { AnomalyWakePolicy } from "./anomalies.js";
 import { retryWithheldApproval, type CiAdapter, type WithheldRetryDeps } from "./cigate.js";
-import { loadConfig, sandboxRoot, type Config } from "./config.js";
+import {
+  DEFAULT_ROUND_FIRST_PASS_MAX_MIN,
+  DEFAULT_ROUND_PASSES_MAX_MIN,
+  DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN,
+  loadConfig,
+  sandboxRoot,
+  type Config,
+} from "./config.js";
 import { dispatchOnce, type DispatchAdapter } from "./dispatch.js";
 import { MutationGate, type MutationIntent } from "./gate.js";
 import { GitHubAdapter } from "./github.js";
 import { TokenMinter } from "./githubAuth.js";
 import { REVIEW_SET_ASIDE_STALE_WINDOW_MS, type FeedbackEvent } from "./feedback.js";
 import { enforceLedgerFreshness } from "./ledgercheck.js";
+import { sweepExpiredLevers } from "./levers.js";
 import { PingPongLedger, ThreadDecisionWatcher, buildWakeMessage, type AuthorReplyEvent } from "./pingpong.js";
 import { reconcileOnce, type ReconcileAdapter } from "./reconcile.js";
 import {
@@ -88,6 +96,8 @@ export interface DaemonDeps {
    * mention pick). Absent ⇒ no git: the config fallback mention is used. */
   directiveAuthor?: (sha: string, paths: string[]) => Promise<{ login: string | null; name: string; email: string } | null>;
   log?: (msg: string, extra?: unknown) => void;
+  /** Shared deterministic clock for dispatch, verdict and stage supervision. */
+  now?: () => Date;
   /** Skip binding the HTTP port (tests). */
   listen?: boolean;
   /** Latest digest headline for status.json (B5's digest module). */
@@ -134,6 +144,10 @@ export interface Daemon {
   stop(): Promise<void>;
   reconcile(): Promise<void>;
   pump(): Promise<void>;
+  /** Deterministic tick: claim due debt, then hand it to the one pump. */
+  retryDueReviewFailures(): Promise<number>;
+  /** Public deterministic scan seam; the periodic loop calls the same object. */
+  scanRoundStages(): Promise<void>;
   wakeThreadDecisions(): void;
   retryThreadDecision(commentId: number): { ok: boolean; reason?: string; file?: string };
   readonly store: StateStore;
@@ -161,6 +175,11 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
   const log = deps.log ?? ((msg: string, extra?: unknown) => console.log(`[quickreviewd] ${msg}`, extra ?? ""));
   const store = deps.store ?? new StateStore(join(stateDir, "state.db"));
   const hooks = deps.hooks ?? stubSessionHooks(root, log);
+  const roundStageBounds = {
+    first_pass_max_min: cfg.daemon.round_first_pass_max_min ?? DEFAULT_ROUND_FIRST_PASS_MAX_MIN,
+    passes_max_min: cfg.daemon.round_passes_max_min ?? DEFAULT_ROUND_PASSES_MAX_MIN,
+    running_max_min: cfg.daemon.session_command_running_max_min ?? DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN,
+  };
 
   // Overseer wake policy: every logAnomaly flows through the ONE
   // severity map + dedup; WAKE classes write an overseer inject, QUIET classes
@@ -192,6 +211,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     announce,
     verdictDir,
     root, // anchors the default pi-session dir for round usage measurement
+    ...(deps.now ? { now: deps.now } : {}),
     // The durable reasoning record — same dir the round prompts pin.
     findingsDir: join(root, "state", "findings"),
     log,
@@ -210,6 +230,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     },
     onRoundFailure: (pr, roundNo, stage, detail) =>
       verdicts.recoverInfrastructureFailure(pr, roundNo, stage, detail),
+    ...(deps.now ? { now: deps.now } : {}),
   });
   const pingpong = new PingPongLedger(store.db);
   const threadDecisions = new ThreadDecisionWatcher({
@@ -436,7 +457,9 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
           `corrections=${report.corrections} errors=${report.errors.length}`,
       );
       if (bootFirstPass && report.errors.length === 0 && store.drainState().draining) {
-        const { dropped } = store.setDraining(false);
+        // The operator's lift: this is the deploy flow's drain completing, so
+        // it clears whatever hold stands — a session's included.
+        const { dropped } = store.liftDrain("operator");
         store.logEvent("drain_lifted", null, { dropped_deliveries: dropped });
         log(`drain_lifted — first reconcile pass healthy; ${dropped} webhook delivery(ies) were dropped while draining`);
         threadDecisions.requestSweep();
@@ -447,6 +470,9 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
 
   const pump = async (): Promise<void> => {
     await guard("dispatch", async () => {
+      // Session levers that lapsed since the last tick leave the ledger here
+      //; the readers below already treat them as gone.
+      sweepExpiredLevers(store, (line) => log(line));
       const orders = await dispatchOnce({
         cfg,
         store,
@@ -462,9 +488,23 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         resolvedFilesInMerges: deps.resolvedFilesInMerges,
         announce,
         log,
+        ...(deps.now ? { now: deps.now } : {}),
       });
       for (const o of orders) log(`dispatched #${o.pr} round ${o.round_no} (${o.round_type}) lenses=${o.lenses.join(",")}`);
     });
+  };
+
+  const retryDueReviewFailures = async (): Promise<number> => {
+    // This transition only republishes ordinary queued debt; the ONE dispatch
+    // pump below remains the sole round and Pi-command creator.
+    const automaticRetries = store.activateDueReviewFailureRetries(store.currentTimeIso());
+    if (automaticRetries.length > 0) {
+      for (const retry of automaticRetries) {
+        log(`automatic pre-fanout retry: #${retry.pr} round ${retry.target_round_no} epoch ${retry.retry_epoch} @ ${retry.target_head_sha.slice(0, 7)}`);
+      }
+      await pump();
+    }
+    return automaticRetries.length;
   };
 
   // Passive pi auth-failure watch (the owner, 2026-08-19): no smoke calls, just
@@ -518,6 +558,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
           openviking,
           threadDecisions.status(),
           roundStages.health(),
+          roundStageBounds,
         ),
       );
     } catch (err) {
@@ -536,6 +577,8 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     cfg,
     reconcile,
     pump,
+    retryDueReviewFailures,
+    scanRoundStages: () => roundStages.scan(),
     wakeThreadDecisions: () => threadDecisions.requestSweep(),
     retryThreadDecision: (commentId) => threadDecisions.retryFailed(commentId),
 
@@ -560,6 +603,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
             undefined,
             undefined,
             roundStages.health(),
+            roundStageBounds,
           ).pipeline,
           log,
         });
@@ -609,6 +653,9 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         });
         void guard("deadline check", async () => {
         await verdicts.checkDeadlines();
+        // a safe pre-fanout exhaustion is a circuit breaker, not an
+        // inert operator park.
+        await retryDueReviewFailures();
         // Zombie-round expiry: rounds stuck `overdue` past the
         // horizon whose PR has since verdicted/closed become terminal
         // `expired`. Rounds a rerun could still service are left standing.

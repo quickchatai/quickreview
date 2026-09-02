@@ -1028,8 +1028,54 @@ export interface Config {
   recheck: RecheckConfig;
   review: ReviewConfig;
   escalation: EscalationConfig;
+  levers: LeversConfig;
   slack: SlackConfig;
   owner: OwnerConfig;
+}
+
+/**
+ * `[levers]`: the bounds on a SESSION-issued `drain` / `pause-pr`.
+ * The operator's own levers (`qcr drain on`, the deploy tab) are not bounded
+ * by anything here — the deploy flow's drain stands until the new boot's
+ * first healthy reconcile lifts it. Every number is minutes; the budgets are
+ * counted per `[ops] timezone` day.
+ */
+export interface LeversConfig {
+  /** Longest single session drain. */
+  session_drain_max_min: number;
+  /** Total session-drain minutes grantable per day; must be ≥ the cap. */
+  session_drain_budget_min_per_day: number;
+  /** Longest single session pause of one PR. */
+  session_pause_max_min: number;
+  /** Total session-pause minutes grantable per PR per day; must be ≥ the cap. */
+  session_pause_budget_min_per_day: number;
+}
+
+export const LEVERS_DEFAULTS: LeversConfig = {
+  session_drain_max_min: 30,
+  session_drain_budget_min_per_day: 90,
+  session_pause_max_min: 240,
+  session_pause_budget_min_per_day: 480,
+};
+
+/** Parse `[levers]`; a bound that is not a positive integer, or a budget
+ * smaller than its cap, refuses to load — a lever bound of zero or a budget
+ * that can never fund one full grant is a misconfiguration, not a setting. */
+export function parseLevers(raw: Record<string, any>): LeversConfig {
+  const cfg: LeversConfig = { ...LEVERS_DEFAULTS, ...(raw as Partial<LeversConfig>) };
+  for (const key of Object.keys(LEVERS_DEFAULTS) as Array<keyof LeversConfig>) {
+    const v = cfg[key];
+    if (!Number.isInteger(v) || v < 1) {
+      throw new Error(`config.toml [levers]: ${key} must be a positive integer number of minutes (got ${JSON.stringify(v)})`);
+    }
+  }
+  if (cfg.session_drain_budget_min_per_day < cfg.session_drain_max_min) {
+    throw new Error("config.toml [levers]: session_drain_budget_min_per_day must be at least session_drain_max_min");
+  }
+  if (cfg.session_pause_budget_min_per_day < cfg.session_pause_max_min) {
+    throw new Error("config.toml [levers]: session_pause_budget_min_per_day must be at least session_pause_max_min");
+  }
+  return cfg;
 }
 
 /** Defaults for [backfill], derived from the already-parsed [github] block. */
@@ -1215,6 +1261,39 @@ function req(obj: Record<string, unknown>, key: string): unknown {
   return v;
 }
 
+/**
+ * `[caps]` parsed with each numeric cap CHECKED, not cast. This
+ * section used to be spread into `Config["caps"]` through an `as`, so a key
+ * missing from an operator's file reached `checkDiffstat` as `undefined` —
+ * and `files > undefined` is `false`, i.e. the cap passed. A cap the daemon
+ * cannot compare against is a startup refusal: the improvement channel is the
+ * one place this system pushes code, and it must never run uncapped.
+ */
+export function parseCaps(raw: Record<string, unknown>): Config["caps"] {
+  const cap = (key: string): number => {
+    const v = raw[key];
+    if (typeof v !== "number" || !Number.isFinite(v) || v < 0) {
+      throw new Error(`config.toml [caps]: ${key} must be a non-negative number (got ${JSON.stringify(v)})`);
+    }
+    return v;
+  };
+  const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
+  const denyPrefixes = (): string[] => {
+    const prefixes = raw.improvement_pr_deny_prefixes;
+    if (prefixes === undefined) return [...IMPROVEMENT_DENY_PREFIXES_DEFAULT];
+    if (isStrings(prefixes)) return [...prefixes];
+    throw new Error(`config.toml [caps]: improvement_pr_deny_prefixes must be an array of strings (got ${JSON.stringify(prefixes)})`);
+  };
+  return {
+    improvement_pr_max_lines: cap("improvement_pr_max_lines"),
+    improvement_pr_max_files: cap("improvement_pr_max_files"),
+    improvement_pr_per_day: cap("improvement_pr_per_day"),
+    improvement_pr_per_week: cap("improvement_pr_per_week"),
+    issues_per_day: cap("issues_per_day"),
+    improvement_pr_deny_prefixes: denyPrefixes(),
+  };
+}
+
 /** The shipped improvement-PR path denylist: the exact pre-lift
  * hardcode. Lives here (not in improvements.ts) so config carries the default
  * without a runtime import cycle. */
@@ -1280,10 +1359,7 @@ export function parseConfig(toml: string): Config {
       timezone: ops.timezone,
       ...(req(raw, "eod") as Partial<Config["eod"]>),
     } as Config["eod"],
-    caps: {
-      improvement_pr_deny_prefixes: [...IMPROVEMENT_DENY_PREFIXES_DEFAULT],
-      ...(req(raw, "caps") as Partial<Config["caps"]>),
-    } as Config["caps"],
+    caps: parseCaps(req(raw, "caps") as Record<string, unknown>),
     models: parseModels(req(raw, "models") as Record<string, any>),
     pi: {
       subagent_max_concurrency: 4,
@@ -1309,6 +1385,7 @@ export function parseConfig(toml: string): Config {
       },
     },
     escalation: parseEscalation((raw.escalation ?? {}) as Record<string, any>),
+    levers: parseLevers((raw.levers ?? {}) as Record<string, any>),
     slack: parseSlack((raw.slack ?? {}) as Record<string, any>, ops.timezone),
     owner: { ...OWNER_DEFAULTS, ...((raw.owner ?? {}) as Partial<OwnerConfig>) },
   };

@@ -216,6 +216,20 @@ export function mergeRegister(previous: ChangeEntry[], fresh: ChangeEntry[]): Ch
 
 export const REGISTER_FILE = "change-register.json";
 
+/**
+ * What a read of the register file found (FT-0397; the `CandidateStore.read`
+ * shape from FT-0387). `absent` is a state dir with no register yet — the
+ * first scan writes one. `unreadable` is a register that EXISTS and cannot
+ * be read: a torn write, a hand edit, a full disk. The two must never fold:
+ * a scan merged onto an "empty" baseline and saved would rewrite
+ * `first_seen` on every row and drop every row the scan no longer reaches —
+ * the two things `mergeRegister` promises never happen.
+ */
+export type RegisterRead =
+  | { state: "register"; register: ChangeRegister }
+  | { state: "absent" }
+  | { state: "unreadable"; reason: string };
+
 /** Same idiom as `EvidenceStore`/`CandidateStore`: a plain file, written
  * atomically (temp + rename) so a reader never sees half a register, re-read
  * from disk rather than held in memory, so a TUI restart costs nothing. */
@@ -230,14 +244,25 @@ export class ChangeRegisterStore {
     mkdirSync(this.dir, { recursive: true });
   }
 
-  /** Missing or unreadable ⇒ undefined. Never a throw, never "no changes". */
-  load(): ChangeRegister | undefined {
+  /** Never a throw — and never a collapse of "cannot read" into "no changes";
+   * there is deliberately no `load()` returning `ChangeRegister | undefined`
+   * beside this (FT-0397: that accessor is what the next merge-and-save
+   * reaches for). */
+  read(): RegisterRead {
+    let raw: string;
     try {
-      const raw = JSON.parse(readFileSync(this.path, "utf8")) as ChangeRegister;
-      if (!Array.isArray(raw?.entries)) return undefined;
-      return raw;
-    } catch {
-      return undefined;
+      raw = readFileSync(this.path, "utf8");
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") return { state: "absent" };
+      return { state: "unreadable", reason: code ?? errText(err) };
+    }
+    try {
+      const parsed = JSON.parse(raw) as ChangeRegister;
+      if (!Array.isArray(parsed?.entries)) return { state: "unreadable", reason: "no entries array" };
+      return { state: "register", register: parsed };
+    } catch (err) {
+      return { state: "unreadable", reason: errText(err) };
     }
   }
 
@@ -250,6 +275,15 @@ export class ChangeRegisterStore {
 }
 
 // ---- scanning and reverting ---------------------------------------------------
+
+/**
+ * What stops the register from being the whole story. `register_unreadable`
+ * is the file on disk: it exists and cannot be read, so nothing is scanned
+ * and nothing is saved over it. `scan_failed` is git: the stored register
+ * stands, but whether it is current is unknown. The tab renders each as its
+ * own sentence — neither is "no changes yet" (FT-0397).
+ */
+export type ChangeLogProblem = { kind: "register_unreadable"; reason: string } | { kind: "scan_failed"; reason: string };
 
 export interface RevertResult {
   ok: boolean;
@@ -283,23 +317,51 @@ export class ChangeLog {
     // The persisted register IS the first paint: the tab has content before
     // git has been asked anything, which is what "survives a restart" means
     // in practice on a cold start.
-    this.register = store.load();
+    this.adopt(store.read());
   }
 
   /** Last loaded/scanned register — what the tab paints. */
   register: ChangeRegister | undefined;
 
+  /** Why `register` cannot currently be trusted as the whole story — for the
+   * tab to SAY. `undefined` means the last read and scan both succeeded. */
+  problem: ChangeLogProblem | undefined;
+
   private busy = false;
 
-  async refresh(): Promise<ChangeRegister | undefined> {
-    if (this.busy) return this.register;
+  /** Fold one file read into the two fields above. An unreadable file keeps
+   * whatever register is already in memory (an earlier, true read) and marks
+   * the problem; it never blanks the list. */
+  private adopt(read: RegisterRead): void {
+    if (read.state === "register") this.register = read.register;
+    this.problem = read.state === "unreadable" ? { kind: "register_unreadable", reason: read.reason } : undefined;
+  }
+
+  /**
+   * Re-scan git and fold the result into the stored register. Resolves to the
+   * problem that stopped it, or `undefined` when `register` is fresh.
+   *
+   * The baseline is read FIRST and an unreadable one stands the scan down
+   * entirely — no git, no merge, no save. `mergeRegister` keeps every row the
+   * scan no longer reaches and never rewrites `first_seen`; both promises are
+   * only as good as the baseline they merge onto, and a torn file merged as
+   * "no previous entries" and saved would falsify both at once (FT-0397).
+   */
+  async refresh(): Promise<ChangeLogProblem | undefined> {
+    if (this.busy) return this.problem;
     this.busy = true;
     try {
+      const baseline = this.store.read();
+      this.adopt(baseline);
+      if (baseline.state === "unreadable") return this.problem;
       const res = await this.local(changeLogArgv());
-      if (!res.ok) return this.register;
+      if (!res.ok) {
+        this.problem = { kind: "scan_failed", reason: firstLine(res.stderr || res.stdout) };
+        return this.problem;
+      }
       const commits = parseGitLog(res.stdout);
       const now = this.now().toISOString();
-      const previous = this.store.load()?.entries ?? [];
+      const previous = baseline.state === "register" ? baseline.register.entries : [];
       const register: ChangeRegister = {
         version: 1,
         updated_at: now,
@@ -312,9 +374,11 @@ export class ChangeLog {
         // An unwritable state dir costs durability, never the view.
       }
       this.register = register;
-      return register;
-    } catch {
-      return this.register;
+      this.problem = undefined;
+      return undefined;
+    } catch (err) {
+      this.problem = { kind: "scan_failed", reason: errText(err) };
+      return this.problem;
     } finally {
       this.busy = false;
     }
@@ -348,4 +412,8 @@ export class ChangeLog {
 
 function firstLine(text: string): string {
   return text.split("\n").find((l) => l.trim() !== "")?.trim() ?? "no output";
+}
+
+function errText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }

@@ -93,7 +93,17 @@ export function parseBuildSha(stdout: string): DeployedMarker | undefined {
 export interface DeployState {
   loaded: boolean;
   loading: boolean;
-  deployed?: DeployedMarker;
+  /** The VM's BUILD_SHA marker: the marker when read; `"absent"` when the VM
+   * carries none (this system has never deployed to it — the first deploy
+   * writes one); `"unparseable"` when the file is there but is not a
+   * `<sha> <iso> <mode>` line (the read succeeded — the content is the
+   * problem, and a redeploy rewrites it); `undefined` until fetched, and
+   * after a fetch whose ssh or docker read never answered. Three different
+   * facts, three different sentences: an unanswered read says NOTHING about
+   * what the VM runs, so it must never render or publish as "no marker" —
+   * and a corrupt marker must never be blamed on ssh. */
+  deployed?: DeployedMarker | "absent" | "unparseable";
+  /** Local HEAD; `undefined` when `git rev-parse` could not be read. */
   head?: string;
   /** Uncommitted paths, or `undefined` when `git status` could not be read.
    * NOT an empty array in that case: an unread tree rendered as a
@@ -180,7 +190,14 @@ export class RealDeployFetcher implements DeployFetcher {
       this.local(DIRTY_ARGV),
       this.local(PLAN_ARGV),
     ]);
-    const deployed = marker.ok ? parseBuildSha(marker.stdout) : undefined;
+    // `buildShaArgv` swallows a missing file into empty output, so an ok/empty
+    // answer is a VM with no marker; ok/garbage is a marker we read but could
+    // not parse; a failed exec is a VM we could not ask.
+    const deployed = marker.ok
+      ? marker.stdout.trim() === ""
+        ? "absent"
+        : (parseBuildSha(marker.stdout) ?? "unparseable")
+      : undefined;
     const out: Omit<DeployState, "loaded" | "loading" | "scroll"> = {
       deployed,
       containerStatus: status.ok ? status.stdout.trim() : undefined,
@@ -189,7 +206,7 @@ export class RealDeployFetcher implements DeployFetcher {
       // A refusal exits non-zero with the reason on stderr — that IS the plan.
       plan: (plan.ok ? plan.stdout : `${plan.stdout}${plan.stderr}`).split("\n"),
     };
-    if (deployed) {
+    if (typeof deployed === "object") {
       const [log, stat] = await Promise.all([this.local(logArgv(deployed.sha)), this.local(diffStatArgv(deployed.sha))]);
       // A sha local git doesn't know (rewritten history?) leaves these
       // undefined and the render says so instead of pretending "0 pending".
@@ -210,18 +227,23 @@ function section(title: string, subtitle: string): string {
 export function deployLines(st: DeployState, width: number): string[] {
   if (!st.loaded) return [`${MUTED}loading…${DRESET}`];
   const lines: string[] = [];
-  const dep = st.deployed;
+  const dep = typeof st.deployed === "object" ? st.deployed : undefined;
   const depText = dep
     ? `${STRONG}${dep.sha}${DRESET}${dep.at ? ` ${FG.dim}${dep.at}${RESET}` : ""}${dep.mode ? ` ${FG.dim}(${dep.mode})${RESET}` : ""}`
-    : `${FG.dim}unknown — no BUILD_SHA on the VM yet (the next deploy writes it)${RESET}`;
+    : st.deployed === "absent"
+      ? `${FG.dim}unknown — no BUILD_SHA on the VM yet (the next deploy writes it)${RESET}`
+      : st.deployed === "unparseable"
+        ? `${WARN}unknown — the VM's BUILD_SHA was read but is not a <sha> <iso> <mode> line (corrupt marker; the next deploy rewrites it)${DRESET}`
+        : `${WARN}unknown — the VM's BUILD_SHA could not be read (ssh/docker failed); r retries${DRESET}`;
   lines.push(truncate(`${section("DEPLOYED", "what the VM runs")}  ${depText}`, width));
+  const headText = st.head ? `${STRONG}${st.head}${DRESET}` : `${WARN}HEAD unknown — git rev-parse failed${DRESET}`;
   const cleanliness =
     st.dirty === undefined
       ? `${WARN}unknown — git status could not be read${DRESET}`
       : st.dirty.length === 0
         ? `${OK}clean${DRESET}`
         : `${BAD}dirty — ${st.dirty.length} uncommitted (deploy.sh will refuse)${DRESET}`;
-  lines.push(truncate(`${section("LOCAL", "this working copy")}     ${STRONG}${st.head ?? "?"}${DRESET}  ${cleanliness}`, width));
+  lines.push(truncate(`${section("LOCAL", "this working copy")}     ${headText}  ${cleanliness}`, width));
   for (const d of (st.dirty ?? []).slice(0, 8)) lines.push(truncate(`    ${FG.dim}${d}${RESET}`, width));
   if ((st.dirty?.length ?? 0) > 8) lines.push(`    ${FG.dim}… ${st.dirty!.length - 8} more${RESET}`);
   lines.push("");
@@ -665,6 +687,18 @@ export function installDeployHooks(
       }
       if (abortDrainRequested) {
         liftDrainAfterAbort(theApp, run);
+        return;
+      }
+      if (result.issuer === "session") {
+        // the daemon found commands/operator/ unsealed and bounded
+        // this drain like a session's — it can lapse mid-sync. A deploy never
+        // rides a drain that may lift itself; the receipt says when it does.
+        failDrain(
+          theApp,
+          run,
+          `the daemon bounded the drain because the operator channel is NOT sealed (commands/operator/ in the container must be root-owned 0755) — ` +
+            `it lapses ${result.expires_at ?? "at an unknown time"}; \`qcr drain off\` lifts it now. Fix the directory before deploying`,
+        );
         return;
       }
       st.deployPhase = "waiting-rounds";

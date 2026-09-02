@@ -23,7 +23,7 @@ import { ACCENT, BAD, HEADING, MUTED, OK, RESET as DRESET, SEP, STRONG, WARN, bu
 import { Frame, fit, rule, sanitizeText, truncate } from "./paint.js";
 import { paintCmdBar } from "./cmdbar.js";
 import type { BoardKey } from "./keys.js";
-import type { ChangeEntry, ChangeLog, ChangeRegister } from "./changelog-store.js";
+import type { ChangeEntry, ChangeLog, ChangeLogProblem, ChangeRegister } from "./changelog-store.js";
 import { FG, RESET, fmtAge } from "./theme.js";
 
 /** Clickable things the tab declares. */
@@ -31,6 +31,10 @@ export type ChangesAction = { t: "select"; index: number };
 
 export interface ChangesView {
   register?: ChangeRegister;
+  /** Mirrors `ChangeLog.problem`: why the list on screen may not be the whole
+   * story. An unreadable register or a failed scan is SAID in the summary
+   * line, never painted as "no changes yet". */
+  problem?: ChangeLogProblem;
   sel: number;
   scroll: number;
   /** The sha `R` armed; `y` runs it, anything else cancels. */
@@ -38,6 +42,12 @@ export interface ChangesView {
   /** Result of the last revert (or refusal), shown until the next action. */
   result?: string;
   loading: boolean;
+  /** The screen hook's one automatic scan has been fired. It is armed on
+   * "nothing on disk to paint", exactly once per run — never on "still no
+   * register", which re-arms on every settle-and-repaint when the scan cannot
+   * succeed. That spin was measured at 502 `git log` spawns in 200 ms against
+   * an unreadable register. After it, `r` is the only trigger. */
+  autoScanned: boolean;
   dryRun: boolean | undefined;
   now?: Date;
 }
@@ -85,6 +95,26 @@ export function armedLines(entry: ChangeEntry, width: number): string[] {
   ];
 }
 
+/**
+ * The one-line verdict on the list below. "no feedback-derived commits yet"
+ * is a CLAIM, so it is made only when a scan succeeded and found none; a
+ * register that could not be read, or a scan that failed with nothing stored,
+ * says so instead.
+ */
+export function summaryLine(view: ChangesView, entries: ChangeEntry[], reverted: number, now: Date): string {
+  const problem = view.problem;
+  if (problem?.kind === "register_unreadable") {
+    return `${BAD}change register unreadable${DRESET} ${FG.dim}(${sanitizeText(problem.reason)}) — nothing is scanned or saved over it; fix the file, then r${RESET}`;
+  }
+  if (entries.length === 0) {
+    return problem
+      ? `${WARN}git log failed${DRESET} ${FG.dim}(${sanitizeText(problem.reason)}) — whether there are feedback-derived commits is unknown; r retries${RESET}`
+      : `${FG.dim}no feedback-derived commits yet — a change joins this list when it carries a ${RESET}Ratified-in-session:${FG.dim} trailer${RESET}`;
+  }
+  const scanNote = problem ? `${SEP}${WARN}last scan failed — list may be behind${DRESET}` : "";
+  return `${STRONG}${entries.length}${DRESET} ${FG.dim}changes${RESET}${SEP}${reverted > 0 ? WARN : FG.dim}${reverted} reverted${reverted > 0 ? DRESET : RESET}${SEP}${FG.dim}scanned ${view.register?.scanned ?? 0} commits${view.register ? ` · ${fmtAge(view.register.updated_at, now)} ago` : ""}${RESET}${scanNote}`;
+}
+
 export function renderChanges(view: ChangesView, cols: number, rows: number): Frame {
   const frame = new Frame(cols, rows);
   const now = view.now ?? new Date();
@@ -100,11 +130,7 @@ export function renderChanges(view: ChangesView, cols: number, rows: number): Fr
     ]),
   );
 
-  const summary =
-    entries.length === 0
-      ? `${FG.dim}no feedback-derived commits yet — a change joins this list when it carries a ${RESET}Ratified-in-session:${FG.dim} trailer${RESET}`
-      : `${STRONG}${entries.length}${DRESET} ${FG.dim}changes${RESET}${SEP}${reverted > 0 ? WARN : FG.dim}${reverted} reverted${reverted > 0 ? DRESET : RESET}${SEP}${FG.dim}scanned ${view.register?.scanned ?? 0} commits${view.register ? ` · ${fmtAge(view.register.updated_at, now)} ago` : ""}${RESET}`;
-  frame.boxRow(1, [{ text: ` ${truncate(summary, cols - 3)}`, width: cols - 2 }]);
+  frame.boxRow(1, [{ text: ` ${truncate(summaryLine(view, entries, reverted, now), cols - 3)}`, width: cols - 2 }]);
   frame.boxRow(2, [{ text: ` ${truncate(view.result ?? sectionTitle("CHANGES", "R reverts the selected one"), cols - 3)}`, width: cols - 2 }]);
 
   const bodyTop = 3;
@@ -148,22 +174,23 @@ function keyChar(key: BoardKey): string | undefined {
 }
 
 export function installChangesHooks(app: App, log: ChangeLog): ChangesView {
-  const view: ChangesView = { register: log.register, sel: 0, scroll: 0, loading: false, dryRun: app.view.dryRun };
+  const view: ChangesView = { register: log.register, problem: log.problem, sel: 0, scroll: 0, loading: false, autoScanned: false, dryRun: app.view.dryRun };
   // The tab's own last frame, exactly as metricstab keeps one: hit-testing must
   // read the zones THIS tab painted, not the composed frame the App holds.
   let lastFrame: Frame | undefined;
+
+  /** The log's two facts, copied together — the list and the caveat on it. */
+  const adopt = (): void => {
+    view.register = log.register;
+    view.problem = log.problem;
+  };
 
   const reload = (): void => {
     if (view.loading) return;
     view.loading = true;
     void log
       .refresh()
-      .then((reg) => {
-        if (reg) view.register = reg;
-      })
-      .catch(() => {
-        /* a failed scan keeps the persisted register — never an empty list */
-      })
+      .then(adopt, adopt) // a failed scan keeps the persisted register — never an empty list
       .finally(() => {
         view.loading = false;
         app.repaint();
@@ -177,7 +204,7 @@ export function installChangesHooks(app: App, log: ChangeLog): ChangesView {
     void log.revert(sha).then((res) => {
       view.result = res.ok ? `${OK}${res.message}${DRESET}` : `${BAD}${res.message}${DRESET}`;
       app.notice(res.message);
-      if (res.ok) view.register = log.register;
+      adopt();
       app.repaint();
     });
   };
@@ -185,7 +212,10 @@ export function installChangesHooks(app: App, log: ChangeLog): ChangesView {
   app.hooks.changesScreen = (theApp, cols, rows) => {
     view.dryRun = theApp.view.dryRun;
     view.now = new Date();
-    if (!view.register && !view.loading) reload();
+    if (!view.register && !view.autoScanned) {
+      view.autoScanned = true;
+      reload();
+    }
     const frame = renderChanges(view, cols, rows);
     lastFrame = frame;
     return frame;

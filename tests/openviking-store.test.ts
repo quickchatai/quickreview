@@ -489,7 +489,7 @@ describe("context search", () => {
     expect(res.result.stats["candidates"]).toBe(1);
 
     const block = await assembler.contextBlock("renumber", { maxTokens: 800 });
-    expect(block).toContain("migration renumber collision");
+    expect(block).toMatchObject({ status: "read", text: expect.stringContaining("migration renumber collision") });
     expect(assembler.lastSearch?.stats["used_tokens"]).toBeGreaterThan(0);
   });
 });
@@ -631,10 +631,15 @@ describe("a dead server cannot make a caller throw", () => {
         expect(res.message).not.toBe("");
       }
 
-      // The round path — the contract is "" and never a rejection, because a
-      // memory-less round is a normal round.
-      await expect(assembler.pinnedHead()).resolves.toBe("");
-      await expect(assembler.contextBlock("q", { maxTokens: 2000 })).resolves.toBe("");
+      // The round path — the contract is `unreadable` and never a rejection,
+      // because a memory-less round is a normal round. And it is UNREADABLE,
+      // not an empty answer: a dead server must never read as a fresh store
+      // with nothing pinned.
+      await expect(assembler.pinnedHead()).resolves.toMatchObject({ status: "unreadable" });
+      await expect(assembler.contextBlock("q", { maxTokens: 2000 })).resolves.toMatchObject({ status: "unreadable" });
+      // The sweep itself keeps the distinction the timeline read() collapses.
+      await expect(store.sweep()).resolves.toMatchObject({ entries: [] });
+      expect((await store.sweep()).unread.length).toBeGreaterThan(0);
 
       // The client's own surface.
       await expect(client.searchContext("q", {})).resolves.toMatchObject({ ok: false });
@@ -654,15 +659,15 @@ describe("a dead server cannot make a caller throw", () => {
 
   it("keeps the assembler's promise even when the store itself throws", async () => {
     const exploding = {
-      read: () => Promise.reject(new Error("store is on fire")),
+      sweep: () => Promise.reject(new Error("store is on fire")),
     } as unknown as OpenVikingStore;
     const client = new OpenVikingClient({ baseUrl: BASE, apiKey: KEY, fetchFn: () => Promise.reject(new Error("down")) });
     const assembler: ContextAssembler = new OpenVikingContextAssembler({ client, store: exploding });
-    await expect(assembler.pinnedHead()).resolves.toBe("");
-    await expect(assembler.contextBlock("q", { maxTokens: 100 })).resolves.toBe("");
+    await expect(assembler.pinnedHead()).resolves.toEqual({ status: "unreadable", reason: "Error: store is on fire" });
+    await expect(assembler.contextBlock("q", { maxTokens: 100 })).resolves.toMatchObject({ status: "unreadable" });
   });
 
-  it("skips one unreadable file rather than losing the whole sweep", async () => {
+  it("skips one unreadable file rather than losing the whole sweep — and the sweep says it did", async () => {
     const server = new FakeOpenViking();
     const { store } = wire(server);
     await store.apply({ op: "note", text: "#feedback good one" });
@@ -679,27 +684,169 @@ describe("a dead server cannot make a caller throw", () => {
     const store2 = new OpenVikingStore({ client: client2, now: () => NOW, cacheTtlMs: 0 });
     const entries = await store2.read();
     expect(entries).toHaveLength(1);
+    // The timeline still shows what could be read; the round's head cannot
+    // vouch for a standing instruction it may have skipped, so it is
+    // `unreadable`, naming the file.
+    const sweep = await store2.sweep();
+    expect(sweep.entries).toHaveLength(1);
+    expect(sweep.unread).toHaveLength(1);
+    expect(sweep.unread[0]).toContain(doomed);
+    const assembler2 = new OpenVikingContextAssembler({ client: client2, store: store2 });
+    await expect(assembler2.pinnedHead()).resolves.toMatchObject({ status: "unreadable", reason: expect.stringContaining(doomed) });
   });
+
+  it("EVERY listed file answering NOT_FOUND is not a race — the sweep is unread, and the head with it", async () => {
+    const server = new FakeOpenViking();
+    const { store } = wire(server);
+    await store.apply({ op: "note", text: "#pinned keep this" });
+    await store.apply({ op: "note", text: "#feedback and this" });
+    const realFetch = server.fetch;
+    const client2 = new OpenVikingClient({
+      baseUrl: BASE,
+      apiKey: KEY,
+      user: "reviewer",
+      // The listing still names both files; every read says they are gone.
+      fetchFn: (url, init) =>
+        url.includes("/content/read")
+          ? Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve('{"status":"error","result":null,"error":{"code":"NOT_FOUND","message":"no such file"}}') })
+          : realFetch(url, init),
+    });
+    const store2 = new OpenVikingStore({ client: client2, now: () => NOW, cacheTtlMs: 0 });
+    const sweep = await store2.sweep();
+    expect(sweep.entries).toEqual([]);
+    expect(sweep.unread).toEqual([expect.stringContaining("all 2 listed files answered NOT_FOUND")]);
+    const assembler2 = new OpenVikingContextAssembler({ client: client2, store: store2 });
+    await expect(assembler2.pinnedHead()).resolves.toMatchObject({ status: "unreadable" });
+  });
+
+  it("a file that vanished between the listing and the read is a race, not an unread store", async () => {
+    const server = new FakeOpenViking();
+    const { store } = wire(server);
+    await store.apply({ op: "note", text: "#pinned keep this" });
+    await store.apply({ op: "note", text: "#feedback going away" });
+    const gone = [...server.files.entries()].find(([, text]) => text.includes("going away"))![0];
+    const realFetch = server.fetch;
+    const client2 = new OpenVikingClient({
+      baseUrl: BASE,
+      apiKey: KEY,
+      user: "reviewer",
+      // Listed (the fake lists from its map), then 404 on read.
+      fetchFn: (url, init) =>
+        url.includes("/content/read") && url.includes(encodeURIComponent(gone))
+          ? Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve('{"status":"error","result":null,"error":{"code":"NOT_FOUND","message":"no such file"}}') })
+          : realFetch(url, init),
+    });
+    const store2 = new OpenVikingStore({ client: client2, now: () => NOW, cacheTtlMs: 0 });
+    const sweep = await store2.sweep();
+    expect(sweep.unread).toEqual([]);
+    expect(sweep.entries.map((e) => e.text)).toEqual(["#pinned keep this"]);
+  });
+});
+
+// ---- the key never leaves the client ----------------------------------------
+
+// review: the unread/reason chain now carries server and transport
+// messages into the round prompt, the round_memory_seeded event, the overseer
+// anomaly and the daemon log. A server body that echoes the bearer key must be
+// scrubbed where the failure is BUILT, not only on the client's own log line.
+describe("a failure message never carries the key", () => {
+  const echoing = (arm: "envelope" | "transport"): HttpFetch =>
+    arm === "envelope"
+      ? () =>
+          Promise.resolve({
+            ok: false,
+            status: 403,
+            text: () => Promise.resolve(JSON.stringify({ status: "error", result: null, error: { code: "PERMISSION_DENIED", message: `denied for bearer ${KEY}` } })),
+          })
+      : () => Promise.reject(new Error(`connect failed while sending Authorization: Bearer ${KEY}`));
+
+  for (const arm of ["envelope", "transport"] as const) {
+    it(`${arm}: the sweep, the head, the block, the gap sink and the log are all scrubbed`, async () => {
+      const log: string[] = [];
+      const gaps: string[] = [];
+      const client = new OpenVikingClient({ baseUrl: BASE, apiKey: KEY, user: "reviewer", fetchFn: echoing(arm), log: (m) => log.push(m), onGap: (g) => gaps.push(g.message) });
+      const store = new OpenVikingStore({ client, now: () => NOW, cacheTtlMs: 0 });
+      const assembler = new OpenVikingContextAssembler({ client, store, log: (m) => log.push(m) });
+
+      const sweep = await store.sweep();
+      const head = await assembler.pinnedHead();
+      const block = await assembler.contextBlock("q", { maxTokens: 100 });
+      const everything = JSON.stringify({ sweep, head, block, gaps, log });
+      expect(everything).not.toContain(KEY);
+      expect(everything).toContain("<redacted>");
+      // And the failure is still a failure — redaction does not soften it.
+      expect(sweep.unread.length).toBeGreaterThan(0);
+      expect(head.status).toBe("unreadable");
+      expect(block.status).toBe("unreadable");
+    });
+  }
 });
 
 // ---- the pinned head --------------------------------------------------------
 
+// three answers, kept apart. `read` with text, `read` with "" (a
+// healthy store with nothing pinned — every fresh install), and `unreadable`.
 describe("the pinned head", () => {
-  it("delivers pinned entries verbatim, oldest first, and nothing else", async () => {
+  it("healthy-and-populated: delivers pinned entries verbatim, oldest first, and nothing else", async () => {
     const server = new FakeOpenViking();
     const { store, assembler } = wire(server);
     await store.apply({ op: "note", text: "#pinned never dismiss an approval" });
     await store.apply({ op: "note", text: "#feedback not a standing instruction" });
     const head = await assembler.pinnedHead();
-    expect(head).toContain("never dismiss an approval");
-    expect(head).not.toContain("not a standing instruction");
+    expect(head.status).toBe("read");
+    if (head.status !== "read") throw new Error("unreachable");
+    expect(head.text).toContain("never dismiss an approval");
+    expect(head.text).not.toContain("not a standing instruction");
   });
 
-  it("is empty — not a rejection — when nothing is pinned", async () => {
+  it("healthy-and-empty: a store with entries but nothing pinned is a READ answer, not a gap", async () => {
     const server = new FakeOpenViking();
     const { store, assembler } = wire(server);
     await store.apply({ op: "note", text: "#feedback ordinary" });
-    await expect(assembler.pinnedHead()).resolves.toBe("");
+    await expect(assembler.pinnedHead()).resolves.toEqual({ status: "read", text: "" });
+  });
+
+  it("healthy-and-empty: a brand-new namespace whose memories root does not exist yet is READ and empty", async () => {
+    // A fresh server holds only `viking://user/default`; the reviewer's root
+    // is created by the first write. Until then the server 404s the listing —
+    // that is an ABSENT directory, which is known-empty, not an outage.
+    const notFound = () =>
+      Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve('{"status":"error","result":null,"error":{"code":"NOT_FOUND","message":"no such directory"}}') });
+    const log: string[] = [];
+    const client = new OpenVikingClient({ baseUrl: BASE, apiKey: KEY, user: "reviewer", fetchFn: notFound, log: (m) => log.push(m) });
+    const store = new OpenVikingStore({ client, now: () => NOW, cacheTtlMs: 0 });
+    const assembler = new OpenVikingContextAssembler({ client, store });
+    await expect(store.sweep()).resolves.toEqual({ entries: [], unread: [] });
+    await expect(assembler.pinnedHead()).resolves.toEqual({ status: "read", text: "" });
+  });
+
+  it("unreadable: a listing that fails for any other reason is reported as such, with the reason", async () => {
+    const denied = () =>
+      Promise.resolve({ ok: false, status: 403, text: () => Promise.resolve('{"status":"error","result":null,"error":{"code":"PERMISSION_DENIED","message":"Access denied"}}') });
+    const client = new OpenVikingClient({ baseUrl: BASE, apiKey: KEY, user: "reviewer", fetchFn: denied });
+    const store = new OpenVikingStore({ client, now: () => NOW, cacheTtlMs: 0 });
+    const assembler = new OpenVikingContextAssembler({ client, store });
+    const sweep = await store.sweep();
+    expect(sweep.entries).toEqual([]);
+    expect(sweep.unread).toEqual([expect.stringMatching(/^ls viking:\/\/user\/reviewer\/memories: /)]);
+    await expect(assembler.pinnedHead()).resolves.toMatchObject({ status: "unreadable", reason: expect.stringContaining("Access denied") });
+    // And the timeline read collapses the same sweep to "nothing to show".
+    await expect(store.read()).resolves.toEqual([]);
+  });
+
+  it("the sweep is cached WITH its outcome — an unread sweep does not turn into an empty one inside the TTL", async () => {
+    let calls = 0;
+    const refuse = () => {
+      calls += 1;
+      return Promise.reject(new Error("connect ECONNREFUSED 127.0.0.1:1933"));
+    };
+    const client = new OpenVikingClient({ baseUrl: BASE, apiKey: KEY, user: "reviewer", fetchFn: refuse });
+    const store = new OpenVikingStore({ client, now: () => NOW, cacheTtlMs: 60_000 });
+    const first = await store.sweep();
+    const second = await store.sweep();
+    expect(first.unread.length).toBeGreaterThan(0);
+    expect(second).toBe(first);
+    expect(calls).toBe(1);
   });
 });
 

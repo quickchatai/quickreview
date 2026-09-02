@@ -92,7 +92,7 @@ describe("RealDeployFetcher", () => {
       [diffStatArgv("aaa1111").join(" ")]: ok(" src/x.ts | 2 +-\n"),
     });
     const st = await f.load();
-    expect(st.deployed?.sha).toBe("aaa1111");
+    expect(st.deployed).toMatchObject({ sha: "aaa1111" });
     expect(st.head).toBe("bbb2222");
     expect(st.commits).toEqual(["bbb2222 fix the thing"]);
     expect(st.diffstat).toEqual([" src/x.ts | 2 +-"]);
@@ -105,11 +105,35 @@ describe("RealDeployFetcher", () => {
       [PLAN_ARGV.join(" ")]: fail("deploy.sh: refusing to deploy — the working tree is dirty:\n"),
     });
     const st = await f.load();
-    expect(st.deployed).toBeUndefined();
+    expect(st.deployed).toBe("absent"); // the VM answered: no marker file
     expect(st.commits).toBeUndefined();
     expect(st.dirty).toEqual([" M src/x.ts"]);
     // the refusal is shown verbatim as the plan
     expect(st.plan.join("\n")).toContain("refusing to deploy");
+    expect(localCalls.some((c) => c.includes("log"))).toBe(false);
+  });
+
+  // `cat … || true` swallows a missing marker into empty output, so
+  // an ok/empty answer is a VM with no marker; a failed exec is a VM we could
+  // not ask. The two used to collapse into one `undefined`, which the tab AND
+  // the companion feed both read as "no marker".
+  it("an ssh that never answered is NOT a VM with no marker", async () => {
+    const { f, localCalls } = fetcherWith(fail("ssh: connect timed out"), {
+      [HEAD_ARGV.join(" ")]: ok("bbb2222\n"),
+      [DIRTY_ARGV.join(" ")]: ok(""),
+      [PLAN_ARGV.join(" ")]: ok("plan\n"),
+    });
+    const st = await f.load();
+    expect(st.deployed).toBeUndefined();
+    expect(st.containerStatus).toBeUndefined();
+    expect(localCalls.some((c) => c.includes("log"))).toBe(false);
+  });
+
+  // The read SUCCEEDED here — the content is the problem — so it is neither a
+  // missing marker nor an ssh failure, and neither of those sentences is true.
+  it("a marker that exists but is garbage is unparseable — not absent, not unread", async () => {
+    const { f, localCalls } = fetcherWith(ok("not-a-sha here\n"), { [HEAD_ARGV.join(" ")]: ok("bbb2222\n"), [DIRTY_ARGV.join(" ")]: ok(""), [PLAN_ARGV.join(" ")]: ok("") });
+    expect((await f.load()).deployed).toBe("unparseable");
     expect(localCalls.some((c) => c.includes("log"))).toBe(false);
   });
 });
@@ -142,6 +166,22 @@ describe("deployLines", () => {
     expect(text).toContain("ccc3333 tui deploy tab");
     expect(text).toContain("dirty — 1 uncommitted (deploy.sh will refuse)");
     expect(text).toContain("plan — deploy.sh sync");
+  });
+
+  it("renders 'no marker' and 'could not read' as different sentences, and an unread HEAD as unknown", () => {
+    const absent = stripAnsi(deployLines(emptyState({ deployed: "absent", head: "ccc3333" }), 90).join("\n"));
+    expect(absent).toContain("no BUILD_SHA on the VM yet");
+    expect(absent).not.toContain("could not be read");
+    const unread = stripAnsi(deployLines(emptyState({ deployed: undefined, head: undefined }), 90).join("\n"));
+    expect(unread).toContain("could not be read");
+    expect(unread).not.toContain("no BUILD_SHA on the VM yet");
+    expect(unread).toContain("HEAD unknown");
+    // A corrupt marker was READ — blaming ssh/docker for it would be false.
+    const corrupt = stripAnsi(deployLines(emptyState({ deployed: "unparseable", head: "ccc3333" }), 160).join("\n"));
+    expect(corrupt).toContain("corrupt marker");
+    expect(corrupt).not.toContain("could not be read");
+    expect(corrupt).not.toContain("no BUILD_SHA on the VM yet");
+    expect(corrupt).not.toContain("nothing to deploy");
   });
 
   it("flags a deployed sha unknown to local git instead of pretending 0 pending", () => {
@@ -370,6 +410,36 @@ describe("deploy tab drain orchestration", () => {
     await run;
   });
 
+  it("never starts deploy on a drain the daemon BOUNDED because the operator channel was unsealed", async () => {
+    // The receipt is ok and draining, but stamped issuer "session": the daemon
+    // found commands/operator/ writable by its own uid and gave the deploy
+    // tab a 30-minute session drain that can lapse mid-sync. MUTATION: drop
+    // the `result.issuer === "session"` branch in startDrain — the phase
+    // lands on "waiting-rounds" and the written text says nothing.
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    let deploys = 0;
+    app.hooks.deployRun = () => { deploys++; return { kill: () => {} }; };
+    const drain: DeployDrainSender = {
+      set: async () => ({ ok: true, draining: true, running_rounds: 0, issuer: "session", expires_at: "2026-09-02T10:30:00.000Z" }),
+    };
+    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => 1000, drain);
+    const run = app.run();
+    streams.type("3");
+    await settle();
+    streams.type("D"); streams.type("D");
+    await settle();
+    publishStatus(app, 0);
+    await settle();
+    expect(deploys).toBe(0);
+    expect(st.deployPhase).toBe("drain-failed");
+    expect(stripAnsi(streams.written())).toContain("NOT sealed");
+    // The run's own lines carry the whole reason (the pane truncates to width).
+    expect(st.run?.lines.join("\n")).toContain("lapses 2026-09-02T10:30:00.000Z");
+    app.quit();
+    await run;
+  });
+
   it("x while rounds are draining lifts the drain and does not deploy", async () => {
     const streams = fakeStreams();
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
@@ -480,7 +550,7 @@ describe("deploy tab keys", () => {
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
     let loads = 0;
     const st = installDeployHooks(app, {
-      load: async () => (loads++, { dirty: [], plan: ["plan — deploy.sh sync"], deployed: undefined, head: "abc1234" }),
+      load: async () => (loads++, { dirty: [], plan: ["plan — deploy.sh sync"], deployed: "absent" as const, head: "abc1234" }),
     });
     const run = app.run();
     streams.type("3");
