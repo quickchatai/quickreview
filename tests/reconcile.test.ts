@@ -565,14 +565,14 @@ describe("dry-run re-trigger suppression", () => {
     gh.labelTriggered = [item(13)];
     gh.stale = [{ number: 13, head_sha: "sha13", approved_sha: "old", approved_at: "2026-08-10T00:00:00Z" }];
     store.upsertPr({ number: 13, state: "tracked", head_sha: "sha13", title: "PR 13", author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
-    store.setPaused(13, true);
+    store.pausePr(13, { issuer: "operator", expires_at: null }, "test");
 
     await reconcileOnce({ cfg: { ...cfg, dry_run: false }, store, adapter: gh, hooks });
     const row = store.getPr(13)!;
     expect(row.state).toBe("tracked");
     expect(row.stale_recheck).toBe(0);
 
-    store.setPaused(13, false);
+    store.resumePr(13, "operator");
     await reconcileOnce({ cfg: { ...cfg, dry_run: false }, store, adapter: gh, hooks });
     expect(store.getPr(13)!.state).toBe("queued");
   });

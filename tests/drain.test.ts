@@ -49,8 +49,8 @@ describe("drain state row", () => {
   it("survives a simulated restart (new StateStore over the same file)", () => {
     const dbPath = join(dir, "state.db");
     const first = new StateStore(dbPath);
-    expect(first.drainState()).toEqual({ draining: false, drained_deliveries: 0, since: null });
-    expect(first.setDraining(true).changed).toBe(true);
+    expect(first.drainState()).toEqual({ draining: false, drained_deliveries: 0, since: null, issued_by: null, expires_at: null });
+    expect(first.engageDrain({ issuer: "operator", expires_at: null }).outcome).toBe("engaged");
     first.countDrainedDelivery();
     expect(first.countDrainedDelivery()).toBe(2);
     first.close();
@@ -61,11 +61,11 @@ describe("drain state row", () => {
     expect(state.drained_deliveries).toBe(2);
     expect(state.since).not.toBeNull();
     // Lifting returns the window's drop count; re-draining starts a fresh one.
-    expect(second.setDraining(false)).toEqual({ changed: true, dropped: 2 });
+    expect(second.liftDrain("operator")).toEqual({ changed: true, dropped: 2 });
     // Idempotent off: no change, and the counter (kept for the record until
     // the next drain-on resets it) is still reported honestly.
-    expect(second.setDraining(false)).toEqual({ changed: false, dropped: 2 });
-    expect(second.setDraining(true)).toEqual({ changed: true, dropped: 0 });
+    expect(second.liftDrain("operator")).toEqual({ changed: false, dropped: 2 });
+    expect(second.engageDrain({ issuer: "operator", expires_at: null }).outcome).toBe("engaged");
     expect(second.drainState().drained_deliveries).toBe(0);
     second.close();
   });
@@ -89,7 +89,7 @@ function delivery(store: StateStore, payload: unknown, event: string, guid: stri
 describe("webhook while draining", () => {
   it("answers 200, drops the delivery unrecorded, and counts it", () => {
     const store = new StateStore(":memory:");
-    store.setDraining(true);
+    store.engageDrain({ issuer: "operator", expires_at: null });
     const res = delivery(store, labeledPayload(), "pull_request", "drain-g1");
     expect(res.status).toBe(200);
     expect(res.reason).toBe("draining");
@@ -100,7 +100,7 @@ describe("webhook while draining", () => {
     expect((store.db.prepare("SELECT COUNT(*) AS c FROM deliveries").get() as { c: number }).c).toBe(0);
     expect(eventKinds(store)).not.toContain("webhook_event");
 
-    store.setDraining(false);
+    store.liftDrain("operator");
     const after = delivery(store, labeledPayload(), "pull_request", "drain-g1");
     expect(after.reason).toBe("trigger");
     expect(after.interpretation?.kind).toBe("trigger");
@@ -109,7 +109,7 @@ describe("webhook while draining", () => {
 
   it("still 403s a bad signature (the drop only ever answers authentic deliveries)", () => {
     const store = new StateStore(":memory:");
-    store.setDraining(true);
+    store.engageDrain({ issuer: "operator", expires_at: null });
     const raw = Buffer.from(JSON.stringify(labeledPayload()));
     const res = handleDelivery(
       { cfg, store, secret: SECRET, onInterpretation: () => {} },
@@ -124,7 +124,7 @@ describe("webhook while draining", () => {
   it("drops an author reply too — ping-pong cannot fire from a drained webhook", () => {
     const store = new StateStore(":memory:");
     store.registerBotComment(800001, 4242);
-    store.setDraining(true);
+    store.engageDrain({ issuer: "operator", expires_at: null });
     const payload = {
       action: "created",
       comment: { id: 900001, in_reply_to_id: 800001, body: "done", user: { login: "alice", type: "User" }, path: "x.py" },
@@ -132,7 +132,7 @@ describe("webhook while draining", () => {
       sender: { login: "alice", type: "User" },
     };
     expect(delivery(store, payload, "pull_request_review_comment", "drain-g2").reason).toBe("draining");
-    store.setDraining(false);
+    store.liftDrain("operator");
     expect(delivery(store, payload, "pull_request_review_comment", "drain-g3").interpretation?.kind).toBe("author_reply");
     store.close();
   });
@@ -184,12 +184,12 @@ describe("dispatch pump while draining", () => {
       async injectOverseer() {},
       async archiveAndClose() {},
     };
-    store.setDraining(true);
+    store.engageDrain({ issuer: "operator", expires_at: null });
     expect(await dispatchOnce({ cfg, store, adapter: new PumpAdapter(), hooks })).toEqual([]);
     expect(orders).toHaveLength(0);
     expect(store.runningRounds()).toHaveLength(0);
 
-    store.setDraining(false);
+    store.liftDrain("operator");
     const dispatched = await dispatchOnce({ cfg, store, adapter: new PumpAdapter(), hooks });
     expect(dispatched.map((o) => o.pr)).toEqual([7]);
     store.close();
@@ -201,12 +201,12 @@ describe("dispatch pump while draining", () => {
 describe("recheck while draining", () => {
   it("generates no nudge (noop: draining), and works again after the lift", async () => {
     const store = new StateStore(":memory:");
-    store.setDraining(true);
+    store.engageDrain({ issuer: "operator", expires_at: null });
     const inject = vi.fn();
     const out = await runRecheck({ cfg, store, adapter: {}, inject }, { pr: 5, trigger: "push", head_sha: "h2" });
     expect(out).toMatchObject({ action: "noop", reason: "draining" });
     expect(inject).not.toHaveBeenCalled();
-    store.setDraining(false);
+    store.liftDrain("operator");
     const after = await runRecheck({ cfg, store, adapter: {}, inject }, { pr: 5, trigger: "push", head_sha: "h2" });
     // The drain lifted, so the recheck must get PAST the drain gate. It still
     // no-ops here — this PR carries no approval to re-check — and that is the
@@ -239,7 +239,7 @@ describe("recheck while draining", () => {
       migration_gate: 0,
     });
     store.recordReviewedHead(9, { head_sha: "h9", verdict: "APPROVE", posted_event: "approved", round_no: 1 });
-    store.setDraining(true);
+    store.engageDrain({ issuer: "operator", expires_at: null });
     const getPr = vi.fn();
     const enabled: Config = { ...cfg, recheck: { ...cfg.recheck, enabled: true, on_base_advance: true } };
     const out = await runBaseAdvance(
@@ -340,7 +340,7 @@ describe("drain auto-lift", () => {
   afterEach(() => rmSync(root, { recursive: true, force: true }));
 
   it("lifts on the boot's first HEALTHY reconcile pass, logging the drop count", async () => {
-    store.setDraining(true);
+    store.engageDrain({ issuer: "operator", expires_at: null });
     store.countDrainedDelivery();
     store.countDrainedDelivery();
     store.countDrainedDelivery();
@@ -366,7 +366,7 @@ describe("drain auto-lift", () => {
   });
 
   it("does NOT lift when the first reconcile pass fails — and never auto-lifts later that boot", async () => {
-    store.setDraining(true);
+    store.engageDrain({ issuer: "operator", expires_at: null });
     const adapter = bootAdapter({
       listOpenPrs: async () => {
         throw new Error("github down");
@@ -390,7 +390,7 @@ describe("drain auto-lift", () => {
       expect(store.drainState().draining).toBe(true);
       expect(eventKinds(store)).not.toContain("drain_lifted");
       // The manual lift always works.
-      expect(store.setDraining(false).changed).toBe(true);
+      expect(store.liftDrain("operator").changed).toBe(true);
     } finally {
       await daemon.stop();
     }
@@ -446,7 +446,7 @@ describe("drain surfacing", () => {
   it("rides the status snapshot while draining, absent otherwise", () => {
     const store = new StateStore(":memory:");
     expect(buildStatusSnapshot(store, false)).not.toHaveProperty("draining");
-    store.setDraining(true);
+    store.engageDrain({ issuer: "operator", expires_at: null });
     store.countDrainedDelivery();
     const snap = buildStatusSnapshot(store, false);
     expect(snap.draining).toBe(true);

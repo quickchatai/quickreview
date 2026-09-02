@@ -78,6 +78,22 @@ export interface BoardView {
 
 // ---- layout ----------------------------------------------------------------
 
+/** "held by the operator" / "held by a session, lapses 12:30:00Z";
+ * an older daemon reports no holder, and that is said rather than guessed. */
+export function leverHolderLabel(by: "operator" | "session" | undefined, until: string | undefined): string {
+  if (by === undefined) return "holder unknown (older daemon)";
+  const who = by === "operator" ? "held by the operator" : "held by a session";
+  return until ? `${who}, lapses ${until.slice(11, 19)}Z` : `${who} until lifted`;
+}
+
+/** The pause chip on a PR row: `⏸op` for the operator's hold, `⏸` + the lapse time for a session's. */
+function pauseChip(pr: SnapshotPr): string {
+  if (!pr.paused) return "";
+  if (!pr.pause) return "⏸";
+  if (pr.pause.issuer === "operator") return "⏸op";
+  return pr.pause.expires_at ? `⏸→${pr.pause.expires_at.slice(11, 16)}Z` : "⏸";
+}
+
 function rowPlain(pr: SnapshotPr, now: Date): string {
   // "ESCALATE" still appears in rounds recorded before 2026-08-18.
   const chip =
@@ -89,7 +105,7 @@ function rowPlain(pr: SnapshotPr, now: Date): string {
           ? "⚑H"
           : "";
   const rounds = pr.rounds ? `r${pr.rounds}` : "";
-  return [glyphFor(pr), `#${pr.number}`, pr.author ?? "", fmtAge(pr.updated_at, now), rounds, chip, pr.title].filter((s) => s !== "").join(" ");
+  return [glyphFor(pr), `#${pr.number}`, pr.author ?? "", fmtAge(pr.updated_at, now), rounds, chip, pauseChip(pr), pr.title].filter((s) => s !== "").join(" ");
 }
 
 /** Left column sized to the longest PR row so titles aren't cropped while
@@ -230,8 +246,11 @@ function barSegments(view: BoardView, alerts: boolean): string[] {
   // Deploy-window drain (2026-08-25): while the daemon drains, the bar says
   // so loudly, with how many rounds still have to finish before a deploy is
   // safe and how many webhook deliveries were dropped so far.
+  // and by WHOM, and when it lapses — an operator's drain holds
+  // until lifted, a session's always has an expiry. An older daemon that
+  // reports neither is shown as such rather than guessed at.
   const drainSeg = s?.draining
-    ? `${FG.anomaly}⛔ DRAINING — ${s.running_rounds} round${s.running_rounds === 1 ? "" : "s"} finishing · ${s.drain_failed_loud ?? 0} failed loud · ${s.drained_deliveries ?? 0} dropped${RESET}`
+    ? `${FG.anomaly}⛔ DRAINING — ${s.running_rounds} round${s.running_rounds === 1 ? "" : "s"} finishing · ${s.drain_failed_loud ?? 0} failed loud · ${s.drained_deliveries ?? 0} dropped · ${leverHolderLabel(s.draining_by, s.draining_until)}${RESET}`
     : "";
   const td = s?.thread_decisions;
   const breakerSeg = td && (td.breaker_state !== "closed" || td.failed > 0)
@@ -268,8 +287,9 @@ function styledRow(pr: SnapshotPr, selected: boolean, width: number, now: Date, 
     ? `${FG.anomaly}FAILED_LOUD${RESET}`
     : verdictChip(pr.last_verdict);
   const rounds = pr.rounds ? `${FG.dim}r${pr.rounds}${RESET}` : "";
+  const paused = pr.paused ? `${WARN}${pauseChip(pr)}${DRESET}` : "";
   const head = `${color}${glyphFor(pr)} ${STRONG}#${pr.number}${RESET}`;
-  const meta = [`${FG.author}${pr.author ?? ""}${RESET}`, `${FG.dim}${fmtAge(pr.updated_at, now)}${RESET}`, rounds, chip]
+  const meta = [`${FG.author}${pr.author ?? ""}${RESET}`, `${FG.dim}${fmtAge(pr.updated_at, now)}${RESET}`, rounds, chip, paused]
     .filter((s) => stripAnsi(s) !== "")
     .join(" ");
   const used = displayWidth(`${stripAnsi(head)} ${stripAnsi(meta)} `);
@@ -395,6 +415,12 @@ export function detailLines(
   lines.push(truncate(`spend $${detail.spend_usd.toFixed(2)} · head ${(detail.head_sha ?? "").slice(0, 7)} · ${trig}`, width));
   if (detail.labels && detail.labels.length > 0) {
     lines.push(truncate(detail.labels.map((l) => `${FG.accent}[${sanitizeText(l)}]${RESET}`).join(" "), width));
+  }
+  if (pr.paused) {
+    // a held PR says who holds it and when the hold lapses.
+    const hold = pr.pause;
+    const why = hold?.reason ? ` · ${oneLine(sanitizeText(hold.reason))}` : "";
+    lines.push(truncate(`${WARN}${STRONG}PAUSED${DRESET}${WARN} · ${leverHolderLabel(hold?.issuer, hold?.expires_at ?? undefined)}${why}${DRESET}`, width));
   }
   if (pr.review_failure) {
     const command = pr.review_failure.command_id ? ` · ${pr.review_failure.command_id}` : "";

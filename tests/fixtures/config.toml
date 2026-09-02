@@ -393,6 +393,13 @@ escalation_mention_default = "example-maintainer"
 # set only). Tests select a profile explicitly where one is under test.
 profile = ""
 
+# session lever bounds (minutes; budgets per [ops] timezone day).
+[levers]
+session_drain_max_min = 30
+session_drain_budget_min_per_day = 90
+session_pause_max_min = 240
+session_pause_budget_min_per_day = 480
+
 [slack]
 # The Slack concierge — ONE channel, one thread per PR. Tokens are
 # NEVER here: bot_token_file / app_token_file name flat files under

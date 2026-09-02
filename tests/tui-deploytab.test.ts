@@ -370,6 +370,36 @@ describe("deploy tab drain orchestration", () => {
     await run;
   });
 
+  it("never starts deploy on a drain the daemon BOUNDED because the operator channel was unsealed", async () => {
+    // The receipt is ok and draining, but stamped issuer "session": the daemon
+    // found commands/operator/ writable by its own uid and gave the deploy
+    // tab a 30-minute session drain that can lapse mid-sync. MUTATION: drop
+    // the `result.issuer === "session"` branch in startDrain — the phase
+    // lands on "waiting-rounds" and the written text says nothing.
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    let deploys = 0;
+    app.hooks.deployRun = () => { deploys++; return { kill: () => {} }; };
+    const drain: DeployDrainSender = {
+      set: async () => ({ ok: true, draining: true, running_rounds: 0, issuer: "session", expires_at: "2026-09-02T10:30:00.000Z" }),
+    };
+    const st = installDeployHooks(app, { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) }, () => 1000, drain);
+    const run = app.run();
+    streams.type("3");
+    await settle();
+    streams.type("D"); streams.type("D");
+    await settle();
+    publishStatus(app, 0);
+    await settle();
+    expect(deploys).toBe(0);
+    expect(st.deployPhase).toBe("drain-failed");
+    expect(stripAnsi(streams.written())).toContain("NOT sealed");
+    // The run's own lines carry the whole reason (the pane truncates to width).
+    expect(st.run?.lines.join("\n")).toContain("lapses 2026-09-02T10:30:00.000Z");
+    app.quit();
+    await run;
+  });
+
   it("x while rounds are draining lifts the drain and does not deploy", async () => {
     const streams = fakeStreams();
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);

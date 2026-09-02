@@ -975,8 +975,54 @@ export interface Config {
   recheck: RecheckConfig;
   review: ReviewConfig;
   escalation: EscalationConfig;
+  levers: LeversConfig;
   slack: SlackConfig;
   owner: OwnerConfig;
+}
+
+/**
+ * `[levers]`: the bounds on a SESSION-issued `drain` / `pause-pr`.
+ * The operator's own levers (`qcr drain on`, the deploy tab) are not bounded
+ * by anything here — the deploy flow's drain stands until the new boot's
+ * first healthy reconcile lifts it. Every number is minutes; the budgets are
+ * counted per `[ops] timezone` day.
+ */
+export interface LeversConfig {
+  /** Longest single session drain. */
+  session_drain_max_min: number;
+  /** Total session-drain minutes grantable per day; must be ≥ the cap. */
+  session_drain_budget_min_per_day: number;
+  /** Longest single session pause of one PR. */
+  session_pause_max_min: number;
+  /** Total session-pause minutes grantable per PR per day; must be ≥ the cap. */
+  session_pause_budget_min_per_day: number;
+}
+
+export const LEVERS_DEFAULTS: LeversConfig = {
+  session_drain_max_min: 30,
+  session_drain_budget_min_per_day: 90,
+  session_pause_max_min: 240,
+  session_pause_budget_min_per_day: 480,
+};
+
+/** Parse `[levers]`; a bound that is not a positive integer, or a budget
+ * smaller than its cap, refuses to load — a lever bound of zero or a budget
+ * that can never fund one full grant is a misconfiguration, not a setting. */
+export function parseLevers(raw: Record<string, any>): LeversConfig {
+  const cfg: LeversConfig = { ...LEVERS_DEFAULTS, ...(raw as Partial<LeversConfig>) };
+  for (const key of Object.keys(LEVERS_DEFAULTS) as Array<keyof LeversConfig>) {
+    const v = cfg[key];
+    if (!Number.isInteger(v) || v < 1) {
+      throw new Error(`config.toml [levers]: ${key} must be a positive integer number of minutes (got ${JSON.stringify(v)})`);
+    }
+  }
+  if (cfg.session_drain_budget_min_per_day < cfg.session_drain_max_min) {
+    throw new Error("config.toml [levers]: session_drain_budget_min_per_day must be at least session_drain_max_min");
+  }
+  if (cfg.session_pause_budget_min_per_day < cfg.session_pause_max_min) {
+    throw new Error("config.toml [levers]: session_pause_budget_min_per_day must be at least session_pause_max_min");
+  }
+  return cfg;
 }
 
 /** Defaults for [backfill], derived from the already-parsed [github] block. */
@@ -1256,6 +1302,7 @@ export function parseConfig(toml: string): Config {
       },
     },
     escalation: parseEscalation((raw.escalation ?? {}) as Record<string, any>),
+    levers: parseLevers((raw.levers ?? {}) as Record<string, any>),
     slack: parseSlack((raw.slack ?? {}) as Record<string, any>, ops.timezone),
     owner: { ...OWNER_DEFAULTS, ...((raw.owner ?? {}) as Partial<OwnerConfig>) },
   };

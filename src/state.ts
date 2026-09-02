@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { OpenVikingStatus } from "./openviking/types.js";
+import { holdActive, mayLift, mergeHold, type HoldOutcome, type LeverGrant, type LeverHold, type LeverIssuer, type LeverKind } from "./levers.js";
 import type { PassPlanEntry, VerdictPassEntry } from "./types.js";
 import { standingVerdict as standingReviewVerdict } from "./standing-review.js";
 
@@ -88,8 +89,16 @@ export interface PrStateRow {
   trigger_provenance: TriggerProvenance | null;
   stale_recheck: number;
   migration_gate: number;
-  /** Overseer pause-pr: no dispatch/re-trigger until resumed (or closed). */
+  /** `pause-pr` hold: no dispatch/re-trigger while it stands. Read back
+   * through `getPr`/`allPrs`, it is already folded against the hold's expiry
+   * — a lapsed session pause reads 0. */
   paused: number;
+  /** Who holds the pause and until when (null = until resumed; operator
+   * only); all null when not paused. */
+  pause_issuer: LeverIssuer | null;
+  pause_expires_at: string | null;
+  pause_reason: string | null;
+  pause_since: string | null;
   updated_at: string;
 }
 
@@ -443,13 +452,19 @@ export interface SlackCooldownRow {
   bypassed: number;
 }
 
-/** Deploy-window drain state (2026-08-25) — one persistent row. */
+/** Deploy-window drain state (2026-08-25) — one persistent row. Read back
+ * through `drainState()` it is already folded against the hold's expiry: a
+ * lapsed session drain reads `draining: false`. */
 export interface DrainState {
   draining: boolean;
   /** Webhook deliveries dropped while the CURRENT drain window stood. */
   drained_deliveries: number;
   /** When the current drain was engaged; null when not draining. */
   since: string | null;
+  /** Who holds the drain; null when not draining. */
+  issued_by: LeverIssuer | null;
+  /** When the hold lapses; null = until lifted (operator only). */
+  expires_at: string | null;
 }
 
 const SESSION_COMMAND_COLUMNS_SQL = `(
@@ -791,6 +806,27 @@ CREATE TABLE IF NOT EXISTS drain_state (
   since              TEXT,
   updated_at         TEXT NOT NULL
 );
+-- Session lever grants: every bounded drain / pause a SESSION was
+-- granted, with the minutes it drew from that day's budget. The per-day cap
+-- is the SUM over this table; the operator's own levers never write here.
+CREATE TABLE IF NOT EXISTS lever_grants (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind       TEXT NOT NULL,       -- 'drain' | 'pause'
+  pr         INTEGER,             -- the paused PR; NULL for a drain
+  minutes    INTEGER NOT NULL,
+  day        TEXT NOT NULL,       -- [ops] timezone day the grant is charged to
+  granted_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS lever_grants_day ON lever_grants (kind, day, pr);
+-- Operator command files handled. The operator's commands/operator/
+-- directory is root-owned and NOT writable by the daemon, so a handled file
+-- cannot be archived by rename the way commands/processed/ does it; this
+-- ledger is what keeps a restart from executing one twice.
+CREATE TABLE IF NOT EXISTS operator_commands (
+  file       TEXT PRIMARY KEY,
+  handled_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS filed_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   kind TEXT NOT NULL,           -- 'improvement_pr' | 'issue'
@@ -1111,6 +1147,16 @@ export class StateStore {
       // Trigger provenance — "human" | "system", nullable, additive.
       // Null = legacy/unknown, which dispatch treats as human (full round).
       "ALTER TABLE pr_state ADD COLUMN trigger_provenance TEXT",
+      // Lever holds: who holds the drain / a pause and until when.
+      // Nullable, additive. A legacy row that is draining or paused
+      // reads as an OPERATOR hold with no expiry — the only shape it could
+      // have been, and the fail-safe one: nothing lapses that nobody bounded.
+      "ALTER TABLE drain_state ADD COLUMN issued_by TEXT",
+      "ALTER TABLE drain_state ADD COLUMN expires_at TEXT",
+      "ALTER TABLE pr_state ADD COLUMN pause_issuer TEXT",
+      "ALTER TABLE pr_state ADD COLUMN pause_expires_at TEXT",
+      "ALTER TABLE pr_state ADD COLUMN pause_reason TEXT",
+      "ALTER TABLE pr_state ADD COLUMN pause_since TEXT",
       // hardening: first-seen-silent mark for the lost-prompt net —
       // nullable, additive.
       "ALTER TABLE rounds ADD COLUMN silent_since TEXT",
@@ -1255,19 +1301,76 @@ export class StateStore {
   // ---- pr_state ----------------------------------------------------------
 
   getPr(n: number): PrStateRow | undefined {
-    return this.db.prepare("SELECT * FROM pr_state WHERE number = ?").get(n) as PrStateRow | undefined;
+    const row = this.db.prepare("SELECT * FROM pr_state WHERE number = ?").get(n) as PrStateRow | undefined;
+    return row && this.withLivePause(row);
   }
 
   allPrs(): PrStateRow[] {
-    return this.db.prepare("SELECT * FROM pr_state ORDER BY number").all() as PrStateRow[];
+    return (this.db.prepare("SELECT * FROM pr_state ORDER BY number").all() as PrStateRow[]).map((r) => this.withLivePause(r));
+  }
+
+  /**
+   * The ONE reading of a PR's pause: `paused` is 1 only while the
+   * hold is in force. A lapsed session pause therefore stops binding at its
+   * expiry whether or not the sweep has run yet, at every reader — dispatch,
+   * reconcile, the successor promotion and the snapshot all come through
+   * here. A legacy pause (no issuer recorded) is the operator's: it
+   * predates any session bound and never lapses on its own.
+   */
+  private withLivePause(row: PrStateRow): PrStateRow {
+    if (!row.paused) return row;
+    const hold = this.pauseHold(row);
+    return holdActive(hold, this.ts()) ? { ...row, pause_issuer: hold.issuer } : { ...row, paused: 0 };
+  }
+
+  private pauseHold(row: PrStateRow): LeverHold | null {
+    if (!row.paused) return null;
+    return { issuer: row.pause_issuer ?? "operator", expires_at: row.pause_issuer ? row.pause_expires_at : null };
+  }
+
+  /**
+   * Hold `n` out of dispatch and re-trigger under `grant`. The
+   * precedence is `mergeHold`'s: a session cannot narrow or replace an
+   * operator's pause, an operator's grant replaces a session's, and a repeat
+   * from the same issuer only ever widens. Returns the hold that now stands.
+   */
+  pausePr(n: number, grant: LeverGrant, reason: string): { outcome: HoldOutcome; hold: LeverHold } {
+    const row = this.getPr(n);
+    if (!row) throw new Error(`pausePr: unknown PR #${n}`);
+    const merged = mergeHold(this.pauseHold(row), grant);
+    if (merged.outcome === "unchanged") return merged;
+    const ts = this.ts();
+    this.db
+      .prepare(
+        `UPDATE pr_state SET paused = 1, pause_issuer = ?, pause_expires_at = ?, pause_reason = ?,
+                pause_since = COALESCE(CASE WHEN paused = 1 THEN pause_since END, ?), updated_at = ?
+          WHERE number = ?`,
+      )
+      .run(merged.hold.issuer, merged.hold.expires_at, reason, ts, ts, n);
+    return merged;
+  }
+
+  /** Lift a pause. A session's resume is REFUSED while the operator holds it. */
+  resumePr(n: number, by: LeverIssuer): { changed: boolean; refused?: "held-by-operator" } {
+    const row = this.getPr(n);
+    const hold = row ? this.pauseHold(row) : null;
+    if (!hold) return { changed: false };
+    if (!mayLift(hold, by)) return { changed: false, refused: "held-by-operator" };
+    this.db
+      .prepare(
+        "UPDATE pr_state SET paused = 0, pause_issuer = NULL, pause_expires_at = NULL, pause_reason = NULL, pause_since = NULL, updated_at = ? WHERE number = ?",
+      )
+      .run(this.ts(), n);
+    return { changed: true };
   }
 
   /** `paused` is deliberately not part of the upsert: it is owned by
-   * setPaused() so state transitions can never clobber an overseer pause.
+   * `pausePr`/`resumePr` (and the expiry sweep) so state transitions can never
+   * clobber a standing pause.
    * `trigger_provenance` is optional for callers that predate it —
    * absent means null, i.e. the full-round default. */
   upsertPr(
-    row: Omit<PrStateRow, "updated_at" | "paused" | "trigger_provenance"> & {
+    row: Omit<PrStateRow, "updated_at" | "paused" | "pause_issuer" | "pause_expires_at" | "pause_reason" | "pause_since" | "trigger_provenance"> & {
       paused?: number;
       trigger_provenance?: TriggerProvenance | null;
     },
@@ -1288,10 +1391,6 @@ export class StateStore {
           updated_at: this.ts(),
         }))(row),
       );
-  }
-
-  setPaused(n: number, paused: boolean): void {
-    this.db.prepare("UPDATE pr_state SET paused = ?, updated_at = ? WHERE number = ?").run(paused ? 1 : 0, this.ts(), n);
   }
 
   setPrState(n: number, state: PrLifecycleState): void {
@@ -3405,36 +3504,123 @@ export class StateStore {
    */
   // ---- deploy-window drain (2026-08-25) ----------------------------------
 
-  /** The drain flag + its drop counter. A missing row means "not draining". */
+  /**
+   * The drain flag + its drop counter, folded against the hold's expiry: a
+   * session drain past its `expires_at` reads `draining: false` here, at
+   * every reader, whether or not the sweep has retired the row yet. A missing
+   * row means "not draining"; a draining row with no issuer recorded predates
+   * and is the operator's (no expiry).
+   */
   drainState(): DrainState {
     const row = this.db
-      .prepare("SELECT draining, drained_deliveries, since FROM drain_state WHERE id = 1")
-      .get() as { draining: number; drained_deliveries: number; since: string | null } | undefined;
-    if (!row) return { draining: false, drained_deliveries: 0, since: null };
-    return { draining: row.draining === 1, drained_deliveries: row.drained_deliveries, since: row.since };
+      .prepare("SELECT draining, drained_deliveries, since, issued_by, expires_at FROM drain_state WHERE id = 1")
+      .get() as
+      | { draining: number; drained_deliveries: number; since: string | null; issued_by: LeverIssuer | null; expires_at: string | null }
+      | undefined;
+    if (!row) return { draining: false, drained_deliveries: 0, since: null, issued_by: null, expires_at: null };
+    const hold = this.drainHold(row);
+    if (!holdActive(hold, this.ts())) {
+      return { draining: false, drained_deliveries: row.drained_deliveries, since: null, issued_by: null, expires_at: null };
+    }
+    return { draining: true, drained_deliveries: row.drained_deliveries, since: row.since, issued_by: hold.issuer, expires_at: hold.expires_at };
+  }
+
+  private drainHold(row: { draining: number; issued_by: LeverIssuer | null; expires_at: string | null }): LeverHold | null {
+    if (row.draining !== 1) return null;
+    return { issuer: row.issued_by ?? "operator", expires_at: row.issued_by ? row.expires_at : null };
   }
 
   /**
-   * Flip the drain. Turning it ON starts a fresh drop window (counter reset);
-   * turning it OFF returns how many deliveries were dropped while it stood, so
-   * the lift log line can say what the reconcile poll now has to recover.
-   * Idempotent: repeating the current state changes nothing.
+   * Engage the drain under `grant`. A fresh engagement starts a new
+   * drop window (counter reset); a grant landing on a standing drain follows
+   * `mergeHold` — an operator's grant upgrades a session's, a session's never
+   * narrows an operator's, a repeat from the same issuer only widens — and
+   * keeps the window it found. Returns the state that now stands.
    */
-  setDraining(on: boolean): { changed: boolean; dropped: number } {
-    const prev = this.drainState();
-    if (prev.draining === on) return { changed: false, dropped: prev.drained_deliveries };
-    if (on) {
+  engageDrain(grant: LeverGrant): { outcome: HoldOutcome; state: DrainState } {
+    const standing = this.drainState();
+    const merged = mergeHold(standing.draining ? { issuer: standing.issued_by!, expires_at: standing.expires_at } : null, grant);
+    if (merged.outcome === "unchanged") return { outcome: merged.outcome, state: standing };
+    const ts = this.ts();
+    if (merged.outcome === "engaged") {
       this.db
         .prepare(
-          `INSERT INTO drain_state (id, draining, drained_deliveries, since, updated_at)
-           VALUES (1, 1, 0, @ts, @ts)
-           ON CONFLICT(id) DO UPDATE SET draining = 1, drained_deliveries = 0, since = @ts, updated_at = @ts`,
+          `INSERT INTO drain_state (id, draining, drained_deliveries, since, issued_by, expires_at, updated_at)
+           VALUES (1, 1, 0, @ts, @issuer, @expires, @ts)
+           ON CONFLICT(id) DO UPDATE SET draining = 1, drained_deliveries = 0, since = @ts, issued_by = @issuer, expires_at = @expires, updated_at = @ts`,
         )
-        .run({ ts: this.ts() });
-      return { changed: true, dropped: 0 };
+        .run({ ts, issuer: merged.hold.issuer, expires: merged.hold.expires_at });
+    } else {
+      this.db
+        .prepare("UPDATE drain_state SET issued_by = ?, expires_at = ?, updated_at = ? WHERE id = 1")
+        .run(merged.hold.issuer, merged.hold.expires_at, ts);
     }
-    this.db.prepare("UPDATE drain_state SET draining = 0, updated_at = ? WHERE id = 1").run(this.ts());
-    return { changed: true, dropped: prev.drained_deliveries };
+    return { outcome: merged.outcome, state: this.drainState() };
+  }
+
+  /**
+   * Lift the drain, returning how many deliveries were dropped while it stood
+   * so the lift log line can say what the reconcile poll now has to recover.
+   * A session's lift is REFUSED while the operator holds the drain; the
+   * operator (and the boot auto-lift, which is the operator's deploy flow
+   * completing) lifts anything. Idempotent when nothing is draining.
+   */
+  liftDrain(by: LeverIssuer): { changed: boolean; dropped: number; refused?: "held-by-operator" } {
+    const standing = this.drainState();
+    if (!standing.draining) return { changed: false, dropped: standing.drained_deliveries };
+    if (!mayLift({ issuer: standing.issued_by!, expires_at: standing.expires_at }, by)) {
+      return { changed: false, dropped: standing.drained_deliveries, refused: "held-by-operator" };
+    }
+    this.db.prepare("UPDATE drain_state SET draining = 0, issued_by = NULL, expires_at = NULL, updated_at = ? WHERE id = 1").run(this.ts());
+    return { changed: true, dropped: standing.drained_deliveries };
+  }
+
+  /**
+   * Retire every hold whose expiry has passed. The readers already
+   * fold expiry, so this changes no decision — it makes the row match what
+   * the readers have been answering and returns what lapsed, for the ledger.
+   */
+  expireLevers(): { drain: boolean; pauses: number[] } {
+    const now = this.ts();
+    const drain = this.db
+      .prepare("UPDATE drain_state SET draining = 0, issued_by = NULL, expires_at = NULL, updated_at = ? WHERE id = 1 AND draining = 1 AND expires_at IS NOT NULL AND expires_at <= ?")
+      .run(now, now).changes > 0;
+    const pauses = (this.db
+      .prepare("SELECT number FROM pr_state WHERE paused = 1 AND pause_expires_at IS NOT NULL AND pause_expires_at <= ? ORDER BY number")
+      .all(now) as Array<{ number: number }>).map((r) => r.number);
+    if (pauses.length > 0) {
+      this.db
+        .prepare(
+          `UPDATE pr_state SET paused = 0, pause_issuer = NULL, pause_expires_at = NULL, pause_reason = NULL, pause_since = NULL, updated_at = ?
+            WHERE number IN (${pauses.map(() => "?").join(",")})`,
+        )
+        .run(now, ...pauses);
+    }
+    return { drain, pauses };
+  }
+
+  /** Charge a session grant to `day`'s budget. `pr` is null for a drain. */
+  recordLeverGrant(kind: LeverKind, pr: number | null, minutes: number, day: string, expiresAt: string): void {
+    this.db
+      .prepare("INSERT INTO lever_grants (kind, pr, minutes, day, granted_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(kind, pr, minutes, day, this.ts(), expiresAt);
+  }
+
+  /** Minutes already granted to sessions for `kind` on `day` — per PR for pauses. */
+  leverMinutesUsed(kind: LeverKind, day: string, pr: number | null): number {
+    const row = this.db
+      .prepare("SELECT COALESCE(SUM(minutes), 0) AS used FROM lever_grants WHERE kind = ? AND day = ? AND pr IS ?")
+      .get(kind, day, pr) as { used: number };
+    return row.used;
+  }
+
+  /** Has this operator command file already been executed? */
+  operatorCommandHandled(file: string): boolean {
+    return this.db.prepare("SELECT 1 FROM operator_commands WHERE file = ?").get(file) !== undefined;
+  }
+
+  markOperatorCommandHandled(file: string): void {
+    this.db.prepare("INSERT OR IGNORE INTO operator_commands (file, handled_at) VALUES (?, ?)").run(file, this.ts());
   }
 
   /** Count one webhook delivery dropped while draining; returns the new total. */
@@ -3873,6 +4059,10 @@ export interface StatusSnapshot {
         /** canonical operator hold. Presence overrides the ordinary PR
          * lifecycle label: review work is still owed and `u` is the action. */
         review_failure?: Pick<ReviewFailureRow, "incident_id" | "command_id" | "round_no" | "head_sha" | "stage" | "detail" | "attempts" | "retry_cap" | "failed_at" | "next_action">;
+        /** The `pause-pr` hold: present exactly while `paused` is 1
+         * — who holds it, why, since when, and when it lapses (null = until
+         * resumed; operator only). */
+        pause?: { issuer: LeverIssuer; reason: string | null; since: string | null; expires_at: string | null };
       }
   >;
   running_rounds: number;
@@ -3895,6 +4085,10 @@ export interface StatusSnapshot {
   draining?: boolean;
   drained_deliveries?: number;
   draining_since?: string;
+  /** Who holds the drain and when it lapses; `draining_until` is
+   * absent for the operator's until-lifted hold. Present only while draining. */
+  draining_by?: LeverIssuer;
+  draining_until?: string;
   /** Terminal FAILED_LOUD obligations are visible during drain but do not
    * count as live rounds; operator recovery remains dormant until drain lifts. */
   drain_failed_loud?: number;
@@ -4042,6 +4236,9 @@ export function buildStatusSnapshot(
       updated_at: p.updated_at,
       author: p.author,
       paused: p.paused,
+      ...(p.paused
+        ? { pause: { issuer: p.pause_issuer ?? "operator", reason: p.pause_reason, since: p.pause_since, expires_at: p.pause_expires_at } }
+        : {}),
       ...(failureByPr.get(p.number)
         ? {
             review_failure: {
@@ -4088,6 +4285,8 @@ export function buildStatusSnapshot(
           draining: true,
           drained_deliveries: drain.drained_deliveries,
           ...(drain.since ? { draining_since: drain.since } : {}),
+          draining_by: drain.issued_by!,
+          ...(drain.expires_at ? { draining_until: drain.expires_at } : {}),
           drain_failed_loud: failures.length,
         }
       : {}),

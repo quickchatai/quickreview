@@ -126,9 +126,9 @@ describe("queue ordering and capacity", () => {
   it("skips overseer-paused PRs entirely", () => {
     queue(1, "2026-08-13T09:00:00Z");
     queue(2, "2026-08-13T10:00:00Z");
-    store.setPaused(1, true);
+    store.pausePr(1, { issuer: "operator", expires_at: null }, "test");
     expect(queuedInOrder(store).map((p) => p.number)).toEqual([2]);
-    store.setPaused(1, false);
+    store.resumePr(1, "operator");
     expect(queuedInOrder(store).map((p) => p.number)).toEqual([1, 2]);
   });
 

@@ -125,9 +125,9 @@ describe("executeCommand", () => {
     await executeCommand({ command: "resolve-terminal-failure", ...terminal }, deps);
     expect(deps.resolveTerminalFailure).toHaveBeenCalledWith(terminal);
     await executeCommand({ command: "pause-pr", pr: 5266, reason: "same-head churn" }, deps);
-    expect(deps.pausePr).toHaveBeenCalledWith(5266, "same-head churn");
+    expect(deps.pausePr).toHaveBeenCalledWith(5266, "same-head churn", "session", undefined);
     await executeCommand({ command: "resume-pr", pr: 5266 }, deps);
-    expect(deps.resumePr).toHaveBeenCalledWith(5266);
+    expect(deps.resumePr).toHaveBeenCalledWith(5266, "session");
     await executeCommand({ command: "flag-owner", message: "look" }, deps);
     expect(deps.flagOwner).toHaveBeenCalledWith("look");
     await executeCommand(
@@ -140,7 +140,7 @@ describe("executeCommand", () => {
     await executeCommand(
       { command: "slack_reply", thread: "1712345678.123456", text: "on it" },
       deps,
-      { file: "c9" },
+      { file: "c9", issuer: "session" },
     );
     expect(deps.slackReply).toHaveBeenCalledWith({ thread: "1712345678.123456", text: "on it", file: "c9" });
     await executeCommand({ command: "retry-thread-decision", comment_id: 5001 }, deps);

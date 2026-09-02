@@ -13,6 +13,14 @@ export interface DrainCommandOutcome {
   draining?: boolean;
   running_rounds?: number;
   dropped_deliveries?: number;
+  /** Who the daemon recorded as holding the drain. `session` from
+   * an operator client means the operator channel was NOT sealed (the
+   * directory was writable by the daemon's uid) and the drain was bounded
+   * like a session's — the caller must say so, never read it as the deploy
+   * drain it asked for. */
+  issuer?: "operator" | "session";
+  /** When a bounded drain lapses; absent for the operator's until-lifted hold. */
+  expires_at?: string;
 }
 
 export interface DeployDrainSender {
@@ -52,7 +60,15 @@ export class CommandDrainSender implements DeployDrainSender {
       if (!probe.ok) continue;
       const body = probe.stdout.trim();
       if (body === "" || body === "pending") continue;
-      let value: { ok?: unknown; reason?: unknown; draining?: unknown; running_rounds?: unknown; dropped_deliveries?: unknown };
+      let value: {
+        ok?: unknown;
+        reason?: unknown;
+        draining?: unknown;
+        running_rounds?: unknown;
+        dropped_deliveries?: unknown;
+        issuer?: unknown;
+        expires_at?: unknown;
+      };
       try {
         value = JSON.parse(body) as typeof value;
       } catch {
@@ -64,7 +80,13 @@ export class CommandDrainSender implements DeployDrainSender {
         if (typeof value.running_rounds !== "number" || !Number.isInteger(value.running_rounds) || value.running_rounds < 0) {
           return { ok: false, reason: "daemon result omitted running_rounds" };
         }
-        return { ok: true, draining: true, running_rounds: value.running_rounds };
+        return {
+          ok: true,
+          draining: true,
+          running_rounds: value.running_rounds,
+          ...(value.issuer === "operator" || value.issuer === "session" ? { issuer: value.issuer } : {}),
+          ...(typeof value.expires_at === "string" ? { expires_at: value.expires_at } : {}),
+        };
       }
       const dropped = typeof value.dropped_deliveries === "number" && Number.isInteger(value.dropped_deliveries)
         ? value.dropped_deliveries

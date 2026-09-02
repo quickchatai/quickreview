@@ -17,7 +17,8 @@ import {
   type Config,
   type SecretReader,
 } from "./config.js";
-import { CommandWatcher, type CommandDeps } from "./commands.js";
+import { CommandWatcher, processOperatorSeal, type CommandDeps } from "./commands.js";
+import { drainLever, pauseLever, resumeLever, type LeverDeps } from "./levers.js";
 import { createDaemon, type Daemon } from "./daemon.js";
 import { eodDigestContext, latestDigestHeadline } from "./digest.js";
 import { startHeartbeat, type HeartbeatTimer } from "./anomalies.js";
@@ -335,6 +336,24 @@ export function buildLocalCommandWatcher(opts: {
 }
 
 /**
+ * The OPERATOR's command watcher: `commands/operator/`, the
+ * directory `qcr drain`, the board's `u` and the deploy tab write AS ROOT.
+ * Same vocabulary, same handlers; the difference is the issuer the watcher
+ * stamps, and only the real process seal decides it. No Slack tier gate: the
+ * belt exists to stop the overseer mis-filing, and the overseer cannot write
+ * here. The daemon never creates the directory — see `CommandWatcherOptions`.
+ */
+export function buildOperatorCommandWatcher(opts: { root: string; deps: CommandDeps; store: StateStore; log: (line: string) => void }): CommandWatcher {
+  return new CommandWatcher({
+    dir: join(opts.root, "commands", "operator"),
+    operator: processOperatorSeal(),
+    deps: opts.deps,
+    store: opts.store,
+    log: opts.log,
+  });
+}
+
+/**
  * The OTHER half of "who caused this turn": every daemon-originated overseer
  * wake stamps a `local` origin before it injects.
  *
@@ -441,6 +460,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   let pinWatch: ReturnType<typeof startEodPinWatch> | null = null;
   let heartbeat: HeartbeatTimer | null = null;
   let commands: CommandWatcher | null = null;
+  let operatorCommands: CommandWatcher | null = null;
   let slack: SlackRuntime | null = null;
   // built in onStart (it needs the store). Signals arriving in the
   // boot gap between the webhook binding and onStart are dropped with a log —
@@ -640,6 +660,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       }
 
       // Overseer command files → validated execution (whitelist + caps).
+      const leverDeps: LeverDeps = { store: d.store, levers: cfg.levers, timezone: cfg.ops.timezone };
       const commandDeps: CommandDeps = {
         async rerunRound(pr) {
           return recoverPrForOperator({ store: d.store, pump: () => d.pump() }, pr, "rerun-round");
@@ -667,21 +688,14 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
             getPrDisposition: (pr) => adapter.getPrDisposition(pr),
           }, payload);
         },
-        pausePr(pr, reason) {
-          const row = d.store.getPr(pr);
-          if (!row) return { ok: false, reason: `unknown PR #${pr}` };
-          d.store.setPaused(pr, true);
-          d.store.logEvent("pr_paused", pr, { reason });
-          return { ok: true, paused: pr };
+        // The two bounded levers: who is asking comes from the
+        // watcher's channel, and a session's hold is capped, budgeted and
+        // expiring in src/levers.ts — an operator's is not.
+        pausePr(pr, reason, issuer, forMin) {
+          return pauseLever(leverDeps, pr, reason, issuer, forMin);
         },
-        async resumePr(pr) {
-          const row = d.store.getPr(pr);
-          if (!row) return { ok: false, reason: `unknown PR #${pr}` };
-          d.store.setPaused(pr, false);
-          d.store.promoteSuccessor(pr);
-          d.store.logEvent("pr_resumed", pr, {});
-          await d.pump();
-          return { ok: true, resumed: pr };
+        resumePr(pr, issuer) {
+          return resumeLever(leverDeps, pr, issuer, () => d.pump());
         },
         flagOwner(message) {
           const flags = join(root, "state", "flags");
@@ -713,16 +727,11 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         retryThreadDecision(commentId) {
           return d.retryThreadDecision(commentId);
         },
-        async drain(on) {
-          const res = d.store.setDraining(on);
-          if (on) {
-            if (res.changed) d.store.logEvent("drain_on", null, {});
-            return { ok: true, draining: true, running_rounds: d.store.runningRounds().length };
-          }
-          if (res.changed) d.store.logEvent("drain_off", null, { dropped_deliveries: res.dropped });
-          d.wakeThreadDecisions();
-          await d.pump();
-          return { ok: true, draining: false, dropped_deliveries: res.dropped };
+        drain(on, issuer, forMin) {
+          return drainLever(leverDeps, on, issuer, forMin, async () => {
+            d.wakeThreadDecisions();
+            await d.pump();
+          });
         },
       };
       // The Slack concierge. Off by default; when on it owns its own
@@ -744,6 +753,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
 
       commands = buildLocalCommandWatcher({ root, deps: commandDeps, store: d.store, slack, log: (l) => log(l) });
       await commands.start();
+      operatorCommands = buildOperatorCommandWatcher({ root, deps: commandDeps, store: d.store, log: (l) => log(l) });
+      await operatorCommands.start();
 
       // Webhook-URL self-heal: only under the tunnel-file ingress
       // shape. The gated PATCH rides the app-self-config class, so it executes
@@ -843,6 +854,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       eod?.stop();
       heartbeat?.stop();
       commands?.stop();
+      operatorCommands?.stop();
       webhookHeal?.stop();
       webhookHeal = null;
       // SIGTERM then SIGKILL after a bounded grace — a memory engine must not

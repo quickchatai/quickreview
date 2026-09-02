@@ -142,9 +142,10 @@ describe("github sink", () => {
     expect(String(payload["title"])).not.toContain("#bug"); // tags are not title material
     expect(String(payload["body"])).toContain(`Memory-key: ${memoryKey(entry())}`);
     expect(String(payload["body"])).toContain("lingering stale_recheck");
-    // tmp+mv into the daemon's commands/ dir — the unwedge write idiom.
+    // tmp+mv into the OPERATOR command dir (FT-0395) — the unwedge write
+    // idiom: this is the TUI filing on the operator's behalf, not a session.
     const script = write.argv[write.argv.length - 1]!;
-    expect(script).toContain("/opt/quickreview/sandbox/commands/.");
+    expect(script).toContain("/opt/quickreview/sandbox/commands/operator/.");
     expect(script).toContain(".tmp' && mv ");
   });
 

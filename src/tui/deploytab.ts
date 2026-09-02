@@ -667,6 +667,18 @@ export function installDeployHooks(
         liftDrainAfterAbort(theApp, run);
         return;
       }
+      if (result.issuer === "session") {
+        // the daemon found commands/operator/ unsealed and bounded
+        // this drain like a session's — it can lapse mid-sync. A deploy never
+        // rides a drain that may lift itself; the receipt says when it does.
+        failDrain(
+          theApp,
+          run,
+          `the daemon bounded the drain because the operator channel is NOT sealed (commands/operator/ in the container must be root-owned 0755) — ` +
+            `it lapses ${result.expires_at ?? "at an unknown time"}; \`qcr drain off\` lifts it now. Fix the directory before deploying`,
+        );
+        return;
+      }
       st.deployPhase = "waiting-rounds";
       persist("waiting-rounds");
       st.drainRounds = result.running_rounds;

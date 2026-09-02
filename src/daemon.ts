@@ -18,6 +18,7 @@ import { GitHubAdapter } from "./github.js";
 import { TokenMinter } from "./githubAuth.js";
 import { REVIEW_SET_ASIDE_STALE_WINDOW_MS, type FeedbackEvent } from "./feedback.js";
 import { enforceLedgerFreshness } from "./ledgercheck.js";
+import { sweepExpiredLevers } from "./levers.js";
 import { PingPongLedger, ThreadDecisionWatcher, buildWakeMessage, type AuthorReplyEvent } from "./pingpong.js";
 import { reconcileOnce, type ReconcileAdapter } from "./reconcile.js";
 import {
@@ -436,7 +437,9 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
           `corrections=${report.corrections} errors=${report.errors.length}`,
       );
       if (bootFirstPass && report.errors.length === 0 && store.drainState().draining) {
-        const { dropped } = store.setDraining(false);
+        // The operator's lift: this is the deploy flow's drain completing, so
+        // it clears whatever hold stands — a session's included.
+        const { dropped } = store.liftDrain("operator");
         store.logEvent("drain_lifted", null, { dropped_deliveries: dropped });
         log(`drain_lifted — first reconcile pass healthy; ${dropped} webhook delivery(ies) were dropped while draining`);
         threadDecisions.requestSweep();
@@ -447,6 +450,9 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
 
   const pump = async (): Promise<void> => {
     await guard("dispatch", async () => {
+      // Session levers that lapsed since the last tick leave the ledger here
+      //; the readers below already treat them as gone.
+      sweepExpiredLevers(store, (line) => log(line));
       const orders = await dispatchOnce({
         cfg,
         store,

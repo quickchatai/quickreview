@@ -32,8 +32,24 @@ import type { SshRunner } from "./remote.js";
  * makes sense as a keystroke on a stuck PR. */
 export type UnwedgeCommand = "rerun-round" | "restart-session";
 
+/** The daemon's command root: results land in `<root>/results/`. */
 export function commandDirFor(cfg: TuiConfig): string {
   return `${cfg.remote_sandbox_root}/commands`;
+}
+
+/**
+ * The OPERATOR's command directory. Everything this module and
+ * `qcr drain` write goes here, and it is what makes an operator-issued lever
+ * structurally different from a session-issued one: the directory is created
+ * and written as ROOT (`docker exec -u 0`), mode 0755, and the daemon — which
+ * runs as the same uid every pi session runs as — can read it but not write
+ * into it. A session therefore cannot put a file here, and the daemon treats
+ * a file here as the operator's only when that seal holds (`operatorSealVerdict`
+ * in `src/commands.ts`). The overseer's own commands keep landing in the
+ * daemon-owned `commands/` beside it, where every drain and pause is bounded.
+ */
+export function operatorCommandDirFor(cfg: TuiConfig): string {
+  return `${commandDirFor(cfg)}/operator`;
 }
 
 export function commandFileName(now: Date, seq: number): string {
@@ -41,21 +57,48 @@ export function commandFileName(now: Date, seq: number): string {
   return `${ts}-tui-${String(seq).padStart(4, "0")}.json`;
 }
 
+/**
+ * The in-container shell that writes one operator command file as root.
+ * Refuses when the daemon's `commands/` root does not exist yet (creating it
+ * as root would leave the daemon unable to write its own results, and a
+ * daemon that has never booted cannot answer anyway) and when the operator
+ * directory is a SYMLINK: `commands/` itself is the daemon's, so a session
+ * could plant `operator` there ahead of the operator, and a root `chown` that
+ * followed the link would hand root a directory the daemon needs. A real
+ * directory a session pre-made is simply taken over — `chown 0:0` + `0755`
+ * is what makes it the operator's, whoever created it — and the file's own
+ * mode is set explicitly rather than left to the exec's umask, because the
+ * daemon's seal check (`operatorSealVerdict`) reads both.
+ */
+export function operatorCommandWriteScript(cfg: TuiConfig, name: string): string {
+  const root = commandDirFor(cfg);
+  const dir = operatorCommandDirFor(cfg);
+  const tmp = `${dir}/.${name}.tmp`;
+  return (
+    `[ -d '${root}' ] || { echo 'daemon commands dir ${root} missing - is the daemon running?' >&2; exit 1; }; ` +
+    `[ ! -L '${dir}' ] || { echo '${dir} is a symlink - refusing to write the operator command' >&2; exit 1; }; ` +
+    `mkdir -p '${dir}' && chown 0:0 '${dir}' && chmod 0755 '${dir}' || exit 1; ` +
+    `find '${dir}' -maxdepth 1 -name '*.json' -mmin +1440 -delete 2>/dev/null; ` +
+    `cat > '${tmp}' && chmod 0644 '${tmp}' && mv '${tmp}' '${dir}/${name}'`
+  );
+}
+
 /** argv for the atomic command write. The payload rides STDIN, never the
  * command line: nothing about the request can be shell-interpreted, and the
  * tmp+mv means the watcher never sees a half-written file (its own writes use
- * the same idiom). */
+ * the same idiom). `-u 0` is the operator seal — see `operatorCommandDirFor`. */
 export function commandWriteArgv(cfg: TuiConfig, name: string): string[] {
-  const dir = commandDirFor(cfg);
   return [
     ...(cfg.sudo_docker ? ["sudo"] : []),
     "docker",
     "exec",
     "-i",
+    "-u",
+    "0",
     cfg.container,
     "sh",
     "-c",
-    `mkdir -p '${dir}' && cat > '${dir}/.${name}.tmp' && mv '${dir}/.${name}.tmp' '${dir}/${name}'`,
+    operatorCommandWriteScript(cfg, name),
   ];
 }
 

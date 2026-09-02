@@ -978,7 +978,7 @@ describe("durable fresh-head successor obligation", () => {
     const roundId = store.startRound(5408, "re-review", [], 75);
     store.recordSuccessor({ pr: 5408, predecessor_round_id: roundId, head_sha: "new", provenance: "system", reason: "push" });
     store.markRoundCancelled(roundId, "done", "head_moved");
-    store.setPaused(5408, true);
+    store.pausePr(5408, { issuer: "operator", expires_at: null }, "test");
     expect(store.promoteSuccessor(5408)).toBe(false);
     expect(store.successorFor(5408)).toBeDefined();
     store.clearSuccessor(5408, "closed");

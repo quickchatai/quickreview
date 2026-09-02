@@ -5,11 +5,23 @@
 //
 // Envelope: {"command": "<name>", ...payload}. Schemas are hand-rolled and
 // STRICT — unknown fields are a rejection, not a warning.
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, watch, writeFileSync, type FSWatcher } from "node:fs";
-import { basename, join } from "node:path";
+//
+// TWO ISSUERS, decided by DIRECTORY. The same vocabulary is served
+// from the daemon-owned `commands/` (and `commands/slack/`), where every
+// writer is a pi SESSION, and from `commands/operator/`, which the operator's
+// tools (`qcr drain`, the board's `u`, the deploy tab) create and write as
+// ROOT so that the daemon's uid — the uid every session runs as — cannot write
+// into it. Nothing in a command file says who wrote it; the watcher stamps
+// the issuer from the directory and the seal, and the lever handlers
+// (`src/levers.ts`) bound a session's `drain`/`pause-pr` and never an
+// operator's. A file in the operator directory without the seal is served as
+// a session's, loudly.
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, watch, writeFileSync, type FSWatcher } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import type { StateStore } from "./state.js";
 import type { FileOutcome, ImprovementPayload, IssuePayload } from "./improvements.js";
 import { SLUG_RE } from "./improvements.js";
+import type { LeverIssuer } from "./levers.js";
 import type { OriginRecord } from "./slack/origin.js";
 import { SLACK_TS_RE } from "./slack/reply.js";
 
@@ -64,7 +76,11 @@ export type Command =
   | { command: "rerun-round"; pr: number }
   | { command: "restart-session"; pr: number | "overseer" }
   | ({ command: "resolve-terminal-failure" } & TerminalFailurePayload)
-  | { command: "pause-pr"; pr: number; reason: string }
+  /** `for_min`: how long the hold is asked for. Optional — a
+   * session that omits it gets the largest bounded grant the cap and the
+   * day's budget allow, never "until resumed"; an operator's omission IS
+   * "until resumed". Which of the two applies comes from the channel. */
+  | { command: "pause-pr"; pr: number; reason: string; for_min?: number }
   | { command: "resume-pr"; pr: number }
   | { command: "flag-owner"; message: string }
   | ({ command: "file-improvement-pr" } & ImprovementPayload)
@@ -72,14 +88,22 @@ export type Command =
   | { command: "slack_reply"; thread: string; text: string }
   /** Deploy-window drain (2026-08-25): the valve the TUI unwedge precedent
    * carries — a hard webhook stop + dispatch/recheck/ping-pong/EOD hold while
-   * in-flight rounds finish naturally. */
-  | { command: "drain"; on: boolean }
+   * in-flight rounds finish naturally. `for_min` as on `pause-pr`;
+   * only meaningful with `on: true`. */
+  | { command: "drain"; on: boolean; for_min?: number }
   | { command: "retry-thread-decision"; comment_id: number };
 
-/** Context a command file carries with it (its own name, for idempotence). */
+/** Who a command directory's writer is. Decided by WHICH DIRECTORY a
+ * file arrived in and whether the operator seal held — never by a field in
+ * the file. `session` is the default everywhere: it is the bounded side. */
+export type CommandIssuer = LeverIssuer;
+
+/** Context a command file carries with it (its own name, for idempotence,
+ * and the issuer the watcher stamped from the channel). */
 export interface CommandContext {
   /** Basename of the command file, "" for a direct executeCommand call. */
   file: string;
+  issuer: CommandIssuer;
 }
 
 /** Handlers the daemon wires; each may reject by returning {ok:false, reason}. */
@@ -87,14 +111,16 @@ export interface CommandDeps {
   rerunRound(pr: number): Promise<FileOutcome | void> | FileOutcome | void;
   restartSession(target: number | "overseer"): Promise<FileOutcome | void> | FileOutcome | void;
   resolveTerminalFailure(payload: TerminalFailurePayload): Promise<FileOutcome | void> | FileOutcome | void;
-  pausePr(pr: number, reason: string): Promise<FileOutcome | void> | FileOutcome | void;
-  resumePr(pr: number): Promise<FileOutcome | void> | FileOutcome | void;
+  /** The two bounded levers receive the issuer the watcher stamped
+   * from the channel, plus the optional asked-for duration. */
+  pausePr(pr: number, reason: string, issuer: CommandIssuer, forMin: number | undefined): Promise<FileOutcome | void> | FileOutcome | void;
+  resumePr(pr: number, issuer: CommandIssuer): Promise<FileOutcome | void> | FileOutcome | void;
   flagOwner(message: string): Promise<FileOutcome | void> | FileOutcome | void;
   fileImprovementPr(payload: ImprovementPayload): Promise<FileOutcome | void> | FileOutcome | void;
   fileIssue(payload: IssuePayload): Promise<FileOutcome | void> | FileOutcome | void;
   /** Deploy-window drain valve. Optional like `slackReply`: a daemon wired
    * without it rejects the command with a reason instead of pretending. */
-  drain?(on: boolean): Promise<FileOutcome | void> | FileOutcome | void;
+  drain?(on: boolean, issuer: CommandIssuer, forMin: number | undefined): Promise<FileOutcome | void> | FileOutcome | void;
   retryThreadDecision?(commentId: number): Promise<FileOutcome | void> | FileOutcome | void;
   /** Optional: absent when Slack is disabled, in which case `slack_reply` is
    * rejected with a reason instead of silently succeeding. */
@@ -122,6 +148,18 @@ function isGitHubId(v: unknown): v is number {
 
 function isNonEmptyString(v: unknown): v is string {
   return typeof v === "string" && v.trim().length > 0;
+}
+
+/** The optional `for_min` of a lever command: absent, or a positive integer.
+ * The CAP is not checked here — the validator does not know the channel; the
+ * lever handler applies it with the issuer in hand. */
+function forMinField(obj: Record<string, unknown>): { ok: true; value: number | undefined } | { ok: false; reason: string } {
+  const v = obj["for_min"];
+  if (v === undefined) return { ok: true, value: undefined };
+  if (typeof v !== "number" || !Number.isInteger(v) || v < 1) {
+    return { ok: false, reason: "'for_min' must be a positive integer number of minutes when present" };
+  }
+  return { ok: true, value: v };
 }
 
 /** Validate a parsed command file against the whitelist + per-command schema. */
@@ -195,11 +233,16 @@ export function validateCommand(raw: unknown): ValidationResult {
       };
     }
     case "pause-pr": {
-      const err = fieldError(obj, ["pr", "reason"]);
+      const err = fieldError(obj, ["pr", "reason", "for_min"]);
       if (err) return { ok: false, reason: err };
       if (!isPrNumber(obj["pr"])) return { ok: false, reason: "'pr' must be a positive integer" };
       if (!isNonEmptyString(obj["reason"])) return { ok: false, reason: "'reason' must be a non-empty string" };
-      return { ok: true, command: { command: "pause-pr", pr: obj["pr"], reason: obj["reason"] } };
+      const forMin = forMinField(obj);
+      if (!forMin.ok) return forMin;
+      return {
+        ok: true,
+        command: { command: "pause-pr", pr: obj["pr"], reason: obj["reason"], ...(forMin.value === undefined ? {} : { for_min: forMin.value }) },
+      };
     }
     case "resume-pr": {
       const err = fieldError(obj, ["pr"]);
@@ -260,12 +303,15 @@ export function validateCommand(raw: unknown): ValidationResult {
       };
     }
     case "drain": {
-      const err = fieldError(obj, ["on"]);
+      const err = fieldError(obj, ["on", "for_min"]);
       if (err) return { ok: false, reason: err };
       if (typeof obj["on"] !== "boolean") {
         return { ok: false, reason: "'on' must be a boolean (true = engage the drain, false = lift it)" };
       }
-      return { ok: true, command: { command: "drain", on: obj["on"] } };
+      const forMin = forMinField(obj);
+      if (!forMin.ok) return forMin;
+      if (forMin.value !== undefined && !obj["on"]) return { ok: false, reason: "'for_min' only applies with on = true" };
+      return { ok: true, command: { command: "drain", on: obj["on"], ...(forMin.value === undefined ? {} : { for_min: forMin.value }) } };
     }
     case "retry-thread-decision": {
       const err = fieldError(obj, ["comment_id"]);
@@ -399,7 +445,9 @@ function normalize(outcome: FileOutcome | void): FileOutcome {
 export async function executeCommand(
   command: Command,
   deps: CommandDeps,
-  ctx: CommandContext = { file: "" },
+  // A direct call with no context is a SESSION's: the bounded side is the
+  // default, and only the operator watcher ever stamps the other one.
+  ctx: CommandContext = { file: "", issuer: "session" },
 ): Promise<FileOutcome> {
   switch (command.command) {
     case "rerun-round":
@@ -414,9 +462,9 @@ export async function executeCommand(
         head_sha: command.head_sha,
       }));
     case "pause-pr":
-      return normalize(await deps.pausePr(command.pr, command.reason));
+      return normalize(await deps.pausePr(command.pr, command.reason, ctx.issuer, command.for_min));
     case "resume-pr":
-      return normalize(await deps.resumePr(command.pr));
+      return normalize(await deps.resumePr(command.pr, ctx.issuer));
     case "flag-owner":
       return normalize(await deps.flagOwner(command.message));
     case "file-improvement-pr":
@@ -442,7 +490,7 @@ export async function executeCommand(
     }
     case "drain": {
       if (!deps.drain) return { ok: false, reason: "drain is not wired on this daemon" };
-      return normalize(await deps.drain(command.on));
+      return normalize(await deps.drain(command.on, ctx.issuer, command.for_min));
     }
     case "retry-thread-decision": {
       if (!deps.retryThreadDecision) return { ok: false, reason: "retry-thread-decision is not wired on this daemon" };
@@ -483,17 +531,85 @@ export interface CommandTierGate {
   currentOrigin(): OriginRecord | null;
 }
 
+// ---- the operator seal -------------------------------------------
+
+/** What the watcher can learn about a path's owner and mode. Injected so the
+ * sealed case — a ROOT-owned directory — is testable by a process that is
+ * not root; the real one is `processOperatorSeal()`. */
+export interface OperatorSeal {
+  /** The daemon's effective uid — the uid every pi session runs as too. */
+  euid: number;
+  /** The daemon's supplementary groups (for the group-write bit). */
+  gids: readonly number[];
+  /** `null` when the path does not exist. */
+  stat(path: string): { uid: number; gid: number; mode: number } | null;
+}
+
+export function processOperatorSeal(): OperatorSeal {
+  return {
+    euid: process.geteuid?.() ?? -1,
+    gids: process.getgroups?.() ?? [],
+    stat(path) {
+      try {
+        const s = statSync(path);
+        return { uid: s.uid, gid: s.gid, mode: s.mode & 0o7777 };
+      } catch {
+        return null;
+      }
+    },
+  };
+}
+
+/** Could a process with `seal`'s identity write this path? */
+function writableBy(seal: OperatorSeal, s: { uid: number; gid: number; mode: number }): boolean {
+  if (s.uid === seal.euid) return true;
+  if ((s.mode & 0o002) !== 0) return true;
+  return seal.gids.includes(s.gid) && (s.mode & 0o020) !== 0;
+}
+
+export type SealVerdict = { sealed: true } | { sealed: false; reason: string };
+
+/**
+ * Is `file` in `dir` the OPERATOR's? It is exactly when neither the directory
+ * nor the file could have been written by the daemon's own identity — the
+ * identity every session shares. Anything else (the directory made by the
+ * daemon's uid, a group- or world-writable mode, a file the daemon could
+ * edit) is not a seal, and the verdict says which.
+ */
+export function operatorSealVerdict(seal: OperatorSeal, dir: string, file: string): SealVerdict {
+  const d = seal.stat(dir);
+  if (!d) return { sealed: false, reason: "operator directory missing" };
+  if (writableBy(seal, d)) return { sealed: false, reason: `operator directory is writable by uid ${seal.euid} (owner ${d.uid}, mode ${d.mode.toString(8)})` };
+  const f = seal.stat(file);
+  if (!f) return { sealed: false, reason: "command file vanished" };
+  if (writableBy(seal, f)) return { sealed: false, reason: `command file is writable by uid ${seal.euid} (owner ${f.uid}, mode ${f.mode.toString(8)})` };
+  return { sealed: true };
+}
+
 export interface CommandWatcherOptions {
-  /** commands/ directory. Results land in <dir>/results, handled files in <dir>/processed. */
+  /** The directory served. Session dirs: results land in <dir>/results and
+   * handled files move to <dir>/processed. */
   dir: string;
   /** Tier enforcement for this directory. Absent ⇒ legacy behaviour. */
   tier?: CommandTierGate;
+  /**
+   * Serve `dir` as the OPERATOR's directory. The watcher then never
+   * creates it (a daemon-made directory would carry the daemon's uid and be
+   * no seal), never renames out of it (it cannot), records handled files in
+   * the store instead, stamps `issuer: "operator"` only on files the seal
+   * vouches for, and writes results beside the session dir's — into
+   * `<parent>/results` — so the operator's clients read them from one place.
+   */
+  operator?: OperatorSeal;
   deps: CommandDeps;
   store: StateStore;
   now?: () => Date;
   /** Partial-write tolerance: re-read a file that fails to parse. */
   parseAttempts?: number;
   parseRetryMs?: number;
+  /** Operator dir only: re-sweep (and attach to a directory that appeared
+   * after start) this often. 0 disables the timer. Default 15 s. */
+  sweepIntervalMs?: number;
   log?: (line: string) => void;
 }
 
@@ -501,6 +617,8 @@ export interface CommandResultFile extends FileOutcome {
   command: string | null;
   file: string;
   handled_at: string;
+  /** Who the watcher decided the writer was. */
+  issuer: CommandIssuer;
 }
 
 export class CommandWatcher {
@@ -510,28 +628,51 @@ export class CommandWatcher {
   private readonly now: () => Date;
   private readonly log: (line: string) => void;
   private watcher: FSWatcher | null = null;
+  private parentWatcher: FSWatcher | null = null;
+  private sweepTimer: NodeJS.Timeout | null = null;
   private readonly inFlight = new Set<string>();
   /** Serialises handling so two file events can't race the same caps. */
   private queue: Promise<void> = Promise.resolve();
 
   constructor(private readonly opts: CommandWatcherOptions) {
     this.dir = opts.dir;
-    this.resultsDir = join(opts.dir, "results");
+    const resultsRoot = opts.operator ? dirname(opts.dir) : opts.dir;
+    this.resultsDir = join(resultsRoot, "results");
     this.processedDir = join(opts.dir, "processed");
     this.now = opts.now ?? (() => new Date());
     this.log = opts.log ?? ((line) => console.error(line));
   }
 
   private ensureDirs(): void {
-    mkdirSync(this.dir, { recursive: true });
     mkdirSync(this.resultsDir, { recursive: true });
+    if (this.opts.operator) return; // never ours to create — see `operator`
+    mkdirSync(this.dir, { recursive: true });
     mkdirSync(this.processedDir, { recursive: true });
   }
 
-  /** Startup sweep + fs.watch. Returns once the initial sweep has completed. */
+  /** Startup sweep + fs.watch. Returns once the initial sweep has completed.
+   * The operator directory may not exist yet (the operator's first write
+   * creates it): then the parent is watched for it to appear, and the sweep
+   * timer re-tries the attach as a belt. */
   async start(): Promise<void> {
     this.ensureDirs();
     await this.sweep();
+    if (!this.attachDirWatch() && this.opts.operator) {
+      this.parentWatcher = watch(dirname(this.dir), (_event, filename) => {
+        if (filename?.toString() === basename(this.dir)) void this.enqueueSweep();
+      });
+    }
+    const interval = this.opts.sweepIntervalMs ?? 15_000;
+    if (this.opts.operator && interval > 0) {
+      this.sweepTimer = setInterval(() => void this.enqueueSweep(), interval);
+      this.sweepTimer.unref?.();
+    }
+  }
+
+  /** Watch the served directory when it exists. True once watching. */
+  private attachDirWatch(): boolean {
+    if (this.watcher) return true;
+    if (!existsSync(this.dir)) return false;
     this.watcher = watch(this.dir, (_event, filename) => {
       if (!filename) {
         void this.enqueueSweep();
@@ -541,16 +682,25 @@ export class CommandWatcher {
       if (!name.endsWith(".json")) return;
       void this.enqueue(join(this.dir, name));
     });
+    this.parentWatcher?.close();
+    this.parentWatcher = null;
+    return true;
   }
 
   stop(): void {
     this.watcher?.close();
     this.watcher = null;
+    this.parentWatcher?.close();
+    this.parentWatcher = null;
+    if (this.sweepTimer) clearInterval(this.sweepTimer);
+    this.sweepTimer = null;
   }
 
-  /** Handle every pending commands/*.json once. */
+  /** Handle every pending <dir>/*.json once. */
   async sweep(): Promise<void> {
     this.ensureDirs();
+    if (!existsSync(this.dir)) return;
+    if (this.parentWatcher || this.sweepTimer) this.attachDirWatch();
     const names = readdirSync(this.dir, { withFileTypes: true })
       .filter((e) => e.isFile() && e.name.endsWith(".json"))
       .map((e) => e.name)
@@ -594,18 +744,39 @@ export class CommandWatcher {
     return { ok: false, reason: `malformed JSON: ${lastError}` };
   }
 
+  /**
+   * Who wrote this file, as far as the daemon can PROVE it. A session
+   * directory's writer is a session. The operator directory's writer is the
+   * operator only when the seal holds; a file there without it is served as a
+   * session's — loudly, with the reason in the ledger — so an unsealed channel
+   * degrades to the bounded side and never to the unbounded one.
+   */
+  private issuerFor(path: string): CommandIssuer {
+    const seal = this.opts.operator;
+    if (!seal) return "session";
+    const verdict = operatorSealVerdict(seal, this.dir, path);
+    if (verdict.sealed) return "operator";
+    this.opts.store.logEvent("operator_channel_unsealed", null, { file: basename(path), reason: verdict.reason });
+    this.log(`[commands] ${basename(path)}: operator channel NOT sealed (${verdict.reason}) — served as a session's command`);
+    return "session";
+  }
+
   /** Validate + execute one command file, writing its result file. */
   async handleFile(path: string): Promise<CommandResultFile | null> {
     const name = basename(path, ".json");
     if (this.inFlight.has(path)) return null;
     if (!existsSync(path)) return null;
+    // An operator file cannot be archived away (the directory is not ours to
+    // write), so the store remembers what was handled across restarts.
+    if (this.opts.operator && this.opts.store.operatorCommandHandled(basename(path))) return null;
     this.inFlight.add(path);
     try {
       this.ensureDirs();
+      const issuer = this.issuerFor(path);
       const read = await this.readCommandFile(path);
       if (!read.ok) {
         if (read.reason === "file disappeared") return null;
-        return this.finish(path, name, null, { ok: false, reason: read.reason }, true);
+        return this.finish(path, name, null, issuer, { ok: false, reason: read.reason }, true);
       }
       const validation = validateCommand(read.value);
       if (!validation.ok) {
@@ -614,19 +785,20 @@ export class CommandWatcher {
           path,
           name,
           typeof attempted === "string" ? attempted : null,
+          issuer,
           { ok: false, reason: validation.reason },
           true,
         );
       }
       const denial = this.tierCheck(validation.command);
-      if (denial) return this.finish(path, name, validation.command.command, { ok: false, reason: denial }, true);
+      if (denial) return this.finish(path, name, validation.command.command, issuer, { ok: false, reason: denial }, true);
       let outcome: FileOutcome;
       try {
-        outcome = await executeCommand(validation.command, this.opts.deps, { file: name });
+        outcome = await executeCommand(validation.command, this.opts.deps, { file: name, issuer });
       } catch (err) {
         outcome = { ok: false, reason: `handler threw: ${(err as Error).message}` };
       }
-      return this.finish(path, name, validation.command.command, outcome, !outcome.ok);
+      return this.finish(path, name, validation.command.command, issuer, outcome, !outcome.ok);
     } finally {
       this.inFlight.delete(path);
     }
@@ -669,6 +841,7 @@ export class CommandWatcher {
     path: string,
     name: string,
     command: string | null,
+    issuer: CommandIssuer,
     outcome: FileOutcome,
     loud: boolean,
   ): CommandResultFile {
@@ -677,19 +850,26 @@ export class CommandWatcher {
       command,
       file: basename(path),
       handled_at: this.now().toISOString(),
+      issuer,
     };
     writeFileSync(join(this.resultsDir, `${name}.result.json`), JSON.stringify(result, null, 2));
     if (outcome.ok) {
-      this.opts.store.logEvent("command_executed", null, { command, file: result.file });
+      this.opts.store.logEvent("command_executed", null, { command, file: result.file, issuer });
     } else {
-      this.opts.store.logEvent("command_rejected", null, { command, file: result.file, reason: outcome.reason });
+      this.opts.store.logEvent("command_rejected", null, { command, file: result.file, issuer, reason: outcome.reason });
     }
     if (loud) this.log(`[commands] REJECTED ${result.file} (${command ?? "?"}): ${outcome.reason ?? "unknown reason"}`);
-    // Archive the handled file so a daemon restart cannot re-execute it.
-    try {
-      renameSync(path, join(this.processedDir, `${name}.json`));
-    } catch {
-      /* best effort — a vanished file is fine */
+    // Make sure a daemon restart cannot re-execute the file: session dirs
+    // archive it into processed/; the operator dir is not writable by the
+    // daemon, so the store keeps the ledger instead.
+    if (this.opts.operator) {
+      this.opts.store.markOperatorCommandHandled(result.file);
+    } else {
+      try {
+        renameSync(path, join(this.processedDir, `${name}.json`));
+      } catch {
+        /* best effort — a vanished file is fine */
+      }
     }
     return result;
   }
