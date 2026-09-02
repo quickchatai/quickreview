@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { APP_SELF_CONFIG_KINDS, MUTATION_KINDS, MutationGate, type MutationIntent } from "../src/gate.js";
+import { APP_SELF_CONFIG_KINDS, GUARD_REWRITABLE_FIELDS, MUTATION_KINDS, MutationGate, type MutationIntent } from "../src/gate.js";
 
 let dir: string;
 
@@ -428,16 +428,17 @@ describe("MutationGate — git pushes", () => {
 
   it("a guard cannot rewrite a git intent into something else and still get the performer run", async () => {
     // The entry checks run BEFORE the guard, and a guard may return a rewritten
-    // `decision.intent` (guard 1 does exactly that). The re-check at the
-    // execute line is what stops a rewrite turning the performer loose on a
-    // mutation nobody approved as a push.
+    // `decision.intent` (guard 1 does exactly that). Since the rewrite
+    // is refused at the seam itself — a guard may change only body and note —
+    // so the performer is never turned loose on a mutation nobody approved as
+    // a push (see the describe below for the whole contract).
     const perform = vi.fn(async () => ({ pushed: true }));
     const gate = new MutationGate(false, join(dir, "dryrun"), async () => ({}));
     gate.setGuard({
       before: async () => ({ intent: { ...intent, kind: "create_review", method: "POST" } }),
     });
 
-    await expect(gate.execute(push, perform)).rejects.toThrow(/a guard rewrote a git intent/);
+    await expect(gate.execute(push, perform)).rejects.toThrow(/a guard may rewrite only body and note/);
     expect(perform).not.toHaveBeenCalled();
   });
 
@@ -466,5 +467,126 @@ describe("MutationGate — git pushes", () => {
     const gate = new MutationGate(true, join(dir, "dryrun"), async () => ({}));
     await expect(gate.execute({ ...push, forceLive: true }, perform)).rejects.toThrow(/forceLive is not allowed/);
     expect(perform).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * a guard may soften a mutation, never change which one it is.
+ *
+ * Found by the audit re-verification, BY EXECUTION: `execute()` ran
+ * the kind list, the forceLive check and the performer checks on the caller's
+ * intent, then let a guard hand back a rewritten one, then re-checked only
+ * `reviewPurpose` and the performer's method/kind on what came back. Three
+ * hostile rewrites therefore went through — a dismissal kind EXECUTED; a
+ * rewrite into `update_own_webhook_url` EXECUTED FOR REAL in dry-run; a
+ * `forceLive` added to a `create_review` EXECUTED LIVE in dry-run. Latent (the
+ * shipped guards rewrite `body` and `note` only), but rule 2 is meant to be
+ * structural and dry-run is the one belt an operator has during bring-up.
+ *
+ * Two independent belts close it, and the tests below tell them apart:
+ * `GUARD_REWRITABLE_FIELDS` (a guard may change ONLY body and note — the
+ * method/path/pr cases are caught by nothing else) and re-admission of the
+ * post-guard intent in full. Each case below drives a HOSTILE guard through
+ * the real gate, and each was verified by mutation — removing the post-guard
+ * `guardRewriteCheck` + `admit` pair in `src/gate.ts` turns every one red.
+ */
+describe("a guard may rewrite only body and note", () => {
+  const review: MutationIntent = {
+    kind: "create_review",
+    method: "POST",
+    path: "/repos/o/r/pulls/7/reviews",
+    body: { commit_id: "abc1234", event: "REQUEST_CHANGES", body: "one blocker" },
+    note: "post REQUEST_CHANGES review on #7",
+    pr: 7,
+  };
+  /** A guard that returns the same intent with the given fields overridden. */
+  const hostile = (over: Partial<Record<keyof MutationIntent, unknown>>) => ({
+    before: async (i: MutationIntent) => ({ intent: { ...i, ...over } as MutationIntent }),
+  });
+  const nothingHappened = (executor: ReturnType<typeof vi.fn>) => {
+    expect(executor).not.toHaveBeenCalled();
+    expect(existsSync(join(dir, "dryrun"))).toBe(false);
+  };
+
+  it("the rewritable set is exactly body and note — widening it is a decision, not a diff", () => {
+    expect([...GUARD_REWRITABLE_FIELDS]).toEqual(["body", "note"]);
+  });
+
+  it("① kind → dismiss_review in LIVE mode is refused, and the executor never sees it", async () => {
+    // Rule 2: no dismissal kind exists. Before this rewrite executed.
+    const executor = vi.fn(async () => ({ dismissed: true }));
+    const gate = new MutationGate(false, join(dir, "dryrun"), executor);
+    gate.setGuard(hostile({ kind: "dismiss_review", method: "PUT", path: "/repos/o/r/pulls/7/reviews/99/dismissals" }));
+    await expect(gate.execute(review)).rejects.toThrow(/a guard may rewrite only body and note.*"kind"/);
+    nothingHappened(executor);
+  });
+
+  it("② kind → update_own_webhook_url in DRY-RUN is refused — the app-self-config class cannot be entered by rewrite", async () => {
+    // The class executes for real in dry-run, so this rewrite was a dry-run
+    // bypass. `update_own_webhook_url` IS a declared kind and this guard adds
+    // no forceLive, so re-admission alone would have let it through: this
+    // case is caught by the field list and by nothing else.
+    const executor = vi.fn(async () => ({ repointed: true }));
+    const log = vi.fn();
+    const gate = new MutationGate(true, join(dir, "dryrun"), executor, undefined, undefined, log);
+    gate.setGuard(hostile({ kind: "update_own_webhook_url", method: "PATCH", path: "/app/hook/config" }));
+    await expect(gate.execute(review)).rejects.toThrow(/a guard may rewrite only body and note.*"kind"/);
+    nothingHappened(executor);
+    expect(log).not.toHaveBeenCalled();
+    expect([...APP_SELF_CONFIG_KINDS]).toEqual(["update_own_webhook_url"]);
+  });
+
+  it("③ forceLive added to a create_review in DRY-RUN is refused — the dry-run bypass cannot be minted by a guard", async () => {
+    const executor = vi.fn(async () => ({ posted: true }));
+    const gate = new MutationGate(true, join(dir, "dryrun"), executor);
+    gate.setGuard(hostile({ forceLive: true }));
+    await expect(gate.execute(review)).rejects.toThrow(/a guard may rewrite only body and note.*"forceLive"/);
+    nothingHappened(executor);
+  });
+
+  it("the same kind at a different method/path is refused — the executor sends method+path, not kind", async () => {
+    // A kind-only re-check would pass this: `create_review` is a fine kind,
+    // and the rewritten request is GitHub's dismissal endpoint.
+    const executor = vi.fn(async () => ({ dismissed: true }));
+    const gate = new MutationGate(false, join(dir, "dryrun"), executor);
+    gate.setGuard(hostile({ method: "PUT", path: "/repos/o/r/pulls/7/reviews/99/dismissals" }));
+    await expect(gate.execute(review)).rejects.toThrow(/a guard may rewrite only body and note.*"method"/);
+    nothingHappened(executor);
+  });
+
+  it("re-pointing the pr or minting a reviewPurpose is refused too — identity, not policy", async () => {
+    for (const over of [{ pr: 8 }, { reviewPurpose: "escalation" }] as const) {
+      const executor = vi.fn(async () => ({}));
+      const gate = new MutationGate(false, join(dir, "dryrun"), executor);
+      gate.setGuard(hostile({ ...over, body: { ...(review.body as object), event: "COMMENT" } }));
+      await expect(gate.execute(review)).rejects.toThrow(/a guard may rewrite only body and note/);
+      nothingHappened(executor);
+    }
+  });
+
+  it("the post-guard intent is re-admitted in full, independently of the field list", async () => {
+    // Guard 1 really does rewrite the event; a rewrite that turns a purposed
+    // COMMENT into an APPROVE stays within body and note and is still refused
+    // — by admission, not by the field list.
+    const executor = vi.fn(async () => ({}));
+    const gate = new MutationGate(false, join(dir, "dryrun"), executor);
+    gate.setGuard(hostile({ body: { commit_id: "abc1234", event: "APPROVE", body: "x" } }));
+    await expect(
+      gate.execute({ ...review, reviewPurpose: "escalation", body: { commit_id: "abc1234", event: "COMMENT", body: "x" } }),
+    ).rejects.toThrow(/reviewPurpose/);
+    nothingHappened(executor);
+  });
+
+  it("the shipped shape — body and note softened, everything else identical — still goes through", async () => {
+    // Positive control: guard 1's downgrade and guard 4's withhold are exactly
+    // this rewrite, and the executor receives the rewritten intent.
+    const executor = vi.fn(async (_i: MutationIntent) => ({ ok: true }));
+    const gate = new MutationGate(false, join(dir, "dryrun"), executor);
+    const softened = { ...(review.body as object), event: "COMMENT" };
+    gate.setGuard(hostile({ body: softened, note: "post COMMENT review on #7 (downgraded)" }));
+    const result = await gate.execute(review);
+    expect(result.executed).toBe(true);
+    expect(executor).toHaveBeenCalledOnce();
+    expect(executor.mock.calls[0]![0]).toEqual({ ...review, body: softened, note: "post COMMENT review on #7 (downgraded)" });
   });
 });

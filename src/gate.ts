@@ -159,17 +159,61 @@ export type MutationExecutor = (intent: MutationIntent) => Promise<unknown>;
  * The seam cannot widen. `execute` throws if a performer accompanies any method
  * other than `"git"` OR any kind other than `push_branch` — `method` is a free
  * field with no relation to `kind`, so the method check alone would let any
- * kind ride the performer — and it re-checks BOTH against the post-guard
- * intent, because a guard may hand back a rewritten one.
+ * kind ride the performer. Both are checked again on the intent a guard hands
+ * back (`admit` runs twice), and a guard cannot change either field in the
+ * first place (`GUARD_REWRITABLE_FIELDS`).
  */
 export type GitPerformer = () => Promise<unknown>;
 
 /** A guard's answer: refuse (`block`), or let it through — optionally with a
  * rewritten intent (the human-approval downgrade posts a COMMENT instead of a
- * REQUEST_CHANGES). Returning `{}` means "no opinion". */
+ * REQUEST_CHANGES). Returning `{}` means "no opinion". A rewrite may differ
+ * from the admitted intent in `body` and `note` ONLY (GUARD_REWRITABLE_FIELDS);
+ * the gate refuses any other difference. */
 export interface GuardDecision {
   block?: string;
   intent?: MutationIntent;
+}
+
+/**
+ * The ONLY fields a guard may rewrite. Everything else on a
+ * MutationIntent is the mutation's IDENTITY — `kind` selects the gate's policy
+ * (the kind list, the forceLive exception, the app-self-config class),
+ * `method` + `path` are what the executor actually sends, `pr` is what the
+ * `after` hooks stamp, and `reviewPurpose` and `forceLive` each buy an
+ * exemption — and a guard has no business with any of it.
+ *
+ * Why a closed list of what MAY change, rather than checks on what must not:
+ * the gate admits an intent, lets the guards rewrite it, then executes what
+ * came back. Before that rewrite was re-checked for `reviewPurpose`
+ * and for the git performer's method/kind and for nothing else, so a guard
+ * that returned `kind: "dismiss_review"` executed it, one that returned
+ * `kind: "update_own_webhook_url"` executed FOR REAL in dry-run, and one that
+ * added `forceLive` to a `create_review` did the same. No shipped guard did
+ * any of that — guards 1 and 4 rewrite `body` and `note` and nothing else,
+ * which is the whole of what a guard is for: soften WHAT IS SAID and how the
+ * record describes it, never WHAT IS DONE — but rule 2 is meant to be
+ * structural, and a re-check that enumerates the fields it thought of is the
+ * shape that left this seam open. So a guard's authority is stated positively
+ * and exhaustively. A field added to MutationIntent later is identity by
+ * default and stays un-rewritable until someone puts it here on purpose.
+ */
+export const GUARD_REWRITABLE_FIELDS = ["body", "note"] as const satisfies readonly (keyof MutationIntent)[];
+
+/** See GUARD_REWRITABLE_FIELDS: every field outside that list must be
+ * identical (`===`) before and after the guard, presence included — a guard
+ * that ADDS `forceLive: true` differs from one that left it absent. */
+function guardRewriteCheck(before: MutationIntent, after: MutationIntent): void {
+  const fields = new Set([...Object.keys(before), ...Object.keys(after)] as (keyof MutationIntent)[]);
+  for (const field of fields) {
+    if ((GUARD_REWRITABLE_FIELDS as readonly string[]).includes(field)) continue;
+    if (before[field] !== after[field]) {
+      throw new Error(
+        `gate: a guard may rewrite only ${GUARD_REWRITABLE_FIELDS.join(" and ")}; it changed "${field}" on ${before.kind} `
+          + `(${JSON.stringify(before[field])} → ${JSON.stringify(after[field])}) — refusing to execute or record it`,
+      );
+    }
+  }
 }
 
 /**
@@ -193,6 +237,46 @@ function reviewPurposeCheck(intent: MutationIntent): void {
       `gate: reviewPurpose "${intent.reviewPurpose}" is only allowed on a create_review with event COMMENT, not ${intent.kind}/${event || "(no event)"}`,
     );
   }
+}
+
+/**
+ * Admission: what the gate demands of ANY intent before it may execute or be
+ * recorded. It runs on the caller's intent on entry, and again on whatever a
+ * guard hands back. The second run is the invariant "only an
+ * admitted intent executes", checked on the very object that executes rather
+ * than inferred from GUARD_REWRITABLE_FIELDS. The two are deliberately
+ * independent belts: the field list says what a guard MAY change, admission
+ * says what may run at all — so widening the field list (should a guard ever
+ * need to) does not loosen what runs.
+ */
+function admit(intent: MutationIntent, perform: GitPerformer | undefined): void {
+  // Checked before anything else — an unknown kind is never recorded to
+  // state/dryrun/ either, so a retired kind cannot even leave evidence
+  // suggesting the daemon still performs it.
+  if (!(MUTATION_KINDS as readonly string[]).includes(intent.kind)) {
+    throw new Error(`gate: unknown mutation kind "${intent.kind}" — refusing to execute or record it`);
+  }
+  // The git performer exists for `method: "git"` and nothing else:
+  // otherwise it would be a second executor, i.e. a way to run an arbitrary
+  // mutation the REST executor never saw. Checked before the guards so the
+  // refusal is unconditional.
+  if (perform && intent.method !== "git") {
+    throw new Error(`gate: a git performer is only allowed for method "git", not ${intent.method} (${intent.kind})`);
+  }
+  // `method` is a free field with no relation to `kind`, so the method check
+  // alone would let any kind ride the performer. `push_branch` is the only
+  // kind this system ever performs with git — and rule 4 already says the
+  // only branches it pushes are `bot/improve-*`.
+  if (perform && intent.kind !== "push_branch") {
+    throw new Error(`gate: a git performer is only allowed for kind "push_branch", not ${intent.kind}`);
+  }
+  if (intent.forceLive && intent.kind !== "supersede_own_review") {
+    throw new Error(`forceLive is not allowed for kind ${intent.kind}`);
+  }
+  // A reviewPurpose marks a MECHANICALLY-authored COMMENT (see ReviewPurpose):
+  // it buys two exemptions, so it is confined to the one shape those
+  // exemptions are safe for.
+  reviewPurposeCheck(intent);
 }
 
 let seq = 0;
@@ -228,33 +312,7 @@ export class MutationGate {
 
   async execute(intentIn: MutationIntent, perform?: GitPerformer): Promise<GateResult> {
     let intent = intentIn;
-    // Checked before anything else — an unknown kind is never recorded to
-    // state/dryrun/ either, so a retired kind cannot even leave evidence
-    // suggesting the daemon still performs it.
-    if (!(MUTATION_KINDS as readonly string[]).includes(intent.kind)) {
-      throw new Error(`gate: unknown mutation kind "${intent.kind}" — refusing to execute or record it`);
-    }
-    // The git performer exists for `method: "git"` and nothing else:
-    // otherwise it would be a second executor, i.e. a way to run an arbitrary
-    // mutation the REST executor never saw. Checked before the guards so the
-    // refusal is unconditional.
-    if (perform && intent.method !== "git") {
-      throw new Error(`gate: a git performer is only allowed for method "git", not ${intent.method} (${intent.kind})`);
-    }
-    // `method` is a free field with no relation to `kind`, so the method check
-    // alone would let any kind ride the performer. `push_branch` is the only
-    // kind this system ever performs with git — and rule 4 already says the
-    // only branches it pushes are `bot/improve-*`.
-    if (perform && intent.kind !== "push_branch") {
-      throw new Error(`gate: a git performer is only allowed for kind "push_branch", not ${intent.kind}`);
-    }
-    if (intent.forceLive && intent.kind !== "supersede_own_review") {
-      throw new Error(`forceLive is not allowed for kind ${intent.kind}`);
-    }
-    // A reviewPurpose marks a MECHANICALLY-authored COMMENT (see ReviewPurpose):
-    // it buys two exemptions, so it is confined to the one shape those
-    // exemptions are safe for.
-    reviewPurposeCheck(intent);
+    admit(intent, perform);
     // Posting-time guards run BEFORE the dry-run branch: a mutation a guard
     // refuses is neither executed nor recorded, so the dry-run evidence shows
     // the same behaviour the live path would have had.
@@ -265,12 +323,21 @@ export class MutationGate {
         await this.guard.after?.(intent, blocked);
         return blocked;
       }
-      if (decision.intent) intent = decision.intent;
-      // Re-checked against the POST-GUARD intent for the same reason the git
-      // performer is: a guard may hand back a rewritten intent, and guard 1
-      // really does rewrite the event. A rewrite must not turn a purposed
-      // COMMENT into a purposed anything-else.
-      reviewPurposeCheck(intent);
+      if (decision.intent) {
+        // A guard may soften the mutation (guards 1 and 4 rewrite the review
+        // body and the note), never change which mutation it is: every field
+        // outside GUARD_REWRITABLE_FIELDS must come back identical.
+        guardRewriteCheck(intent, decision.intent);
+        intent = decision.intent;
+        // And what executes is re-admitted IN FULL — kind against
+        // MUTATION_KINDS, forceLive against its single permitted kind, the
+        // performer's method/kind, reviewPurpose against the rewritten body —
+        // on the object that will execute, not inferred from the check above.
+        // Only the reviewPurpose leg can still fail here today (guard 1 really
+        // does rewrite the event); the rest is what keeps that true if the
+        // field list is ever widened.
+        admit(intent, perform);
+      }
     }
     // The app-self-config class (see APP_SELF_CONFIG_KINDS): executes for real
     // even in dry-run — the ratified rule-1 amendment — and every execution is
@@ -295,18 +362,10 @@ export class MutationGate {
     }
     // A `method: "git"` intent runs its performer; everything else runs the
     // REST executor (which still throws on "git", so a git intent that arrives
-    // without a performer cannot execute).
-    //
-    // Re-checked against the POST-GUARD intent, not the one the caller passed:
-    // a guard may return a rewritten `decision.intent` (guard 1 does), and the
-    // entry check above ran before that rewrite. A rewrite that changed the
-    // method or kind out from under the performer must not silently execute a
-    // git push in place of the mutation the guard approved.
-    if (perform && (intent.method !== "git" || intent.kind !== "push_branch")) {
-      throw new Error(
-        `gate: a guard rewrote a git intent into ${intent.method} ${intent.kind} — refusing to run the performer against it`,
-      );
-    }
+    // without a performer cannot execute). By this line `intent` has passed
+    // admission — twice, if a guard rewrote it — and the rewrite cannot have
+    // touched `method` or `kind`, so the performer only ever runs against the
+    // push_branch it was handed in for.
     const response = perform ? await perform() : await this.executor(intent);
     const executed: GateResult = { executed: true, response };
     await this.guard?.after?.(intent, executed);
