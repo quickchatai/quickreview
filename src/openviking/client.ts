@@ -34,7 +34,8 @@
 //      headers are ignored in api_key mode, and an ADMIN/ROOT key must never
 //      appear here: ADMIN grants no cross-user data access anyway and can list
 //      every user key in plaintext. The key is supplied by the caller, read
-//      lazily, and NEVER logged — `redact()` scrubs it from anything that is.
+//      lazily, and NEVER logged — `redact()` scrubs it out of every failure
+//      message at construction, before any caller can log or render one.
 import { readFileSync } from "node:fs";
 
 /** The `fetch` slice this client uses — the whole network seam. */
@@ -320,9 +321,13 @@ export class OpenVikingClient {
     return `viking://user/${this.user}/memories`;
   }
 
-  /** Scrub the key out of a string before it can reach a log. The key is never
-   * deliberately logged; this is the belt to that braces, because server error
-   * bodies have been known to echo request material. */
+  /** Scrub the key out of a string before it can leave this class. The key is
+   * never deliberately logged; this is the belt to that braces, because server
+   * error bodies have been known to echo request material. It is applied where
+   * a failure is CONSTRUCTED (`request()`), so every consumer of an
+   * `OvFailure.message` or `OvGap.message` — the round prompt's unreadable
+   * note, the overseer anomaly, the daemon log, the `onGap` sink — receives the
+   * scrubbed text; `report()` scrubs its own line again as braces. */
   private redact(text: string): string {
     const key = this.key();
     if (!key || key.length < 8) return text;
@@ -378,7 +383,7 @@ export class OpenVikingClient {
       });
       raw = await res.text();
     } catch (err) {
-      const gap: OvGap = { op, status: 0, code: "transport", message: errText(err) };
+      const gap: OvGap = { op, status: 0, code: "transport", message: this.redact(errText(err)) };
       this.report(gap);
       return ovFailed(gap.status, gap.code, gap.message);
     }
@@ -405,7 +410,7 @@ export class OpenVikingClient {
 
     if (!res.ok || body.status === "error") {
       const code = typeof body.error?.code === "string" ? body.error.code : `http_${res.status}`;
-      const message = typeof body.error?.message === "string" ? body.error.message : `HTTP ${res.status}`;
+      const message = this.redact(typeof body.error?.message === "string" ? body.error.message : `HTTP ${res.status}`);
       const outcome = ovFailed(res.status, code, message);
       // A 409 is the precondition working as designed; it is an answer, not a
       // gap, so it is not alerted on.

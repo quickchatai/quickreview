@@ -122,6 +122,23 @@ function events(kind: string): Array<{ pr: number | null; payload: any }> {
   );
 }
 
+function commandForRound(pr: number, roundNo: number, id = `cmd-${pr}-${roundNo}`): string {
+  store.createSessionCommand({
+    id,
+    pr,
+    session: `pr-${pr}`,
+    kind: "round",
+    round_no: roundNo,
+    payload_sha256: "a".repeat(64),
+    payload_path: join(dir, "state", "session-commands", `${id}.md`),
+    inject_path: join(dir, "inject", `pr-${pr}`, `wake--cmd-${id}.md`),
+    next_check_at: clock.toISOString(),
+  });
+  store.claimSessionCommand(id, "bridge", clock.toISOString());
+  store.markSessionCommandStarted(id, "bridge", clock.toISOString());
+  return id;
+}
+
 function roundStatus(id: number): string {
   return (store.db.prepare("SELECT status FROM rounds WHERE id = ?").get(id) as { status: string }).status;
 }
@@ -147,6 +164,26 @@ describe("bounded infrastructure-stage recovery", () => {
     expect(store.roundsFor(290)[0]?.verdict).toBeNull();
     expect(adapter.calls).toEqual([]);
     expect(overseer.some((m) => m.includes("SELF-REQUEUE (recovery)"))).toBe(true);
+  });
+
+  it("changes an immediate first-pass retry by binding a fanout-first instruction to its exact successor", async () => {
+    reviewingRound(294);
+    const commandId = commandForRound(294, 1);
+    const { hooks } = hooksWith(true);
+    hooks.killSession = async () => {};
+    const v = watcher(hooks);
+
+    expect(await v.recoverInfrastructureFailure(294, 1, "first_pass_start", "accepted and preparing; no fanout")).toBe("requeued");
+
+    expect(store.roundRecoveryInstruction(294, 2)).toMatchObject({
+      target_head_sha: "abc123",
+      stage: "first_pass_start",
+      source_command_id: commandId,
+      source_round_no: 1,
+      immediate_attempt: 1,
+      retry_epoch: 0,
+    });
+    expect(store.getPr(294)?.state).toBe("queued");
   });
 
   it("strictly stops an active timed-out session before requeueing", async () => {
@@ -175,8 +212,37 @@ describe("bounded infrastructure-stage recovery", () => {
     expect(events("round_self_requeued")).toHaveLength(0);
   });
 
-  it("returns exhausted at the ordinary recovery cap, stops Pi, and frees round capacity", async () => {
+  it("turns exhausted exact first-pass work into a durable automatic retry instead of an operator-only park", async () => {
+    const roundId = reviewingRound(295);
+    store.stampPostingKey(roundId, "v1:295:1:abc123");
+    const commandId = commandForRound(295, 1);
+    const { hooks } = hooksWith(true);
+    hooks.killSession = async () => {};
+    for (let i = 0; i < DEFAULT_MAX_SELF_REQUEUES; i++) {
+      store.logEvent("round_self_requeued", 295, { head_sha: "abc123" });
+    }
+    const v = watcher(hooks);
+
+    expect(await v.recoverInfrastructureFailure(295, 1, "first_pass_start", "accepted and preparing; no fanout")).toBe("exhausted");
+    store.failActiveSessionCommand(commandId, "first-pass recovery exhausted");
+    const failure = store.openReviewFailure(295)!;
+    expect(failure).toMatchObject({
+      next_action: "retry_wait",
+      retry_epoch: 0,
+      next_retry_at: new Date(clock.getTime() + 15 * 60_000).toISOString(),
+    });
+
+    clock = new Date(failure.next_retry_at!);
+    expect(store.activateDueReviewFailureRetries(clock.toISOString())).toEqual([
+      expect.objectContaining({ pr: 295, target_round_no: 2, retry_epoch: 1 }),
+    ]);
+    expect(store.openReviewFailure(295)).toBeUndefined();
+    expect(store.getPr(295)?.state).toBe("queued");
+  });
+
+  it("returns non-prepass exhaustion to the ordinary operator recovery path, stops Pi, and frees round capacity", async () => {
     reviewingRound(291);
+    commandForRound(291, 1);
     const { hooks } = hooksWith(true);
     const killed: number[] = [];
     hooks.killSession = async (pr) => { killed.push(pr); };

@@ -771,7 +771,7 @@ describe("approval withheld for red CI, session route", () => {
     reviewingRound(100);
     adapter.listChecks = async (ref: string) => {
       expect(ref).toBe("abc123");
-      return [{ name: "ci", status: "completed", conclusion: "failure" }];
+      return [{ name: "ci", source: "check_run", status: "completed", conclusion: "failure" }];
     };
     const name = write(100, 1, verdictFile({ verdict: "APPROVE", approval_withheld: true }));
 

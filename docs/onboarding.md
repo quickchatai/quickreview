@@ -415,10 +415,16 @@ Nothing is ever re-issued. A key that already exists is read back and
 redistributed; a rotation would orphan every copy already handed out, so a file
 holding a *different* value is reported as a conflict and left alone.
 
-**Declining memory is a supported answer.** The reviewer then runs memory-less:
-rounds still run (context assembly resolves empty and never blocks or delays a
-round), the TUI's memory tab shows the store as unavailable, and the end-of-day
-curator and the `[feedback]` sink have nowhere to write.
+**Declining memory is a supported answer, with one rough edge.** The reviewer
+then runs memory-less: rounds still run and are never blocked or delayed by
+memory, the TUI's memory tab shows the store as unavailable, and the end-of-day
+curator and the `[feedback]` sink have nowhere to write. The rough edge: the
+daemon has no word for "off" yet, so a missing reviewer key is reported the
+same way as an unreadable store — every round prompt carries a short
+`MEMORY UNAVAILABLE THIS ROUND` note (the session is told to review normally
+and never to mention it in the posted review) and the overseer hears a
+`round_memory_degraded` anomaly once an hour. Loud, harmless, and yours to
+ignore until that state is given its own name.
 
 One placement detail you may see: the documented key-file location
 (`~/.config/quickreview-bot/openviking-keys.env`) sits inside the secrets dir by

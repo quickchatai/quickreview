@@ -60,13 +60,47 @@ export interface ReviewFailureRow {
   detail: string;
   attempts: number;
   retry_cap: number;
+  /** circuit-breaker generation. Zero is the first delayed retry
+   * after the ordinary per-head fast retries are spent. */
+  retry_epoch: number;
+  next_retry_at: string | null;
   failed_at: string;
   updated_at: string;
   recovered_at: string | null;
   recovery: string | null;
-  next_action: "operator_unwedge" | "closed";
+  next_action: "operator_unwedge" | "retry_wait" | "closed";
   work_owed: number;
 }
+
+/** One exact future round's daemon-authored recovery instruction. It is
+ * append-only history keyed by round number, not mutable ambient PR state, so
+ * a later ordinary round can never inherit a stale recovery override. */
+export interface RoundRecoveryInstructionRow {
+  pr: number;
+  target_round_no: number;
+  target_head_sha: string;
+  stage: "first_pass_start";
+  source_incident_id: string | null;
+  source_command_id: string;
+  source_round_no: number;
+  immediate_attempt: number;
+  retry_epoch: number;
+  created_at: string;
+}
+
+export interface AutomaticReviewRetry {
+  pr: number;
+  incident_id: string;
+  target_head_sha: string;
+  target_round_no: number;
+  retry_epoch: number;
+}
+
+/** Circuit-breaker timing is policy, not activity-derived. The first delayed
+ * attempt waits 15 minutes; repeated pre-fanout failures double to a six-hour
+ * ceiling and continue at that bounded rate until progress or terminal truth. */
+export const AUTO_REVIEW_RETRY_INITIAL_MIN = 15;
+export const AUTO_REVIEW_RETRY_MAX_MIN = 360;
 
 export interface SuccessorObligationRow {
   pr: number;
@@ -175,6 +209,12 @@ export interface RoundRow {
    * not classify from their prose summary. The prose stays in `summary`; this
    * is the machine-readable half every aggregate groups by. */
   cancel_cause: string | null;
+  /** bracket around dispatch-time migration-precheck posting. Existing
+   * rounds migrate as unknown (never auto-replayed); new rounds start none and
+   * move through ambiguous before the gated call resolves. */
+  preflight_posting_state: "unknown" | "none" | "ambiguous" | "executed" | "dryrun" | "refused";
+  /** First exact planned discovery execution observed by the daemon. */
+  fanout_started_at: string | null;
 }
 
 /**
@@ -744,8 +784,9 @@ CREATE TABLE IF NOT EXISTS successor_obligations (
   updated_at           TEXT NOT NULL
 );
 -- canonical FAILED_LOUD review debt. Orthogonal to GitHub lifecycle:
--- a PR may be queued while this hold prevents dispatch. The row remains until
--- explicit operator recovery, so exhausted work can never look merely tracked.
+-- a PR may be queued while this hold prevents dispatch. Most failure classes
+-- remain until explicit operator recovery.'s exact pre-fanout class is
+-- instead a durable circuit breaker with a finite next_retry_at.
 CREATE TABLE IF NOT EXISTS review_failures (
   incident_id  TEXT PRIMARY KEY,
   pr           INTEGER NOT NULL,
@@ -757,6 +798,8 @@ CREATE TABLE IF NOT EXISTS review_failures (
   detail       TEXT NOT NULL,
   attempts     INTEGER NOT NULL,
   retry_cap    INTEGER NOT NULL,
+  retry_epoch  INTEGER NOT NULL DEFAULT 0,
+  next_retry_at TEXT,
   failed_at    TEXT NOT NULL,
   updated_at   TEXT NOT NULL,
   recovered_at TEXT,
@@ -766,6 +809,22 @@ CREATE TABLE IF NOT EXISTS review_failures (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS review_failures_one_open_pr
   ON review_failures(pr) WHERE work_owed=1;
+-- identity-bound instructions for one recovery successor. Rows are
+-- historical receipts, so retry epochs survive restart and a successful
+-- fanout naturally resets the next unrelated round to epoch zero.
+CREATE TABLE IF NOT EXISTS round_recovery_instructions (
+  pr                 INTEGER NOT NULL,
+  target_round_no    INTEGER NOT NULL,
+  target_head_sha    TEXT NOT NULL,
+  stage              TEXT NOT NULL,
+  source_incident_id TEXT,
+  source_command_id  TEXT NOT NULL,
+  source_round_no    INTEGER NOT NULL,
+  immediate_attempt  INTEGER NOT NULL,
+  retry_epoch        INTEGER NOT NULL,
+  created_at         TEXT NOT NULL,
+  PRIMARY KEY (pr, target_round_no)
+);
 -- Approval withheld for red CI: one row per PR, the head whose
 -- approval was withheld and why. Presence of a row is the promise the gate
 -- makes to the author — "this is waiting on CI alone" — and the thing the
@@ -1165,6 +1224,10 @@ export class StateStore {
       // Null on every non-cancelled round; the boot migration classifies the
       // historical cancellations from their prose summary once.
       "ALTER TABLE rounds ADD COLUMN cancel_cause TEXT",
+      // old rows are deliberately unknown; only rounds created by a
+      // build that brackets the preflight posting call can enter auto-retry.
+      "ALTER TABLE rounds ADD COLUMN preflight_posting_state TEXT NOT NULL DEFAULT 'unknown'",
+      "ALTER TABLE rounds ADD COLUMN fanout_started_at TEXT",
       // held wakes are leased and acked only after delivery.
       "ALTER TABLE pending_wakes ADD COLUMN claim_token TEXT",
       "ALTER TABLE pending_wakes ADD COLUMN claimed_at TEXT",
@@ -1174,6 +1237,10 @@ export class StateStore {
       // automatic same-command replay attempts are durable even when
       // rebirth fails before a new bridge can reserve the command.
       "ALTER TABLE session_commands ADD COLUMN recovery_attempts INTEGER NOT NULL DEFAULT 0",
+      // durable circuit-breaker generation and due time. Nullable due
+      // means this failure remains in the operator-owned classes.
+      "ALTER TABLE review_failures ADD COLUMN retry_epoch INTEGER NOT NULL DEFAULT 0",
+      "ALTER TABLE review_failures ADD COLUMN next_retry_at TEXT",
     ]) {
       try {
         this.db.exec(ddl);
@@ -1283,6 +1350,12 @@ export class StateStore {
     return this.now().toISOString();
   }
 
+  /** The store's injected clock, exposed for daemon-level deterministic
+   * sweeps so retry due checks and their SQLite writes share one instant. */
+  currentTimeIso(): string {
+    return this.ts();
+  }
+
   // ---- pr_state ----------------------------------------------------------
 
   getPr(n: number): PrStateRow | undefined {
@@ -1353,8 +1426,9 @@ export class StateStore {
     const info = this.db
       .prepare(
         `INSERT INTO rounds (pr, round_no, round_type, lenses, started_at, deadline_at, status,
-                             additions, deletions, changed_files, trigger_ts, validate_tier, pass_plan, addable_passes)
-         VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?)`,
+                             additions, deletions, changed_files, trigger_ts, validate_tier, pass_plan, addable_passes,
+                             preflight_posting_state)
+         VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, 'none')`,
       )
       .run(
         pr,
@@ -1396,6 +1470,43 @@ export class StateStore {
 
   stampPostingKey(id: number, postingKey: string): void {
     this.db.prepare("UPDATE rounds SET posting_key=? WHERE id=? AND posting_key IS NULL").run(postingKey, id);
+  }
+
+  /** Persist successful stage progress once, both for diagnostics and to reset
+   * the per-head fast-retry generation after a later unrelated round. */
+  recordRoundFanoutStarted(id: number, commandId: string, startedAt: string): boolean {
+    const row = this.db.prepare(
+      `SELECT r.pr, r.round_no, r.posting_key, c.id AS command_id
+         FROM rounds r JOIN session_commands c ON c.pr=r.pr AND c.kind='round' AND c.round_no=r.round_no
+        WHERE r.id=? AND r.status='running' AND c.id=?`,
+    ).get(id, commandId) as { pr: number; round_no: number; posting_key: string | null; command_id: string } | undefined;
+    if (!row) return false;
+    const changed = this.db.prepare(
+      "UPDATE rounds SET fanout_started_at=? WHERE id=? AND status='running' AND fanout_started_at IS NULL",
+    ).run(startedAt, id).changes === 1;
+    if (changed) {
+      const head = row.posting_key
+        ? new RegExp(`^v1:${row.pr}:${row.round_no}:([^:]+)$`).exec(row.posting_key)?.[1]
+        : undefined;
+      this.logEvent("round_fanout_started", row.pr, {
+        round_id: id,
+        round_no: row.round_no,
+        command_id: row.command_id,
+        ...(head ? { head_sha: head } : {}),
+        started_at: startedAt,
+      });
+    }
+    return changed;
+  }
+
+  /** Bracket the only GitHub mutation that can precede command delivery. */
+  recordRoundPreflightPosting(
+    id: number,
+    state: "ambiguous" | "executed" | "dryrun" | "refused",
+  ): void {
+    this.db.prepare(
+      `UPDATE rounds SET preflight_posting_state=? WHERE id=? AND status='running'`,
+    ).run(state, id);
   }
 
   confirmRoundPosting(
@@ -2691,34 +2802,81 @@ export class StateStore {
     const incidentId = arg.command_id
       ? `review-failure:${arg.command_id}`
       : `review-failure:pr-${arg.pr}-round-${arg.round_no ?? "unknown"}`;
+
+    //'s automatic class is deliberately proven here, not selected by
+    // an untrusted field. The exact command must own the exact now-terminal
+    // round, and the supervisor stage must be before the first lens. Every
+    // other class — especially posting ambiguity — stays operator-owned.
+    const command = arg.command_id ? this.getSessionCommand(arg.command_id) : undefined;
+    const round = arg.round_id === null || arg.round_id === undefined
+      ? undefined
+      : this.db.prepare("SELECT * FROM rounds WHERE id=?").get(arg.round_id) as RoundRow | undefined;
+    const postingHead = round?.posting_key && arg.round_no !== null && arg.round_no !== undefined
+      ? new RegExp(`^v1:${arg.pr}:${arg.round_no}:([^:]+)$`).exec(round.posting_key)?.[1]
+      : undefined;
+    const exactPreFanout =
+      arg.stage === "first_pass_start"
+      && postingHead !== undefined
+      && arg.round_no !== null && arg.round_no !== undefined
+      && command?.pr === arg.pr
+      && command.session === `pr-${arg.pr}`
+      && command.kind === "round"
+      && command.round_no === arg.round_no
+      && ["failed", "acked", "cancelled"].includes(command.status)
+      && round?.pr === arg.pr
+      && round.round_no === arg.round_no
+      && round.status !== "running"
+      && ["none", "dryrun", "refused"].includes(round.preflight_posting_state);
+    const priorRecovery = exactPreFanout
+      ? this.roundRecoveryInstruction(arg.pr, arg.round_no!)
+      : undefined;
+    const exactRecovery = priorRecovery?.target_head_sha === postingHead ? priorRecovery : undefined;
+    const retryEpoch = exactRecovery?.retry_epoch ?? 0;
+    // `arg.head_sha` historically meant the newest OWED head (a successor may
+    // already have moved pr_state). The safe class preserves the deterministic
+    // posting-key head; a newer authoritative successor resets backoff later.
+    const failureHead = exactPreFanout ? postingHead! : arg.head_sha;
+    const retryDelayMin = Math.min(AUTO_REVIEW_RETRY_INITIAL_MIN * 2 ** retryEpoch, AUTO_REVIEW_RETRY_MAX_MIN);
+    const nextRetryAt = exactPreFanout
+      ? new Date(Date.parse(ts) + retryDelayMin * 60_000).toISOString()
+      : null;
+    const nextAction = exactPreFanout ? "retry_wait" : "operator_unwedge";
+
     const failure = this.db.transaction((): ReviewFailureRow => {
       this.db.prepare(
         `UPDATE review_failures
-            SET work_owed=0, recovered_at=@ts, recovery='superseded-by-new-failure', next_action='closed', updated_at=@ts
+            SET work_owed=0, recovered_at=@ts, recovery='superseded-by-new-failure',
+                next_action='closed', next_retry_at=NULL, updated_at=@ts
           WHERE pr=@pr AND work_owed=1 AND incident_id!=@incident_id`,
       ).run({ pr: arg.pr, incident_id: incidentId, ts });
       this.db.prepare(
         `INSERT INTO review_failures
           (incident_id, pr, command_id, round_id, round_no, head_sha, stage, detail,
-           attempts, retry_cap, failed_at, updated_at, next_action, work_owed)
+           attempts, retry_cap, retry_epoch, next_retry_at, failed_at, updated_at,
+           next_action, work_owed)
          VALUES (@incident_id, @pr, @command_id, @round_id, @round_no, @head_sha, @stage, @detail,
-                 @attempts, @retry_cap, @ts, @ts, 'operator_unwedge', 1)
+                 @attempts, @retry_cap, @retry_epoch, @next_retry_at, @ts, @ts,
+                 @next_action, 1)
          ON CONFLICT(incident_id) DO UPDATE SET
            head_sha=excluded.head_sha, stage=excluded.stage, detail=excluded.detail,
            attempts=excluded.attempts, retry_cap=excluded.retry_cap,
+           retry_epoch=excluded.retry_epoch, next_retry_at=excluded.next_retry_at,
            updated_at=excluded.updated_at, recovered_at=NULL, recovery=NULL,
-           next_action='operator_unwedge', work_owed=1`,
+           next_action=excluded.next_action, work_owed=1`,
       ).run({
         incident_id: incidentId,
         pr: arg.pr,
         command_id: arg.command_id ?? null,
         round_id: arg.round_id ?? null,
         round_no: arg.round_no ?? null,
-        head_sha: arg.head_sha,
+        head_sha: failureHead,
         stage: arg.stage,
         detail: arg.detail,
         attempts: arg.attempts,
         retry_cap: arg.retry_cap,
+        retry_epoch: retryEpoch,
+        next_retry_at: nextRetryAt,
+        next_action: nextAction,
         ts,
       });
       const row = this.getPr(arg.pr);
@@ -2739,9 +2897,71 @@ export class StateStore {
       stage: failure.stage,
       attempts: failure.attempts,
       retry_cap: failure.retry_cap,
+      retry_epoch: failure.retry_epoch,
+      next_retry_at: failure.next_retry_at,
       next_action: failure.next_action,
     });
     return failure;
+  }
+
+  /** Atomically hand one killed/fenced infrastructure round from active
+   * ownership to durable failure debt. No process crash can observe the round
+   * cancelled without its exact command failed and obligation opened. */
+  terminalizeInfrastructureReviewFailure(input: {
+    pr: number;
+    round_id: number;
+    round_no: number;
+    command_id: string;
+    head_sha: string;
+    stage: string;
+    detail: string;
+    attempts: number;
+    retry_cap: number;
+    summary: string;
+  }): ReviewFailureRow | undefined {
+    const terminalize = this.db.transaction((): ReviewFailureRow | undefined => {
+      const round = this.db.prepare("SELECT * FROM rounds WHERE id=?").get(input.round_id) as RoundRow | undefined;
+      const command = this.getSessionCommand(input.command_id);
+      if (
+        round?.pr !== input.pr || round.round_no !== input.round_no || round.status !== "running"
+        || command?.pr !== input.pr || command.session !== `pr-${input.pr}`
+        || command.kind !== "round" || command.round_no !== input.round_no
+        || !["pending", "running", "acked", "failed"].includes(command.status)
+      ) return undefined;
+      const ts = this.ts();
+      const roundChanged = this.db.prepare(
+        `UPDATE rounds SET status='cancelled', summary=@summary,
+            cancel_cause='infrastructure_failure', finished_at=@ts
+          WHERE id=@round_id AND pr=@pr AND round_no=@round_no AND status='running'`,
+      ).run({ ...input, ts }).changes;
+      if (roundChanged !== 1) return undefined;
+      const commandChanged = this.db.prepare(
+        `UPDATE session_commands
+            SET status='failed', owner_token=NULL, failed_at=COALESCE(failed_at, @ts),
+                failure=@detail, updated_at=@ts, next_check_at=@ts
+          WHERE id=@command_id AND pr=@pr AND session=@session AND kind='round'
+            AND round_no=@round_no AND status IN ('pending','running','acked','failed')`,
+      ).run({ ...input, session: `pr-${input.pr}`, ts }).changes;
+      if (commandChanged !== 1) throw new Error(`infrastructure command CAS lost for ${input.command_id}`);
+      return this.openReviewFailure({
+        pr: input.pr,
+        command_id: input.command_id,
+        round_id: input.round_id,
+        round_no: input.round_no,
+        head_sha: input.head_sha,
+        stage: input.stage,
+        detail: input.detail,
+        attempts: input.attempts,
+        retry_cap: input.retry_cap,
+      });
+    });
+    return terminalize();
+  }
+
+  reviewFailureForCommand(commandId: string): ReviewFailureRow | undefined {
+    return this.db.prepare(
+      "SELECT * FROM review_failures WHERE command_id=? ORDER BY failed_at DESC LIMIT 1",
+    ).get(commandId) as ReviewFailureRow | undefined;
   }
 
   openReviewFailures(): ReviewFailureRow[] {
@@ -2752,6 +2972,315 @@ export class StateStore {
     return this.db.prepare(
       "SELECT * FROM review_failures WHERE work_owed=0 AND recovered_at IS NOT NULL AND recovered_at>=? ORDER BY recovered_at DESC, incident_id",
     ).all(since) as ReviewFailureRow[];
+  }
+
+  roundRecoveryInstruction(pr: number, targetRoundNo: number): RoundRecoveryInstructionRow | undefined {
+    return this.db.prepare(
+      "SELECT * FROM round_recovery_instructions WHERE pr=? AND target_round_no=?",
+    ).get(pr, targetRoundNo) as RoundRecoveryInstructionRow | undefined;
+  }
+
+  /** Recovery behavior belongs to one exact successor identity. A stale row is
+   * immutable history, never permission to alter a later head/round. */
+  roundRecoveryInstructionForDispatch(
+    pr: number,
+    targetRoundNo: number,
+    targetHeadSha: string,
+  ): RoundRecoveryInstructionRow | undefined {
+    const instruction = this.roundRecoveryInstruction(pr, targetRoundNo);
+    if (
+      !instruction || instruction.target_head_sha !== targetHeadSha
+      || instruction.source_round_no + 1 !== targetRoundNo
+      || instruction.stage !== "first_pass_start"
+    ) return undefined;
+    const sourceRound = this.roundsFor(pr).find((round) => round.round_no === instruction.source_round_no);
+    const sourceCommand = this.getSessionCommand(instruction.source_command_id);
+    if (
+      sourceRound?.status !== "cancelled"
+      || sourceCommand?.pr !== pr || sourceCommand.kind !== "round"
+      || sourceCommand.round_no !== instruction.source_round_no
+      || !["failed", "cancelled"].includes(sourceCommand.status)
+    ) return undefined;
+    if (instruction.source_incident_id) {
+      const failure = this.db.prepare("SELECT * FROM review_failures WHERE incident_id=?").get(
+        instruction.source_incident_id,
+      ) as ReviewFailureRow | undefined;
+      if (
+        !failure || failure.pr !== pr || failure.command_id !== instruction.source_command_id
+        || failure.round_id !== sourceRound.id || failure.work_owed !== 0
+      ) return undefined;
+    }
+    return instruction;
+  }
+
+  /** Kill-before-replay is followed by one durable transaction: cancel the
+   * exact old round, bind optional changed behavior to its immediate successor,
+   * and publish ordinary queued work. A crash can see either the live parent or
+   * the complete debt, never an inert cancellation. */
+  cancelRoundAndQueueRecovery(input: {
+    pr: number;
+    round_id: number;
+    round_no: number;
+    summary: string;
+    cause: CancelCause;
+    fallback_head_sha: string;
+    trigger_ts: string;
+    recovery?: {
+      stage: "first_pass_start";
+      source_command_id: string;
+      immediate_attempt: number;
+      retry_epoch: number;
+    };
+  }): { target_round_no: number; target_head_sha: string; queued: boolean } | undefined {
+    return this.db.transaction(() => {
+      const source = this.db.prepare("SELECT * FROM rounds WHERE id=?").get(input.round_id) as RoundRow | undefined;
+      if (source?.pr !== input.pr || source.round_no !== input.round_no || source.status !== "running") return undefined;
+      const row = this.getPr(input.pr);
+      if (!row) throw new Error(`cannot publish recovery for missing PR #${input.pr}`);
+      const successor = this.successorFor(input.pr);
+      const targetHead = successor?.head_sha ?? input.fallback_head_sha;
+      const targetRoundNo = Math.max(0, ...this.roundsFor(input.pr).map((round) => round.round_no)) + 1;
+      const ts = this.ts();
+      const cancelled = this.db.prepare(
+        `UPDATE rounds SET status='cancelled', summary=@summary, cancel_cause=@cause, finished_at=@ts
+          WHERE id=@round_id AND pr=@pr AND round_no=@round_no AND status='running'`,
+      ).run({ ...input, ts }).changes;
+      if (cancelled !== 1) return undefined;
+      if (input.recovery && row.state !== "closed") {
+        this.db.prepare(
+          `INSERT INTO round_recovery_instructions
+             (pr, target_round_no, target_head_sha, stage, source_incident_id,
+              source_command_id, source_round_no, immediate_attempt, retry_epoch, created_at)
+           VALUES (@pr, @target_round_no, @target_head_sha, @stage, NULL,
+              @source_command_id, @source_round_no, @immediate_attempt, @retry_epoch, @created_at)`,
+        ).run({
+          pr: input.pr,
+          target_round_no: targetRoundNo,
+          target_head_sha: targetHead,
+          stage: input.recovery.stage,
+          source_command_id: input.recovery.source_command_id,
+          source_round_no: input.round_no,
+          immediate_attempt: input.recovery.immediate_attempt,
+          retry_epoch: input.recovery.retry_epoch,
+          created_at: ts,
+        });
+      }
+      if (row.state === "closed") return { target_round_no: targetRoundNo, target_head_sha: targetHead, queued: false };
+      this.db.prepare(
+        `UPDATE pr_state
+            SET state='queued', head_sha=@head_sha, trigger_ts=@trigger_ts,
+                trigger_provenance=@provenance, updated_at=@ts
+          WHERE number=@pr AND state!='closed'`,
+      ).run({
+        pr: input.pr,
+        head_sha: targetHead,
+        trigger_ts: successor?.requested_at ?? input.trigger_ts,
+        provenance: successor?.provenance ?? row.trigger_provenance,
+        ts,
+      });
+      return { target_round_no: targetRoundNo, target_head_sha: targetHead, queued: true };
+    })();
+  }
+
+  /** Attach changed behavior to the exact immediate successor before it is
+   * dispatched. Historical rows are immutable by identity; an unexpected
+   * competing writer is a correctness failure rather than last-write-wins. */
+  recordRoundRecoveryInstruction(
+    input: Omit<RoundRecoveryInstructionRow, "created_at">,
+  ): RoundRecoveryInstructionRow {
+    this.db.prepare(
+      `INSERT INTO round_recovery_instructions
+         (pr, target_round_no, target_head_sha, stage, source_incident_id,
+          source_command_id, source_round_no, immediate_attempt, retry_epoch, created_at)
+       VALUES (@pr, @target_round_no, @target_head_sha, @stage, @source_incident_id,
+          @source_command_id, @source_round_no, @immediate_attempt, @retry_epoch, @created_at)`,
+    ).run({ ...input, created_at: this.ts() });
+    return this.roundRecoveryInstruction(input.pr, input.target_round_no)!;
+  }
+
+  /**
+   * circuit-breaker sweep. The whole due transition is one SQLite
+   * transaction: exact debt + failed predecessor command are terminalized,
+   * the recovery instruction is bound to the next round number, and ordinary
+   * queued work is published. The caller may then invoke the normal dispatch
+   * pump; this method itself cannot create a round, a Pi command, or a GitHub
+   * mutation.
+   *
+   * `next_retry_at` is the durable claim: the UPDATE below requires the same
+   * incident, generation and due state selected at the top of the transaction.
+   * Concurrent sweeps, operator `u`, reconcile and verdict settlement can
+   * therefore produce at most one winner.
+   */
+  activateDueReviewFailureRetries(at: string): AutomaticReviewRetry[] {
+    const due = this.db.prepare(
+      `SELECT incident_id FROM review_failures
+        WHERE work_owed=1 AND next_action='retry_wait'
+          AND next_retry_at IS NOT NULL AND next_retry_at<=?
+        ORDER BY next_retry_at, failed_at, incident_id`,
+    ).all(at) as Array<{ incident_id: string }>;
+    const activated: AutomaticReviewRetry[] = [];
+
+    for (const candidate of due) {
+      // A reconciled/webhook `closed` row is already terminal GitHub truth.
+      // Reuse the exact transaction rather than scheduling pointless
+      // review work; contradictory ownership/wakes make it refuse and retain
+      // the finite retry below.
+      const before = this.db.prepare("SELECT * FROM review_failures WHERE incident_id=?").get(candidate.incident_id) as ReviewFailureRow | undefined;
+      if (before?.command_id && this.getPr(before.pr)?.state === "closed") {
+        const terminal = this.resolveTerminalReviewFailure({
+          pr: before.pr,
+          incident_id: before.incident_id,
+          command_id: before.command_id,
+          head_sha: before.head_sha,
+          disposition: "closed",
+        });
+        if (terminal.ok) continue;
+      }
+      const result = this.db.transaction((): AutomaticReviewRetry | undefined => {
+        const failure = this.db.prepare(
+          `SELECT * FROM review_failures
+            WHERE incident_id=? AND work_owed=1 AND next_action='retry_wait'
+              AND next_retry_at IS NOT NULL AND next_retry_at<=?`,
+        ).get(candidate.incident_id, at) as ReviewFailureRow | undefined;
+        if (!failure || failure.stage !== "first_pass_start" || !failure.command_id
+          || failure.round_id === null || failure.round_no === null) return undefined;
+
+        const pr = this.getPr(failure.pr);
+        if (!pr || pr.state === "closed" || pr.paused) {
+          // A close is handled by the exact terminal-failure path; a pause is
+          // an explicit operator hold. Both retain a finite re-check rather
+          // than falling into an actionless state here.
+          const next = new Date(Date.parse(at) + AUTO_REVIEW_RETRY_INITIAL_MIN * 60_000).toISOString();
+          this.db.prepare(
+            `UPDATE review_failures SET next_retry_at=?, updated_at=?
+              WHERE incident_id=? AND work_owed=1 AND next_action='retry_wait'`,
+          ).run(next, this.ts(), failure.incident_id);
+          this.logEvent("review_failure_auto_retry_deferred", failure.pr, {
+            incident_id: failure.incident_id,
+            reason: !pr ? "pr-state-absent" : pr.state === "closed" ? "terminal-resolution-not-ready" : "operator-paused",
+            next_retry_at: next,
+          });
+          return undefined;
+        }
+        const command = this.getSessionCommand(failure.command_id);
+        const round = this.db.prepare("SELECT * FROM rounds WHERE id=?").get(failure.round_id) as RoundRow | undefined;
+        const active = this.db.prepare(
+          "SELECT id FROM session_commands WHERE pr=? AND status IN ('pending','running') LIMIT 1",
+        ).get(failure.pr) as { id: string } | undefined;
+        if (
+          command?.pr !== failure.pr || command.session !== `pr-${failure.pr}`
+          || command.kind !== "round" || command.round_no !== failure.round_no
+          || !["failed", "acked", "cancelled"].includes(command.status)
+          || round?.pr !== failure.pr || round.round_no !== failure.round_no || round.status === "running"
+          || this.hasRunningRound(failure.pr) || active
+        ) {
+          // Contradictory/live ownership is never bulldozed. Keep the exact
+          // debt visible and schedule another finite inspection.
+          const next = new Date(Date.parse(at) + AUTO_REVIEW_RETRY_INITIAL_MIN * 60_000).toISOString();
+          this.db.prepare(
+            `UPDATE review_failures SET next_retry_at=?, updated_at=?
+              WHERE incident_id=? AND work_owed=1 AND next_action='retry_wait'`,
+          ).run(next, this.ts(), failure.incident_id);
+          this.logEvent("review_failure_auto_retry_deferred", failure.pr, {
+            incident_id: failure.incident_id,
+            reason: active ? `active-command:${active.id}` : this.hasRunningRound(failure.pr) ? "running-round" : "identity-mismatch",
+            next_retry_at: next,
+          });
+          return undefined;
+        }
+
+        const successor = this.successorFor(failure.pr);
+        const targetHead = successor?.head_sha || pr.head_sha || failure.head_sha;
+        const targetRoundNo = ((this.db.prepare(
+          "SELECT MAX(round_no) AS m FROM rounds WHERE pr=?",
+        ).get(failure.pr) as { m: number | null }).m ?? 0) + 1;
+        // A new authoritative head is new work and gets its own fast-retry /
+        // backoff generation. The delayed wake still carries the predecessor
+        // identity, but old-head failures do not punish the new head's rate.
+        const retryEpoch = targetHead === failure.head_sha ? failure.retry_epoch + 1 : 0;
+        const triggerTs = successor?.requested_at
+          ?? (pr.trigger_provenance === "human" && pr.trigger_ts ? pr.trigger_ts : this.ts());
+        const provenance = successor?.provenance
+          ?? (pr.trigger_provenance === "human" ? "human" : "system");
+
+        this.db.prepare(
+          `INSERT INTO round_recovery_instructions
+             (pr, target_round_no, target_head_sha, stage, source_incident_id,
+              source_command_id, source_round_no, immediate_attempt, retry_epoch, created_at)
+           VALUES (?, ?, ?, 'first_pass_start', ?, ?, ?, ?, ?, ?)`,
+        ).run(
+          failure.pr,
+          targetRoundNo,
+          targetHead,
+          failure.incident_id,
+          failure.command_id,
+          failure.round_no,
+          failure.attempts,
+          retryEpoch,
+          this.ts(),
+        );
+        const commandChanged = this.db.prepare(
+          `UPDATE session_commands
+              SET status='cancelled', owner_token=NULL,
+                  settled_at=COALESCE(settled_at, @ts), updated_at=@ts,
+                  next_check_at=@ts,
+                  failure=CASE WHEN failure IS NULL OR failure='' THEN @reason ELSE failure || '; ' || @reason END
+            WHERE id=@id AND pr=@pr AND session=@session AND kind='round'
+              AND round_no=@round_no AND status IN ('failed','acked','cancelled')`,
+        ).run({
+          id: failure.command_id,
+          pr: failure.pr,
+          session: `pr-${failure.pr}`,
+          round_no: failure.round_no,
+          ts: this.ts(),
+          reason: `automatic pre-fanout retry epoch ${retryEpoch}`,
+        }).changes;
+        if (commandChanged !== 1) throw new Error(`automatic retry command CAS lost for ${failure.command_id}`);
+        const failureChanged = this.db.prepare(
+          `UPDATE review_failures
+              SET work_owed=0, recovered_at=@ts, recovery=@recovery,
+                  next_action='closed', next_retry_at=NULL, updated_at=@ts
+            WHERE incident_id=@incident_id AND work_owed=1
+              AND next_action='retry_wait' AND retry_epoch=@expected_epoch
+              AND next_retry_at IS NOT NULL AND next_retry_at<=@at`,
+        ).run({
+          incident_id: failure.incident_id,
+          expected_epoch: failure.retry_epoch,
+          at,
+          ts: this.ts(),
+          recovery: `automatic-retry:${retryEpoch}`,
+        }).changes;
+        if (failureChanged !== 1) throw new Error(`automatic retry failure CAS lost for ${failure.incident_id}`);
+        const prChanged = this.db.prepare(
+          `UPDATE pr_state
+              SET state='queued', head_sha=@head, trigger_ts=@trigger,
+                  trigger_provenance=@provenance, updated_at=@ts
+            WHERE number=@pr AND state!='closed' AND paused=0`,
+        ).run({
+          pr: failure.pr,
+          head: targetHead,
+          trigger: triggerTs,
+          provenance,
+          ts: this.ts(),
+        }).changes;
+        if (prChanged !== 1) throw new Error(`automatic retry PR-state CAS lost for #${failure.pr}`);
+        return {
+          pr: failure.pr,
+          incident_id: failure.incident_id,
+          target_head_sha: targetHead,
+          target_round_no: targetRoundNo,
+          retry_epoch: retryEpoch,
+        };
+      })();
+      if (!result) continue;
+      activated.push(result);
+      this.logEvent("review_failure_auto_retry_queued", result.pr, result);
+      this.logEvent("review_failure_recovered", result.pr, {
+        incident_id: result.incident_id,
+        recovery: `automatic-retry:${result.retry_epoch}`,
+      });
+    }
+    return activated;
   }
 
   /**
@@ -2889,7 +3418,7 @@ export class StateStore {
       const failureChanged = this.db.prepare(
         `UPDATE review_failures
             SET work_owed=0, recovered_at=@ts, recovery=@recovery,
-                next_action='closed', updated_at=@ts
+                next_action='closed', next_retry_at=NULL, updated_at=@ts
           WHERE incident_id=@incident_id AND pr=@pr AND command_id=@command_id
             AND round_id=@round_id AND round_no=@round_no AND head_sha=@head_sha
             AND stage='posting_receipt' AND work_owed=1`,
@@ -3036,7 +3565,7 @@ export class StateStore {
       const failureChanged = this.db.prepare(
         `UPDATE review_failures
             SET work_owed=0, recovered_at=@ts, recovery=@recovery,
-                next_action='closed', updated_at=@ts
+                next_action='closed', next_retry_at=NULL, updated_at=@ts
           WHERE incident_id=@incident_id AND pr=@pr AND command_id=@command_id
             AND head_sha=@head_sha AND work_owed=1`,
       ).run({ ...input, recovery, ts }).changes;
@@ -3079,7 +3608,7 @@ export class StateStore {
     const recovered = this.db.transaction((): ReviewFailureRow | undefined => {
       const changed = this.db.prepare(
         `UPDATE review_failures
-            SET work_owed=0, recovered_at=?, recovery=?, next_action='closed', updated_at=?
+            SET work_owed=0, recovered_at=?, recovery=?, next_action='closed', next_retry_at=NULL, updated_at=?
           WHERE incident_id=? AND work_owed=1`,
       ).run(ts, recovery, ts, current.incident_id).changes;
       if (changed !== 1) return undefined;
@@ -3087,6 +3616,38 @@ export class StateStore {
       // after this point may delay the pump, but cannot forget what u asked for.
       const row = this.getPr(pr);
       const successor = this.successorFor(pr);
+      const command = current.command_id ? this.getSessionCommand(current.command_id) : undefined;
+      const round = current.round_id === null
+        ? undefined
+        : this.db.prepare("SELECT * FROM rounds WHERE id=?").get(current.round_id) as RoundRow | undefined;
+      if (
+        row && row.state !== "closed"
+        && current.stage === "first_pass_start"
+        && current.command_id && current.round_no !== null
+        && command?.pr === pr && command.kind === "round" && command.round_no === current.round_no
+        && round?.pr === pr && round.round_no === current.round_no && round.status !== "running"
+      ) {
+        const targetHead = successor?.head_sha || row.head_sha || current.head_sha;
+        const targetRoundNo = ((this.db.prepare(
+          "SELECT MAX(round_no) AS m FROM rounds WHERE pr=?",
+        ).get(pr) as { m: number | null }).m ?? 0) + 1;
+        this.db.prepare(
+          `INSERT INTO round_recovery_instructions
+             (pr, target_round_no, target_head_sha, stage, source_incident_id,
+              source_command_id, source_round_no, immediate_attempt, retry_epoch, created_at)
+           VALUES (?, ?, ?, 'first_pass_start', ?, ?, ?, ?, ?, ?)`,
+        ).run(
+          pr,
+          targetRoundNo,
+          targetHead,
+          current.incident_id,
+          current.command_id,
+          current.round_no,
+          current.attempts,
+          targetHead === current.head_sha ? current.retry_epoch : 0,
+          ts,
+        );
+      }
       if (row && row.state !== "closed") {
         this.db.prepare(
           `UPDATE pr_state
@@ -3414,6 +3975,25 @@ export class StateStore {
 
   // ---- event log ---------------------------------------------------------
 
+  /**
+   * The most recent `round_memory_seeded` row whose pinned head was READ
+   * (`head_state` populated or empty) — the baseline dispatch compares a
+   * newly-empty head against (review: populated → empty across a
+   * restart is otherwise silent). Rows written before `head_state` existed
+   * are not candidates, so a deploy never fires the transition by itself.
+   */
+  lastReadPinnedHead(): { pr: number | null; ts: string; head_chars: number } | null {
+    const row = this.db
+      .prepare(
+        "SELECT pr, ts, json_extract(payload, '$.head_chars') AS head_chars FROM events " +
+          "WHERE kind = 'round_memory_seeded' AND json_extract(payload, '$.head_state') IN ('populated', 'empty') " +
+          "ORDER BY id DESC LIMIT 1",
+      )
+      .get() as { pr: number | null; ts: string; head_chars: number | null } | undefined;
+    if (!row) return null;
+    return { pr: row.pr, ts: row.ts, head_chars: typeof row.head_chars === "number" ? row.head_chars : 0 };
+  }
+
   logEvent(kind: string, pr: number | null, payload?: unknown): void {
     this.db
       .prepare("INSERT INTO events (ts, kind, pr, payload) VALUES (?, ?, ?, ?)")
@@ -3605,27 +4185,47 @@ export class StateStore {
   }
 
   /**
-   * Self-requeues already spent on a PR (cap accounting), split into
-   * the ones `round_self_requeued` stamped with THIS head and the ones whose
-   * payload cannot be read at all. A new head resets the budget, exactly like
-   * the withheld/reviewed marks are per-head positions, and there is no
-   * recency window: the budget is per head, not per day.
+   * Self-requeues spent in the current failed-stage GENERATION at a head
+   * (cap accounting), split into the ones `round_self_requeued`
+   * stamped with THIS head and the ones whose payload cannot be read at all.
+   * A new head resets the budget naturally; an exact planned fanout (or a
+   * completed verdict that was too fast for the supervisor tick to observe) at
+   * the same head starts a fresh generation, so historical incidents never
+   * punish later successful work forever. Rows are read in ledger order so a
+   * generation is a run of rows after the last same-head reset.
    *
-   * `unattributed` rows are requeues that certainly happened at SOME head. The
-   * caller counts them against the cap (they can only ever tighten it), so a
-   * corrupt payload can never buy a requeue past the budget.
+   * `unattributed` rows are requeues that certainly happened at SOME head, in
+   * the current generation. The caller counts them against the cap (they can
+   * only ever tighten it), so a corrupt payload can never buy a requeue past
+   * the budget.
    */
   selfRequeueSpend(pr: number, headSha: string): SelfRequeueSpend {
     const rows = this.db
-      .prepare("SELECT payload FROM events WHERE kind = 'round_self_requeued' AND pr = ?")
-      .all(pr) as Array<{ payload: string | null }>;
+      .prepare(
+        `SELECT kind, payload FROM events
+          WHERE pr=? AND kind IN ('round_self_requeued','round_fanout_started','verdict_applied')
+          ORDER BY id`,
+      )
+      .all(pr) as Array<{ kind: string; payload: string | null }>;
     const spend: SelfRequeueSpend = { at_head: 0, unattributed: 0 };
-    for (const r of rows) {
-      const stamped = readStringField(r.payload, "head_sha");
-      if (stamped === undefined) spend.unattributed += 1;
-      else if (stamped === headSha) spend.at_head += 1;
+    for (const row of rows) {
+      const stamped = readStringField(row.payload, "head_sha");
+      if (row.kind === "round_self_requeued") {
+        if (stamped === undefined) spend.unattributed += 1;
+        else if (stamped === headSha) spend.at_head += 1;
+      } else if (stamped === headSha) {
+        spend.at_head = 0;
+        spend.unattributed = 0;
+      }
     }
     return spend;
+  }
+
+  /** `selfRequeueSpend` collapsed to the number the cap is compared against:
+   * attributed and unattributed rows both spend the budget. */
+  selfRequeueCount(pr: number, headSha: string): number {
+    const spend = this.selfRequeueSpend(pr, headSha);
+    return spend.at_head + spend.unattributed;
   }
 
   /** Head sha of the last applied verdict for a PR (from the event log). */
@@ -3911,6 +4511,12 @@ export class StateStore {
 
 // ---- status.json ---------------------------------------------------------
 
+export interface RoundStageBounds {
+  first_pass_max_min: number;
+  passes_max_min: number;
+  running_max_min: number;
+}
+
 export interface StatusSnapshot {
   written_at: string;
   dry_run: boolean;
@@ -3921,10 +4527,24 @@ export interface StatusSnapshot {
         last_verdict?: string | null;
         /** The authoritative running plan/timing. Live lens activity is a
          * separate ephemeral sidecar; neither source impersonates the other. */
-        current_round?: Pick<RoundRow, "round_no" | "round_type" | "status" | "started_at" | "deadline_at" | "lenses" | "validate_tier">;
-        /** canonical operator hold. Presence overrides the ordinary PR
-         * lifecycle label: review work is still owed and `u` is the action. */
-        review_failure?: Pick<ReviewFailureRow, "incident_id" | "command_id" | "round_no" | "head_sha" | "stage" | "detail" | "attempts" | "retry_cap" | "failed_at" | "next_action">;
+        current_round?: Pick<RoundRow, "round_no" | "round_type" | "status" | "started_at" | "deadline_at" | "lenses" | "validate_tier"> & {
+          /** Exact durable delivery identity for correlating the ephemeral Pi
+           * sidecar. Absent while the round is still being prepared. */
+          command_id?: string;
+          command_sha256?: string;
+          head_sha?: string;
+          /** Immutable command-start-derived bounds. Absent until exact start
+           * exists (and on snapshots from older daemons). */
+          stage_deadlines?: {
+            first_pass_start: string;
+            passes_complete: string;
+            running_hard_bound: string;
+          };
+        };
+        /** canonical failure obligation. Presence overrides
+         * ordinary lifecycle; `retry_wait` carries its finite automatic exit,
+         * while `operator_unwedge` keeps `u` as the required action. */
+        review_failure?: Pick<ReviewFailureRow, "incident_id" | "command_id" | "round_no" | "head_sha" | "stage" | "detail" | "attempts" | "retry_cap" | "retry_epoch" | "next_retry_at" | "failed_at" | "next_action">;
       }
   >;
   running_rounds: number;
@@ -3976,6 +4596,8 @@ export interface StatusSnapshot {
       round_no?: number;
       attempts?: number;
       retry_cap?: number;
+      retry_epoch?: number;
+      next_retry_at?: string;
       age_s?: number;
     }>;
     recoveries?: Array<{ key: string; pr: number; recovered_at: string; recovery: string | null }>;
@@ -4021,6 +4643,7 @@ export function buildStatusSnapshot(
   openviking?: OpenVikingStatus,
   threadDecisions?: StatusSnapshot["thread_decisions"],
   roundStageSupervisor?: StatusSnapshot["round_stage_supervisor"],
+  roundStageBounds?: RoundStageBounds,
 ): StatusSnapshot {
   const at = now();
   const today = at.toISOString().slice(0, 10);
@@ -4045,6 +4668,8 @@ export function buildStatusSnapshot(
     ...(failure.round_no !== null ? { round_no: failure.round_no } : {}),
     attempts: failure.attempts,
     retry_cap: failure.retry_cap,
+    retry_epoch: failure.retry_epoch,
+    ...(failure.next_retry_at ? { next_retry_at: failure.next_retry_at } : {}),
     age_s: Math.max(0, Math.floor((at.getTime() - Date.parse(failure.failed_at)) / 1000)),
   }));
   if (roundStageSupervisor && !roundStageSupervisor.healthy) {
@@ -4082,6 +4707,31 @@ export function buildStatusSnapshot(
               deadline_at: runningByPr.get(p.number)!.deadline_at,
               lenses: runningByPr.get(p.number)!.lenses,
               validate_tier: runningByPr.get(p.number)!.validate_tier,
+              ...(() => {
+                const round = runningByPr.get(p.number)!;
+                const command = store.sessionCommandForRound(p.number, round.round_no);
+                const postingHead = round.posting_key
+                  ? new RegExp(`^v1:${p.number}:${round.round_no}:([^:]+)$`).exec(round.posting_key)?.[1]
+                  : undefined;
+                const identity = command
+                  ? {
+                      command_id: command.id,
+                      command_sha256: command.payload_sha256,
+                      ...(postingHead ? { head_sha: postingHead } : {}),
+                    }
+                  : {};
+                if (!command?.started_at || !roundStageBounds) return identity;
+                const started = Date.parse(command.started_at);
+                if (!Number.isFinite(started)) return identity;
+                return {
+                  ...identity,
+                  stage_deadlines: {
+                    first_pass_start: new Date(started + roundStageBounds.first_pass_max_min * 60_000).toISOString(),
+                    passes_complete: new Date(started + roundStageBounds.passes_max_min * 60_000).toISOString(),
+                    running_hard_bound: new Date(started + roundStageBounds.running_max_min * 60_000).toISOString(),
+                  },
+                };
+              })(),
             },
           }
         : {}),
@@ -4105,6 +4755,8 @@ export function buildStatusSnapshot(
               detail: failureByPr.get(p.number)!.detail,
               attempts: failureByPr.get(p.number)!.attempts,
               retry_cap: failureByPr.get(p.number)!.retry_cap,
+              retry_epoch: failureByPr.get(p.number)!.retry_epoch,
+              next_retry_at: failureByPr.get(p.number)!.next_retry_at,
               failed_at: failureByPr.get(p.number)!.failed_at,
               next_action: failureByPr.get(p.number)!.next_action,
             },
