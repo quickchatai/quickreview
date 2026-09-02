@@ -54,7 +54,7 @@ a proposal directory and his accept click in the TUI ratifies it.
 #### Authoring a rubric proposal (the TUI-accept route)
 
 - **Where**: `state/rubric/<lens>-<topic>-<YYYY-MM-DD>/` under `/workspace` —
-  the LOCAL repo's state dir, the same tree the TUI's Memory & learning tab
+  the LOCAL repo's state dir, the same tree the TUI's `[7] feedback` tab
   reads (`src/tui/proposals.ts` lists it from the repo root; there is no VM
   path in this loop). Slug charset `[A-Za-z0-9._-]`, no leading dot, or the
   TUI never lists it.

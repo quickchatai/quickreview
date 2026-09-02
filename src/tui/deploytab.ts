@@ -1,4 +1,4 @@
-// Deploy tab (key 4) — "what would a deploy ship?" plus the deploy button:
+// `[5] deploy` — "what would a deploy ship?" plus the deploy button:
 // the commit the VM is running (the BUILD_SHA marker deploy.sh rsyncs along),
 // local HEAD, the pending commit list + diffstat between them, and deploy.sh's
 // own --dry-run plan verbatim. Click ▶ (or D D) owns the whole ceremony:
@@ -10,7 +10,7 @@ import { randomUUID } from "node:crypto";
 import type { TuiConfig } from "../config.js";
 import type { App } from "./app.js";
 import type { BoardKey } from "./keys.js";
-import { paintCmdBar } from "./cmdbar.js";
+import { barHeight, paintCmdBar, type BarButton, type LiveKeys } from "./cmdbar.js";
 import { ACCENT, ACCENT_BG, BAD, HEADING, MUTED, OK, RESET as DRESET, STRONG, WARN, WARN_BG, badge, modeBadge, sectionTitle } from "./design.js";
 import { Frame, displayWidth, rule, stripAnsi, truncate } from "./paint.js";
 import { transportOf, type RemoteResult, type SshRunner } from "./remote.js";
@@ -255,8 +255,31 @@ export function deployLines(st: DeployState, width: number): string[] {
   return lines;
 }
 
+/**
+ * What the deploy tab answers to on this frame. `D` and `S` only while no run
+ * is on screen (a press during one is refused, and a refused key is a dead
+ * key); `S` only once the container's state has been READ — the unknown
+ * state registers no key exactly as it paints no click zone (a
+ * stop derived from unread data could stop a live reviewer); `x` while there
+ * is a run to abort or a finished log to close.
+ */
+export function deployKeys(st: DeployState): LiveKeys {
+  const bar: BarButton[] = [];
+  if (st.run) {
+    bar.push({ key: "x", label: st.run.running ? "x abort" : "x close log" });
+    return { bar, inline: [] };
+  }
+  bar.push({ key: "D", label: st.armedKind === "deploy" ? "D confirm deploy" : "D deploy" });
+  if (st.containerStatus !== undefined) {
+    const kind = /^Up /.test(st.containerStatus) ? "stop" : "start";
+    bar.push({ key: "S", label: st.armedKind === kind ? `S confirm ${kind}` : `S ${kind} VM app` });
+  }
+  return { bar, inline: [] };
+}
+
 export function renderDeployTab(st: DeployState, dryRun: boolean | undefined, cols: number, rows: number): Frame {
   const frame = new Frame(cols, rows);
+  const live = deployKeys(st);
   frame.set(0, rule(cols, "┌", "┐", [`${HEADING}quickreview${DRESET}`, modeBadge(dryRun), "deploy"]));
 
   // The button row — deploy + power, both mouse-clickable, pinned under the
@@ -343,7 +366,7 @@ export function renderDeployTab(st: DeployState, dryRun: boolean | undefined, co
     st.powerZone = running === undefined ? undefined : { x1: pX, y1: 2, x2: pX + displayWidth(stripAnsi(pLabel)) - 1, y2: 2 };
   }
 
-  const bodyRows = rows - 5; // top bar + button row + command bar (2 rows) + bottom border
+  const bodyRows = rows - 3 - barHeight("deploy", cols, live.bar); // top bar + button row + command bar + bottom border
   if (run) {
     // Live log view: tail-follow; st.scroll counts lines BACK from the tail.
     const all = run.partial ? [...run.lines, run.partial] : run.lines;
@@ -360,7 +383,7 @@ export function renderDeployTab(st: DeployState, dryRun: boolean | undefined, co
       frame.boxRow(2 + r, [{ text: ` ${lines[st.scroll + r] ?? ""}`, width: cols - 2 }]);
     }
   }
-  paintCmdBar(frame, "deploy", cols, rows);
+  paintCmdBar(frame, "deploy", cols, rows, live.bar);
   frame.set(rows - 1, rule(cols, "└", "┘", []));
   return frame;
 }
@@ -391,7 +414,7 @@ export function installDeployHooks(
     app.repaint();
   };
 
-  app.hooks.deployScreen = (theApp, cols, rows) => {
+  const screen = (theApp: App, cols: number, rows: number): Frame => {
     if (!st.loaded && !st.loading) void load();
     return renderDeployTab(st, theApp.view.dryRun, cols, rows);
   };
@@ -811,20 +834,24 @@ export function installDeployHooks(
     theApp.repaint();
   };
 
-  app.hooks.deployClick = (theApp, x, y): void => {
+  const click = (theApp: App, x: number, y: number): boolean => {
     const inside = (z?: { x1: number; y1: number; x2: number; y2: number }): boolean =>
       z !== undefined && x >= z.x1 && x <= z.x2 && y >= z.y1 && y <= z.y2;
     if (inside(st.buttonZone)) press(theApp, "deploy");
     else if (inside(st.powerZone)) pressPower(theApp);
     else disarm(theApp); // a click anywhere else cancels
+    return true;
   };
 
-  app.hooks.deployKey = (theApp, key: BoardKey): boolean => {
-    if (key.kind === "char" && key.ch === "D") {
+  const onKey = (theApp: App, key: BoardKey): boolean => {
+    // `D`/`S` are this tab's only while offered (deployKeys): with a run on
+    // screen the press would be refused, and a refused printable belongs to
+    // the companion column instead.
+    if (key.kind === "char" && key.ch === "D" && !st.run) {
       press(theApp, "deploy");
       return true;
     }
-    if (key.kind === "char" && key.ch === "S") {
+    if (key.kind === "char" && key.ch === "S" && !st.run && st.containerStatus !== undefined) {
       pressPower(theApp);
       return true;
     }
@@ -895,5 +922,6 @@ export function installDeployHooks(
     }
   };
 
+  app.hooks.tabs.deploy = { screen, click, key: onKey, keys: () => deployKeys(st) };
   return st;
 }

@@ -124,6 +124,17 @@ export function composeColumn(inner: Frame, column: string[], width: number): Fr
 `memtab.ts`, `digesttab.ts` drop their `strip?: StripView` parameter and the
 `stripHeight()` row reservation, so `bodyRows` becomes `rows - 4`.
 
+*Amended 2026-09-02:* `rows - 4` assumed a two-row command bar.
+The bar now WRAPS instead of dropping buttons — at the shipped companion
+width the board used to lose `[u unwedge]` — so a tab's body height is
+`rows - 2 - barHeight(tab, cols, live.bar)` (`src/tui/cmdbar.ts`), and the
+board's pi viewport is sized from the same number (`boardBarHeight`). The
+seven tabs (`src/tui/tabs.ts`: board · memory · digest · tickets · deploy ·
+metrics · feedback) register under `AppHooks.tabs[tab]` as one `TabHooks`
+each — `screen` / `key` / `click` / `keys`, the last being the LIVE key set
+the bar paints and `App.registeredKeys()` derives from. `docs/tui.md` is the
+surface contract.
+
 ### Wiring (`app.ts`, `index.ts`) — the orchestrator, not an agent
 
 Key model (provisional — decides it properly):
@@ -131,7 +142,7 @@ Key model (provisional — decides it properly):
 | key | meaning |
 |---|---|
 | `/` | focus the sidebar |
-| printable on a tab with no binding | focus the sidebar, seeded with that char |
+| printable the current FRAME does not register (`App.registeredKeys()`, derived from the bar it is painting) | focus the sidebar, seeded with that char |
 | `Esc` | forwarded to pi while focused |
 | `Ctrl-q` | release focus (same as the board's pi pane) |
 | `PgUp`/`PgDn` | scroll the sidebar while focused |

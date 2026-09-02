@@ -13,14 +13,10 @@
 // exist should not be representable", so re-adding a writerless state fails
 // here rather than being noticed two weeks later on a screen.
 import { readFileSync } from "node:fs";
-import { EventEmitter } from "node:events";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { TUI_DEFAULTS } from "../src/config.js";
 import { INITIAL_STATE, transition, type SmEvent } from "../src/statemachine.js";
 import type { PrLifecycleState } from "../src/state.js";
-import { App } from "../src/tui/app.js";
-import { registeredKeys } from "../src/tui/cmdbar.js";
 import { parseTuiAction } from "../src/tui/actions.js";
 import { MUTED } from "../src/tui/design.js";
 import type { MetricsWindow } from "../src/metrics.js";
@@ -28,10 +24,9 @@ import { RETIRED_STATES, STATE_GLYPHS } from "../src/tui/model.js";
 import { FG, legendLine, stateColor, verdictChip, verdictColor } from "../src/tui/theme.js";
 import { CompanionSidebar } from "../src/tui/sidebar.js";
 import type { DockerRunner } from "../src/tui/companion.js";
-import { installMemoryLearningHooks, type MemTabState } from "../src/tui/memtab.js";
-import type { DigestFetcher } from "../src/tui/digesttab.js";
-import type { MemoryEntry, MemoryOp, MemoryStore } from "../src/memory/store.js";
+import type { Tab } from "../src/tui/app.js";
 import { stripAnsi } from "../src/tui/paint.js";
+import { learningRig, type Rig } from "./helpers/tui-rig.js";
 
 /** The union's members read out of the SOURCE, not restated here — otherwise
  * adding a writerless member back would pass every test below by simply not
@@ -345,153 +340,98 @@ describe("the always-zero metric is gone from the computation and from every sur
 
 // ---- the six freed keystrokes ----------------------------------------------
 
-class SilentMemory {
-  async read(): Promise<MemoryEntry[]> {
-    return [];
-  }
-  async search(): Promise<MemoryEntry[]> {
-    return [];
-  }
-  async apply(op: MemoryOp): Promise<{ ok: boolean; message: string }> {
-    return { ok: true, message: `ok: ${op.op}` };
-  }
-}
-
-const fakeDigest: DigestFetcher = {
-  list: async () => [],
-  read: async () => undefined,
-};
-
-function harness(): { app: App; mem: MemTabState; sent: string[][]; type: (t: string) => void; running: Promise<void> } {
-  const out = new EventEmitter() as unknown as NodeJS.WriteStream;
-  (out as unknown as { columns: number }).columns = 140;
-  (out as unknown as { rows: number }).rows = 40;
-  out.write = (() => true) as never;
-  const input = new EventEmitter() as unknown as NodeJS.ReadStream;
-  (input as unknown as { isTTY: boolean }).isTTY = false;
-  input.resume = (() => input) as never;
-  input.pause = (() => input) as never;
-  const app = new App(TUI_DEFAULTS, async () => ({ ok: true, stdout: "", stderr: "", code: 0 }), out, input);
+function harness(tab: Tab = "memory"): Rig & { sent: string[][]; type: (t: string) => void; running: Promise<void> } {
+  const rig = learningRig({ cols: 140, rows: 40 });
   const sent: string[][] = [];
   const docker: DockerRunner = async (argv) => {
     if (argv.includes("send-keys")) sent.push(argv);
     return { ok: true, stdout: "", stderr: "", code: 0 };
   };
-  app.sidebar = new CompanionSidebar({ container_name: "qcr-companion", session: "companion" }, docker, { available: () => true });
-  const mem = installMemoryLearningHooks(app, {
-    memory: new SilentMemory() as unknown as MemoryStore,
-    digestFetcher: fakeDigest,
-    fetchProposals: async () => ({ proposals: [], improvements: [] }),
-    readTickets: () => [],
-  });
-  app.tab = "digest";
-  const type = (t: string): void => void (input as unknown as EventEmitter).emit("data", Buffer.from(t));
-  return { app, mem, sent, type, running: app.run() };
+  rig.app.sidebar = new CompanionSidebar({ container_name: "qcr-companion", session: "companion" }, docker, { available: () => true });
+  rig.app.tab = tab;
+  return { ...rig, sent, type: rig.streams.type, running: rig.app.run() };
 }
 
 const settle = (): Promise<unknown> => new Promise((r) => setTimeout(r, 10));
 const literals = (sent: string[][]): string[] => sent.filter((a) => a.includes("-l")).map((a) => a[a.length - 1]!);
 
 describe("the six keys the awaiting panel registered now reach the companion column", () => {
-  it("registeredKeys('digest') no longer claims a m w g o M", () => {
-    const keys = registeredKeys("digest");
+  it("the memory tab no longer claims a m w g o M", async () => {
+    const h = harness();
+    await settle();
+    const keys = h.app.registeredKeys();
     for (const k of ["a", "m", "w", "g", "o", "M"]) expect([k, keys.has(k)]).toEqual([k, false]);
     // The two that are genuinely this tab's still are.
-    expect(keys.has("F")).toBe(true);
     expect(keys.has("W")).toBe(true);
+    expect(keys.has("n")).toBe(true);
+    h.app.quit();
+    await h.running;
   });
 
   for (const key of ["a", "m", "w", "g", "o", "M"]) {
-    it(`\`${key}\` on tab [2] is typed into pi instead of being swallowed`, async () => {
+    it(`\`${key}\` on the memory tab is typed into pi instead of being swallowed`, async () => {
       const h = harness();
       await settle();
-      expect(h.app.tab).toBe("digest");
+      expect(h.app.tab).toBe("memory");
       h.type(key);
       await settle();
       expect(h.app.sidebar!.focused).toBe(true);
       expect(literals(h.sent)).toContain(key);
       // …and the board behind it was not operated on from a tab you cannot see.
-      expect(h.app.tab).toBe("digest");
-      expect(h.app.view.detailFull).toBeFalsy();
+      expect(h.app.tab).toBe("memory");
+      expect(h.app.view.piFocus).toBeFalsy();
+      expect(h.app.view.inputBox).toBeUndefined();
       h.app.sidebar!.blur();
       h.app.quit();
       await h.running;
     });
   }
 
-  // Tab [2] has two views and each has its own handler. The digest view let
-  // these keys fall through; the MEMORY view swallowed all six on purpose, "so
-  // nothing falls to the board". With the board verbs guarded app-side that
-  // reason is gone, and swallowing is now just eating a keystroke.
-  for (const key of ["a", "m", "w", "g", "o", "M"]) {
-    it(`\`${key}\` reaches the companion from the MEMORY view too`, async () => {
-      const h = harness();
-      await settle();
-      h.type("v"); // digest view → memory view
-      await settle();
-      h.type(key);
-      await settle();
-      expect(h.app.sidebar!.focused).toBe(true);
-      expect(literals(h.sent)).toContain(key);
-      h.app.sidebar!.blur();
-      h.app.quit();
-      await h.running;
-    });
-  }
-
-  it("`a` still toggles archived inside a #feedback timeline, and only there", async () => {
-    const h = harness();
+  it("`a` toggles archived on the FEEDBACK tab, and only there — the inbox lives on its own surface now", async () => {
+    const h = harness("feedback");
     await settle();
-    h.type("v");
-    await settle();
-    h.mem.memFilter = "#feedback";
     h.type("a");
     await settle();
     // Claimed by the tab: it never reaches the column.
     expect(h.app.sidebar!.focused).toBe(false);
     expect(literals(h.sent)).not.toContain("a");
+    expect(h.learning.feedback.showArchived).toBe(true);
     h.app.quit();
     await h.running;
   });
 
   // Deleting the awaiting panel took the arrow keys' old job (moving a
   // selection over it) and gave them the digest's scroll. Both halves need
-  // pinning: the OLD `tests/tui-msg-digest.test.ts` case that covered j/k
-  // scrolling went with `installDigestHooks`, and gutting `down`/`up` in
-  // `digestViewKey` left the whole suite green.
+  // pinning: gutting `down`/`up` in the digest key handler once left the
+  // whole suite green.
   it("j/k AND the arrows scroll the digest, and up clamps at the top", async () => {
-    const h = harness();
+    const h = harness("digest");
     await settle();
-    expect(h.mem.digest.scroll).toBe(0);
+    expect(h.learning.store.digest.scroll).toBe(0);
     h.type("k"); // already at the top
     await settle();
-    expect(h.mem.digest.scroll).toBe(0);
+    expect(h.learning.store.digest.scroll).toBe(0);
     h.type("j");
     h.type("j");
     await settle();
-    expect(h.mem.digest.scroll).toBe(2);
+    expect(h.learning.store.digest.scroll).toBe(2);
     h.type(Buffer.from("\x1b[B").toString("utf8")); // ↓ scrolls now; it used to move a selection
     await settle();
-    expect(h.mem.digest.scroll).toBe(3);
+    expect(h.learning.store.digest.scroll).toBe(3);
     h.type(Buffer.from("\x1b[A").toString("utf8")); // ↑
     await settle();
-    expect(h.mem.digest.scroll).toBe(2);
+    expect(h.learning.store.digest.scroll).toBe(2);
     h.app.quit();
     await h.running;
   });
 
-  // A live alert owns ⏎ from wherever you are. Both halves of tab [2] must
-  // agree about that: before this, the digest view let it through (its handler
-  // declined) while the memory view swallowed it, so following an alert worked
-  // or did not depending on which view you happened to be in.
-  for (const view of ["digest", "memory"] as const) {
-    it(`a live alert still owns ⏎ on tab [2]'s ${view} view`, async () => {
-      const h = harness();
+  // A live alert owns ⏎ from wherever you are. Every learning surface must
+  // agree about that: before the two halves of the old tab [2]
+  // disagreed, so following an alert worked or did not depending on the view.
+  for (const tab of ["memory", "digest", "tickets", "feedback"] as const) {
+    it(`a live alert still owns ⏎ on the ${tab} tab`, async () => {
+      const h = harness(tab);
       await settle();
-      if (view === "memory") {
-        h.type("v");
-        await settle();
-      }
       let opened = 0;
       (h.app as unknown as { openCompanion: () => void }).openCompanion = () => {
         opened += 1;
@@ -505,7 +445,7 @@ describe("the six keys the awaiting panel registered now reach the companion col
     });
   }
 
-  it("⏎ on tab [2] does not focus the BOARD's pi pane", async () => {
+  it("⏎ on the memory tab does not focus the BOARD's pi pane", async () => {
     // ⏎ is not printable, so it can never reach the companion; the point is
     // only that it stops acting on a surface the operator is not looking at.
     const h = harness();
@@ -521,7 +461,7 @@ describe("the six keys the awaiting panel registered now reach the companion col
     h.app.selectPr(5265);
     h.type("\r");
     await settle();
-    expect(h.app.tab).toBe("digest");
+    expect(h.app.tab).toBe("memory");
     expect(h.app.view.piFocus).toBeFalsy();
     h.app.quit();
     await h.running;

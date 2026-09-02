@@ -5,13 +5,15 @@ import { loadConfig, sandboxRoot, type Config } from "../config.js";
 import type { TuiDriver } from "./actions.js";
 import { App } from "./app.js";
 import type { DeployState } from "./deploytab.js";
-import type { MemTabState } from "./memtab.js";
+import type { LearningTabs } from "./learning.js";
 import type { MetricsView } from "./metricstab.js";
 import { ensureSshMaster } from "./connect.js";
 import { MOUSE_OFF, MOUSE_ON } from "./mouse.js";
 import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR } from "./paint.js";
 import { visiblePrs } from "./filters.js";
+import { memoryOrder } from "./memtab.js";
 import { reselect } from "./model.js";
+import { isTab } from "./tabs.js";
 import { HotReloader, parseResumeArg, readResumeState, realReexec } from "./reload.js";
 import { killInFlightSsh, runnerFor, transportOf } from "./remote.js";
 import { chainOnPoll } from "./poll-hooks.js";
@@ -51,20 +53,23 @@ layout: ONE shape, always — the tab on the left, the companion column on the
         anything you would have attached to a VM session for, ask the
         companion.
 
-keys: 1/2/3/4/5 tabs (2 = memory & learning — v toggles digest/memory view,
-      x×2 retire · p pin · e edit · n new · A/R accept/reject a rubric proposal;
-      3 = deploy — click ▶/■ buttons (D D deploy, S S stop/start);
-      4 = metrics — 7/0/a window, # <pr> ⏎ for a PR timeline;
-      5 = changes — every feedback-derived commit, newest first; R arms a
-      revert of the selected one and y confirms, local commit only) ·
+keys: 1…7 the seven surfaces — board · memory · digest · tickets · deploy ·
+      metrics · feedback (docs/tui.md says what each is for; the bar at the
+      foot of the screen shows what the current frame answers to) ·
+      2 memory: j/k select · [ ] older/newer day · e p x n edit/pin/retire/new ·
+      3 digest: [ ] older/newer · 4 tickets: c actionable ⇄ all ·
+      5 deploy: click ▶/■ buttons (D D deploy, S S stop/start) ·
+      6 metrics: w/m/a window, # <pr> ⏎ for a PR timeline ·
+      7 feedback: t focus · a archived · A/x accept/reject a proposal ·
+      R then y reverts a feedback-derived commit (local, never pushed) ·
       companion column on every tab: type any unclaimed key (or /) to talk to
       it — every byte reaches pi · wheel over the column, or PgUp/PgDn while
       focused, walks its scrollback ·
       drag its left edge to resize · click it to take the keyboard ·
-      j/k select · ⏎ focus the PR's pi pane ·
+      board: j/k select · ⏎ focus the PR's pi pane · m quick-message ·
+      g github · u unwedge · e events overlay ·
       Ctrl-q release focus · Ctrl-c ×3 hard-kill the TUI ·
-      s reconnect ssh (GCP passphrase, once) ·
-      m quick-message · w detail · e events overlay · r refresh ·
+      s reconnect ssh (GCP passphrase, once) · r refresh ·
       ? full key map · q quit
 
 troubleshooting:
@@ -111,7 +116,7 @@ export function parseTuiArgs(args: string[]): TuiArgs {
  * inside the companionUp block. RATIFIED: actions run instantly — no confirm
  * gate (see src/tui/actions.ts header).
  */
-export function buildTuiDriver(app: App, memState: MemTabState, metricsView: MetricsView, deployState: DeployState): TuiDriver {
+export function buildTuiDriver(app: App, learning: LearningTabs, metricsView: MetricsView, deployState: DeployState): TuiDriver {
   // One keyboard owner at a time: an action must never type into a focused
   // pi pane or companion column (same rule the mouse/tab handlers follow).
   // A busy App (operator input box open, terminal lent to the `s` passphrase
@@ -125,7 +130,7 @@ export function buildTuiDriver(app: App, memState: MemTabState, metricsView: Met
   const driver: TuiDriver = {
     switchTab: (tab) => {
       prep();
-      app.tab = tab === "memory" ? "digest" : tab; // App's [2] tab id is "digest"
+      app.tab = tab; // one vocabulary: the verb's tab name IS the App's (src/tui/tabs.ts)
       app.repaint();
     },
     selectPr: (pr) => {
@@ -158,25 +163,36 @@ export function buildTuiDriver(app: App, memState: MemTabState, metricsView: Met
     digestDay: (date) => {
       prep();
       app.tab = "digest";
-      memState.view = "digest";
       app.repaint();
-      // Page to the day through the tab's own [ / ] keys so content loads
-      // (pageDigest is closure-private). files are date-named ASCENDING
-      // (parseDigestList sorts); back counts BACK from the newest file.
-      const i = memState.digest.files.findIndex((f) => f.startsWith(date));
+      // Page to the day through the tab's own [ / ] keys so content loads.
+      // files are date-named ASCENDING (parseDigestList sorts); back counts
+      // BACK from the newest file. An unlisted digest is a failed result —
+      // including when the listing itself has not happened or failed.
+      const files = learning.store.digest.files ?? [];
+      const i = files.findIndex((f) => f.startsWith(date));
       if (i < 0) throw new Error(`no digest for ${date}`);
-      const target = memState.digest.files.length - 1 - i;
-      const delta = target - memState.digest.back;
+      const target = files.length - 1 - i;
+      const delta = target - learning.store.digest.back;
       for (let k = 0; k < Math.abs(delta); k++) app.pressKey(delta > 0 ? "[" : "]");
     },
     memoryView: (opts) => {
       prep();
-      app.tab = "digest";
-      if (opts.day !== undefined) driver.digestDay(opts.day); // day highlight = digest-selected day
-      memState.view = "memory";
+      app.tab = "memory";
+      const mem = learning.memory;
       if (opts.tag !== undefined) {
-        memState.memFilter = opts.tag;
-        memState.sel = 0; // old ordinal may exceed the narrowed list
+        mem.filter = opts.tag;
+        mem.sel = 0; // old ordinal may exceed the narrowed list
+        mem.selKey = undefined;
+      }
+      if (opts.day !== undefined) {
+        // The day is a JUMP in the day-grouped timeline: land on its first
+        // entry. A day with no entry under the current filter is a failed
+        // result, not a silent no-op.
+        const ordered = memoryOrder(learning.store.entries, mem.filter);
+        const i = ordered.findIndex((e) => e.day === opts.day);
+        if (i < 0) throw new Error(`no memory entries on ${opts.day}${mem.filter ? ` under #${mem.filter}` : ""}`);
+        mem.sel = i;
+        mem.selKey = `${ordered[i]!.ts}|${ordered[i]!.id}#${ordered[i]!.block}`;
       }
       app.repaint();
     },
@@ -190,10 +206,10 @@ export function buildTuiDriver(app: App, memState: MemTabState, metricsView: Met
     },
     setMemoryFilter: (tag) => {
       prep();
-      app.tab = "digest";
-      memState.view = "memory";
-      memState.memFilter = tag;
-      memState.sel = 0;
+      app.tab = "memory";
+      learning.memory.filter = tag;
+      learning.memory.sel = 0;
+      learning.memory.selKey = undefined;
       app.repaint();
     },
     msgSession: (session, text) => app.hooks.sendMessage?.(session, text, app),
@@ -421,12 +437,13 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   installMessageHooks(app);
   const { installUnwedgeHooks } = await import("./unwedge.js");
   installUnwedgeHooks(app);
-  // the [2] tab is Memory & learning — digest view + memory
-  // management. Accept-verdict git actions run against THIS working copy
-  // (the canonical repo); the [sink] config decides where the defect
-  // auto-filer writes (wayfinder tracker, gated github command
-  // channel, or none) and which effort the ticket projection reads.
-  const { installMemoryLearningHooks } = await import("./memtab.js");
+  // The four learning surfaces — [2] memory, [3] digest, [4] tickets,
+  // [7] feedback — over ONE store. Accept-verdict git
+  // actions run against THIS working copy (the canonical repo); the [sink]
+  // config decides where the defect auto-filer writes (wayfinder
+  // tracker, gated github command channel, or none) and which effort the
+  // ticket projection reads.
+  const { installLearningTabs } = await import("./learning.js");
   const { execFile } = await import("node:child_process");
   const gitRun = (cmd: string, args2: string[], stdin?: string): Promise<string> =>
     new Promise((res, rej) => {
@@ -461,17 +478,25 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   const { buildIssueSink, ticketProjection } = await import("./issuesink.js");
   const { readEffortTickets } = await import("./trackertickets.js");
   const projection = ticketProjection(full);
-  const memState = installMemoryLearningHooks(app, {
+  const { RealDeployFetcher, installDeployHooks, powerSpawnArgv, realLocalRunner } = await import("./deploytab.js");
+  const { FileDeployCeremonyStore } = await import("./deploy-ceremony.js");
+  const localRunner = realLocalRunner(sandboxRoot());
+  // the change register — every feedback-derived commit (identified by
+  // its `Ratified-in-session:` trailer), newest first, with a one-key revert
+  // on the feedback tab. It reads and writes the LOCAL checkout only, through
+  // the same read-only local-git seam the deploy tab uses; nothing here
+  // touches the VM, GitHub or the gate. Persisted under state/ so the list is
+  // on screen before git has been asked anything.
+  const { ChangeLog, ChangeRegisterStore } = await import("./changelog-store.js");
+  const learning = installLearningTabs(app, {
     memory: memStore,
     forward: memForward,
     gitRun,
     repoRoot: sandboxRoot(),
     sink: buildIssueSink(full, app.ssh, memStore),
-    ...(projection ? { readTickets: () => readEffortTickets(projection.root, projection.effort) } : {}),
+    changes: new ChangeLog(new ChangeRegisterStore(join(sandboxRoot(), "state", "changes")), localRunner),
+    ...(projection ? { readTickets: () => readEffortTickets(projection.root, projection.effort), ticketsEffort: projection.effort } : {}),
   });
-  const { RealDeployFetcher, installDeployHooks, powerSpawnArgv, realLocalRunner } = await import("./deploytab.js");
-  const { FileDeployCeremonyStore } = await import("./deploy-ceremony.js");
-  const localRunner = realLocalRunner(sandboxRoot());
   app.hooks.powerRun = (_theApp, action, onData, onExit) => {
     // docker stop/start on the VM (or local docker in local mode),
     // streamed into the tab like a deploy.
@@ -507,16 +532,6 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   // The metrics OPERATIONS card answers "deploy needed?" through the same
   // read-only local-git seam the deploy tab uses.
   const metricsView = installMetricsHooks(app, undefined, localHeadProbe(localRunner));
-
-  // the change register — every feedback-derived commit (identified by
-  // its `Ratified-in-session:` trailer), newest first, with a one-key revert.
-  // It reads and writes the LOCAL checkout only, through the same read-only
-  // local-git seam the deploy tab uses; nothing here touches the VM, GitHub or
-  // the gate. Persisted under state/ so the list is on screen before git has
-  // been asked anything.
-  const { ChangeLog, ChangeRegisterStore } = await import("./changelog-store.js");
-  const { installChangesHooks } = await import("./changestab.js");
-  installChangesHooks(app, new ChangeLog(new ChangeRegisterStore(join(sandboxRoot(), "state", "changes")), localRunner));
 
   // finished-round evidence, copied down from the VM into a local
   // store the companion reads read-only. Its dir is CREATED in the bring-up,
@@ -821,7 +836,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     // notice line — instant execution is the ratified decision.
     const { processTuiActions } = await import("./actions.js");
     const tuiActionsDir = join(full.companion.alerts_dir, "tui-actions");
-    const driver = buildTuiDriver(app, memState, metricsView, deployState);
+    const driver = buildTuiDriver(app, learning, metricsView, deployState);
     let tuiActBusy = false;
     chainOnPoll(app, (a) => {
       if (tuiActBusy) return;
@@ -847,12 +862,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
    */
   const bringUp = async (): Promise<void> => {
     // The tracker scan is a filesystem walk, so it waits for the frame too.
-    try {
-      memState.reloadTickets?.();
-      app.repaint();
-    } catch {
-      /* an unreadable tracker is an empty ticket pane, never a failed start */
-    }
+    learning.store.reloadTickets(); // total: an unreadable tracker is an UNKNOWN pane, never a failed start
     // The triage runs CONCURRENTLY with the companion: a wedged ssh master can
     // cost its probe seconds, and the companion has nothing to do with ssh.
     //
@@ -909,13 +919,11 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   // on the right tab with the right selection.
   const resumed = args.resumeState ? readResumeState(args.resumeState) : undefined;
   if (resumed) {
-    if (resumed.tab === "digest") app.tab = "digest";
-    else if (resumed.tab === "deploy") app.tab = "deploy";
-    else if (resumed.tab === "metrics") app.tab = "metrics";
-    else if (resumed.tab === "changes") app.tab = "changes";
+    // A tab name from an older build (`changes`) is not a tab any more and
+    // lands on the board, like an unknown one.
+    if (isTab(resumed.tab)) app.tab = resumed.tab;
     app.view.eventsScroll = resumed.eventsScroll;
     app.view.eventsFocus = resumed.eventsFocus;
-    app.view.detailFull = resumed.detailFull;
     if (app.sidebar && resumed.sidebarWidth !== undefined) {
       app.sidebar.preferredWidth = restorePreferredSidebarWidth(resumed.sidebarWidth);
     }
@@ -932,7 +940,6 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
           pr: app.currentPr(),
           eventsScroll: app.view.eventsScroll,
           eventsFocus: app.view.eventsFocus,
-          detailFull: app.view.detailFull,
           sidebarWidth: app.sidebar?.preferredWidth,
           saved_at: "",
         }),

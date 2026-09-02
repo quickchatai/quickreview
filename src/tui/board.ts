@@ -6,7 +6,7 @@
 import type { WhyPayload } from "../cli.js";
 import { cancelCauseLabel, isLoudCancelCause, type StatusSnapshot } from "../state.js";
 import type { AlertBadge } from "./alerts.js";
-import { paintCmdBar } from "./cmdbar.js";
+import { barHeight, paintCmdBar, type BarButton, type LiveKeys } from "./cmdbar.js";
 import { filterLabel, visiblePrs, type BoardFilter } from "./filters.js";
 import { glyphFor, type EventLine, type SnapshotPr } from "./model.js";
 import { ACCENT, ACCENT_BG, HEADING, MUTED, RESET as DRESET, STRONG, WARN, modeBadge, sectionTitle, selected as selectedLine } from "./design.js";
@@ -23,9 +23,7 @@ export type BoardAction =
   | { t: "open-github"; pr: number }
   | { t: "event-jump"; pr: number }
   | { t: "pi-focus" } // the live pi pane: clicking it types into the session in place
-  | { t: "tab"; tab: "board" | "digest" | "deploy" | "metrics" }
-  | { t: "companion" } // the alert badge: open the companion attach
-  | { t: "key"; key: string }; // hint-bar button → synthesized keypress
+  | { t: "companion" }; // the alert badge: hand the keyboard to the companion column
 
 export interface BoardView {
   health: Health;
@@ -40,7 +38,6 @@ export interface BoardView {
   events: EventLine[]; // newest first
   selected: number;
   detail?: WhyPayload;
-  detailFull: boolean;
   /** The EVENTS overlay is open (and owns j/k) — `e` toggles it. */
   eventsFocus: boolean;
   eventsScroll: number;
@@ -100,13 +97,43 @@ export function listWidth(prs: SnapshotPr[], cols: number, now: Date = new Date(
 }
 
 /**
+ * What the board answers to on this frame (the bar is state-derived,
+ * so a button is painted exactly when its key would do something).
+ *
+ * The verbs that act on the selected PR appear only while there IS one: with
+ * no snapshot, or an empty list, a `[u unwedge]` would be an action derived
+ * from no data — the second half of the honest-unknown rule. `g` also needs
+ * the repo slug the URL is built from. `e` toggles the events overlay
+ * regardless. Inline: `a` is ⏎'s printable twin and `F` clears a filter the
+ * PRS subtitle is advertising.
+ */
+export function boardKeys(view: Pick<BoardView, "snapshot" | "boardFilter" | "selected" | "repo">): LiveKeys {
+  const selected = visiblePrs(view)[view.selected] !== undefined;
+  const bar: BarButton[] = [];
+  if (selected) bar.push({ key: "\r", label: "⏎ pi pane" }, { key: "m", label: "m message" });
+  if (selected && view.repo) bar.push({ key: "g", label: "g github" });
+  bar.push({ key: "e", label: "e events" });
+  if (selected) bar.push({ key: "u", label: "u unwedge" });
+  const inline: string[] = [];
+  if (selected) inline.push("a");
+  if (view.boardFilter != null) inline.push("F");
+  return { bar, inline };
+}
+
+/** Rows the command bar takes on the board at this width — the one number
+ * `renderBoard` and the App's pi-viewport arithmetic must agree on. */
+export function boardBarHeight(view: Pick<BoardView, "snapshot" | "boardFilter" | "selected" | "repo">, cols: number): number {
+  return barHeight("board", cols, boardKeys(view).bar);
+}
+
+/**
  * The live pi mirror owns the bottom half of the board — the region that used
  * to sit empty under a short PR list (and, before that, under the EVENTS
  * strip). Two rows are chrome (divider + header), the rest is session tail.
  * Floors at 6 rows and never squeezes the list/detail body below 3.
  */
-export function piRows(rows: number): number {
-  const usable = rows - 4; // top bar + command bar (2 rows) + bottom border
+export function piRows(rows: number, barRows: number): number {
+  const usable = rows - 2 - barRows; // top bar + command bar + bottom border
   return Math.max(0, Math.min(Math.max(6, Math.floor(usable * 0.5)), usable - 3));
 }
 
@@ -120,17 +147,17 @@ export function piRows(rows: number): number {
  * rows are chrome (divider + header); of the width, two cells are the board's
  * borders and one is the leading space each mirror row is painted with.
  */
-export function piPaneSize(cols: number, rows: number): { cols: number; rows: number } | undefined {
-  const lines = piRows(rows) - 2;
+export function piPaneSize(cols: number, rows: number, barRows: number): { cols: number; rows: number } | undefined {
+  const lines = piRows(rows, barRows) - 2;
   const width = cols - 4;
   if (lines <= 0 || width <= 0) return undefined;
   return { cols: width, rows: lines };
 }
 
 /** Geometry of the floating EVENTS overlay: a centered band over the board,
- * bordered top and bottom, ~60% of the height. */
-export function eventsOverlayBand(rows: number): { top: number; height: number } {
-  const height = Math.max(5, Math.min(Math.floor(rows * 0.6), rows - 5)); // never under the 2-row bar
+ * bordered top and bottom, ~60% of the height, never under the bar. */
+export function eventsOverlayBand(rows: number, barRows: number): { top: number; height: number } {
+  const height = Math.max(5, Math.min(Math.floor(rows * 0.6), rows - 3 - barRows));
   return { top: Math.max(1, Math.floor((rows - height) / 2)), height };
 }
 
@@ -478,33 +505,44 @@ export function detailLines(
   return lines;
 }
 
+/**
+ * The `?` overlay. Pinned against docs/tui.md (tests/tui-surfaces.test.ts):
+ * every key named here is in some surface's vocabulary, and every surface
+ * the doc lists is named here. The bar shows what the CURRENT frame answers
+ * to; this is the whole map.
+ */
 export const HELP_LINES = [
-  "1/2/3/4/5     board / memory & learning / deploy / metrics / changes tab",
-  "               changes tab: every feedback-derived commit, newest first (they carry a Ratified-in-session: trailer)",
-  "               j/k select · R arms a revert of the selected one, y confirms (local commit only — never pushed)",
-  "               metrics tab: 7 / 0 / a switch the 7d / 30d / all window; # <pr> ⏎ opens a PR timeline (Esc back)",
-  "               deploy tab: click ▶ DEPLOY TO VM (or D D) to deploy · ■ STOP/▶ START VM APP (or S S) to power the container",
-  "s              reconnect VM ssh (the one ssh key-passphrase prompt, shared 4h)",
+  "1…7            the seven surfaces: board · memory · digest · tickets · deploy · metrics · feedback",
+  "               the bar at the foot shows what THIS frame answers to; a button that is not there is a key that would do nothing",
+  "r / s / ? / q  refresh · reconnect VM ssh (the one ssh key-passphrase prompt) · this overlay · quit (asks first)",
   "Ctrl-c ×3      kill the TUI from anywhere (terminal restored) — the un-stuck hatch",
   "               an alert in the top bar: click it or ⏎ to open the companion",
-  "the companion sidebar down the right edge is on every tab:",
+  "the companion column down the right edge is on every tab:",
   "               type any key no tab claims (or /) — it is a terminal, every byte reaches pi; Ctrl-q releases",
   "               wheel over the column (or PgUp/PgDn while focused) walks its scrollback · drag its left edge to resize",
   "               the column is always there at full width — nothing in the TUI collapses it or goes full-screen",
-  "on the board [1] only — these verbs act on the SELECTED PR, so off the board they do nothing:",
+  "[1] board — the verbs act on the SELECTED PR, so they exist only while one is selected, and only here:",
   "j/k ↓/↑        select PR (mouse: click a row; click again to focus its pi pane)",
-  "⏎ / a          focus the selected PR's pi pane (embedded, below the list; Ctrl-q back)",
-  "click the PI pane below the list — it is a live terminal, not a picture:",
-  "               everything you type goes to that pi session; Ctrl-q hands the keyboard back",
-  "               wheel over the pane scrolls its scrollback (End/live once you wheel back down)",
+  "⏎ / a          focus the selected PR's pi pane (embedded, below the list; Ctrl-q back) — it is a live terminal, not a picture",
   "g              open the PR on GitHub (PR numbers are Ctrl+clickable links)",
-  "w              toggle full-height detail",
-  "m              quick-message selected PR (m on the overseer/main rows too — the TUI never attaches to them; ask the companion)",
+  "m              quick-message the selected PR's session",
+  "u              unwedge: cancel the running round and re-queue it (nothing posted, no GitHub write)",
   "e              events overlay (j/k scroll, e/Esc close; click an event → its PR)",
-  "r              force refresh",
-  "[ / ]          older / newer day (memory & learning tab; v toggles digest/memory view)",
+  "F              clear the board filter the PRS title is advertising",
+  "[2] memory — the store, newest first, grouped by day:",
+  "j/k · [ / ]    select an entry · jump to the older / newer day",
+  "e / p / x / n  edit · pin or unpin · retire (x twice) · new #manual entry — painted beside the selected entry",
+  "W / F          open OpenViking Studio through the memory forward · clear the tag filter",
+  "[3] digest — the EOD sweep's document: j/k scroll · [ / ] older / newer day",
+  "[4] tickets — what adjudication filed on the tracker: j/k choose · [ / ] scroll the body · c actionable ⇄ all",
+  "[5] deploy — D D deploys (or click ▶ DEPLOY TO VM) · S S powers the VM app · x aborts a run / closes its log",
+  "[6] metrics — w / m / a switch the 7d / 30d / all window · # <pr> ⏎ opens a PR timeline (Esc back)",
+  "[7] feedback — the loop on one surface: signal → adjudication → proposal → change → revert",
+  "t              focus the next pane: inbox → proposed → changed",
+  "a              show / hide archived (acted-on) signals",
+  "A / x          accept / reject the focused rubric proposal (accept applies + auto-ratifies + commits locally)",
+  "R then y       arm and confirm a revert of the focused change — a local commit only, never pushed",
   "Ctrl-q         release a focused pi pane or the companion column back to the board",
-  "q              quit",
   "",
   "any key to close",
 ];
@@ -548,8 +586,8 @@ export function piBody(pr: number | undefined, pane: PiPaneView | undefined, wid
 // ---- events overlay ---------------------------------------------------------
 
 /** The demoted EVENTS strip: a floating, scrollable band over the board. */
-function renderEventsOverlay(frame: Frame, view: BoardView, cols: number, rows: number): void {
-  const { top, height } = eventsOverlayBand(rows);
+function renderEventsOverlay(frame: Frame, view: BoardView, cols: number, rows: number, barRows: number): void {
+  const { top, height } = eventsOverlayBand(rows, barRows);
   const visible = Math.max(0, height - 2);
   frame.set(top, rule(cols, "├", "┤", [sectionTitle("EVENTS"), `${MUTED}what the daemon just did${DRESET}`, `${MUTED}j/k scroll · e/Esc close${DRESET}`]));
   const slice = view.events.slice(view.eventsScroll, view.eventsScroll + visible);
@@ -573,8 +611,10 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
   frame.set(0, topBar(view, cols));
   const az = alertZone(view, cols);
   if (az) frame.zones.push({ x1: az.x1, y1: 1, x2: az.x2, y2: 1, action: { t: "companion" } satisfies BoardAction });
-  const pRows = piRows(rows);
-  const bodyRows = rows - 4 - pRows; // top bar + command bar (2 rows) + bottom border
+  const live = boardKeys(view);
+  const barRows = barHeight("board", cols, live.bar);
+  const pRows = piRows(rows, barRows);
+  const bodyRows = rows - 2 - barRows - pRows; // top bar + command bar + bottom border
   const sorted = visiblePrs(view);
   const listW = listWidth(sorted, cols, now);
   const detailW = cols - 2 - listW - 1;
@@ -588,19 +628,6 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
     });
     for (let r = 2 + HELP_LINES.length; r < rows - 1; r++) frame.boxRow(r, [{ text: "", width: cols - 2 }]);
     frame.set(rows - 1, rule(cols, "└", "┘", []));
-    return frame;
-  }
-
-  if (view.detailFull) {
-    const lines =
-      view.snapshot === undefined
-        ? unknownDetailLines(view.connection, cols - 4)
-        : detailLines(view.detail, selectedPr, cols - 4, now, view.progress?.pr === selectedPr?.number ? view.progress : undefined);
-    for (let r = 0; r < rows - 4; r++) {
-      frame.boxRow(1 + r, [{ text: ` ${lines[r] ?? ""}`, width: cols - 2 }]);
-    }
-    paintCmdBar(frame, "board", cols, rows);
-    frame.set(rows - 1, rule(cols, "└", "┘", ["w back"]));
     return frame;
   }
 
@@ -657,21 +684,20 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
     frame.boxRow(piTop + 1, [{ text: ` ${piHeader(panePr, view.pi, piFocused)}${view.noticeLine ? `   ${view.noticeLine}` : ""}`, width: cols - 2 }]);
     // Width comes from piPaneSize so the rectangle tmux is resized to and the
     // rectangle the capture is painted into cannot drift apart.
-    const body = piBody(panePr, view.pi, piPaneSize(cols, rows)?.cols ?? 0, piLines);
+    const body = piBody(panePr, view.pi, piPaneSize(cols, rows, barRows)?.cols ?? 0, piLines);
     for (let i = 0; i < piLines; i++) frame.boxRow(piTop + 2 + i, [{ text: ` ${body[i] ?? ""}`, width: cols - 2 }]);
     // Clicking anywhere in the region (divider, header or body) gives the pane
-    // the keyboard — it does NOT open the full-screen attach any more. The
-    // takeover is still there, on ⏎ / a from the PR list.
+    // the keyboard, in place — nothing on the board takes the whole terminal.
     if (panePr !== undefined) {
       frame.zones.push({ x1: 2, y1: piTop + 1, x2: cols - 1, y2: piTop + pRows, action: { t: "pi-focus" } satisfies BoardAction });
     }
   }
 
   // EVENTS: no longer a permanent strip — a floating overlay on `e`.
-  if (view.eventsFocus) renderEventsOverlay(frame, view, cols, rows);
+  if (view.eventsFocus) renderEventsOverlay(frame, view, cols, rows, barRows);
 
-  // The shared two-row command bar replaces the board's own hint row.
-  paintCmdBar(frame, "board", cols, rows);
+  // The shared command bar: exactly the verbs this frame answers to.
+  paintCmdBar(frame, "board", cols, rows, live.bar);
   frame.set(rows - 1, rule(cols, "└", "┘", []));
   return frame;
 }

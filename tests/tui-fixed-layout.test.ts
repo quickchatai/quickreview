@@ -16,7 +16,7 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { TUI_DEFAULTS } from "../src/config.js";
 import { App } from "../src/tui/app.js";
-import { TAB_COMMANDS, registeredKeys } from "../src/tui/cmdbar.js";
+import { TAB_VOCABULARY } from "../src/tui/cmdbar.js";
 import { decodeKey } from "../src/tui/keys.js";
 import { parseTarget } from "../src/tui/index.js";
 import { stripAnsi } from "../src/tui/paint.js";
@@ -68,13 +68,13 @@ describe("① no full-screen attach exists", () => {
     // `o` and `M` were the overseer / main-session attach verbs.
     expect(decodeKey(Buffer.from("o"))).toEqual({ kind: "char", ch: "o" });
     expect(decodeKey(Buffer.from("M"))).toEqual({ kind: "char", ch: "M" });
-    const boardBar = TAB_COMMANDS.board.map((b) => b.key);
+    const boardBar = TAB_VOCABULARY.board.map((b) => b.key);
     expect(boardBar).not.toContain("o");
     expect(boardBar).not.toContain("M");
     // Unregistered means the board hands them to the companion column — which
     // is where the owner wants overseer questions to go.
-    expect(registeredKeys("board").has("o")).toBe(false);
-    expect(registeredKeys("board").has("M")).toBe(false);
+    expect(app.registeredKeys().has("o")).toBe(false);
+    expect(app.registeredKeys().has("M")).toBe(false);
   });
 
   it("the deep-links that opened an attach are refused, and a PR deep-link is just a selection", () => {

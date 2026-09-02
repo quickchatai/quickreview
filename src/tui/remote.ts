@@ -158,8 +158,8 @@ export function sendKeysArgv(cfg: TuiConfig, session: string, parts: string[]): 
  * is shredded into separate words: `sh -c "cat '/x' || true"` reaches the
  * VM as `sh -c cat '/x' || true`, so sh runs bare `cat` against an empty
  * stdin and the `|| true` masks it — every dockerSh() read silently
- * returned nothing (the empty Memory & learning tab, and the digest tab's
- * reads before it). Quoting each element makes the remote shell rebuild
+ * returned nothing (an empty memory tab, and the digest tab's reads
+ * before it). Quoting each element makes the remote shell rebuild
  * the exact argv.
  */
 export function shellQuote(arg: string): string {

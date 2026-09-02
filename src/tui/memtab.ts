@@ -1,339 +1,125 @@
-// The Memory & learning tab — the renamed [2] tab. Two views:
+// `[2] memory` — the reviewer's durable store, and nothing else.
 //
-//   * digest view — the digest screen, full width
-//     retired the awaiting-you panel beside it, still paged by [ / ].
-//   * memory view (`v` toggles) — the full memory timeline newest-first on
-//     the left (pinned floated, the digest-selected day highlighted), the
-//     proposals + defects stack on the right.
+// The timeline on the left is newest first, pinned entries floated, grouped
+// by day so "what was learned when" reads at a glance; `[` / `]` jump between
+// days. The reading pane on the right shows the selected entry in full, the
+// verbs painted beside it — e edit · p pin/unpin · x retire (twice) — the
+// defect flags the auto-filer works from, and the memory forward's state with
+// the Studio link. Proposals, tickets and the feedback inbox that used to
+// share this tab have their own surfaces now (`[4] tickets`, `[7] feedback`).
 //
-// Management verbs (memory view): x retire (press twice), p pin/unpin,
-// e edit, n new #manual entry, t switch pane focus, A accept / R reject a
-// rubric proposal. Every memory mutation goes through the ONE MemoryStore
-// seam (src/memory/store.ts — addressing and optimistic concurrency are its
-// contract, and the engine behind it is none of this tab's business);
-// accept/reject follow src/tui/proposals.ts (accept = merge + auto-ratify —
-// the ratified decision).
+// Every memory mutation goes through the ONE MemoryStore seam
+// (src/memory/store.ts — addressing and optimistic concurrency are its
+// contract, and the engine behind it is none of this tab's business). A round
+// carries the memory it assembled when it STARTED, so an edit made here
+// reaches an in-flight round's context only at the next round.
 //
-// Real-time honesty (restated for OpenViking): a round carries the
-// memory it assembled when it STARTED, so an edit made here reaches an
-// in-flight round's context only at the next round; a semantic search sees it
-// once the server's index refresh lands (writes are durable immediately —
-// `wait: false` only defers searchability).
-//
-// The store behind the verbs is OpenViking on the VM, reached over the memory
-// forward's loopback listener, with BOTH user keys — so companion memory is
-// listed and editable here (`src/tui/memory.ts` carries the transport and the
-// namespacing). When it does not answer, the timeline is replaced by an
-// explicit failure banner: an empty list must never be mistaken for an empty
-// store.
+// When the store does not answer, the timeline is replaced by an explicit
+// failure banner: an empty list must never be mistaken for an empty store
+//.
 import type { App } from "./app.js";
-import { decodeKey, type BoardKey } from "./keys.js";
-import { hitTest, type Zone } from "./mouse.js";
-import type { IssueSink } from "./issuesink.js";
-import { paintCmdBar } from "./cmdbar.js";
-import { currentFile, renderDigestTab, SshDigestFetcher, type DigestAction, type DigestFetcher, type DigestState } from "./digesttab.js";
-import { applyMemoryFilter, memoryFilterLabel } from "./filters.js";
-import { parseEventTags } from "../memory/eventtags.js";
-import { defectEntries, refOf, storeHealth, timelineOrder, tuiMemoryStore, type MemoryEntry, type MemoryStore } from "./memory.js";
-import type { ForwardStatus } from "./memforward.js";
-import { isActionableTicket, type TrackerTicket } from "./trackertickets.js";
+import { barHeight, paintCmdBar, type BarButton, type LiveKeys } from "./cmdbar.js";
 import { ACCENT, HEADING, MUTED, RESET, STRONG, WARN, button, modeBadge, sectionTitle, selected as selectedLine } from "./design.js";
-import { Frame, displayWidth, rule, sanitizeText, stripAnsi, truncate, wrap } from "./paint.js";
-import {
-  acceptProposal,
-  improvementsArgv,
-  listRubricProposals,
-  parseImprovements,
-  readRubricFile,
-  removeRubricDir,
-  type AcceptDeps,
-  type ImprovementItem,
-  type RubricProposal,
-} from "./proposals.js";
+import { emptyLine } from "./emptystate.js";
+import { applyMemoryFilter, memoryFilterLabel } from "./filters.js";
+import type { BoardKey } from "./keys.js";
+import type { LearningStore } from "./learning.js";
+import type { ForwardStatus } from "./memforward.js";
+import { defectEntries, refOf, timelineOrder, type MemoryEntry } from "./memory.js";
+import { hitTest, type Zone } from "./mouse.js";
+import { Frame, rule, sanitizeText, truncate, wrap } from "./paint.js";
+import { paintSplit, splitWidths, windowStart, zonedRow, type RowChunk, type ZonedRow } from "./panes.js";
 
-export interface MemTabState {
-  view: "digest" | "memory";
-  digest: DigestState;
-  entries: MemoryEntry[];
-  memLoaded: boolean;
-  focus: "timeline" | "tickets" | "proposals";
+export interface MemoryTabState {
+  /** Ordinal into `memoryOrder(...)` — the filtered, day-grouped timeline. */
   sel: number;
-  propSel: number;
-  /** Read-only fleet tickets from the review-feedback-loop effort. */
-  tickets?: TrackerTicket[];
-  /** False until the tracker has actually been read once: the scan
-   * is a filesystem walk and runs behind the first frame, so an empty
-   * `tickets` before it is UNKNOWN, not "no tickets". */
-  ticketsLoaded?: boolean;
-  /** Run that scan. Called by the TUI's bring-up, never on the paint path. */
-  reloadTickets?: () => void;
-  /** Whether the last proposals load ran with `view.repo` known. `false` means
-   * the gh half was SKIPPED and is worth exactly one retry once it arrives. */
-  improvementsTriedWithRepo?: boolean;
-  ticketSel?: number;
-  ticketScroll?: number;
-  ticketShowClosed?: boolean;
-  scroll: number;
-  proposals: RubricProposal[];
-  /** `undefined` = the gh read was skipped or failed, NOT "no bot PRs"
-   *: the fetch needs `view.repo`, which is not always set. */
-  improvements: ImprovementItem[] | undefined;
-  propLoaded: boolean;
-  /** Two-keystroke retire confirmation: the entry key armed by the first x. */
-  confirmRetire?: string;
-  /** One-line status of the last verb (also mirrored to app.notice). */
-  status?: string;
-  /** Set when NO memory namespace answered — the tab paints an explicit
-   * failure banner instead of an empty timeline. An empty list and
-   * an unreachable store must never look alike. */
-  memError?: string;
-  /** Set when memory answered but partially: one of the two user trees is
-   * down, or entries were listed and not readable. */
-  memWarn?: string;
-  filedTotal: number;
+  /** The selected ENTRY's identity, so a reload that reorders the timeline
+   * re-binds to the same entry and a verb never lands on a neighbour. */
+  selKey?: string;
   /**: active timeline tag filter (companion `memory_filter` verb;
    * F clears). Render AND verbs derive ordering through it — one list. */
-  memFilter?: string | null;
-  /** The active feedback inbox hides acted-on episodes by default; `a`
-   * reveals their original signal rows without exposing disposition records. */
-  feedbackShowArchived?: boolean;
-  /**: where the memory forward stands. The tab paints it because the
-   * forward is the ONE reason an otherwise healthy store reads as
-   * unreachable — and because the Studio link is only live while it is up. */
-  forward?: ForwardStatus;
+  filter?: string | null;
+  /** Two-keystroke retire confirmation: the entry key armed by the first x. */
+  confirmRetire?: string;
 }
 
 export function entryKey(e: MemoryEntry): string {
   return `${e.ts}|${e.id}#${e.block}`;
 }
 
+/** THE timeline ordering — render and every verb share it, so x/p/e can
+ * never address an entry the filter hides. */
+export function memoryOrder(entries: MemoryEntry[], filter: string | null | undefined): MemoryEntry[] {
+  return applyMemoryFilter(timelineOrder(entries), filter);
+}
+
 /** The visible one-line form of a timeline entry. The text already leads
  * with its #tags — never re-print them as a prefix (they doubled before). */
-export function entryLine(e: MemoryEntry, width: number, highlightDay: string | undefined): string {
+export function entryLine(e: MemoryEntry, width: number): string {
   const text = sanitizeText(e.text).replace(/\s+/g, " ");
   const line = truncate(`${e.pinned ? "● " : "  "}${e.ts.slice(5, 16)} ${text}`, width);
-  const pinned = e.pinned ? line.replace("● ", `${ACCENT}●${RESET} `) : line;
-  if (highlightDay && e.day === highlightDay) return `${STRONG}${pinned}${RESET}`;
-  return pinned;
+  return e.pinned ? line.replace("● ", `${ACCENT}●${RESET} `) : line;
 }
 
-export type FeedbackStatus = "unprocessed" | "settled" | "needs-attention" | "acted-on";
+export type MemoryRow = { kind: "group"; label: string } | { kind: "entry"; entry: MemoryEntry; index: number };
 
-export interface FeedbackPresentation {
-  pr?: string;
-  episode: string;
-  /** Looked-at is independent of whether the episode reached a verdict. */
-  processed: boolean;
-  status: FeedbackStatus;
-  listTitle: string;
-  title: string;
-  summary: string;
-  raw: string;
-  learning: string;
+/**
+ * The timeline with its group headers: the floated pinned block first, then
+ * one group per day, newest first. `index` is the ordinal in the ordered list
+ * the selection and the verbs use — headers are chrome and take no ordinal.
+ */
+export function memoryRows(ordered: MemoryEntry[]): MemoryRow[] {
+  const rows: MemoryRow[] = [];
+  let group: string | undefined;
+  ordered.forEach((entry, index) => {
+    const label = entry.pinned ? "pinned" : entry.day;
+    if (label !== group) {
+      rows.push({ kind: "group", label });
+      group = label;
+    }
+    rows.push({ kind: "entry", entry, index });
+  });
+  return rows;
 }
 
-const hasTag = (e: MemoryEntry, tag: string): boolean => e.tags.some((t) => t.replace(/^#+/, "").toLowerCase() === tag);
-
-/** The #feedback filter is an inbox: disposition records describe processing
- * of a signal, but are not themselves another signal row. They still remain in
- * `all` so the selected card can prove its settled/needs-attention badge. */
-export function feedbackInbox(entries: MemoryEntry[], filter: string | null | undefined, showArchived = false): MemoryEntry[] {
-  const filtered = applyMemoryFilter(timelineOrder(entries), filter);
-  if ((filter ?? "").replace(/^#+/, "").toLowerCase() !== "feedback") return filtered;
-  return filtered.filter((e) => {
-    if (hasTag(e, "adjudication") || hasTag(e, "feedback-review") || hasTag(e, "feedback-action")) return false;
-    // An explicit action receipt is the archive transition: the original
-    // signal remains durable in memory, but leaves the active feedback inbox.
-    return showArchived || feedbackPresentation(e, entries)?.status !== "acted-on";
+/** First ordinal of each group, in timeline order — what `[` / `]` step over. */
+export function groupStarts(ordered: MemoryEntry[]): number[] {
+  return memoryRows(ordered).flatMap((r, i, all) => {
+    const next = all[i + 1];
+    return r.kind === "group" && next?.kind === "entry" ? [next.index] : [];
   });
 }
 
-function feedbackRaw(text: string): string {
-  const quoted = /\):\s*"([\s\S]*)"\s+—\s+/.exec(text);
-  if (quoted?.[1]) return quoted[1].trim();
-  return text.replace(/^(?:#[^\s]+\s+)*(?:[a-z][a-z0-9_-]*=[^\s]+\s+)*/, "").trim();
-}
-
-function feedbackEpisode(e: MemoryEntry, signal: string): string {
-  if (signal === "feedback_comment") {
-    const id = /\bcomment\s+(\d+)\)/.exec(e.text)?.[1];
-    if (id) return `comment-${id}`;
-  }
-  if (signal === "review_set_aside") {
-    const id = /\bbot review\s+(\d+)\b/.exec(e.text)?.[1];
-    if (id) return `review-${id}`;
-  }
-  return `${signal || "feedback"}-${e.day}`;
-}
-
-function dispositionFor(
-  all: MemoryEntry[],
-  pr: string | undefined,
-  episode: string,
-): { status: Exclude<FeedbackStatus, "unprocessed">; entry: MemoryEntry } | undefined {
-  if (!pr) return undefined;
-  const exact = (candidate: MemoryEntry): boolean => {
-    const tags = parseEventTags(candidate.text);
-    return tags["pr"] === pr && tags["episode"] === episode;
-  };
-  // An action receipt supersedes every intermediate disposition. A reached
-  // verdict supersedes an earlier needs-attention marker.
-  const action = all.find((candidate) => hasTag(candidate, "feedback-action") && exact(candidate));
-  if (action) return { status: "acted-on", entry: action };
-  const adjudication = all.find((candidate) => hasTag(candidate, "adjudication") && exact(candidate));
-  if (adjudication) return { status: "settled", entry: adjudication };
-  const reviewed = all.find((candidate) => hasTag(candidate, "feedback-review") && exact(candidate));
-  if (reviewed) return { status: "needs-attention", entry: reviewed };
-  return undefined;
-}
-
-/** A deterministic, inspectable presentation over the raw memory signal. It
- * does not adjudicate: unprocessed cards name a question to investigate, while
- * processed cards quote the attribution and Changed fields from the actual
- * #adjudication entry. */
-export function feedbackPresentation(e: MemoryEntry, all: MemoryEntry[]): FeedbackPresentation | undefined {
-  if (
-    !hasTag(e, "feedback") ||
-    hasTag(e, "adjudication") ||
-    hasTag(e, "feedback-review") ||
-    hasTag(e, "feedback-action")
-  )
-    return undefined;
-  const tags = parseEventTags(e.text);
-  const pr = tags["pr"] ?? /\bPR\s+#?(\d+)\b/i.exec(e.text)?.[1];
-  const signal = tags["signal"] ?? (e.text.includes("merged while") ? "merged_over_block" : "feedback");
-  const raw = feedbackRaw(e.text);
-  const lower = raw.toLowerCase();
-  const episode = feedbackEpisode(e, signal);
-  const disposition = dispositionFor(all, pr, episode);
-  const status: FeedbackStatus = disposition?.status ?? "unprocessed";
-  const actor = /human \[feedback\] by ([^\s]+) on PR/i.exec(e.text)?.[1];
-
-  let title: string;
-  let summary: string;
-  let learning: string;
-  if (signal === "review_set_aside") {
-    title = "Bot review was dismissed";
-    summary = `A bot review${pr ? ` on #${pr}` : ""} was set aside; GitHub may also auto-dismiss stale reviews, so this is a strong investigation prompt but not proof of a bad finding.`;
-    learning = "Check whether the dismissed review was stale, superseded, or disposable on its merits before changing reviewer behaviour.";
-  } else if (signal === "merged_over_block") {
-    title = "PR merged over a standing bot block";
-    summary = `The PR${pr ? ` #${pr}` : ""} merged while REQUEST_CHANGES stood. That is a low-weight disagreement signal because repository policy may allow advisory overrides.`;
-    learning = "Reconstruct the standing blockers and test each against the merged code; the merge alone does not refute them.";
-  } else if (signal === "trigger_withdrawn") {
-    title = "Review trigger was withdrawn";
-    summary = `The review trigger${pr ? ` on #${pr}` : ""} was removed before completion, which may indicate cost, delay, irrelevance, or an ordinary workflow change.`;
-    learning = "Inspect timing and work already produced before attributing this to review quality.";
-  } else if (lower.includes("prompt injection")) {
-    title = "Prompt-injection blocker disputed";
-    summary = `${actor ?? "A human reviewer"} says the prompt-injection finding${pr ? ` on #${pr}` : ""} should be ignored as a false positive.`;
-    learning = "Test the claimed execution boundary against the code and the standing injection bright line; do not infer safety merely from prior testing.";
-  } else if (/\brare\b|\bnarrow\b|\bunlikely\b|\bimprobabl/.test(lower)) {
-    title = "Narrow edge case judged non-actionable";
-    summary = `${actor ?? "A human reviewer"} says the finding${pr ? ` on #${pr}` : ""} concerns a production path too rare or narrow to belong in this feature PR.`;
-    learning = "Re-derive reachability and impact separately: the bug may be real while its severity or delivery is wrong.";
-  } else if (lower.includes("small impact")) {
-    title = "Low-impact finding judged non-actionable";
-    summary = `${actor ?? "A human reviewer"} says the finding${pr ? ` on #${pr}` : ""} has too little impact to justify action.`;
-    learning = "Check whether the evidence supports a present defect, then whether its delivery exceeded the practical maintenance bar.";
-  } else {
-    title = "Human disputes a review finding";
-    summary = `${actor ?? "A human reviewer"} challenged a finding${pr ? ` on #${pr}` : ""}; the complaint still needs contact with the review evidence and code.`;
-    learning = "Compare the human claim, the posted finding, and the reviewed code before assigning fault or changing the rubric.";
-  }
-
-  if (status === "settled" && disposition) {
-    const attribution = /^Attribution:\s*(.+)$/im.exec(disposition.entry.text)?.[1]?.trim() ?? "recorded in adjudication";
-    const changed = /^Changed:\s*(.+)$/im.exec(disposition.entry.text)?.[1]?.trim() ?? "see adjudication";
-    learning = `Adjudicated as ${attribution}. Changed: ${changed}.`;
-  } else if (status === "needs-attention" && disposition) {
-    const reason = /^Reason:\s*(.+)$/im.exec(disposition.entry.text)?.[1]?.trim() ?? "The review was inconclusive and needs the owner.";
-    learning = `Reviewed; needs attention. ${reason}`;
-  } else if (status === "acted-on" && disposition) {
-    const result = /^Result:\s*(.+)$/im.exec(disposition.entry.text)?.[1]?.trim() ?? "The resulting action is recorded in memory.";
-    learning = `Acted on. ${result}`;
-  }
-
-  return {
-    pr,
-    episode,
-    processed: status !== "unprocessed",
-    status,
-    listTitle: `${pr ? `#${pr} · ` : ""}${title}`,
-    title,
-    summary,
-    raw,
-    learning,
-  };
-}
-
-export function feedbackEntryLine(e: MemoryEntry, presentation: FeedbackPresentation, width: number, highlightDay: string | undefined): string {
-  const marker = presentation.status === "settled" ? "✓" : presentation.status === "needs-attention" ? "!" : presentation.status === "acted-on" ? "◆" : "○";
-  const line = truncate(`  ${e.day} ${marker} ${presentation.listTitle}`, width);
-  return highlightDay && e.day === highlightDay ? `${STRONG}${line}${RESET}` : line;
-}
-
-/** Every click target on the Memory & learning tab's memory view. */
-export type MemAction =
-  | { t: "key"; key: string }
-  | { t: "mem"; i: number }
-  | { t: "prop"; i: number }
-  | { t: "ticket"; i: number }
-  | { t: "prop-accept"; i: number }
-  | { t: "prop-reject"; i: number }
-  | { t: "url"; url: string };
-
-export interface RowChunk {
-  text: string;
-  action?: MemAction;
-  dim?: boolean;
-}
-
-interface ZonedRow {
-  text: string;
-  zones: Array<{ x1: number; x2: number; action: MemAction }>;
-}
-
-/** Assemble one row from chunks, tracking each clickable chunk's x-range
- * relative to the row start (styling excluded from the measure). */
-function zonedRow(chunks: RowChunk[], gap = "  "): ZonedRow {
-  let text = "";
-  let plainW = 0;
-  const zones: ZonedRow["zones"] = [];
-  for (const c of chunks) {
-    if (text.length > 0) {
-      text += gap;
-      plainW += gap.length;
-    }
-    const w = displayWidth(stripAnsi(c.text));
-    if (c.action) zones.push({ x1: plainW, x2: plainW + w - 1, action: c.action });
-    text += c.dim ? `${MUTED}${c.text}${RESET}` : c.text;
-    plainW += w;
-  }
-  return { text, zones };
+/** The ordinal `[` (older, +1) or `]` (newer, −1) would move to, if any. */
+export function dayJump(ordered: MemoryEntry[], sel: number, dir: 1 | -1): number | undefined {
+  const starts = groupStarts(ordered);
+  const here = starts.filter((s) => s <= sel).length - 1;
+  return starts[here + dir];
 }
 
 /** Pinned-region budget: only the first ~1,991 chars / 75 lines of
- * MEMORY.md survive injection truncation — warn when pins outgrow it. */
+ * the injection head survive truncation — warn when pins outgrow it. */
 export function pinnedBudget(entries: MemoryEntry[]): { chars: number; over: boolean } {
   const chars = entries.filter((e) => e.pinned).reduce((n, e) => n + e.text.length + 2, 0);
   return { chars, over: chars > 1900 };
 }
 
+/** Every click target on the memory tab. */
+export type MemAction = { t: "key"; key: string } | { t: "mem"; i: number } | { t: "url"; url: string };
+
 /**
  * The two forward rows: state, then the Studio link (clickable) or the reason
- * there is nothing to click. Exported so the render test can read them without
- * reconstructing a whole frame.
+ * there is nothing to click.
  *
  * The link is only offered when the forward is UP. Handing the operator a URL
  * that cannot connect — and a browser tab that fails — is worse than saying
  * plainly that the forward is down and how to bring it back.
  */
-export function forwardRows(fwd: ForwardStatus | undefined, width: number): RowChunk[][] {
+export function forwardRows(fwd: ForwardStatus | undefined, width: number): Array<Array<RowChunk<MemAction>>> {
   if (!fwd) return [[{ text: `${sectionTitle("MEMORY STORE")} ${MUTED}forward: starting…${RESET}` }], [{ text: "" }]];
   const dot = fwd.state === "failed" ? `${WARN}✖${RESET}` : fwd.state === "off" ? `${MUTED}○${RESET}` : `${ACCENT}●${RESET}`;
-  const head: RowChunk[] = [{ text: `${sectionTitle("MEMORY STORE")} ${dot} ${fwd.state}` }, { text: truncate(fwd.detail, Math.max(10, width - 26)), dim: true }];
-  const link: RowChunk[] = fwd.state === "adopted" || fwd.state === "owned"
+  const head: Array<RowChunk<MemAction>> = [{ text: `${sectionTitle("MEMORY STORE")} ${dot} ${fwd.state}` }, { text: truncate(fwd.detail, Math.max(10, width - 26)), dim: true }];
+  const link: Array<RowChunk<MemAction>> = fwd.state === "adopted" || fwd.state === "owned"
     ? [
         { text: button("W studio"), action: { t: "url", url: fwd.studioUrl } },
         { text: truncate(fwd.studioUrl, Math.max(10, width - 16)), action: { t: "url", url: fwd.studioUrl }, dim: true },
@@ -342,757 +128,264 @@ export function forwardRows(fwd: ForwardStatus | undefined, width: number): RowC
   return [head, link];
 }
 
-export function renderMemoryView(
-  st: MemTabState,
-  dryRun: boolean | undefined,
-  highlightDay: string | undefined,
-  cols: number,
-  rows: number,
-  repo?: string,
-): Frame {
+/** What the memory tab answers to on this frame. */
+export function memoryKeys(store: LearningStore, st: MemoryTabState): LiveKeys {
+  const ordered = memoryOrder(store.entries, st.filter);
+  const bar: BarButton[] = [];
+  if (dayJump(ordered, st.sel, 1) !== undefined) bar.push({ key: "[", label: "[ older day" });
+  if (dayJump(ordered, st.sel, -1) !== undefined) bar.push({ key: "]", label: "] newer day" });
+  // `n` opens a prompt whatever the store's state (a dead store refuses the
+  // write and says so); `W` opens Studio or explains why it cannot.
+  bar.push({ key: "n", label: "n new" }, { key: "W", label: "W studio" });
+  const inline: string[] = [];
+  if (ordered[st.sel] !== undefined) inline.push("e", "p", "x");
+  if (st.filter != null && st.filter !== "") inline.push("F");
+  return { bar, inline };
+}
+
+export function renderMemoryTab(store: LearningStore, st: MemoryTabState, dryRun: boolean | undefined, cols: number, rows: number): Frame {
   const frame = new Frame(cols, rows);
+  const ordered = memoryOrder(store.entries, st.filter);
+  const selected = ordered[st.sel];
   frame.set(
     0,
     rule(cols, "┌", "┐", [
       `${HEADING}quickreview${RESET}`,
       modeBadge(dryRun),
-      `memory & learning${highlightDay ? ` · ${highlightDay}` : ""}`,
+      `memory${selected ? ` · ${selected.day}` : ""}`,
       // The banner lives in the list, but the title bar must carry it too:
       // the tab is often read at a glance from another pane.
-      ...(st.memError ? [`${WARN}${STRONG}✖ MEMORY UNREACHABLE${RESET}`] : st.memWarn ? [`${WARN}⚠ memory degraded${RESET}`] : []),
+      ...(store.memError ? [`${WARN}${STRONG}✖ MEMORY UNREACHABLE${RESET}`] : store.memWarn ? [`${WARN}⚠ memory degraded${RESET}`] : []),
     ]),
   );
-  // List left (38%), reading pane right: the full selected entry WRAPPED —
-  // the one-line list is for picking, never the only way to read a lesson.
-  const leftW = Math.floor((cols - 3) * 0.38);
-  const rightW = cols - 4 - leftW; // │ + (leftW+1) + │ + rightW + │ = cols
-  const bodyRows = rows - 4; // top bar + command bar (2 rows) + bottom border
+  const live = memoryKeys(store, st);
+  const bodyRows = rows - 2 - barHeight("memory", cols, live.bar);
+  const { leftW, rightW } = splitWidths(cols);
 
-  const ordered = feedbackInbox(st.entries, st.memFilter, st.feedbackShowArchived);
-  const feedbackFiltered = (st.memFilter ?? "").replace(/^#+/, "").toLowerCase() === "feedback";
   const left: string[] = [];
   const leftActions: Array<MemAction | undefined> = [];
-  if (!st.memLoaded) left.push(`${MUTED}loading memory…${RESET}`);
-  else if (st.memError) {
+  const filterOn = st.filter != null && st.filter !== "";
+  if (!store.memLoaded) left.push(emptyLine({ kind: "unread", how: "reading the store" }));
+  else if (store.memError) {
     // THE point of this branch: a store we cannot reach must not render as a
     // store with nothing in it. Banner, reason, and the retry key — never a
     // bare "none yet".
     left.push(`${WARN}${STRONG}✖ MEMORY UNREACHABLE${RESET}`);
     left.push("");
-    for (const l of wrap(sanitizeText(st.memError), leftW - 3)) left.push(`${WARN}${l}${RESET}`);
+    for (const l of wrap(sanitizeText(store.memError), leftW - 3)) left.push(`${WARN}${l}${RESET}`);
     left.push("");
     left.push(`${MUTED}nothing below is memory — the store did not answer.${RESET}`);
     left.push(`${MUTED}r retries; verbs will refuse until it is back.${RESET}`);
-  } else if (ordered.length === 0) {
-    left.push(`${MUTED}${feedbackFiltered && !st.feedbackShowArchived ? "none active — a shows archived" : "none yet — memory holds no entries"}${RESET}`);
   } else {
     const budget = pinnedBudget(ordered);
     const budgetNote = budget.over ? ` ${WARN}⚠ pinned ${budget.chars}ch${RESET}` : "";
-    const fl = memoryFilterLabel(st.memFilter);
-    const archiveNote = feedbackFiltered ? ` ${MUTED}[a ${st.feedbackShowArchived ? "hide archived" : "show archived"}]${RESET}` : "";
-    left.push(`${sectionTitle(`MEMORY (${ordered.length})`)}${budgetNote}${fl !== "" ? ` ${fl}` : ""}${archiveNote}`);
+    const fl = memoryFilterLabel(st.filter);
+    left.push(`${sectionTitle(`MEMORY (${ordered.length})`)}${budgetNote}${fl !== "" ? ` ${fl}` : ""}`);
     leftActions.push(undefined);
-    if (st.memWarn) {
-      left.push(`${WARN}⚠ ${truncate(sanitizeText(st.memWarn), leftW - 5)}${RESET}`);
+    if (store.memWarn) {
+      left.push(`${WARN}⚠ ${truncate(sanitizeText(store.memWarn), leftW - 5)}${RESET}`);
       leftActions.push(undefined);
     }
-    // The window follows the selection — verbs act on the inverse row, so it
-    // must never sit off-screen.
-    const visible = Math.max(1, bodyRows - left.length);
-    const start = Math.max(0, Math.min(st.sel - (visible - 1), ordered.length - visible));
-    ordered.slice(Math.max(0, start), Math.max(0, start) + visible).forEach((e, i) => {
-      const abs = Math.max(0, start) + i;
-      const feedback = feedbackPresentation(e, st.entries);
-      const line = feedback ? feedbackEntryLine(e, feedback, leftW - 3, highlightDay) : entryLine(e, leftW - 3, highlightDay);
-      const selected = st.focus === "timeline" && abs === st.sel;
-      left.push(selected ? selectedLine(line) : line);
-      leftActions.push({ t: "mem", i: abs });
-    });
+    if (ordered.length === 0) {
+      left.push(filterOn ? emptyLine({ kind: "filtered", what: `F clears #${st.filter}` }) : emptyLine({ kind: "none", what: "memory holds no entries" }));
+      leftActions.push(undefined);
+    } else {
+      const all = memoryRows(ordered);
+      const selRow = all.findIndex((r) => r.kind === "entry" && r.index === st.sel);
+      const visible = Math.max(1, bodyRows - left.length);
+      const start = windowStart(Math.max(0, selRow), all.length, visible);
+      for (const row of all.slice(start, start + visible)) {
+        if (row.kind === "group") {
+          const label = ` ${row.label} `;
+          left.push(`${MUTED}──${label}${"─".repeat(Math.max(0, leftW - 5 - label.length))}${RESET}`);
+          leftActions.push(undefined);
+          continue;
+        }
+        const line = entryLine(row.entry, leftW - 3);
+        left.push(row.index === st.sel ? selectedLine(line) : line);
+        leftActions.push({ t: "mem", i: row.index });
+      }
+    }
   }
 
-  const right: ZonedRow[] = [];
-  const row = (chunks: RowChunk[], gap?: string): void => {
+  const right: Array<ZonedRow<MemAction>> = [];
+  const row = (chunks: Array<RowChunk<MemAction>>, gap?: string): void => {
     right.push(zonedRow(chunks, gap));
   };
-  const selected = ordered[st.sel];
-  const allTickets = st.tickets ?? [];
-  const tickets = st.ticketShowClosed ? allTickets : allTickets.filter(isActionableTicket);
-  const ticketSel = Math.min(st.ticketSel ?? 0, Math.max(0, tickets.length - 1));
-  const selectedTicket = tickets[ticketSel];
-
-  if (st.focus === "tickets") {
-    const read = st.ticketsLoaded === true;
-    const actionable = allTickets.filter(isActionableTicket).length;
+  if (selected) {
+    row([{ text: `${sectionTitle("ENTRY")} ${selected.ts} ${MUTED}[${selected.id}]${RESET}${selected.pinned ? ` ${ACCENT}●${RESET}pinned` : ""}` }]);
     row([
-      { text: sectionTitle(read ? `FEEDBACK TICKETS (${actionable} actionable / ${allTickets.length} total)` : "FEEDBACK TICKETS (?)") },
-      { text: button(st.ticketShowClosed ? "c actionable" : "c show all"), action: { t: "key", key: "c" } },
-      { text: button("t next pane"), action: { t: "key", key: "t" } },
+      { text: button("e edit"), action: { t: "key", key: "e" } },
+      { text: button(selected.pinned ? "p unpin" : "p pin"), action: { t: "key", key: "p" } },
+      { text: st.confirmRetire === entryKey(selected) ? `${WARN}${STRONG}[x CONFIRM retire]${RESET}` : button("x retire"), action: { t: "key", key: "x" } },
     ]);
-    if (tickets.length === 0) {
-      // "not read yet" and "none" are different facts. The tracker
-      // scan is a filesystem walk and therefore runs AFTER the first frame, so
-      // the empty list must say which of the two it is.
-      row([{ text: st.ticketsLoaded === true ? "none — adjudication files a ticket only when something changes" : "reading the tracker…", dim: true }]);
-    }
-    const ticketStart = Math.max(0, Math.min(ticketSel - 5, Math.max(0, tickets.length - 6)));
-    for (const [offset, ticket] of tickets.slice(ticketStart, ticketStart + 6).entries()) {
-      const i = ticketStart + offset;
-      const label = truncate(`${ticket.id} [${ticket.status}] ${ticket.title}`, rightW - 3);
-      row([{ text: i === ticketSel ? selectedLine(label) : label, action: { t: "ticket", i } }]);
-    }
-    if (selectedTicket) {
-      row([{ text: "" }]);
-      row([{ text: `${sectionTitle(selectedTicket.id)} ${STRONG}${truncate(selectedTicket.title, rightW - selectedTicket.id.length - 7)}${RESET}` }]);
-      row([{ text: `${selectedTicket.status} · role ${selectedTicket.role} · updated ${selectedTicket.updated}`, dim: true }]);
-      row([{ text: `${MUTED}[ / ] scroll ticket · j/k choose ticket · t changes pane${RESET}` }]);
-      const ticketLines = wrap(sanitizeText(selectedTicket.body), rightW - 3);
-      const cap = Math.max(4, bodyRows - right.length - 1);
-      const start = Math.max(0, Math.min(st.ticketScroll ?? 0, Math.max(0, ticketLines.length - cap)));
-      for (const line of ticketLines.slice(start, start + cap)) row([{ text: line }]);
-      if (start + cap < ticketLines.length) row([{ text: `… ${ticketLines.length - start - cap} more lines`, dim: true }]);
-    }
-  } else {
-    if (selected) {
-      row([
-        { text: `${sectionTitle("ENTRY")} ${selected.ts} ${MUTED}[${selected.id}]${RESET}${selected.pinned ? ` ${ACCENT}●${RESET}pinned` : ""}` },
-      ]);
-      row([
-        { text: button("e edit"), action: { t: "key", key: "e" } },
-        { text: button(selected.pinned ? "p unpin" : "p pin"), action: { t: "key", key: "p" } },
-        { text: st.confirmRetire === entryKey(selected) ? `${WARN}${STRONG}[x CONFIRM retire]${RESET}` : button("x retire"), action: { t: "key", key: "x" } },
-        { text: button("n new"), action: { t: "key", key: "n" } },
-        { text: button("r refresh"), action: { t: "key", key: "r" } },
-      ]);
-      // Reserve the foot plus the feedback-ticket invitation; this keeps the
-      // actionable queue visible instead of letting a long raw entry bury it.
-      const detailCap = Math.max(5, bodyRows - 18 - st.proposals.length * 2 - Math.min(4, st.improvements?.length ?? 0));
-      const feedback = feedbackPresentation(selected, st.entries);
-      const feedbackState =
-        feedback?.status === "settled"
-          ? "✓ PROCESSED · SETTLED"
-          : feedback?.status === "needs-attention"
-            ? "! PROCESSED · NEEDS ATTENTION"
-            : feedback?.status === "acted-on"
-              ? "◆ ACTED ON · ARCHIVED"
-              : "○ UNPROCESSED — needs review";
-      const detailText = feedback
-        ? [
-            `${feedbackState}  episode=${feedback.episode}`,
-            "",
-            `TITLE\n${feedback.title}`,
-            "",
-            `SUMMARY\n${feedback.summary}`,
-            "",
-            `RAW FEEDBACK\n${feedback.raw}`,
-            "",
-            `WHAT WE CAN LEARN\n${feedback.learning}`,
-          ].join("\n")
-        : selected.text;
-      const wrapped = wrap(sanitizeText(detailText), rightW - 3);
-      for (const l of wrapped.slice(0, detailCap)) row([{ text: l }]);
-      if (wrapped.length > detailCap) row([{ text: `… ${wrapped.length - detailCap} more lines`, dim: true }]);
-    }
+    // Leave room for the defect flags and the store rows below; a long entry
+    // must not bury the panel that says whether memory is reachable.
+    const detailCap = Math.max(5, bodyRows - 14);
+    const wrapped = wrap(sanitizeText(selected.text), rightW - 3);
+    for (const l of wrapped.slice(0, detailCap)) row([{ text: l }]);
+    if (wrapped.length > detailCap) row([{ text: `… ${wrapped.length - detailCap} more lines`, dim: true }]);
     row([{ text: "" }]);
-    // Same rule as the focused pane below: the tracker scan runs
-    // BEHIND the first frame, so an empty list before it has run is UNKNOWN.
-    // `(0)` inside that window is a count of something nobody has read.
-    const ticketsRead = st.ticketsLoaded === true;
-    const actionable = allTickets.filter(isActionableTicket).length;
-    row([
-      { text: sectionTitle(`FEEDBACK TICKETS (${ticketsRead ? actionable : "?"})`) },
-      { text: button("t inspect"), action: { t: "key", key: "t" } },
-    ]);
-    if (!ticketsRead) row([{ text: "reading the tracker…", dim: true }]);
-    else if (actionable === 0) row([{ text: "none actionable — changed adjudications file here", dim: true }]);
-    for (const [i, ticket] of allTickets.filter(isActionableTicket).slice(0, 3).entries()) {
-      row([{ text: truncate(`${ticket.id} [${ticket.status}] ${ticket.title}`, rightW - 3), action: { t: "ticket", i } }]);
-    }
+  }
+  const defects = store.memLoaded && !store.memError ? defectEntries(store.entries) : undefined;
+  row([{ text: `${sectionTitle(`DEFECT FLAGS ${defects === undefined ? "(—)" : `(${defects.length})`}`)}${store.filedTotal > 0 ? ` ${MUTED}${store.filedTotal} auto-filed${RESET}` : ""}` }]);
+  if (defects === undefined) row([{ text: emptyLine({ kind: "unread", how: "the store has not answered" }) }]);
+  else if (defects.length === 0) row([{ text: emptyLine({ kind: "none", what: "#bug entries are auto-filed to the tracker" }) }]);
+  for (const d of (defects ?? []).slice(0, 5)) {
+    const i = ordered.findIndex((e) => entryKey(e) === entryKey(d));
+    row([{ text: truncate(`⚑ ${d.ts.slice(5, 10)} ${d.links[0] ?? d.text.slice(0, 30)}`, rightW - 2), action: i >= 0 ? { t: "mem", i } : undefined }]);
+  }
+  row([{ text: "" }]);
+  for (const chunks of forwardRows(store.forward, rightW)) row(chunks);
+  if (store.status) {
     row([{ text: "" }]);
-    row([{ text: sectionTitle(`RUBRIC PROPOSALS (${st.proposals.length})`) }]);
-    if (!st.propLoaded) row([{ text: "loading…", dim: true }]);
-    else if (st.proposals.length === 0) row([{ text: "none yet — the companion authors proposals into state/rubric/", dim: true }]);
-    st.proposals.forEach((p, i) => {
-      const isSel = st.focus === "proposals" && i === st.propSel;
-      row([
-        { text: isSel ? selectedLine(`▸ ${truncate(p.slug, rightW - 26)}`) : `▸ ${truncate(p.slug, rightW - 26)}`, action: { t: "prop", i } },
-        { text: button("accept"), action: { t: "prop-accept", i } },
-        { text: button("reject"), action: { t: "prop-reject", i } },
-      ]);
-      if (p.head[0]) row([{ text: truncate(`  ${p.head[0]}`, rightW - 2), dim: true }]);
-    });
-    row([{ text: "" }]);
-    row([{ text: sectionTitle("BOT PRs / ISSUES") }]);
-    if (st.improvements === undefined) row([{ text: "not read — the gh query was skipped or failed · r retries", dim: true }]);
-    else if (st.improvements.length === 0) row([{ text: "none yet — the overseer files them", dim: true }]);
-    for (const it of (st.improvements ?? []).slice(0, 6)) {
-      const url = repo ? `https://github.com/${repo}/${it.kind === "pr" ? "pull" : "issues"}/${it.number}` : undefined;
-      row([
-        {
-          text: truncate(`${it.kind === "pr" ? "PR" : "IS"} #${it.number} [${it.state}] ${it.title}`, rightW - 2),
-          action: url ? { t: "url", url } : undefined,
-        },
-      ]);
-    }
-    row([{ text: "" }]);
-    const defects = defectEntries(st.entries);
-    row([{ text: `${sectionTitle(`DEFECT FLAGS (${defects.length})`)}${st.filedTotal > 0 ? ` ${MUTED}${st.filedTotal} auto-filed${RESET}` : ""}` }]);
-    for (const d of defects.slice(0, 5)) {
-      const i = ordered.findIndex((e) => entryKey(e) === entryKey(d));
-      row([{ text: truncate(`⚑ ${d.ts.slice(5, 10)} ${d.links[0] ?? d.text.slice(0, 30)}`, rightW - 2), action: i >= 0 ? { t: "mem", i } : undefined }]);
-    }
-    row([{ text: "" }]);
-    for (const chunks of forwardRows(st.forward, rightW)) row(chunks);
-    if (st.status) {
-      row([{ text: "" }]);
-      row([{ text: truncate(st.status, rightW - 2) }]);
-    }
+    row([{ text: truncate(store.status, rightW - 2) }]);
   }
 
-  const rightX0 = leftW + 4; // │ + left cell (leftW+1) + │ + leading space
-  for (let r = 0; r < bodyRows; r++) {
-    const rr = right[r];
-    frame.boxRow(1 + r, [
-      { text: ` ${left[r] ?? ""}`, width: leftW + 1 },
-      { text: ` ${rr?.text ?? ""}`, width: rightW },
-    ]);
-    const la = leftActions[r];
-    if (la) frame.zones.push({ x1: 2, y1: r + 2, x2: leftW + 1, y2: r + 2, action: la });
-    if (rr) for (const z of rr.zones) frame.zones.push({ x1: rightX0 + z.x1, y1: r + 2, x2: rightX0 + z.x2, y2: r + 2, action: z.action });
-  }
-  paintCmdBar(frame, "digest", cols, rows);
+  paintSplit(frame, { left, leftActions, right, leftW, rightW, top: 1, bodyRows });
+  paintCmdBar(frame, "memory", cols, rows, live.bar);
   frame.set(rows - 1, rule(cols, "└", "┘", []));
   return frame;
 }
 
-export interface MemTabDeps {
-  memory?: MemoryStore;
-  digestFetcher?: DigestFetcher;
-  /** Fetch rubric slugs + heads and gh improvements; injectable for tests. */
-  fetchProposals?: (app: App) => Promise<{ proposals: RubricProposal[]; improvements: ImprovementItem[] | undefined }>;
-  accept?: (app: App, slug: string) => Promise<{ ok: boolean; message: string }>;
-  reject?: (app: App, slug: string, reason: string) => Promise<{ ok: boolean; message: string }>;
-  /**: the configured issue sink the defect auto-filer writes through
-   * (wayfinder tracker, gated github command channel, or none). Absent ⇒
-   * auto-filing is off, exactly like kind "none". */
-  sink?: IssueSink;
-  /** Read-only tracker-ticket projection for the configured effort (:
-   * the effort is config, not a literal — index.ts wires this from
-   * `ticketProjection`); injected in tests so no fixture tree is required. */
-  readTickets?: () => TrackerTicket[];
-  gitRun?: AcceptDeps["git"]["run"];
-  /** The canonical repo root the accept path applies/ratifies/commits in —
-   * NOT process.cwd(): `qcr` runs from anywhere. */
-  repoRoot?: string;
-  /**: the TUI-owned memory forward. Structural on purpose — tests
-   * hand in a stub and never spawn ssh. Absent = the tab paints "starting…"
-   * and offers no Studio link, which is the honest state for a TUI that was
-   * built without one. */
-  forward?: { view(): ForwardStatus; ensure(): Promise<ForwardStatus> };
-  now?: () => Date;
-}
-
-export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): MemTabState {
-  const memory = deps.memory ?? tuiMemoryStore();
-  const digestFetcher = deps.digestFetcher ?? new SshDigestFetcher(app.cfg, app.ssh);
-  const now = deps.now ?? (() => new Date());
-  const st: MemTabState = {
-    view: "digest",
-    digest: { files: [], back: 0, scroll: 0, loaded: false },
-    entries: [],
-    memLoaded: false,
-    focus: "timeline",
-    sel: 0,
-    propSel: 0,
-    scroll: 0,
-    proposals: [],
-    improvements: undefined,
-    propLoaded: false,
-    tickets: [],
-    ticketSel: 0,
-    ticketScroll: 0,
-    ticketShowClosed: false,
-    filedTotal: 0,
-    ...(deps.forward ? { forward: deps.forward.view() } : {}),
+/** Install the memory surface over the shared learning store. */
+export function installMemoryTab(app: App, store: LearningStore): MemoryTabState {
+  const st: MemoryTabState = { sel: 0 };
+  const ordered = (): MemoryEntry[] => memoryOrder(store.entries, st.filter);
+  const select = (i: number): void => {
+    const list = ordered();
+    st.sel = Math.max(0, Math.min(i, Math.max(0, list.length - 1)));
+    st.selKey = list[st.sel] ? entryKey(list[st.sel]!) : undefined;
   };
+  // Re-bind the selection to the same ENTRY, not the same ordinal — a
+  // refresh that reorders the timeline must not silently redirect the next
+  // verb keystroke to a different entry.
+  store.onLoaded((part) => {
+    if (part !== "memory") return;
+    const list = ordered();
+    const rebound = st.selKey ? list.findIndex((e) => entryKey(e) === st.selKey) : -1;
+    select(rebound >= 0 ? rebound : st.sel);
+  });
 
-  /** THE timeline ordering — render (renderMemoryView computes the same
-   * expression from st) and every verb below share it, so x/p/e can never
-   * address an entry the filter hides. */
-  const orderedNow = (): MemoryEntry[] => feedbackInbox(st.entries, st.memFilter, st.feedbackShowArchived);
+  /** The last painted frame's click zones — hitTest target for clicks. */
+  let lastZones: Zone<MemAction>[] = [];
 
-  const loadTickets = (): void => {
-    // A FAILED read is not an empty tracker. Latching `loaded` here
-    // turned an unreadable tracker into a confident
-    // "FEEDBACK TICKETS (0 actionable / 0 total) · none" that never retried —
-    // the honest-unknown rule applied one layer up and missed inside the loader
-    // it was written for.
-    try {
-      st.tickets = deps.readTickets?.() ?? [];
-      st.ticketsLoaded = true;
-    } catch {
-      st.tickets = [];
-      st.ticketsLoaded = false;
-      app.notice("✖ the tracker could not be read — the ticket panes stay unknown (r retries)");
-    }
-    const visible = st.ticketShowClosed ? st.tickets : st.tickets.filter(isActionableTicket);
-    st.ticketSel = Math.min(st.ticketSel ?? 0, Math.max(0, visible.length - 1));
-    st.ticketScroll = 0;
-  };
-  // NOT called here: reading the tracker is a filesystem walk, and
-  // nothing external may run before the first frame is painted. The TUI's
-  // bring-up calls `reloadTickets` behind that frame; a harness that wants the
-  // old eager behaviour calls it itself.
-  st.ticketsLoaded = false;
-  st.reloadTickets = loadTickets;
-
-  const loadDigest = async (): Promise<void> => {
-    st.digest.files = await digestFetcher.list();
-    st.digest.loaded = true;
-    const file = currentFile(st.digest);
-    st.digest.content = file ? await digestFetcher.read(file) : undefined;
-    app.repaint();
-  };
-
-  const loadMemory = async (): Promise<void> => {
-    const prevKey = orderedNow()[st.sel] ? entryKey(orderedNow()[st.sel]!) : undefined;
-    const wasError = st.memError;
-    st.entries = await memory.read();
-    st.memLoaded = true;
-    // Reachability is a property of the READ, not of the result: an empty
-    // array from a dead store and an empty array from an empty store are the
-    // same array. The store says which one it was.
-    const health = storeHealth(memory);
-    st.memError = health?.error;
-    st.memWarn = health?.warning;
-    if (st.memError && st.memError !== wasError) app.notice(`✖ memory unreachable: ${st.memError}`);
-    else if (!st.memError && wasError) app.notice("memory reachable again");
-    // Re-bind the selection to the same ENTRY, not the same ordinal — a
-    // refresh that reorders the timeline must not silently redirect the
-    // next verb keystroke to a different entry.
-    const ordered = orderedNow();
-    const rebound = prevKey ? ordered.findIndex((e) => entryKey(e) === prevKey) : -1;
-    st.sel = rebound >= 0 ? rebound : Math.min(st.sel, Math.max(0, ordered.length - 1));
-    if (deps.sink && !st.memError) {
-      // The sink holds the same store the verbs use (it stamps `filed=` back
-      // onto each entry), so "already filed" stays a property of the memory.
-      const report = await deps.sink.file(defectEntries(st.entries), now().toISOString());
-      if (report.filed.length > 0) {
-        const ids = report.filed.map((f) => f.id).join(", ");
-        st.status = `auto-filed ${ids}`;
-        app.notice(`memory: auto-filed ${report.filed.length} defect(s): ${ids}`);
-      }
-      // A refusal is a real answer (a cap, a dead channel) and the operator
-      // must see it — the wayfinder sink's quiet-skip simply never sets one.
-      if (report.refused !== undefined) st.status = `issue sink: ${report.refused}`;
-      st.filedTotal += report.filed.length;
-    }
-    app.repaint();
-  };
-
-  const defaultFetchProposals = async (theApp: App): Promise<{ proposals: RubricProposal[]; improvements: ImprovementItem[] | undefined }> => {
-    // Proposals are LOCAL (producer change: the companion's `land`
-    // skill writes state/rubric/ in this repo — no ssh, no VM path).
-    const root = deps.repoRoot ?? process.cwd();
-    const proposals: RubricProposal[] = listRubricProposals(root).map((slug) => ({
-      slug,
-      head: (readRubricFile(root, slug, "PROPOSAL.md") ?? "")
-        .split("\n")
-        .filter((l) => l.trim().length > 0)
-        .slice(0, 3),
-    }));
-    // A skipped or failed gh read stays UNDEFINED — "we did not ask" and
-    // "there are none" are different answers, and the old `[]` made the second
-    // one up while latching `propLoaded` so it never asked again.
-    const repo = theApp.view.repo ?? "";
-    let improvements: ImprovementItem[] | undefined;
-    if (repo) {
-      const res = await theApp.ssh(theApp.cfg.ssh_host, improvementsArgv(theApp.cfg, repo), { timeoutMs: 20_000 });
-      if (res.ok) improvements = parseImprovements(res.stdout);
-    }
-    return { proposals, improvements };
-  };
-
-  const loadProposals = async (): Promise<void> => {
-    // Remember whether the gh read was even POSSIBLE at the time: it needs
-    // `view.repo`, which arrives with the first snapshot — and
-    // instant first frame makes opening [2] before that snapshot far more
-    // likely, which used to park the pane on "not read" for the whole session.
-    const hadRepo = (app.view.repo ?? "") !== "";
-    const { proposals, improvements } = await (deps.fetchProposals ?? defaultFetchProposals)(app);
-    st.proposals = proposals;
-    st.improvements = improvements;
-    st.propLoaded = true;
-    st.improvementsTriedWithRepo = hadRepo;
-    st.propSel = Math.min(st.propSel, Math.max(0, proposals.length - 1));
-    app.repaint();
-  };
-
-  /** Re-probe the forward and repaint. Runs BEFORE the memory read on every
-   * refresh, so `r` on a tab showing MEMORY UNREACHABLE first tries to bring
-   * the transport back and only then blames the store — the previous ordering
-   * would have reported the same failure twice. */
-  const loadForward = async (): Promise<void> => {
-    if (!deps.forward) return;
-    st.forward = await deps.forward.ensure();
-    app.repaint();
-  };
-
-  /** The memory part of a load: transport first, then the store. Every path
-   * that reads memory goes through THIS, not `loadMemory` — a read that skips
-   * the forward reports "unreachable" for a transport nobody tried to start. */
-  const loadMemoryPart = async (): Promise<void> => {
-    await loadForward();
-    await loadMemory();
-  };
-
-  const loadAll = (): void => {
-    guard("digest", loadDigest);
-    guard("memory", loadMemoryPart);
-    guard("proposals", loadProposals);
-  };
-
-  const doAccept =
-    deps.accept ??
-    (async (_theApp: App, slug: string) =>
-      acceptProposal(
-        {
-          git: { run: deps.gitRun ?? failingGit },
-          repoRoot: deps.repoRoot ?? process.cwd(),
-          today: () => now().toISOString().slice(0, 10),
-        },
-        slug,
-      ));
-
-  const doReject =
-    deps.reject ??
-    (async (_theApp: App, slug: string, reason: string) => {
-      try {
-        removeRubricDir(deps.repoRoot ?? process.cwd(), slug);
-      } catch {
-        return { ok: false, message: `could not remove state/rubric/${slug}` };
-      }
-      // The sweep's never-re-propose contract rides this memory entry.
-      const mem = await memory.apply({ op: "add", text: `#rejected-proposal ${slug} — ${reason}` });
-      return { ok: mem.ok, message: mem.ok ? `rejected '${slug}' — recorded` : `rejected '${slug}' but the memory record failed: ${mem.message}` };
-    });
-
-  const verb = (p: Promise<{ ok: boolean; message: string }>): void => {
-    void p.then((res) => {
-      st.status = `${res.ok ? "✓" : "✖"} ${res.message}`;
-      app.notice(st.status);
-      void loadMemory();
-      void loadProposals();
-    });
-  };
-
-  // Per-part lazy reload with in-flight guards: an invalidation of one part
-  // (e.g. a companion memory request flips memLoaded) re-fetches exactly that part
-  // on the next paint, and a paint during a load never stacks a second one.
-  const busy = { digest: false, memory: false, proposals: false };
-  const guard = (key: keyof typeof busy, run: () => Promise<void>): void => {
-    if (busy[key]) return;
-    busy[key] = true;
-    void run().finally(() => {
-      busy[key] = false;
-    });
-  };
-
-  /** The last painted frame's click zones — hitTest target for digestClick. */
-  let lastZones: Array<{ x1: number; y1: number; x2: number; y2: number; action: unknown }> = [];
-
-  app.hooks.digestScreen = (theApp, cols, rows) => {
-    if (!st.digest.loaded) guard("digest", loadDigest);
-    if (!st.memLoaded) guard("memory", loadMemoryPart);
-    // Re-attempt ONCE when the repo turns up after a load that could not use
-    // it. Bounded on purpose: `improvementsTriedWithRepo` latches on the
-    // attempt, not on its result, so a failing gh read costs one retry and
-    // then waits for `r` rather than spinning on every repaint.
-    if (!st.propLoaded || (st.improvementsTriedWithRepo === false && (theApp.view.repo ?? "") !== "")) {
-      guard("proposals", loadProposals);
-    }
-    const today = now().toISOString().slice(0, 10);
-    if (st.view === "digest") {
-      const frame = renderDigestTab(st.digest, theApp.view.dryRun, today, cols, rows);
-      lastZones = frame.zones;
-      // The Frame, not its rendering: the app composes the companion column
-      // beside it and only then paints.
+  app.hooks.tabs.memory = {
+    keys: () => memoryKeys(store, st),
+    screen: (theApp, cols, rows) => {
+      store.ensureMemory();
+      const frame = renderMemoryTab(store, st, theApp.view.dryRun, cols, rows);
+      lastZones = frame.zones as Zone<MemAction>[];
       return frame;
-    }
-    const day = currentFile(st.digest)?.slice(0, 10);
-    const frame = renderMemoryView(st, theApp.view.dryRun, day, cols, rows, theApp.view.repo);
-    lastZones = frame.zones;
-    return frame;
-  };
-
-  // Mouse: every row and [button] on the tab is a zone; a click either
-  // selects (rows) or synthesizes the verb's keystroke (buttons), so the
-  // keyboard and the mouse share one state machine (retire keeps its
-  // two-step confirm either way).
-  app.hooks.digestClick = (theApp, x, y): void => {
-    const action = hitTest(lastZones as Zone<MemAction | DigestAction>[], x, y);
-    if (!action) return;
-    switch (action.t) {
-      case "key":
-        // Through the app's input path, so bar-style keys AND globals work
-        // uniformly (the tab handler still gets first crack).
-        theApp.pressKey(action.key);
-        return;
-      case "mem":
-        st.view = "memory";
-        st.focus = "timeline";
-        st.sel = action.i;
-        theApp.repaint();
-        return;
-      case "prop":
-        st.focus = "proposals";
-        st.propSel = action.i;
-        theApp.repaint();
-        return;
-      case "ticket": {
-        st.focus = "tickets";
-        st.ticketSel = action.i;
-        st.ticketScroll = 0;
-        const visible = st.ticketShowClosed ? (st.tickets ?? []) : (st.tickets ?? []).filter(isActionableTicket);
-        const ticket = visible[action.i];
-        if (ticket) theApp.notice(`ticket open → ${ticket.id} ${ticket.title}`);
-        theApp.repaint();
-        return;
+    },
+    // Mouse: every row and [button] on the tab is a zone; a click either
+    // selects (rows) or synthesizes the verb's keystroke (buttons), so the
+    // keyboard and the mouse share one state machine (retire keeps its
+    // two-step confirm either way).
+    click: (theApp, x, y): boolean => {
+      const action = hitTest(lastZones, x, y);
+      if (!action) return false;
+      switch (action.t) {
+        case "key":
+          theApp.pressKey(action.key);
+          return true;
+        case "mem":
+          select(action.i);
+          theApp.repaint();
+          return true;
+        case "url":
+          theApp.hooks.openUrl?.(action.url);
+          theApp.notice(`opened ${action.url}`);
+          return true;
       }
-      case "prop-accept":
-      case "prop-reject":
-        st.focus = "proposals";
-        st.propSel = action.i;
-        theApp.hooks.digestKey?.(theApp, decodeKey(Buffer.from(action.t === "prop-accept" ? "A" : "R", "utf8")));
-        return;
-      case "url":
-        theApp.hooks.openUrl?.(action.url);
-        theApp.notice(`opened ${action.url}`);
-        return;
-    }
-  };
-
-  app.hooks.digestKey = (theApp, key: BoardKey): boolean => {
-    // F clears the memory filter — the indicator promises it.
-    if (key.kind === "char" && key.ch === "F") {
-      st.memFilter = null;
-      theApp.repaint();
-      return true;
-    }
-    if (key.kind === "char" && key.ch === "v") {
-      st.view = st.view === "digest" ? "memory" : "digest";
-      st.confirmRetire = undefined;
-      theApp.repaint();
-      return true;
-    }
-    // W opens OpenViking's Studio web UI. Tab-wide, beside F and v,
-    // NOT inside the memory view's own switch: `registeredKeys("digest")`
-    // claims W for the whole tab, so handling it in one view only would make
-    // it a dead key in the other — registered, swallowed, doing nothing.
-    // Same target the [W studio] zone clicks, so mouse and key cannot drift.
-    if (key.kind === "char" && key.ch === "W") {
-      const fwd = st.forward;
-      if (!fwd || (fwd.state !== "adopted" && fwd.state !== "owned")) {
-        st.status = `no web UI — memory forward is ${fwd?.state ?? "starting"}: ${fwd?.detail ?? ""}`.trim();
-        theApp.notice(st.status);
-        theApp.repaint();
-        return true;
-      }
-      theApp.hooks.openUrl?.(fwd.studioUrl);
-      theApp.notice(`opened ${fwd.studioUrl}`);
-      return true;
-    }
-    if (st.view === "digest") return digestViewKey(theApp, key);
-    return memoryViewKey(theApp, key);
-  };
-
-  const digestViewKey = (theApp: App, key: BoardKey): boolean => {
-    switch (key.kind) {
-      case "events":
-        // `e` is the MEMORY view's edit; here it would fall through to the
-        // board's events overlay and silently toggle it — swallow instead.
-        return true;
-      // j/k AND the arrows scroll the digest. Until the arrows moved a
-      // selection over the awaiting-you list instead; with that list gone there
-      // is nothing on this view to select, so both spellings do the one thing.
-      case "down":
-      case "up": {
-        if (key.kind === "down") st.digest.scroll += 1;
-        else st.digest.scroll = Math.max(0, st.digest.scroll - 1);
-        theApp.repaint();
-        return true;
-      }
-      case "digest-older":
-      case "digest-newer":
-        return pageDigest(theApp, key.kind === "digest-older" ? 1 : -1);
-      case "refresh":
-        st.digest.loaded = false;
-        st.memLoaded = false;
-        st.propLoaded = false;
-        loadTickets();
-        loadAll();
-        return true;
-      default:
-        return false;
-    }
-  };
-
-  const pageDigest = (theApp: App, dir: 1 | -1): boolean => {
-    const next = st.digest.back + dir;
-    if (next >= 0 && next < st.digest.files.length) {
-      st.digest.back = next;
-      st.digest.scroll = 0;
-      st.digest.content = undefined;
-      void (async () => {
-        const file = currentFile(st.digest);
-        st.digest.content = file ? await digestFetcher.read(file) : undefined;
-        theApp.repaint();
-      })();
-    }
-    theApp.repaint();
-    return true;
-  };
-
-  const memoryViewKey = (theApp: App, key: BoardKey): boolean => {
-    const ordered = orderedNow();
-    const selected = ordered[st.sel];
-    const proposal = st.proposals[st.propSel];
-    const visibleTickets = st.ticketShowClosed ? (st.tickets ?? []) : (st.tickets ?? []).filter(isActionableTicket);
-    const ticket = visibleTickets[st.ticketSel ?? 0];
-    if (!(key.kind === "char" && key.ch === "x")) st.confirmRetire = undefined;
-    switch (key.kind) {
-      case "down":
-      case "up": {
-        // j/k and arrows both move the selection; the render window follows
-        // it, so there is no separate scroll to desynchronize from.
-        const delta = key.kind === "down" ? 1 : -1;
-        if (st.focus === "timeline") st.sel = Math.max(0, Math.min(st.sel + delta, Math.max(0, ordered.length - 1)));
-        else if (st.focus === "tickets" && key.wheel) {
-          // The mouse wheel means "read this ticket"; j/k and arrow keys mean
-          // "choose another ticket". App preserves that origin bit when it
-          // translates the SGR mouse event into this key-shaped tab API.
-          st.ticketScroll = Math.max(0, (st.ticketScroll ?? 0) + delta * 3);
-        } else if (st.focus === "tickets") {
-          st.ticketSel = Math.max(0, Math.min((st.ticketSel ?? 0) + delta, Math.max(0, visibleTickets.length - 1)));
-          st.ticketScroll = 0;
-          const next = visibleTickets[st.ticketSel];
-          if (next) theApp.notice(`ticket open → ${next.id} ${next.title}`);
-        } else st.propSel = Math.max(0, Math.min(st.propSel + delta, Math.max(0, st.proposals.length - 1)));
-        theApp.repaint();
-        return true;
-      }
-      case "digest-older":
-      case "digest-newer":
-        if (st.focus === "tickets") {
-          const delta = key.kind === "digest-older" ? 5 : -5;
-          st.ticketScroll = Math.max(0, (st.ticketScroll ?? 0) + delta);
+    },
+    key: (theApp, key: BoardKey): boolean => {
+      const list = ordered();
+      const selected = list[st.sel];
+      if (!(key.kind === "char" && key.ch === "x")) st.confirmRetire = undefined;
+      switch (key.kind) {
+        case "down":
+        case "up":
+          select(st.sel + (key.kind === "down" ? 1 : -1));
+          theApp.repaint();
+          return true;
+        case "older":
+        case "newer": {
+          const to = dayJump(list, st.sel, key.kind === "older" ? 1 : -1);
+          if (to === undefined) return false;
+          select(to);
           theApp.repaint();
           return true;
         }
-        return pageDigest(theApp, key.kind === "digest-older" ? 1 : -1);
-      case "refresh":
-        st.memLoaded = false;
-        st.propLoaded = false;
-        loadTickets();
-        loadAll();
-        return true;
-      case "events": {
-        // `e` = edit (the board's events overlay has no meaning on this tab).
-        if (st.focus !== "timeline" || !selected) return true;
-        theApp.promptInput(`edit memory ${selected.id}@${selected.ts.slice(11)}`, selected.text, (text) => {
-          verb(memory.apply({ op: "edit", ...refOf(selected), text }));
-        });
-        return true;
-      }
-      case "char":
-        switch (key.ch) {
-          case "t":
-            st.focus = st.focus === "timeline" ? "tickets" : st.focus === "tickets" ? "proposals" : "timeline";
-            st.ticketScroll = 0;
-            if (st.focus === "tickets" && ticket) theApp.notice(`ticket open → ${ticket.id} ${ticket.title}`);
-            theApp.repaint();
-            return true;
-          case "c":
-            if (st.focus !== "tickets") return true;
-            st.ticketShowClosed = !st.ticketShowClosed;
-            st.ticketSel = 0;
-            st.ticketScroll = 0;
-            theApp.repaint();
-            return true;
-          case "x": {
-            if (st.focus !== "timeline" || !selected) return true;
-            const k = entryKey(selected);
-            if (st.confirmRetire === k) {
-              st.confirmRetire = undefined;
-              verb(memory.apply({ op: "retire", ...refOf(selected) }));
-            } else {
-              st.confirmRetire = k;
-              st.status = `x again to retire: ${selected.text.slice(0, 40)}…`;
-              theApp.repaint();
-            }
-            return true;
-          }
-          case "p": {
-            if (st.focus !== "timeline" || !selected) return true;
-            verb(memory.apply({ op: selected.pinned ? "unpin" : "pin", ...refOf(selected) }));
-            return true;
-          }
-          case "n":
-            if (st.focus !== "timeline") return true;
-            theApp.promptInput("new memory entry (#manual)", "", (text) => {
-              verb(memory.apply({ op: "add", text }));
-            });
-            return true;
-          case "A": {
-            if (st.focus !== "proposals" || !proposal) return true;
-            st.status = `accepting '${proposal.slug}'…`;
-            theApp.repaint();
-            verb(doAccept(theApp, proposal.slug));
-            return true;
-          }
-          case "R": {
-            if (st.focus !== "proposals" || !proposal) return true;
-            theApp.promptInput(`reject '${proposal.slug}' — reason`, "", (reason) => {
-              verb(doReject(theApp, proposal.slug, reason));
-            });
-            return true;
-          }
-          default:
-            // A letter this view does not claim is the operator talking to
-            // the companion column — the same rule as every other tab
-            // (guards the board's verbs app-side, so nothing can fall
-            // to the board from here). This used to swallow "so nothing falls
-            // to the board", which since 2026-09-02 also ate `o`/`M`: no
-            // longer verbs, just letters.
-            return false;
+        case "refresh":
+          store.reloadMemory();
+          return true;
+        case "events": {
+          // `e` = edit here; the board's events overlay has no meaning on this
+          // tab, and with no entry selected the key is not this tab's at all.
+          if (!selected) return false;
+          theApp.promptInput(`edit memory ${selected.id}@${selected.ts.slice(11)}`, selected.text, (text) => {
+            store.verb(store.memory.apply({ op: "edit", ...refOf(selected), text }));
+          });
+          return true;
         }
-      case "attach":
-        // In a #feedback timeline `a` is the spatially local archive toggle the
-        // owner asked for. Anywhere else it is NOT this tab's key: took
-        // a/m/w/g/o/M off `registeredKeys("digest")`, so returning false hands
-        // the keystroke to the companion column like any other printable.
-        if ((st.memFilter ?? "").replace(/^#+/, "").toLowerCase() !== "feedback") return false;
-        st.feedbackShowArchived = !st.feedbackShowArchived;
-        st.sel = 0;
-        theApp.repaint();
-        return true;
-      case "enter":
-        // A live alert owns ⏎ from wherever you are — the board's guard has
-        // the same carve-out, and this view swallowing it made the two halves
-        // of tab [2] disagree: the alert was followable from the digest view
-        // and inert here.
-        if (theApp.view.alertFocus) return false;
-        // Otherwise: ⏎ is not a printable, so it can never reach the companion
-        // column; swallowing it here keeps it from focusing the BOARD's pi
-        // pane from a tab that is not the board.
-        return true;
-      default:
-        // tabs/quit/help — and reconnect: the bar promises [s ssh]
-        // everywhere, so it must reach the app from this view too.
-        return false;
-    }
+        case "char":
+          switch (key.ch) {
+            case "F":
+              // The indicator promises it — and only while there is one.
+              if (st.filter == null || st.filter === "") return false;
+              st.filter = null;
+              select(0);
+              theApp.repaint();
+              return true;
+            case "W": {
+              // W opens OpenViking's Studio web UI. Same target the
+              // [W studio] zone clicks, so mouse and key cannot drift.
+              const fwd = store.forward;
+              if (!fwd || (fwd.state !== "adopted" && fwd.state !== "owned")) {
+                store.status = `no web UI — memory forward is ${fwd?.state ?? "starting"}: ${fwd?.detail ?? ""}`.trim();
+                theApp.notice(store.status);
+                theApp.repaint();
+                return true;
+              }
+              theApp.hooks.openUrl?.(fwd.studioUrl);
+              theApp.notice(`opened ${fwd.studioUrl}`);
+              return true;
+            }
+            case "n":
+              theApp.promptInput("new memory entry (#manual)", "", (text) => {
+                store.verb(store.memory.apply({ op: "add", text }));
+              });
+              return true;
+            case "x": {
+              if (!selected) return false;
+              const k = entryKey(selected);
+              if (st.confirmRetire === k) {
+                st.confirmRetire = undefined;
+                store.verb(store.memory.apply({ op: "retire", ...refOf(selected) }));
+              } else {
+                st.confirmRetire = k;
+                store.status = `x again to retire: ${selected.text.slice(0, 40)}…`;
+                theApp.repaint();
+              }
+              return true;
+            }
+            case "p":
+              if (!selected) return false;
+              store.verb(store.memory.apply({ op: selected.pinned ? "unpin" : "pin", ...refOf(selected) }));
+              return true;
+            default:
+              // A letter this tab does not claim is the operator talking to the
+              // companion column — the same rule as every other tab.
+              return false;
+          }
+        default:
+          // tabs/quit/help/reconnect — and ⏎/a/m/g/u, which are the board's
+          // and are refused app-side off it (BOARD_ONLY_VERBS).
+          return false;
+      }
+    },
   };
 
   return st;
 }
-
-const failingGit = (): Promise<string> => Promise.reject(new Error("local git runner not wired"));

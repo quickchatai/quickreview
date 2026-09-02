@@ -513,11 +513,12 @@ describe("pi pane scrollback (wheel)", () => {
     await settle();
     expect(app.view.pi?.offset).toBe(3);
     // The resize rides the same invocation as the capture (100×24 terminal →
-    // a 96×8 mirror rectangle); without it pi would wrap at tmux's detached
-    // 80-column default and the capture would crowd into the left of the pane.
+    // a 96×7 mirror rectangle: at 100 columns the command bar wraps to three
+    // rows); without it pi would wrap at tmux's detached 80-column
+    // default and the capture would crowd into the left of the pane.
     expect(captureArgvs.at(-1)).toEqual([
       "sudo", "docker", "exec", "quickreview-sandbox", "tmux",
-      "resize-window", "-t", "pr-5012", "-x", "96", "-y", "8", ";",
+      "resize-window", "-t", "pr-5012", "-x", "96", "-y", "7", ";",
       "capture-pane", "-e", "-p", "-J", "-S", "-203", "-t", "pr-5012",
     ]);
     expect(stripAnsi(piHeader(5012, app.view.pi, true))).toContain("↑ 3 lines back · End live");

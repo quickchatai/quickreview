@@ -1,83 +1,28 @@
 // wiring: the companion action channel driving a REAL App — the
-// buildTuiDriver mapping (docs/tui-actions-wiring.md, applied) plus the
-// filter consumption invariant: render and verb handlers share ONE filtered
-// ordering, so selection movement and x/p/e can never address a hidden row.
-import { EventEmitter } from "node:events";
+// buildTuiDriver mapping (docs/tui-actions-wiring.md, applied; re-homed onto
+// the seven surfaces) plus the filter consumption invariant: render
+// and verb handlers share ONE filtered ordering, so selection movement and
+// x/p/e can never address a hidden row.
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { TUI_DEFAULTS } from "../src/config.js";
 import type { StatusSnapshot } from "../src/state.js";
 import { processTuiActions } from "../src/tui/actions.js";
-import { App } from "../src/tui/app.js";
 import { renderBoard } from "../src/tui/board.js";
 import type { DeployFetcher } from "../src/tui/deploytab.js";
 import { installDeployHooks } from "../src/tui/deploytab.js";
-import type { DigestFetcher } from "../src/tui/digesttab.js";
 import { applyMemoryFilter } from "../src/tui/filters.js";
 import { FeedWriter } from "../src/tui/feed.js";
 import { buildTuiDriver, chainOnPoll } from "../src/tui/index.js";
 import type { CompanionSidebar } from "../src/tui/sidebar.js";
 import { decodeKey } from "../src/tui/keys.js";
-import { installMemoryLearningHooks, type MemTabState } from "../src/tui/memtab.js";
 import { timelineOrder } from "../src/tui/memory.js";
 import { legacyBlockHash as blockHash, parseLegacyMemory as parseMemory } from "../src/memory/legacy-file.js";
-import type { MemoryEntry, MemoryOp, MemoryStore } from "../src/memory/store.js";
+import type { MemoryOp } from "../src/memory/store.js";
 import { installMetricsHooks, type MetricsFetcher } from "../src/tui/metricstab.js";
-import { Frame, stripAnsi } from "../src/tui/paint.js";
-
-/**: tab hooks hand back a Frame so the app can compose the companion
- * column beside it. These tests read the tab alone, so they render it. */
-const renderScreen = (screen: string | Frame | undefined): string =>
-  screen === undefined ? "" : typeof screen === "string" ? screen : screen.render();
-import type { RemoteResult } from "../src/tui/remote.js";
-
-// ---- harness (the memtab.test.ts pattern) ----------------------------------
-
-function fakeStreams() {
-  const out = new EventEmitter() as unknown as NodeJS.WriteStream;
-  let buf = "";
-  (out as unknown as { columns: number }).columns = 110;
-  (out as unknown as { rows: number }).rows = 30;
-  out.write = ((s: string) => ((buf += s), true)) as never;
-  const input = new EventEmitter() as unknown as NodeJS.ReadStream;
-  (input as unknown as { isTTY: boolean }).isTTY = false;
-  input.resume = (() => input) as never;
-  input.pause = (() => input) as never;
-  return { out, input, written: () => buf };
-}
-
-const SAMPLE = `<!-- 2026-08-19 18:13:54 [01a01ab3] -->
-#false-positive #eod-learning lesson about merge bases.
-
-#refuted lesson about External Apps.
-
-<!-- 2026-08-20 09:01:42 [01a01b03] -->
-#bug #operations [[stale-recheck]] stale recheck flag lingers on #5180.
-`;
-
-class FakeMemory implements MemoryStore {
-  applied: MemoryOp[] = [];
-  read(): Promise<MemoryEntry[]> {
-    return Promise.resolve(parseMemory(SAMPLE));
-  }
-  search(query: string): Promise<MemoryEntry[]> {
-    const q = query.toLowerCase();
-    return Promise.resolve(parseMemory(SAMPLE).filter((e) => e.text.toLowerCase().includes(q)));
-  }
-  apply(op: MemoryOp): Promise<{ ok: boolean; message: string }> {
-    this.applied.push(op);
-    return Promise.resolve({ ok: true, message: `ok: ${op.op}` });
-  }
-}
-
-const fakeDigest: DigestFetcher = {
-  // ASCENDING, like production: parseDigestList sorts lexicographically and
-  // DigestState.back counts back from the NEWEST (= last) file.
-  list: () => Promise.resolve(["2026-08-19.md", "2026-08-20.md"]),
-  read: (f) => Promise.resolve(`# digest ${f}`),
-};
+import { stripAnsi } from "../src/tui/paint.js";
+import { learningRig, SAMPLE, settle, type Rig } from "./helpers/tui-rig.js";
 
 class FakeMetrics implements MetricsFetcher {
   timelineCalls: number[] = [];
@@ -94,8 +39,6 @@ const fakeDeploy: DeployFetcher = {
   load: () => Promise.resolve({ dirty: [], plan: ["plan"], containerStatus: "Up 2 hours" }),
 };
 
-const okSsh = (_h: string, _argv: string[]): Promise<RemoteResult> => Promise.resolve({ ok: true, stdout: "", stderr: "", code: 0 });
-
 const snapshot: StatusSnapshot = {
   written_at: "2026-08-20T12:00:00Z",
   dry_run: true,
@@ -109,37 +52,25 @@ const snapshot: StatusSnapshot = {
   heartbeat: "2026-08-20T12:00:00Z",
 };
 
-async function settle(): Promise<void> {
-  await new Promise((r) => setTimeout(r, 5));
-}
-
-interface Rig {
-  app: App;
-  mem: FakeMemory;
-  memState: MemTabState;
+interface WiredRig extends Rig {
   metricsView: ReturnType<typeof installMetricsHooks>;
   deployState: ReturnType<typeof installDeployHooks>;
   metrics: FakeMetrics;
   driver: ReturnType<typeof buildTuiDriver>;
-  written: () => string;
 }
 
-function makeRig(): Rig {
-  const { out, input, written } = fakeStreams();
-  const app = new App(TUI_DEFAULTS, okSsh, out, input);
-  app.view.snapshot = snapshot;
-  const mem = new FakeMemory();
-  const memState = installMemoryLearningHooks(app, {
-    memory: mem,
-    digestFetcher: fakeDigest,
-    fetchProposals: () => Promise.resolve({ proposals: [], improvements: [] }),
-  });
+function makeRig(): WiredRig {
+  const rig = learningRig({ fetchProposals: () => Promise.resolve({ proposals: [], improvements: [] }) });
+  rig.app.view.snapshot = snapshot;
   const metrics = new FakeMetrics();
-  const metricsView = installMetricsHooks(app, metrics);
-  const deployState = installDeployHooks(app, fakeDeploy);
-  const driver = buildTuiDriver(app, memState, metricsView, deployState);
-  return { app, mem, memState, metricsView, deployState, metrics, driver, written };
+  const metricsView = installMetricsHooks(rig.app, metrics);
+  const deployState = installDeployHooks(rig.app, fakeDeploy);
+  const driver = buildTuiDriver(rig.app, rig.learning, metricsView, deployState);
+  return { ...rig, metricsView, deployState, metrics, driver };
 }
+
+const memoryScreen = (rig: Rig): string => stripAnsi(rig.app.hooks.tabs.memory!.screen(rig.app, 110, 30).render());
+const memoryKey = (rig: Rig, k: string): boolean => rig.app.hooks.tabs.memory!.key(rig.app, decodeKey(Buffer.from(k)));
 
 const tmps: string[] = [];
 afterEach(() => {
@@ -161,16 +92,29 @@ function drop(dir: string, name: string, body: unknown): void {
 // ---- the tests --------------------------------------------------------------
 
 describe("actions wiring: the watcher on a real App", () => {
-  it("switch_tab memory lands on the digest tab id, archives + writes a result", async () => {
+  it("switch_tab memory lands on the memory tab — the verb's name IS the tab's — and archives + writes a result", async () => {
     const { app, driver } = makeRig();
     const dir = actionDir();
     drop(dir, "2026-08-20T12-00-00-tab.json", { verb: "switch_tab", params: { tab: "memory" } });
     const done = await processTuiActions(dir, driver);
     expect(done).toHaveLength(1);
     expect(done[0]!.ok).toBe(true);
-    expect(app.tab).toBe("digest");
+    expect(app.tab).toBe("memory");
     expect(readdirSync(join(dir, ".done"))).toContain("2026-08-20T12-00-00-tab.json");
     expect(readdirSync(dir)).toContain("2026-08-20T12-00-00-tab.result.json");
+  });
+
+  it("switch_tab reaches every one of the seven, and the retired `changes` is refused", async () => {
+    const { app, driver } = makeRig();
+    for (const tab of ["digest", "tickets", "feedback", "deploy", "metrics", "board"] as const) {
+      driver.switchTab(tab);
+      expect(app.tab).toBe(tab);
+    }
+    const dir = actionDir();
+    drop(dir, "old.json", { verb: "switch_tab", params: { tab: "changes" } });
+    const [r] = await processTuiActions(dir, driver);
+    expect(r!.ok).toBe(false);
+    expect(r!.message).toContain("switch_tab needs tab");
   });
 
   it("select_pr jumps to the board and selects the PR", async () => {
@@ -219,62 +163,80 @@ describe("actions wiring: the watcher on a real App", () => {
   });
 
   it("memory_filter narrows the timeline render and labels it", async () => {
-    const { app, memState, driver } = makeRig();
-    app.tab = "digest";
-    app.hooks.digestScreen!(app, 110, 30);
+    const rig = makeRig();
+    rig.app.tab = "memory";
+    memoryScreen(rig);
     await settle(); // memory loaded
     const dir = actionDir();
     drop(dir, "m.json", { verb: "memory_filter", params: { tag: "#false-positive" } });
-    await processTuiActions(dir, driver);
-    expect(memState.memFilter).toBe("false-positive");
-    expect(memState.view).toBe("memory");
-    const screen = stripAnsi(renderScreen(app.hooks.digestScreen!(app, 110, 30)));
+    await processTuiActions(dir, rig.driver);
+    expect(rig.learning.memory.filter).toBe("false-positive");
+    expect(rig.app.tab).toBe("memory");
+    const screen = memoryScreen(rig);
     expect(screen).toContain("MEMORY (1)");
     expect(screen).toContain("⛉ #false-positive — F clears");
     expect(screen).not.toContain("stale recheck flag");
   });
 
   it("verbs address the filtered ordering: p pins the visible entry, not the unfiltered ordinal", async () => {
-    const { app, mem, memState, driver } = makeRig();
-    app.tab = "digest";
-    app.hooks.digestScreen!(app, 110, 30);
+    const rig = makeRig();
+    rig.app.tab = "memory";
+    memoryScreen(rig);
     await settle();
-    driver.setMemoryFilter("false-positive"); // unfiltered ordinal 0 is the #bug entry
+    rig.driver.setMemoryFilter("false-positive"); // unfiltered ordinal 0 is the #bug entry
     const want = applyMemoryFilter(timelineOrder(parseMemory(SAMPLE)), "false-positive")[0]!;
-    app.hooks.digestKey!(app, decodeKey(Buffer.from("p")));
+    memoryKey(rig, "p");
     await settle();
-    expect(mem.applied).toHaveLength(1);
-    const op = mem.applied[0]! as Extract<MemoryOp, { op: "pin" }>;
+    expect(rig.mem.applied).toHaveLength(1);
+    const op = rig.mem.applied[0]! as Extract<MemoryOp, { op: "pin" }>;
     expect(op.op).toBe("pin");
     expect(op.expect).toBe(blockHash(want.text));
-    expect(memState.sel).toBe(0);
+    expect(rig.learning.memory.sel).toBe(0);
   });
 
   it("x x retires the filtered selection too", async () => {
-    const { app, mem, driver } = makeRig();
-    app.tab = "digest";
-    app.hooks.digestScreen!(app, 110, 30);
+    const rig = makeRig();
+    rig.app.tab = "memory";
+    memoryScreen(rig);
     await settle();
-    driver.setMemoryFilter("refuted");
+    rig.driver.setMemoryFilter("refuted");
     const want = applyMemoryFilter(timelineOrder(parseMemory(SAMPLE)), "refuted")[0]!;
-    app.hooks.digestKey!(app, decodeKey(Buffer.from("x")));
-    app.hooks.digestKey!(app, decodeKey(Buffer.from("x")));
+    memoryKey(rig, "x");
+    memoryKey(rig, "x");
     await settle();
-    const op = mem.applied[0]! as Extract<MemoryOp, { op: "retire" }>;
+    const op = rig.mem.applied[0]! as Extract<MemoryOp, { op: "retire" }>;
     expect(op.op).toBe("retire");
     expect(op.expect).toBe(blockHash(want.text));
   });
 
   it("F on the memory tab clears the memory filter", async () => {
-    const { app, memState, driver } = makeRig();
-    app.tab = "digest";
-    app.hooks.digestScreen!(app, 110, 30);
+    const rig = makeRig();
+    rig.app.tab = "memory";
+    memoryScreen(rig);
     await settle();
-    driver.setMemoryFilter("bug");
-    expect(app.hooks.digestKey!(app, decodeKey(Buffer.from("F")))).toBe(true);
-    expect(memState.memFilter).toBeNull();
-    const screen = stripAnsi(renderScreen(app.hooks.digestScreen!(app, 110, 30)));
-    expect(screen).toContain("MEMORY (3)");
+    rig.driver.setMemoryFilter("bug");
+    expect(memoryKey(rig, "F")).toBe(true);
+    expect(rig.learning.memory.filter).toBeNull();
+    expect(memoryScreen(rig)).toContain("MEMORY (3)");
+  });
+
+  it("memory_view jumps to a day's first entry and filters; a day with no entry is a FAILED result", async () => {
+    const rig = makeRig();
+    rig.app.tab = "board";
+    memoryScreen(rig);
+    await settle();
+    rig.driver.memoryView({ day: "2026-08-19" });
+    expect(rig.app.tab).toBe("memory");
+    expect(rig.learning.memory.sel).toBe(1); // the newest 2026-08-19 entry, after the one 2026-08-20 row
+    expect(memoryScreen(rig)).toContain("memory · 2026-08-19");
+    rig.driver.memoryView({ tag: "bug" });
+    expect(rig.learning.memory.filter).toBe("bug");
+    expect(rig.learning.memory.sel).toBe(0);
+    const dir = actionDir();
+    drop(dir, "d.json", { verb: "memory_view", params: { day: "2026-07-01" } });
+    const [r] = await processTuiActions(dir, rig.driver);
+    expect(r!.ok).toBe(false);
+    expect(r!.message).toContain("no memory entries on 2026-07-01");
   });
 
   it("metrics window maps 7d→d7 and resets the drill", async () => {
@@ -292,7 +254,7 @@ describe("actions wiring: the watcher on a real App", () => {
 
   it("metrics pr drives the tab's own #-entry keys into a timeline fetch", async () => {
     const { app, metricsView, metrics, driver } = makeRig();
-    driver.metricsPr(5012); // presses # 5 0 1 2 ⏎ (digits 1/2 decode as tab keys — keyChar folds them back)
+    driver.metricsPr(5012); // presses # 5 0 1 2 ⏎ (digits 1/2/5 decode as tab keys — keyChar folds them back)
     await settle();
     expect(app.tab).toBe("metrics");
     expect(metrics.timelineCalls).toEqual([5012]);
@@ -321,32 +283,30 @@ describe("actions wiring: the watcher on a real App", () => {
     expect(deployState.armedKind).toBeUndefined();
   });
 
-  it("digest_day pages to the requested day in BOTH directions (ascending file order)", async () => {
-    const { app, memState, driver } = makeRig();
-    app.tab = "digest";
-    app.hooks.digestScreen!(app, 110, 30);
+  it("digest_day pages the digest tab to the requested day in BOTH directions (ascending file order)", async () => {
+    const rig = makeRig();
+    rig.app.tab = "digest";
+    rig.app.hooks.tabs.digest!.screen(rig.app, 110, 30);
     await settle(); // files listed ascending, back=0 = newest (2026-08-20)
-    driver.digestDay("2026-08-19");
+    rig.driver.digestDay("2026-08-19");
     await settle();
-    expect(memState.digest.back).toBe(1);
-    expect(memState.view).toBe("digest");
-    expect(memState.digest.content).toContain("2026-08-19"); // the day actually loaded
-    driver.digestDay("2026-08-20"); // and back newer again
+    expect(rig.app.tab).toBe("digest");
+    expect(rig.learning.store.digest.back).toBe(1);
+    expect(rig.learning.store.digest.content).toContain("2026-08-19"); // the day actually loaded
+    rig.driver.digestDay("2026-08-20"); // and back newer again
     await settle();
-    expect(memState.digest.back).toBe(0);
-    expect(memState.digest.content).toContain("2026-08-20");
+    expect(rig.learning.store.digest.back).toBe(0);
+    expect(rig.learning.store.digest.content).toContain("2026-08-20");
   });
 
-  it("digest_day for an unknown day is a FAILED result", async () => {
-    const { memState, driver } = makeRig();
-    memState.digest.files = ["2026-08-19.md", "2026-08-20.md"];
-    memState.digest.loaded = true;
+  it("digest_day for an unknown day — or before the listing has happened — is a FAILED result", async () => {
+    const rig = makeRig();
     const dir = actionDir();
     drop(dir, "u.json", { verb: "digest_day", params: { date: "2026-07-01" } });
-    const [r] = await processTuiActions(dir, driver);
+    const [r] = await processTuiActions(dir, rig.driver);
     expect(r!.ok).toBe(false);
     expect(r!.message).toContain("no digest for 2026-07-01");
-    expect(memState.digest.back).toBe(0);
+    expect(rig.learning.store.digest.back).toBe(0);
   });
 
   it("actions are REFUSED while an operator input box is open — the draft is untouched", async () => {

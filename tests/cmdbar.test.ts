@@ -1,25 +1,21 @@
-// The shared two-row command bar: paint/hit share one layout (round-trip
-// pinned here), globals keep the same x on every tab (the constant-position
-// guarantee), the active nav slot is highlighted, and an App-level click on a
-// bar button IS that keypress (quit from a non-board tab).
+// The shared command bar: paint/hit share one layout (round-trip pinned
+// here), globals keep the same x on every tab (the constant-position
+// guarantee), the active nav slot is highlighted, an App-level click on a bar
+// button IS that keypress — and,, the bar WRAPS instead of
+// dropping buttons and paints only the verbs the frame answers to.
 import { ACCENT_BG } from "../src/tui/design.js";
 import { EventEmitter } from "node:events";
 import { describe, expect, it } from "vitest";
 import { TUI_DEFAULTS } from "../src/config.js";
-import { App, type Tab } from "../src/tui/app.js";
-import { barHitKey, paintCmdBar, TAB_COMMANDS } from "../src/tui/cmdbar.js";
+import { App, type Tab, type TabHooks } from "../src/tui/app.js";
+import { barHeight, barHitKey, NO_LIVE_KEYS, paintCmdBar, TAB_VOCABULARY, type BarButton } from "../src/tui/cmdbar.js";
+import { boardKeys, renderBoard, type BoardView } from "../src/tui/board.js";
 import { Frame, stripAnsi } from "../src/tui/paint.js";
-import { CompanionSidebar } from "../src/tui/sidebar.js";
+import { CompanionSidebar, sidebarWidth } from "../src/tui/sidebar.js";
+import { TABS } from "../src/tui/tabs.js";
 import type { DockerRunner } from "../src/tui/companion.js";
 
-const TABS: Tab[] = ["board", "digest", "deploy", "metrics", "changes"];
-const NAV: Array<[string, string]> = [
-  ["1", "1 board"],
-  ["2", "2 memory"],
-  ["3", "3 deploy"],
-  ["4", "4 metrics"],
-  ["5", "5 changes"], // — the change register
-];
+const NAV: Array<[string, string]> = TABS.map((t, i) => [String(i + 1), `${i + 1} ${t}`]);
 const GLOBALS: Array<[string, string]> = [
   ["r", "r refresh"],
   ["s", "s ssh"],
@@ -27,17 +23,17 @@ const GLOBALS: Array<[string, string]> = [
   ["q", "q quit"],
 ];
 
-function paint(tab: Tab, cols: number, rows: number): Frame {
+function paint(tab: Tab, cols: number, rows: number, commands: readonly BarButton[] = TAB_VOCABULARY[tab]): Frame {
   const frame = new Frame(cols, rows);
-  paintCmdBar(frame, tab, cols, rows);
+  paintCmdBar(frame, tab, cols, rows, commands);
   return frame;
 }
 
 /** Contiguous hit runs along a bar row: which key answers at which x-range. */
-function hitRuns(tab: Tab, y: number, cols: number, rows: number): Array<{ key: string; x1: number; x2: number }> {
+function hitRuns(tab: Tab, y: number, cols: number, rows: number, commands: readonly BarButton[] = TAB_VOCABULARY[tab]): Array<{ key: string; x1: number; x2: number }> {
   const runs: Array<{ key: string; x1: number; x2: number }> = [];
   for (let x = 2; x <= cols - 1; x++) {
-    const k = barHitKey(tab, x, y, cols, rows);
+    const k = barHitKey(tab, x, y, cols, rows, commands);
     if (k === undefined) continue;
     const last = runs[runs.length - 1];
     if (last && last.key === k && last.x2 === x - 1) last.x2 = x;
@@ -47,15 +43,16 @@ function hitRuns(tab: Tab, y: number, cols: number, rows: number): Array<{ key: 
 }
 
 describe("layout/hit round-trip", () => {
-  for (const tab of ["board", "digest"] as const) {
-    for (const cols of [120, 180]) {
+  for (const tab of ["board", "memory", "feedback"] as const) {
+    for (const cols of [140, 200]) {
       it(`${tab} @ ${cols} cols: every button's rendered cells hit back to its key`, () => {
         const rows = 40;
         const frame = paint(tab, cols, rows);
+        expect(barHeight(tab, cols, TAB_VOCABULARY[tab])).toBe(2); // wide enough for the classic two rows
         const plainA = stripAnsi(frame.lines[rows - 3]!);
         const plainB = stripAnsi(frame.lines[rows - 2]!);
         const wantA = [...NAV, ...GLOBALS];
-        const wantB = TAB_COMMANDS[tab].map((b) => [b.key, b.label] as [string, string]);
+        const wantB = TAB_VOCABULARY[tab].map((b) => [b.key, b.label] as [string, string]);
         const runsA = hitRuns(tab, rows - 2, cols, rows); // terminal y = frame row + 1
         const runsB = hitRuns(tab, rows - 1, cols, rows);
         expect(runsA.map((r) => r.key)).toEqual(wantA.map(([k]) => k));
@@ -63,17 +60,109 @@ describe("layout/hit round-trip", () => {
         // …and the hit range covers exactly the rendered `[label]` cells.
         runsA.forEach((r, i) => expect(plainA.slice(r.x1 - 1, r.x2)).toBe(`[${wantA[i]![1]}]`));
         runsB.forEach((r, i) => expect(plainB.slice(r.x1 - 1, r.x2)).toBe(`[${wantB[i]![1]}]`));
-        // Between buttons and off the two bar rows: nothing.
-        expect(barHitKey(tab, runsA[0]!.x2 + 1, rows - 2, cols, rows)).toBeUndefined();
-        expect(barHitKey(tab, runsA[0]!.x1, rows - 5, cols, rows)).toBeUndefined();
+        // Between buttons and off the bar rows: nothing.
+        expect(barHitKey(tab, runsA[0]!.x2 + 1, rows - 2, cols, rows, TAB_VOCABULARY[tab])).toBeUndefined();
+        expect(barHitKey(tab, runsA[0]!.x1, rows - 5, cols, rows, TAB_VOCABULARY[tab])).toBeUndefined();
       });
     }
   }
+
+  it("paints exactly the LIVE commands it is handed, not the vocabulary", () => {
+    const rows = 20;
+    const frame = paint("memory", 160, rows, [{ key: "n", label: "n new" }]);
+    const rowB = stripAnsi(frame.lines[rows - 2]!);
+    expect(rowB).toContain("[n new]");
+    expect(rowB).not.toContain("older day");
+    expect(hitRuns("memory", rows - 1, 160, rows, [{ key: "n", label: "n new" }]).map((r) => r.key)).toEqual(["n"]);
+  });
+});
+
+describe("the bar wraps instead of dropping buttons (→)", () => {
+  /** Every `[label]` painted on the bar rows, in order. */
+  function paintedLabels(frame: Frame, rows: number, height: number): string[] {
+    const out: string[] = [];
+    for (let i = 0; i < height; i++) {
+      const plain = stripAnsi(frame.lines[rows - 1 - height + i]!);
+      for (const m of plain.matchAll(/\[([^\]]+)\]/g)) out.push(m[1]!);
+    }
+    return out;
+  }
+
+  it("at EVERY width, every nav slot, global and command is painted whole and hits back to its key", () => {
+    const rows = 40;
+    for (let cols = 16; cols <= 240; cols++) {
+      const commands = TAB_VOCABULARY.board;
+      const h = barHeight("board", cols, commands);
+      const frame = paint("board", cols, rows, commands);
+      const labels = paintedLabels(frame, rows, h);
+      const want = [...NAV.map(([, l]) => l), ...GLOBALS.map(([, l]) => l), ...commands.map((b) => b.label)];
+      // A label wider than the whole row is truncated by the paint (a `…`
+      // shows), never dropped: count those as present when the row is too
+      // narrow to hold the label at all.
+      const fits = (l: string): boolean => l.length + 2 <= cols - 2;
+      expect(labels, `cols=${cols}`).toEqual(want.filter(fits));
+      // Hit-test agrees with the paint: every key answers somewhere on the bar.
+      const keys = new Set<string>();
+      for (let i = 0; i < h; i++) for (const r of hitRuns("board", rows - h + i, cols, rows, commands)) keys.add(r.key);
+      for (const k of [...NAV, ...GLOBALS].map(([k]) => k)) expect(keys.has(k), `key ${k} @ cols=${cols}`).toBe(true);
+      for (const b of commands) expect(keys.has(b.key), `key ${JSON.stringify(b.key)} @ cols=${cols}`).toBe(true);
+    }
+  });
+
+  it("the bar sits directly above the bottom border and is never shorter than two rows", () => {
+    for (const cols of [20, 61, 81, 120]) {
+      const h = barHeight("feedback", cols, TAB_VOCABULARY.feedback);
+      expect(h).toBeGreaterThanOrEqual(2);
+      const frame = paint("feedback", cols, 30, TAB_VOCABULARY.feedback);
+      for (let i = 0; i < h; i++) expect(frame.lines[29 - h + i]!.startsWith("│")).toBe(true);
+      expect(frame.lines[29 - h - 1]).toBe(""); // the row above the bar was not painted by the bar
+    }
+  });
+
+  it("[u unwedge] survives on the board at the shipped companion width — the ratified lever is always on screen", () => {
+    // The shipped default gives the companion column half the terminal, so
+    // the board renders at `cols - sidebarWidth(cols) + 1`. Before
+    // the board's row B was silently truncated at that width and `u` was the
+    // button that fell off.
+    const view: BoardView = {
+      health: { kind: "ok", heartbeatAgeS: 1 },
+      dryRun: false,
+      snapshot: {
+        written_at: "",
+        dry_run: false,
+        prs: [{ number: 5012, state: "reviewing", title: "t", head_sha: "x", stale_recheck: 0, author: "alice" }],
+        running_rounds: 0,
+        total_spend_usd: 0,
+        heartbeat: "",
+      },
+      events: [],
+      selected: 0,
+      eventsFocus: false,
+      eventsScroll: 0,
+      help: false,
+      repo: "exampleorg/example-app",
+      now: new Date("2026-09-02T10:00:00Z"),
+    };
+    expect(boardKeys(view).bar.map((b) => b.key)).toContain("u");
+    // 64 is the cramped case: the column keeps its 24-column minimum and the
+    // board gets 41, where the five verbs no longer fit on one row.
+    for (const terminal of [64, 88, 100, 120, 160, 200, 240]) {
+      const inner = terminal - sidebarWidth(terminal) + 1;
+      const rows = 40;
+      const frame = renderBoard(view, inner, rows);
+      const h = barHeight("board", inner, boardKeys(view).bar);
+      const labels = paintedLabels(frame, rows, h);
+      expect(labels, `terminal ${terminal} → inner ${inner}`).toContain("u unwedge");
+      let hit = false;
+      for (let i = 0; i < h && !hit; i++) for (const r of hitRuns("board", rows - h + i, inner, rows, boardKeys(view).bar)) if (r.key === "u") hit = true;
+      expect(hit, `u must hit-test at inner ${inner}`).toBe(true);
+    }
+  });
 });
 
 describe("constant positions", () => {
-  it("globals sit at identical x-ranges on all four tabs (fixed cols)", () => {
-    const cols = 132;
+  it("globals sit at identical x-ranges on all seven tabs (fixed cols)", () => {
+    const cols = 140;
     const rows = 36;
     const positions = TABS.map((tab) =>
       hitRuns(tab, rows - 2, cols, rows)
@@ -86,7 +175,7 @@ describe("constant positions", () => {
   });
 
   it("nav slots too: row A hit ranges are identical on every tab", () => {
-    const cols = 132;
+    const cols = 140;
     const rows = 36;
     const ranges = TABS.map((tab) =>
       hitRuns(tab, rows - 2, cols, rows)
@@ -101,8 +190,8 @@ describe("active-tab highlight", () => {
   it("inverses exactly the current tab's nav slot", () => {
     const rows = 30;
     for (const tab of TABS) {
-      const raw = paint(tab, 140, rows).lines[rows - 3]!;
-      const label = NAV.find(([, l]) => l.startsWith({ board: "1", digest: "2", deploy: "3", metrics: "4", changes: "5" }[tab]))![1];
+      const raw = paint(tab, 160, rows).lines[rows - 3]!;
+      const label = NAV.find(([, l]) => l.endsWith(` ${tab}`))![1];
       expect(raw).toContain(`${ACCENT_BG}\x1b[1m[${label}]`);
       expect(raw.split(ACCENT_BG).length).toBe(2); // one selection fill only
       expect(raw).not.toContain("\x1b[7m"); // no ad-hoc inverse (§8)
@@ -123,13 +212,16 @@ describe("App-level bar clicks", () => {
     input.pause = (() => input) as never;
     return { out, input, written: () => buf };
   }
+  const findKey = (app: App, key: string, y: number, cols: number, rows: number): number | undefined => {
+    for (let x = 2; x < cols; x++) if (barHitKey(app.tab, x, y, cols, rows, app.liveKeys().bar) === key) return x;
+    return undefined;
+  };
 
   it("a click on the quit slot quits, from a non-board tab", async () => {
     const { out, input } = fakeStreams(120, 30);
     const app = new App(TUI_DEFAULTS, async () => ({ ok: true, stdout: "", stderr: "", code: 0 }), out, input);
     app.tab = "deploy";
-    let qx: number | undefined;
-    for (let x = 2; x < 120 && qx === undefined; x++) if (barHitKey("deploy", x, 28, 120, 30) === "q") qx = x;
+    const qx = findKey(app, "q", 28, 120, 30);
     expect(qx).toBeDefined();
     const running = app.run();
     (input as unknown as EventEmitter).emit("data", Buffer.from(`\x1b[<0;${qx};28M`));
@@ -144,13 +236,19 @@ describe("App-level bar clicks", () => {
     const { out, input } = fakeStreams(120, 30);
     const app = new App(TUI_DEFAULTS, async () => ({ ok: true, stdout: "", stderr: "", code: 0 }), out, input);
     app.tab = "board";
+    app.view.snapshot = {
+      written_at: "",
+      dry_run: true,
+      prs: [{ number: 5012, state: "reviewing", title: "a", head_sha: "x", stale_recheck: 0 }],
+      running_rounds: 0,
+      total_spend_usd: 0,
+      heartbeat: "",
+    };
     const sent: string[] = [];
     app.hooks.sendMessage = (_s, text) => void sent.push(text);
-    let ex: number | undefined; // the board row-B enter button
-    for (let x = 2; x < 120 && ex === undefined; x++) if (barHitKey("board", x, 29, 120, 30) === "\r") ex = x;
+    const ex = findKey(app, "\r", 29, 120, 30); // the board row-B enter button
     expect(ex).toBeDefined();
-    let qx: number | undefined;
-    for (let x = 2; x < 120 && qx === undefined; x++) if (barHitKey("board", x, 28, 120, 30) === "q") qx = x;
+    const qx = findKey(app, "q", 28, 120, 30);
     const running = app.run();
     app.openMessageBox("pr-5012");
     (input as unknown as EventEmitter).emit("data", Buffer.from("draft"));
@@ -169,11 +267,13 @@ describe("App-level bar clicks", () => {
     const { out, input } = fakeStreams(120, 30);
     const app = new App(TUI_DEFAULTS, async () => ({ ok: true, stdout: "", stderr: "", code: 0 }), out, input);
     app.tab = "metrics";
-    let x1: number | undefined;
-    for (let x = 2; x < 120 && x1 === undefined; x++) if (barHitKey("metrics", x, 28, 120, 30) === "1") x1 = x;
+    const x1 = findKey(app, "1", 28, 120, 30);
     const running = app.run();
     (input as unknown as EventEmitter).emit("data", Buffer.from(`\x1b[<0;${x1};28M`));
     expect(app.tab).toBe("board");
+    const x7 = findKey(app, "7", 28, 120, 30);
+    (input as unknown as EventEmitter).emit("data", Buffer.from(`\x1b[<0;${x7};28M`));
+    expect(app.tab).toBe("feedback");
     app.quit();
     await running;
   });
@@ -374,6 +474,7 @@ describe("the wheel scrolls the companion column, not the tab behind it", () => 
   // followed the new selection, so the notch scrolled away the thing being
   // read. The column is chrome on every tab, so it has to answer the wheel
   // before the tab dispatch does.
+  const INSTALLED = ["memory", "digest", "tickets", "deploy", "metrics", "feedback"] as const;
   function harness(tab: Tab = "board") {
     const out = new EventEmitter() as unknown as NodeJS.WriteStream;
     (out as unknown as { columns: number }).columns = 140;
@@ -385,12 +486,13 @@ describe("the wheel scrolls the companion column, not the tab behind it", () => 
     input.pause = (() => input) as never;
     const tabNotches: string[] = [];
     const tabKeys: Array<{ kind: string; wheel?: boolean }> = [];
-    const key = (_a: App, k: { kind: string; wheel?: boolean }) => (tabKeys.push(k), tabNotches.push(k.kind), true);
+    const hooks: TabHooks = {
+      screen: (_a, cols, rows) => new Frame(cols, rows),
+      key: (_a, k) => (tabKeys.push(k), tabNotches.push(k.kind), true),
+      keys: () => NO_LIVE_KEYS,
+    };
     const app = new App(TUI_DEFAULTS, async () => ({ ok: true, stdout: "", stderr: "", code: 0 }), out, input, {
-      digestKey: key,
-      deployKey: key,
-      metricsKey: key,
-      changesKey: key,
+      tabs: Object.fromEntries(INSTALLED.map((t) => [t, hooks])),
     });
     app.tab = tab;
     app.view.snapshot = {
@@ -465,7 +567,7 @@ describe("the wheel scrolls the companion column, not the tab behind it", () => 
     await h.running;
   });
 
-  for (const tab of ["digest", "deploy", "metrics", "changes"] as Tab[]) {
+  for (const tab of INSTALLED) {
     it(`the ${tab} tab still owns the wheel outside the column, and never inside it`, async () => {
       const h = harness(tab);
       h.wheel(false, 10);
@@ -482,7 +584,6 @@ describe("the wheel scrolls the companion column, not the tab behind it", () => 
       await h.running;
     });
   }
-
 });
 
 describe("drag-to-copy", () => {

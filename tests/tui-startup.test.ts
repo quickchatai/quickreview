@@ -732,47 +732,57 @@ describe("connection triage", () => {
 // ---- ruling 3: progress in the column, and a stalled step that says so -------
 
 describe("startup progress", () => {
-  it("the memory tab's ticket panes read UNKNOWN until the tracker is scanned", async () => {
-    const { installMemoryLearningHooks, renderMemoryView } = await import("../src/tui/memtab.js");
+  it("the tickets panes read UNKNOWN until the tracker is scanned", async () => {
+    const { installLearningTabs } = await import("../src/tui/learning.js");
+    const { renderTicketsTab } = await import("../src/tui/ticketstab.js");
+    const { renderFeedbackTab } = await import("../src/tui/feedbacktab.js");
     const { TUI_DEFAULTS } = await import("../src/config.js");
-    const app = { cfg: TUI_DEFAULTS, hooks: {}, view: {}, notice: () => {}, repaint: () => {} } as never;
-    const st = installMemoryLearningHooks(app, {
+    const changes = { register: undefined, refresh: async () => undefined, revert: async () => ({ ok: false, message: "no" }) };
+    const app = { cfg: TUI_DEFAULTS, hooks: { tabs: {} }, view: {}, notice: () => {}, repaint: () => {} } as never;
+    const tabs = installLearningTabs(app, {
       memory: { read: async () => [], apply: async () => ({ ok: true }) } as never,
+      digestFetcher: { list: async () => [], read: async () => "" },
       readTickets: () => [],
+      changes,
     });
+    const st = tabs.store;
+    const now = new Date("2026-08-31T10:00:00Z");
     // The scan is a filesystem walk and now runs BEHIND the first frame, so
     // there is a window in which an empty list is "not read", not "none".
-    expect(st.ticketsLoaded).toBe(false);
-    const before = stripAnsi(renderMemoryView(st, undefined, undefined, 160, 30).lines.join("\n"));
-    expect(before).toContain("FEEDBACK TICKETS (?)");
-    expect(before).not.toContain("FEEDBACK TICKETS (0)");
+    expect(st.tickets).toEqual({ kind: "unread" });
+    const before = stripAnsi(renderTicketsTab(st, tabs.tickets, undefined, 160, 30).lines.join("\n"));
+    expect(before).toContain("TICKETS (—)");
+    expect(before).not.toContain("TICKETS (0");
+    expect(stripAnsi(renderFeedbackTab(st, tabs.feedback, changes, undefined, 160, 40, undefined, now).lines.join("\n"))).toContain("FILED (—)");
     // A THROWING read is not an empty tracker: it must not latch, so the pane
     // keeps saying unknown and a later `r` can still succeed.
-    const broken = installMemoryLearningHooks(app, {
+    const broken = installLearningTabs(app, {
       memory: { read: async () => [], apply: async () => ({ ok: true }) } as never,
+      digestFetcher: { list: async () => [], read: async () => "" },
       readTickets: () => {
         throw new Error("ENOENT");
       },
+      changes,
     });
-    broken.reloadTickets?.();
-    expect(broken.ticketsLoaded, "a failed tracker read latched as 'read'").toBe(false);
-    expect(stripAnsi(renderMemoryView(broken, undefined, undefined, 160, 30).lines.join("\n"))).toContain("FEEDBACK TICKETS (?)");
+    broken.store.reloadTickets();
+    expect(broken.store.tickets, "a failed tracker read latched as 'read'").toMatchObject({ kind: "unreadable" });
+    expect(stripAnsi(renderTicketsTab(broken.store, broken.tickets, undefined, 160, 30).lines.join("\n"))).toContain("TICKETS (—)");
 
-    st.reloadTickets?.();
-    expect(st.ticketsLoaded).toBe(true);
-    const after = stripAnsi(renderMemoryView(st, undefined, undefined, 160, 30).lines.join("\n"));
-    expect(after).toContain("FEEDBACK TICKETS (0)");
+    st.reloadTickets();
+    expect(st.tickets).toEqual({ kind: "read", tickets: [] });
+    const after = stripAnsi(renderTicketsTab(st, tabs.tickets, undefined, 160, 30).lines.join("\n"));
+    expect(after).toContain("TICKETS (0 actionable / 0 total)");
     // A gh read that was skipped for want of a repo is not "no bot PRs".
     expect(st.improvements).toBeUndefined();
-    expect(after).toContain("not read");
+    expect(stripAnsi(renderFeedbackTab(st, tabs.feedback, changes, undefined, 160, 40, undefined, now).lines.join("\n"))).toContain("BOT PRs / ISSUES (—)");
   });
 
   it("re-attempts the bot-PR read once the repo arrives with the first snapshot", async () => {
-    const { installMemoryLearningHooks } = await import("../src/tui/memtab.js");
+    const { installLearningTabs } = await import("../src/tui/learning.js");
     const { TUI_DEFAULTS } = await import("../src/config.js");
     let calls = 0;
-    const app = { cfg: TUI_DEFAULTS, hooks: {} as Record<string, unknown>, view: {} as { repo?: string }, notice: () => {}, repaint: () => {} } as never;
-    const st = installMemoryLearningHooks(app, {
+    const app = { cfg: TUI_DEFAULTS, hooks: { tabs: {} } as Record<string, unknown>, view: {} as { repo?: string }, notice: () => {}, repaint: () => {} } as never;
+    const { store: st } = installLearningTabs(app, {
       memory: { read: async () => [], apply: async () => ({ ok: true }) } as never,
       digestFetcher: { list: async () => [], read: async () => "" },
       fetchProposals: async () => {
@@ -780,8 +790,10 @@ describe("startup progress", () => {
         const repo = (app as unknown as { view: { repo?: string } }).view.repo;
         return { proposals: [], improvements: repo ? [{ kind: "pr" as const, number: 1, title: "t", state: "open" }] : undefined };
       },
+      changes: { register: undefined, refresh: async () => undefined, revert: async () => ({ ok: false, message: "no" }) },
     });
-    const screen = (app as unknown as { hooks: { digestScreen: (a: unknown, c: number, r: number) => unknown } }).hooks.digestScreen;
+    const feedback = (app as unknown as { hooks: { tabs: { feedback: { screen: (a: unknown, c: number, r: number) => unknown } } } }).hooks.tabs.feedback;
+    const screen = (a: unknown, c: number, r: number): unknown => feedback.screen(a, c, r);
     // First visit with no snapshot yet — the instant first frame makes this the
     // NORMAL case now, and it used to park the pane for the whole session.
     screen(app, 160, 40);
@@ -1067,7 +1079,7 @@ describe("actions are never taken on unfetched values", () => {
     const runs: string[] = [];
     const app = {
       cfg: TUI_DEFAULTS,
-      hooks: {} as Record<string, unknown>,
+      hooks: { tabs: {} } as Record<string, unknown>,
       view: {},
       notice: () => {},
       repaint: () => {},
@@ -1099,10 +1111,13 @@ describe("actions are never taken on unfetched values", () => {
     expect(st.powerZone, "an unknown state must not offer a clickable power button").toBeUndefined();
 
     // …and the key does not arm it either. Two presses is the full ceremony:
-    // if it armed, the second would fire.
+    // if it armed, the second would fire. (`S` is not even a
+    // registered key while the state is unread — the tab hands it back.)
     const key = { kind: "char", ch: "S" } as never;
-    (app as unknown as { hooks: { deployKey: (a: unknown, k: unknown) => boolean } }).hooks.deployKey(app, key);
-    (app as unknown as { hooks: { deployKey: (a: unknown, k: unknown) => boolean } }).hooks.deployKey(app, key);
+    const deployKey = (a: unknown, k: unknown): boolean => (app as unknown as { hooks: { tabs: { deploy: { key: (a: unknown, k: unknown) => boolean } } } }).hooks.tabs.deploy.key(a, k);
+    expect(deployKey(app, key), "S must be refused, not consumed, on an unread state").toBe(false);
+    deployKey(app, key);
+    deployKey(app, key);
     expect(st.armedKind, "S armed a power action from a state nobody read").toBeUndefined();
     expect(runs, "the TUI stopped/started the container on unfetched data").toEqual([]);
 
@@ -1111,8 +1126,8 @@ describe("actions are never taken on unfetched values", () => {
     st.containerStatus = "Up 3 hours";
     renderDeployTab(st, false, 120, 20);
     expect(st.powerZone).not.toBeUndefined();
-    (app as unknown as { hooks: { deployKey: (a: unknown, k: unknown) => boolean } }).hooks.deployKey(app, key);
-    (app as unknown as { hooks: { deployKey: (a: unknown, k: unknown) => boolean } }).hooks.deployKey(app, key);
+    deployKey(app, key);
+    deployKey(app, key);
     expect(runs).toEqual(["stop"]);
   });
 
@@ -1122,7 +1137,7 @@ describe("actions are never taken on unfetched values", () => {
     const { App } = await import("../src/tui/app.js");
     const app = new App(TUI_DEFAULTS, async () => ({ ok: false, stdout: "", stderr: "", code: 1 }));
     const deployState = { loaded: true, loading: false, dirty: undefined, plan: [], scroll: 0 } as never;
-    const driver = buildTuiDriver(app, { view: "digest" } as never, {} as never, deployState);
+    const driver = buildTuiDriver(app, {} as never, {} as never, deployState);
     // The same fold — unknown ⇒ "stop" — lived here too, so a companion asking
     // for a stop could stop a live reviewer on data nobody fetched.
     expect(() => driver.deployTab("stop")).toThrow(/has not been read/);

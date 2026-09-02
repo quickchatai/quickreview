@@ -46,7 +46,7 @@ describe("[#10] the retired park's readers are counted, not assumed gone", () =>
    * file → mentions, and what they are. Counts include comments deliberately:
    * a comment that describes the park as live is MC-43-class stale prose and
    * was part of what removed, so hiding it would have understated the
-   * job. All three survivors are the other kind — a tombstone, which says the
+   * job. Both survivors are the other kind — a tombstone, which says the
    * park is GONE. Keeping them counted is the point: a tombstone that quietly
    * turns back into live prose is caught here.
    *
@@ -58,11 +58,6 @@ describe("[#10] the retired park's readers are counted, not assumed gone", () =>
       file: "src/reconcile.ts",
       n: 1,
       what: "a TOMBSTONE comment: the legacy-row migration that used to run here is gone, and it records when it last fired.",
-    },
-    {
-      file: "src/tui/digesttab.ts",
-      n: 1,
-      what: "a TOMBSTONE comment recording why the AWAITING YOU list went: its filter named a state nothing can enter.",
     },
     {
       file: "src/tui/model.ts",
@@ -98,6 +93,6 @@ describe("[#10] the retired park's readers are counted, not assumed gone", () =>
       (n, f) => n + (readFileSync(f, "utf8").match(/awaiting_human/g) ?? []).length,
       0,
     );
-    expect(total, "three mentions across three modules, every one of them a tombstone — cut the other 28").toBe(3);
+    expect(total, "two mentions across two modules, both tombstones — cut 28, took the digest tab's with the old tab").toBe(2);
   });
 });

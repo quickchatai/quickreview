@@ -291,7 +291,6 @@ function baseView(): BoardView {
     dryRun: true,
     events: [],
     selected: 0,
-    detailFull: false,
     eventsFocus: false,
     eventsScroll: 0,
     help: false,
@@ -380,9 +379,9 @@ describe("companion tab", () => {
   });
 
 
-  it("the companion tab keys are retired: 3 is deploy now, c is no tab at all", async () => {
+  it("the companion tab keys are retired: 5 is deploy now, c is no tab at all", async () => {
     const h = harness();
-    h.s.type("3");
+    h.s.type("5");
     expect(h.app.tab).toBe("deploy");
     h.s.type("1");
     h.s.type("c");

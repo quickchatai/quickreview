@@ -12,6 +12,17 @@ from this recipe.
 > amendment). The action sweep itself is unchanged and still the last
 > `chainOnPoll` inside `if (companionUp)`; only the landmark moved.
 
+> **Historical, 2026-09-02 (→).** The recipe below predates
+> the seven-surface layout. Three things it names no longer exist as written:
+> App's `[2]` tab id is now `memory` (the `"memory" ? "digest"` translation in
+> `switchTab` is gone — the verb's tab name IS the `Tab`, see
+> `src/tui/tabs.ts`, and `switch_tab` accepts all seven); `memState.view` and
+> `memState.memFilter` are gone with the `v` toggle — `digest_day` drives the
+> `[3] digest` tab and `memory_view` / `memory_filter` the `[2] memory` tab's
+> `filter`, through the `LearningTabs` handle `buildTuiDriver(app, learning,
+> …)` takes instead of `memState`; and the `changes` tab is the CHANGED pane of
+> `[7] feedback`. `docs/tui.md` is the current vocabulary.
+
 `src/tui/actions.ts` and `src/tui/filters.ts` are self-contained; nothing
 imports them yet. This document is the exact insertion recipe. All edits are
 in `src/tui/index.ts` plus one-line consumption changes in `board.ts` /

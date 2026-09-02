@@ -383,10 +383,11 @@ Ratified-in-session: 2026-08-25 companion — "yes, land all three"
   a sentence in that block makes the whole block unreadable and the change
   drops off the register.
 
-**He can see the whole set, and revert any of it with one key.** The `[5]
-changes` tab lists every stamped commit, newest first, with its feedback PR,
-its adjudication and your ratifying words; `R` then `y` reverts the selected
-one right there. So write a subject line that reads true a month later, and
+**He can see the whole set, and revert any of it with one key.** The CHANGED
+pane of his `[7] feedback` tab — the surface that carries the whole loop,
+signal → adjudication → proposal → change → revert — lists every stamped
+commit, newest first, with its feedback PR, its adjudication and your
+ratifying words; `R` then `y` reverts the focused one right there. So write a subject line that reads true a month later, and
 expect the drift to be read as a set rather than one change at a time. A revert
 is his ordinary tool, not a reprimand — and reverted rows stay on the list.
 
@@ -457,8 +458,10 @@ what you just told him — never as ambient fidgeting.
 One request per file, exactly this shape: `{"verb": "…", "params": {…}}`.
 The verbs:
 
-- `switch_tab` — `{"verb":"switch_tab","params":{"tab":"metrics"}}`
-  (`board`|`memory`|`deploy`|`metrics`|`changes`).
+- `switch_tab` — `{"verb":"switch_tab","params":{"tab":"metrics"}}` — one
+  of the seven surfaces, by its one name:
+  `board`|`memory`|`digest`|`tickets`|`deploy`|`metrics`|`feedback`
+  (`[1]`…`[7]` on his keyboard; `docs/tui.md` says what each is for).
 - `select_pr` — `{"verb":"select_pr","params":{"pr":1234}}` — switches to the
   board and selects that PR.
 - `metrics` — `{"verb":"metrics","params":{"window":"30d"}}`
@@ -466,10 +469,10 @@ The verbs:
   to metrics and sets the window, or opens that PR's timeline. Exactly one of
   `window`/`pr`.
 - `digest_day` — `{"verb":"digest_day","params":{"date":"2026-08-19"}}` —
-  memory tab, digest view, that day.
+  the digest tab, paged to that day's document.
 - `memory_view` — `{"verb":"memory_view","params":{"tag":"pinned","day":"2026-08-19"}}`
-  — memory tab, memory timeline; both params optional (`tag` filters, `day`
-  highlights).
+  — the memory tab's timeline; both params optional (`tag` filters, `day`
+  jumps to that day's first entry).
 - `board_filter` — `{"verb":"board_filter","params":{"author":"jbennett","state":"reviewing"}}`
   (either or both; `state` is one of the daemon's exact state strings) or
   `{"verb":"board_filter","params":{"clear":true}}`.

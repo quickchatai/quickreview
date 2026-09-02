@@ -12,16 +12,19 @@ import {
   type DeliveryState,
 } from "../src/tui/msg.js";
 import {
-  currentFile,
+  currentDigestFile,
   digestCatArgv,
+  digestKeys,
   digestListArgv,
   parseDigestList,
   renderDigestTab,
+  SshDigestFetcher,
   styleDigestLine,
   type DigestState,
 } from "../src/tui/digesttab.js";
 import { stripAnsi } from "../src/tui/paint.js";
 import type { RemoteResult, SshRunner } from "../src/tui/remote.js";
+import { learningRig, settle } from "./helpers/tui-rig.js";
 
 const ok = (stdout: string): RemoteResult => ({ ok: true, stdout, stderr: "", code: 0 });
 const fail = (): RemoteResult => ({ ok: false, stdout: "", stderr: "", code: 1 });
@@ -204,11 +207,26 @@ describe("digest tab", () => {
     expect(parseDigestList("2026-08-12.md\njunk.txt\n2026-08-13.md\n")).toEqual(["2026-08-12.md", "2026-08-13.md"]);
   });
 
-  it("pages older/newer through currentFile", () => {
-    const st: DigestState = { files: ["2026-08-11.md", "2026-08-12.md", "2026-08-13.md"], back: 0, scroll: 0, loaded: true };
-    expect(currentFile(st)).toBe("2026-08-13.md");
+  it("a failed listing is UNDEFINED, an empty directory is an empty list — the two are different facts", async () => {
+    const dead = new SshDigestFetcher(TUI_DEFAULTS, async () => fail());
+    expect(await dead.list()).toBeUndefined();
+    const empty = new SshDigestFetcher(TUI_DEFAULTS, async () => ok(""));
+    expect(await empty.list()).toEqual([]);
+  });
+
+  it("pages older/newer through currentDigestFile", () => {
+    const st: DigestState = { files: ["2026-08-11.md", "2026-08-12.md", "2026-08-13.md"], back: 0, scroll: 0 };
+    expect(currentDigestFile(st)).toBe("2026-08-13.md");
     st.back = 2;
-    expect(currentFile(st)).toBe("2026-08-11.md");
+    expect(currentDigestFile(st)).toBe("2026-08-11.md");
+  });
+
+  it("offers a page key only when there is a page that way", () => {
+    const files = ["2026-08-11.md", "2026-08-12.md"];
+    expect(digestKeys({ files, back: 0, scroll: 0 }).bar.map((b) => b.key)).toEqual(["["]);
+    expect(digestKeys({ files, back: 1, scroll: 0 }).bar.map((b) => b.key)).toEqual(["]"]);
+    expect(digestKeys({ files: [], back: 0, scroll: 0 }).bar).toEqual([]);
+    expect(digestKeys({ back: 0, scroll: 0 }).bar).toEqual([]);
   });
 
   // one full-width column. The AWAITING YOU panel that took ~45% of
@@ -216,16 +234,66 @@ describe("digest tab", () => {
   // with the park they listed — a document is read, not chosen from.
   it("styles headings and renders one full-width column with the yesterday tag", () => {
     expect(stripAnsi(styleDigestLine("# Reviews"))).toBe("Reviews");
-    const st: DigestState = { files: ["2026-08-12.md"], back: 0, scroll: 0, loaded: true, content: "# Reviews\n6 PRs · 9 rounds" };
+    const st: DigestState = { files: ["2026-08-12.md"], back: 0, scroll: 0, content: "# Reviews\n6 PRs · 9 rounds" };
     const frame = renderDigestTab(st, true, "2026-08-13", 100, 24);
     const text = frame.lines.map(stripAnsi).join("\n");
     expect(text).toContain("digest 2026-08-12 (yesterday)");
+    expect(text).toContain("1 days");
     expect(text).toContain("Reviews");
     expect(text).not.toContain("AWAITING YOU");
-    expect(text).not.toContain("⏎ attach");
+    expect(text).toContain("[3 digest]");
     expect(frame.zones).toEqual([]);
     // No interior divider: the body is one box row across the whole width.
     const body = frame.lines.map(stripAnsi)[2]!;
     expect(body.slice(1, -1)).not.toContain("│");
+  });
+
+  it("says which of the three empties it is: not listed, could not list, none written", () => {
+    const unread = stripAnsi(renderDigestTab({ back: 0, scroll: 0 }, false, "2026-08-13", 100, 24).lines.join("\n"));
+    expect(unread).toContain("digest — ── — days");
+    expect(unread).toContain("not read yet — listing digest/ on the VM");
+    const failed = stripAnsi(renderDigestTab({ back: 0, scroll: 0, listError: "the digest directory could not be listed over ssh" }, false, "2026-08-13", 100, 24).lines.join("\n"));
+    expect(failed).toContain("could not read — the digest directory could not be listed over ssh · r retries");
+    expect(failed).not.toContain("none yet");
+    const none = stripAnsi(renderDigestTab({ files: [], back: 0, scroll: 0 }, false, "2026-08-13", 100, 24).lines.join("\n"));
+    expect(none).toContain("0 days");
+    expect(none).toContain("none yet — the EOD sweep writes digest/<date>.md at 18:00");
+  });
+
+  it("the installed tab pages with [ / ] and scrolls with j/k — and a boundary key is neither consumed nor offered", async () => {
+    const rig = learningRig();
+    rig.app.tab = "digest";
+    const tab = rig.app.hooks.tabs.digest!;
+    tab.screen(rig.app, 100, 24);
+    await settle();
+    expect(rig.learning.store.digest.files).toEqual(["2026-08-19.md", "2026-08-20.md"]);
+    expect(stripAnsi(tab.screen(rig.app, 100, 24).render())).toContain("digest 2026-08-20.md");
+    expect(tab.key(rig.app, { kind: "newer" })).toBe(false); // already on the newest
+    expect(rig.app.registeredKeys().has("]")).toBe(false);
+    expect(tab.key(rig.app, { kind: "older" })).toBe(true);
+    await settle();
+    expect(rig.learning.store.digest.back).toBe(1);
+    expect(stripAnsi(tab.screen(rig.app, 100, 24).render())).toContain("digest 2026-08-19.md");
+    expect(rig.app.registeredKeys().has("]")).toBe(true);
+    expect(rig.app.registeredKeys().has("[")).toBe(false);
+    tab.key(rig.app, { kind: "down" });
+    tab.key(rig.app, { kind: "down", arrow: true });
+    expect(rig.learning.store.digest.scroll).toBe(2);
+    tab.key(rig.app, { kind: "up" });
+    expect(rig.learning.store.digest.scroll).toBe(1);
+  });
+
+  it("a failed listing on the installed tab says so and r asks again", async () => {
+    let dead = true;
+    const rig = learningRig({ digestFetcher: { list: async () => (dead ? undefined : ["2026-08-20.md"]), read: async () => "# d" } });
+    rig.app.tab = "digest";
+    const tab = rig.app.hooks.tabs.digest!;
+    tab.screen(rig.app, 100, 24);
+    await settle();
+    expect(stripAnsi(tab.screen(rig.app, 100, 24).render())).toContain("could not read");
+    dead = false;
+    tab.key(rig.app, { kind: "refresh" });
+    await settle();
+    expect(stripAnsi(tab.screen(rig.app, 100, 24).render())).toContain("digest 2026-08-20");
   });
 });

@@ -26,7 +26,6 @@ export interface ReloadState {
   pr?: number;
   eventsScroll: number;
   eventsFocus: boolean;
-  detailFull: boolean;
   /** Expanded companion width, borders included. */
   sidebarWidth?: number;
   saved_at: string;
@@ -140,7 +139,6 @@ export function readResumeState(path: string, remove = true): ReloadState | unde
       pr: typeof parsed.pr === "number" ? parsed.pr : undefined,
       eventsScroll: typeof parsed.eventsScroll === "number" ? parsed.eventsScroll : 0,
       eventsFocus: Boolean(parsed.eventsFocus),
-      detailFull: Boolean(parsed.detailFull),
       ...(typeof parsed.sidebarWidth === "number" ? { sidebarWidth: parsed.sidebarWidth } : {}),
       saved_at: typeof parsed.saved_at === "string" ? parsed.saved_at : "",
     };

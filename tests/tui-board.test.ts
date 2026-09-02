@@ -29,7 +29,6 @@ const view = (over: Partial<BoardView> = {}): BoardView => ({
   snapshot,
   events: [],
   selected: 0,
-  detailFull: false,
   eventsFocus: false,
   eventsScroll: 0,
   help: false,
@@ -296,10 +295,13 @@ describe("adaptive layout", () => {
 
   it("gives the live pi mirror half the screen, never starving the body", async () => {
     const { piRows } = await import("../src/tui/board.js");
-    expect(piRows(24)).toBe(10); // 21 usable / 2
-    expect(piRows(40)).toBe(18);
-    expect(piRows(14)).toBe(6); // floor
-    expect(piRows(11)).toBe(4); // squeezed: body keeps 3 rows
+    // With the two-row bar the usable height is rows - 4.
+    expect(piRows(24, 2)).toBe(10); // 20 usable / 2
+    expect(piRows(40, 2)).toBe(18);
+    expect(piRows(14, 2)).toBe(6); // floor
+    expect(piRows(11, 2)).toBe(4); // squeezed: body keeps 3 rows
+    // A wrapped bar costs the mirror, never the body's floor.
+    expect(piRows(24, 3)).toBe(9);
   });
 
   it("the body reaches the command bar now the companion strip is retired", () => {
@@ -318,8 +320,10 @@ describe("adaptive layout", () => {
 
   it("centers the events overlay band on the screen", async () => {
     const { eventsOverlayBand } = await import("../src/tui/board.js");
-    expect(eventsOverlayBand(24)).toEqual({ top: 5, height: 14 });
-    expect(eventsOverlayBand(48)).toEqual({ top: 10, height: 28 });
+    expect(eventsOverlayBand(24, 2)).toEqual({ top: 5, height: 14 });
+    expect(eventsOverlayBand(48, 2)).toEqual({ top: 10, height: 28 });
+    // Never under a wrapped bar either.
+    expect(eventsOverlayBand(12, 4)).toEqual({ top: 3, height: 5 });
   });
 
   it("shows full titles and more events on a tall wide terminal", () => {
@@ -370,7 +374,7 @@ describe("renderBoard", () => {
       offset: 0,
     };
     for (const cols of [30, 100, 220]) {
-      for (const over of [{}, { eventsFocus: true }, { detailFull: true }, { piFocus: true, piPr: 5012 }, { piFocus: true, piPr: 5012, pi: { ...pi, offset: 9 } }]) {
+      for (const over of [{}, { eventsFocus: true }, { piFocus: true, piPr: 5012 }, { piFocus: true, piPr: 5012, pi: { ...pi, offset: 9 } }]) {
         const frame = renderBoard(view({ events, pi, ...over }), cols, 30);
         for (const line of frame.lines) expect(displayWidth(line)).toBe(cols);
       }
@@ -385,7 +389,10 @@ describe("renderBoard", () => {
     expect(raw).toContain("\x1b[31mlast line");
     const text = frame.lines.map(stripAnsi).join("\n");
     expect(text).toContain("last line");
-    expect(text).toContain("line_32"); // tail, not head
+    // At 100 columns the bar wraps to three rows (the seven nav slots, the
+    // globals, the board's verbs), so the pane shows 7 lines.
+    expect(text).toContain("line_33"); // tail, not head
+    expect(text).not.toContain("line_32");
     expect(text).not.toContain("line_0 ");
   });
 
@@ -470,13 +477,6 @@ describe("renderBoard", () => {
     expect(text).not.toContain("PRS (2)");
   });
 
-  it("renders full-height detail on w", () => {
-    const text = renderBoard(view({ detailFull: true }), 100, 24).lines.map(stripAnsi).join("\n");
-    expect(text).toContain("#5012");
-    expect(text).toContain("w back");
-    expect(text).not.toContain("EVENTS");
-  });
-
   it("renders the quick-message input box in place of the events strip", () => {
     const text = renderBoard(view({ inputBox: { target: "#5012 (pi session pr-5012)", text: "also check" } }), 100, 24)
       .lines.map(stripAnsi)
@@ -533,14 +533,15 @@ describe("the mirrored pi session gets the board's real geometry", () => {
   // mirror: the text crowded into the left of the pane and a selection drawn
   // over the empty remainder picked up nothing (reported 2026-08-21).
   it("is the painted rectangle: two chrome rows off, borders and the leading space off the width", () => {
-    expect(piPaneSize(100, 24)).toEqual({ cols: 96, rows: piRows(24) - 2 });
-    expect(piPaneSize(200, 60)).toEqual({ cols: 196, rows: piRows(60) - 2 });
+    expect(piPaneSize(100, 24, 2)).toEqual({ cols: 96, rows: piRows(24, 2) - 2 });
+    expect(piPaneSize(200, 60, 2)).toEqual({ cols: 196, rows: piRows(60, 2) - 2 });
+    expect(piPaneSize(100, 24, 3)).toEqual({ cols: 96, rows: piRows(24, 3) - 2 });
   });
 
   it("has no rectangle to offer when the pane is squeezed out of existence", () => {
-    expect(piPaneSize(100, 6)).toBeUndefined(); // piRows floors to 0 here
-    expect(piPaneSize(3, 40)).toBeUndefined();
-    expect(piPaneSize(0, 0)).toBeUndefined();
+    expect(piPaneSize(100, 6, 2)).toBeUndefined(); // piRows floors to 0 here
+    expect(piPaneSize(3, 40, 2)).toBeUndefined();
+    expect(piPaneSize(0, 0, 2)).toBeUndefined();
   });
 
   it("folds resize-window into the capture, ahead of it and in one invocation", () => {

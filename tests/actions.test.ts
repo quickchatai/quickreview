@@ -40,7 +40,7 @@ const err = (obj: unknown): string => {
 
 describe("parseTuiAction — valid requests, every verb", () => {
   it("switch_tab", () => {
-    for (const tab of ["board", "memory", "deploy", "metrics", "changes"]) {
+    for (const tab of ["board", "memory", "digest", "tickets", "deploy", "metrics", "feedback"]) {
       expect(ok({ verb: "switch_tab", params: { tab } })).toEqual({ verb: "switch_tab", tab });
     }
   });
@@ -120,8 +120,10 @@ describe("parseTuiAction — refusals, never a throw", () => {
     expect(err({ verb: "make_coffee", params: {} })).toContain("unknown verb 'make_coffee'");
   });
 
-  it("switch_tab refuses unknown tabs (incl. the App-internal 'digest'/'companion')", () => {
-    for (const tab of ["digest", "companion", "Board", "", 5, undefined]) {
+  it("switch_tab refuses unknown tabs (incl. the retired 'changes' and 'companion')", () => {
+    // `changes` was tab [5] until folded the register into `feedback`;
+    // under the hard-cut policy it is refused, not aliased.
+    for (const tab of ["changes", "companion", "Board", "", 5, undefined]) {
       expect(err({ verb: "switch_tab", params: { tab } })).toContain("switch_tab");
     }
   });
@@ -189,7 +191,7 @@ describe("executeTuiAction — driver dispatch + traces", () => {
     const { calls, driver } = mockDriver();
     const traces = [
       executeTuiAction({ verb: "switch_tab", tab: "metrics" }, driver),
-      executeTuiAction({ verb: "switch_tab", tab: "changes" }, driver),
+      executeTuiAction({ verb: "switch_tab", tab: "feedback" }, driver),
       executeTuiAction({ verb: "select_pr", pr: 5312 }, driver),
       executeTuiAction({ verb: "metrics", window: "30d" }, driver),
       executeTuiAction({ verb: "metrics", pr: 5312 }, driver),
@@ -205,7 +207,7 @@ describe("executeTuiAction — driver dispatch + traces", () => {
     ];
     expect(calls).toEqual([
       ["switchTab", "metrics"],
-      ["switchTab", "changes"],
+      ["switchTab", "feedback"],
       ["selectPr", 5312],
       ["metricsWindow", "30d"],
       ["metricsPr", 5312],
@@ -221,7 +223,7 @@ describe("executeTuiAction — driver dispatch + traces", () => {
     ]);
     expect(traces).toEqual([
       "companion ▸ tab → metrics",
-      "companion ▸ tab → changes",
+      "companion ▸ tab → feedback",
       "companion ▸ board → #5312",
       "companion ▸ metrics window → 30d",
       "companion ▸ metrics → #5312 timeline",

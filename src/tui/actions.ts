@@ -28,17 +28,20 @@ import { join } from "node:path";
 import type { BoardFilter } from "./filters.js";
 import { STATE_GLYPHS } from "./model.js";
 import { isValidSessionName } from "./msg.js";
+import { TABS, isTab, type Tab } from "./tabs.js";
 
 // ---- the executor seam ------------------------------------------------------
 
 /** What the TUI exposes to the action channel — supplied at wiring time
  * (see docs/tui-actions-wiring.md for the ~30-line production impl). */
 export interface TuiDriver {
-  switchTab(tab: "board" | "memory" | "deploy" | "metrics" | "changes"): void;
+  switchTab(tab: Tab): void;
   selectPr(pr: number): void;
   metricsWindow(w: "7d" | "30d" | "all"): void;
   metricsPr(pr: number): void;
+  /** The digest tab, paged to that day. */
   digestDay(date: string): void;
+  /** The memory tab: `tag` filters the timeline, `day` jumps to that day's entries. */
   memoryView(opts: { day?: string; tag?: string }): void;
   setBoardFilter(f: BoardFilter | null): void;
   setMemoryFilter(tag: string | null): void;
@@ -50,7 +53,7 @@ export interface TuiDriver {
 // ---- the schema -------------------------------------------------------------
 
 export type TuiAction =
-  | { verb: "switch_tab"; tab: "board" | "memory" | "deploy" | "metrics" | "changes" }
+  | { verb: "switch_tab"; tab: Tab }
   | { verb: "select_pr"; pr: number }
   | { verb: "metrics"; window: "7d" | "30d" | "all" }
   | { verb: "metrics"; pr: number }
@@ -64,7 +67,6 @@ export type TuiAction =
 
 export const ACTION_TEXT_MAX = 2000;
 
-const TABS = new Set(["board", "memory", "deploy", "metrics", "changes"]);
 const WINDOWS = new Set(["7d", "30d", "all"]);
 const DEPLOY_ACTIONS = new Set(["deploy", "stop", "start", "abort"]);
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -114,8 +116,9 @@ export function parseTuiAction(text: string): { ok: true; action: TuiAction } | 
   switch (verb) {
     case "switch_tab": {
       const tab = p["tab"];
-      if (typeof tab !== "string" || !TABS.has(tab)) return { ok: false, error: "switch_tab needs tab: board|memory|deploy|metrics|changes" };
-      return { ok: true, action: { verb, tab: tab as "board" | "memory" | "deploy" | "metrics" | "changes" } };
+      // The seven surfaces, by the one name each has everywhere (src/tui/tabs.ts).
+      if (!isTab(tab)) return { ok: false, error: `switch_tab needs tab: ${TABS.join("|")}` };
+      return { ok: true, action: { verb, tab } };
     }
     case "select_pr": {
       const pr = prNumber(p["pr"]);

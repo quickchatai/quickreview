@@ -24,7 +24,10 @@ import {
 import { renderBoard, type BoardView } from "../src/tui/board.js";
 import { renderDeployTab, type DeployState } from "../src/tui/deploytab.js";
 import { renderDigestTab } from "../src/tui/digesttab.js";
-import { renderMemoryView, type MemTabState } from "../src/tui/memtab.js";
+import { renderFeedbackTab } from "../src/tui/feedbacktab.js";
+import { renderMemoryTab } from "../src/tui/memtab.js";
+import { renderTicketsTab } from "../src/tui/ticketstab.js";
+import { FakeChanges, changeEntry, learningRig } from "./helpers/tui-rig.js";
 import { renderMetrics, type MetricsView } from "../src/tui/metricstab.js";
 import { displayWidth, stripAnsi, Frame } from "../src/tui/paint.js";
 import { osc8 } from "../src/tui/theme.js";
@@ -163,7 +166,6 @@ const boardView: BoardView = {
   snapshot,
   events: [{ text: "#5265 round 3 started", anomaly: false, ts: "2026-08-20T11:00:00Z" }],
   selected: 0,
-  detailFull: false,
   eventsFocus: true,
   eventsScroll: 0,
   help: false,
@@ -173,25 +175,25 @@ const boardView: BoardView = {
   piFocus: true,
 };
 
-const memState: MemTabState = {
-  view: "memory",
-  digest: { files: ["2026-08-19.md"], back: 0, scroll: 0, loaded: true, content: "# Digest\n- fine" },
-  entries: [
+/** A learning store with every pane populated, rendered through the surfaces. */
+function learning() {
+  const rig = learningRig({ readTickets: () => [] });
+  const st = rig.learning.store;
+  st.entries = [
     { ts: "2026-08-19T10:00:00", id: "abc", block: 0, day: "2026-08-19", text: "#pinned always check anchors", pinned: true, tags: ["pinned"], links: [] },
     { ts: "2026-08-20T09:00:00", id: "def", block: 1, day: "2026-08-20", text: "#bug missed a migration collision", pinned: false, tags: ["bug"], links: [] },
-  ] as never,
-  memLoaded: true,
-  focus: "timeline",
-  sel: 0,
-  propSel: 0,
-  scroll: 0,
-  proposals: [{ slug: "tighten-anchor-rule", head: ["Tighten the anchor rule"] }],
-  improvements: [{ kind: "pr", number: 12, state: "open", title: "bot improvement" }] as never,
-  propLoaded: true,
-  ticketsLoaded: true,
-  filedTotal: 1,
-  status: "✓ pinned",
-};
+    { ts: "2026-08-20T09:30:00", id: "ghi", block: 2, day: "2026-08-20", text: "#feedback pr=5265 human [feedback] by alex on PR #5265 (comment 1): \"small impact\" — disputed", pinned: false, tags: ["feedback"], links: [] },
+  ] as never;
+  st.memLoaded = true;
+  st.proposals = [{ slug: "tighten-anchor-rule", head: ["Tighten the anchor rule"] }];
+  st.improvements = [{ kind: "pr", number: 12, state: "open", title: "bot improvement" }];
+  st.propLoaded = true;
+  st.filedTotal = 1;
+  st.status = "✓ pinned";
+  st.tickets = { kind: "read", tickets: [{ id: "", title: "Adjudicate one real episode", status: "open", role: "ready-for-human", category: "—", updated: "2026-08-25T18:00:00Z", path: "/t", body: "# Adjudicate\n\nbody" }] };
+  st.digest = { files: ["2026-08-19.md"], back: 0, scroll: 0, content: "# Digest\n- fine" };
+  return { rig, st, changes: new FakeChanges([changeEntry("a".repeat(40), "narrow the injection addendum")]) };
+}
 
 const deployState: DeployState = {
   loaded: true,
@@ -211,11 +213,14 @@ const deployState: DeployState = {
 const metricsView: MetricsView = { window: "d7", loading: true, scroll: 0, dryRun: false };
 
 function frames(): Array<[string, Frame]> {
+  const l = learning();
   return [
     ["board", renderBoard(boardView, 120, 40)],
     ["board-help", renderBoard({ ...boardView, help: true, eventsFocus: false }, 120, 40)],
-    ["memory", renderMemoryView(memState, false, "2026-08-19", 120, 40, "exampleorg/example-app")],
-    ["digest", renderDigestTab(memState.digest, false, "2026-08-20", 120, 40)],
+    ["memory", renderMemoryTab(l.st, l.rig.learning.memory, false, 120, 40)],
+    ["digest", renderDigestTab(l.st.digest, false, "2026-08-20", 120, 40)],
+    ["tickets", renderTicketsTab(l.st, l.rig.learning.tickets, false, 120, 40, "review-feedback-loop")],
+    ["feedback", renderFeedbackTab(l.st, l.rig.learning.feedback, l.changes, false, 120, 40, "exampleorg/example-app", new Date("2026-08-20T12:00:00Z"))],
     ["deploy", renderDeployTab(deployState, false, 120, 40)],
     ["metrics", renderMetrics(metricsView, 120, 40)],
   ];

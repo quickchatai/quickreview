@@ -630,7 +630,7 @@ describe("local-head probe", () => {
       { read: async (sha) => (asked.push(sha), { head: "deadbee", ahead: 4 }) },
     );
     const run = app.run();
-    streams.type("4");
+    streams.type("6");
     await new Promise((r) => setTimeout(r, 0));
     await new Promise((r) => setTimeout(r, 0));
     expect(asked).toEqual(["abc1234"]);
@@ -655,7 +655,7 @@ describe("local-head probe", () => {
       },
     );
     const run = app.run();
-    streams.type("4");
+    streams.type("6");
     await new Promise((r) => setTimeout(r, 0));
     await new Promise((r) => setTimeout(r, 0));
     expect(view.local).toBeUndefined();
@@ -713,7 +713,7 @@ describe("metrics tab wiring", () => {
     expect(metricsPrArgv(TUI_DEFAULTS, 5265).slice(-4)).toEqual(["metrics", "--pr", "5265", "--json"]);
   });
 
-  it("opens on 4, switches windows on 7/0/a, drills in with # <pr> ⏎ and Esc goes back", async () => {
+  it("opens on 6, switches windows on w/m/a, drills in with # <pr> ⏎ and Esc goes back", async () => {
     const streams = fakeStreams();
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
     let overallCalls = 0;
@@ -723,7 +723,7 @@ describe("metrics tab wiring", () => {
       timeline: async (pr) => (timelineCalls.push(pr), { payload: timeline as never }),
     });
     const run = app.run();
-    streams.type("4");
+    streams.type("6");
     expect(app.tab).toBe("metrics");
     await new Promise((r) => setTimeout(r, 0)); // lazy load settles
     expect(overallCalls).toBe(1);
@@ -731,9 +731,13 @@ describe("metrics tab wiring", () => {
 
     streams.type("a");
     expect(view.window).toBe("all");
-    streams.type("0");
+    streams.type("m"); // the board's `m` verb letter is this tab's month window (keyChar)
     expect(view.window).toBe("d30");
-    streams.type("7");
+    streams.type("w");
+    expect(view.window).toBe("d7");
+    streams.type("7"); // a digit is a SURFACE, on every tab — never a window
+    expect(app.tab).toBe("feedback");
+    streams.type("6");
     expect(view.window).toBe("d7");
 
     streams.type("j");
@@ -770,7 +774,7 @@ describe("metrics tab wiring", () => {
       timeline: async () => ({ payload: timeline as never }),
     });
     const run = app.run();
-    streams.type("4");
+    streams.type("6");
     await new Promise((r) => setTimeout(r, 0));
     streams.type("\x1b[<0;19;2M"); // left press on `[ all ]`
     expect(view.window).toBe("all");
@@ -786,7 +790,7 @@ describe("metrics tab wiring", () => {
       timeline: async () => ({ error: "ssh: connect timed out" }),
     });
     const run = app.run();
-    streams.type("4");
+    streams.type("6");
     await new Promise((r) => setTimeout(r, 0));
     expect(stripAnsi(streams.written())).toContain("metrics unavailable: ssh: connect timed out");
     app.quit();

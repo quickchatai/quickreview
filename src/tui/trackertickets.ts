@@ -1,4 +1,5 @@
-// Read-only tracker-ticket projection for the Memory & learning tab.
+// Read-only tracker-ticket projection for the `[4] tickets` tab (and the
+// `[7] feedback` tab's FILED summary).
 //
 // The tracker is a local PC directory already mounted/configured for the TUI's
 // qcr-tui auto-filer. This reader never claims, locks, or rewrites a ticket: it

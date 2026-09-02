@@ -624,8 +624,8 @@ blocker/nit line, the escalation mention — are pinned, which is the one tag wi
 guaranteed reach into every round prompt.
 
 Answers that map onto a `config.toml` knob become **proposals**, never silent
-edits: a pitch plus a patch, waiting in the TUI's `[2] Memory & learning` tab
-for your accept or reject. A proposal touching `dry_run` is structurally
+edits: a pitch plus a patch, waiting in the TUI's `[7] feedback` tab (its
+PROPOSED pane) for your accept or reject. A proposal touching `dry_run` is structurally
 refused.
 
 You can redo or continue the interview any time by asking the companion in

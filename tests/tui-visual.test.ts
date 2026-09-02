@@ -69,7 +69,6 @@ const view = (over: Partial<BoardView> = {}): BoardView => ({
   snapshot,
   events: [],
   selected: 0,
-  detailFull: false,
   eventsFocus: false,
   eventsScroll: 0,
   help: false,

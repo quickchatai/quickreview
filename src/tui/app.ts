@@ -10,9 +10,10 @@
 import type { WhyPayload } from "../cli.js";
 import type { TuiConfig } from "../config.js";
 import type { AlertBadge } from "./alerts.js";
-import { piPaneSize, renderBoard, type BoardAction, type BoardView } from "./board.js";
-import { barHitKey, registeredKeys } from "./cmdbar.js";
-import { decodeInputKey, decodeKey } from "./keys.js";
+import { boardBarHeight, boardKeys, piPaneSize, renderBoard, type BoardAction, type BoardView } from "./board.js";
+import { barHitKey, NO_LIVE_KEYS, registeredKeys, type LiveKeys } from "./cmdbar.js";
+import { decodeInputKey, decodeKey, type BoardKey } from "./keys.js";
+import type { Tab } from "./tabs.js";
 import { visiblePrs } from "./filters.js";
 import { formatEvent, moveSelection, reselect, type EventLine } from "./model.js";
 import { TripleCtrlC } from "./chord.js";
@@ -27,7 +28,38 @@ import { prUrl } from "./theme.js";
 import { CompanionSidebar, paintSidebar, sidebarHit, sidebarResizeHit, sidebarWidth } from "./sidebar.js";
 import { eventsArgv, progressArgv, sendKeysArgv, whyArgv, type SshRunner } from "./remote.js";
 
+export type { Tab } from "./tabs.js";
+
+/**
+ * One installed surface (every tab but the board, which the App renders
+ * itself). The install functions in memtab / digesttab / ticketstab /
+ * deploytab / metricstab / feedbacktab each build one of these over their own
+ * state and register it under `AppHooks.tabs`.
+ */
+export interface TabHooks {
+  /** The tab's frame at the INNER width — the companion column composes
+   * beside it; a bare, sidebar-less string is not a type a tab can
+   * return (2026-09-02). */
+  screen: (app: App, cols: number, rows: number) => Frame;
+  /** Key handling; true when the tab consumed the key. */
+  key: (app: App, key: BoardKey) => boolean;
+  /** Mouse click (1-based terminal coords) — rows select, [buttons] fire
+   * verbs; true when consumed. */
+  click?: (app: App, x: number, y: number) => boolean;
+  /**
+   * What the tab answers to RIGHT NOW: the bar it paints and the
+   * keys it paints beside their objects. The App registers exactly this set —
+   * a key outside it reaches the companion column — so a tab that paints a
+   * button it will not answer is lying to the operator AND stealing the
+   * keystroke. Derived from the tab's state, never a constant.
+   */
+  keys: (app: App) => LiveKeys;
+}
+
 export interface AppHooks {
+  /** The six installed surfaces, by tab. The board is not here: the App owns
+   * its render, its keys and its `boardKeys` (src/tui/board.ts). */
+  tabs: Partial<Record<Exclude<Tab, "board">, TabHooks>>;
   // There is deliberately NO `attach` hook. The full-screen attach
   // (overseer, main session, PR session) was retired 2026-09-02 on the
   // owner's order: the TUI has ONE layout — tab on the left, companion column
@@ -41,16 +73,6 @@ export interface AppHooks {
    * `commands/` dir. The board's one write action beyond wakes — see
    * src/tui/unwedge.ts for why it exists and what bounds it. */
   unwedge?: (pr: number, app: App) => void;
-  /**: render the digest tab; undefined = placeholder. Every tab
-   * returns a Frame at the INNER width so the companion column composes
-   * beside it — a bare, sidebar-less string is no longer a type
-   * the hooks can return (2026-09-02). */
-  digestScreen?: (app: App, cols: number, rows: number) => Frame;
-  /**: digest tab key handling; returns true when it consumed the key. */
-  digestKey?: (app: App, key: ReturnType<typeof decodeKey>) => boolean;
-  /**: mouse click on the Memory & learning tab (1-based coords) —
-   * rows select, [buttons] fire verbs. */
-  digestClick?: (app: App, x: number, y: number) => void;
   /** Open a URL in the user's browser (default: xdg-open, detached). */
   openUrl?: (url: string) => void;
   /** First-launch marker (read, write). Default: state/tui-help-shown. */
@@ -61,22 +83,6 @@ export interface AppHooks {
   /**: the companion was asked for while its startup is down — re-run
    * that startup (build/up/rollover/spawn) and focus the column on success. */
   companionEnsure?: (app: App) => Promise<void>;
-  /** Deploy tab: what would a deploy ship (read-only — never deploys). */
-  deployScreen?: (app: App, cols: number, rows: number) => Frame;
-  /** Deploy tab key handling; returns true when it consumed the key. */
-  deployKey?: (app: App, key: ReturnType<typeof decodeKey>) => boolean;
-  /**: metrics dashboard / per-PR timeline screen. */
-  metricsScreen?: (app: App, cols: number, rows: number) => Frame;
-  /** Metrics tab key handling; returns true when it consumed the key. */
-  metricsKey?: (app: App, key: ReturnType<typeof decodeKey>) => boolean;
-  /** Metrics tab click routing (window switcher zones); true = consumed. */
-  metricsClick?: (app: App, x: number, y: number) => boolean;
-  /**: the change register — feedback-derived commits, newest first. */
-  changesScreen?: (app: App, cols: number, rows: number) => Frame;
-  /** Change-register key handling; returns true when it consumed the key. */
-  changesKey?: (app: App, key: ReturnType<typeof decodeKey>) => boolean;
-  /** Change-register click routing (row selection); true = consumed. */
-  changesClick?: (app: App, x: number, y: number) => boolean;
   /** Start ./scripts/deploy.sh sync after the deploy tab has engaged the
    * daemon drain and observed a fresh zero-running-round snapshot. Streams
    * output back into the tab; the handle aborts a stuck sync. */
@@ -86,8 +92,6 @@ export interface AppHooks {
     onData: (chunk: string) => void,
     onExit: (code: number | null) => void,
   ) => { kill(): void };
-  /** Mouse click on the deploy tab (1-based terminal coords) — the buttons. */
-  deployClick?: (app: App, x: number, y: number) => void;
   /** Stop/start the VM app container, streamed like deployRun (S S or the
    * power button on the deploy tab). */
   powerRun?: (
@@ -101,8 +105,6 @@ export interface AppHooks {
   reconnect?: (app: App) => void;
 }
 
-export type Tab = "board" | "digest" | "deploy" | "metrics" | "changes";
-
 /** Every encoding of the End key we might see — the pi pane's "back to live". */
 const END_KEYS = new Set(["\x1b[F", "\x1bOF", "\x1b[4~", "\x1b[8~"]);
 
@@ -110,16 +112,17 @@ const END_KEYS = new Set(["\x1b[F", "\x1bOF", "\x1b[4~", "\x1b[8~"]);
  * Decoded verbs the BOARD owns. `handleInput` refuses them off the board
  * — see the comment at the guard.
  *
- * The membership test is "is this key advertised by the board's command bar",
- * NOT "does it read the selection". Today every member happens to read it
- * (`attach`/`enter`, `message`, `detail`, `github`), but the reason they are
- * here is that they are the board's bar, they are unregistered elsewhere, and
- * the board is where an operator looks for them. Getting that reason wrong is
- * how the next verb ends up in or out by accident. (`overseer` and
- * `main-session` were members until the full-screen attach they opened was
- * retired, 2026-09-02.)
+ * The membership test is "is this key advertised by the board's command bar"
+ * (`boardKeys`, src/tui/board.ts), NOT "does it read the selection". Most
+ * members happen to read it, but the reason they are here is that they are
+ * the board's bar, they are unregistered elsewhere, and the board is where an
+ * operator looks for them. Getting that reason wrong is how the next verb
+ * ends up in or out by accident — `events` and `unwedge` were missing until
+ *, so `u` from another tab could unwedge a PR nobody was looking at.
+ * (`overseer`/`main-session` left with the full-screen attach, 2026-09-02;
+ * `detail` with the full-screen detail page,.)
  */
-const BOARD_ONLY_VERBS: ReadonlySet<string> = new Set(["attach", "enter", "message", "detail", "github"]);
+const BOARD_ONLY_VERBS: ReadonlySet<string> = new Set(["attach", "enter", "message", "github", "events", "unwedge"]);
 
 /** The frame an UNWIRED tab paints: its notice on the first body row, at the
  * inner width, so the companion column still composes beside it. */
@@ -138,12 +141,12 @@ export class App {
     dryRun: undefined,
     events: [],
     selected: 0,
-    detailFull: false,
     eventsFocus: false,
     eventsScroll: 0,
     help: false,
   };
   tab: Tab = "board";
+  readonly hooks: AppHooks;
   /**: the companion sidebar — a right-hand column on every tab.
    * Wired by index.ts; absent in bare test harnesses (no column painted). */
   sidebar?: CompanionSidebar;
@@ -170,9 +173,10 @@ export class App {
     readonly ssh: SshRunner,
     private readonly out: NodeJS.WriteStream = process.stdout,
     private readonly input: NodeJS.ReadStream = process.stdin,
-    readonly hooks: AppHooks = {},
+    hooks: Partial<AppHooks> = {},
     private readonly now: () => Date = () => new Date(),
   ) {
+    this.hooks = { ...hooks, tabs: hooks.tabs ?? {} };
     this.poller = new Poller(cfg, ssh, () => this.onPoll(), now);
     this.pi = new PiMirror(cfg, ssh, () => {
       this.syncPiPane();
@@ -565,7 +569,8 @@ export class App {
 
   // ---- input -------------------------------------------------------------
 
-  /** Point the board selection at a PR (digest-tab actions jump here). */
+  /** Point the board selection at a PR (the companion's `select_pr` action and
+   * the events overlay land here). */
   selectPr(pr: number): void {
     this.selectedPr = pr;
     const sorted = visiblePrs(this.view);
@@ -681,6 +686,28 @@ export class App {
     this.handleInput(Buffer.from(key, "utf8"));
   }
 
+  /** The installed surface under the current tab, if any (never the board). */
+  private tabHooks(): TabHooks | undefined {
+    return this.tab === "board" ? undefined : this.hooks.tabs[this.tab];
+  }
+
+  /**
+   * What the current frame answers to: the bar the tab paints plus
+   * its inline keys. ONE computation feeds the bar's hit-test, the companion
+   * routing (`registeredKeys`) and the paint, so the three cannot disagree.
+   * An unwired tab answers to nothing but the globals.
+   */
+  liveKeys(): LiveKeys {
+    if (this.tab === "board") return boardKeys(this.view);
+    return this.tabHooks()?.keys(this) ?? NO_LIVE_KEYS;
+  }
+
+  /** Every printable the current frame claims — the companion column gets
+   * the rest. Public for the fences: a registered key must answer. */
+  registeredKeys(): Set<string> {
+    return registeredKeys(this.liveKeys());
+  }
+
   private handleMouse(ev: MouseEvent): void {
     const cols = this.out.columns ?? 80;
     // The sidebar's left seam is the ONE drag surface that is chrome rather
@@ -742,7 +769,7 @@ export class App {
     // would SUBMIT the draft (a live memory edit or quick-message).
     if (ev.kind === "click" && !this.view.inputBox) {
       const rows = this.out.rows ?? 24;
-      const k = barHitKey(this.tab, ev.x, ev.y, cols, rows);
+      const k = barHitKey(this.tab, ev.x, ev.y, cols, rows, this.liveKeys().bar);
       if (k !== undefined) {
         // A focused pi pane would swallow the synthesized key as text.
         if (this.view.piFocus) {
@@ -800,26 +827,12 @@ export class App {
         return;
       }
     }
-    if (this.tab === "digest") {
-      // Memory & learning tab: clicks hit the tab's own zones (rows select,
-      // buttons act); the wheel moves the selection / scrolls.
-      if (ev.kind === "click") this.hooks.digestClick?.(this, ev.x, ev.y);
-      else this.hooks.digestKey?.(this, { kind: ev.kind === "wheel-down" ? "down" : "up", wheel: true });
-      return;
-    }
-    if (this.tab === "deploy") {
-      if (ev.kind === "click") this.hooks.deployClick?.(this, ev.x, ev.y);
-      else this.hooks.deployKey?.(this, { kind: ev.kind === "wheel-down" ? "down" : "up", wheel: true });
-      return;
-    }
-    if (this.tab === "metrics") {
-      if (ev.kind === "click") this.hooks.metricsClick?.(this, ev.x, ev.y);
-      else this.hooks.metricsKey?.(this, { kind: ev.kind === "wheel-down" ? "down" : "up", wheel: true });
-      return;
-    }
-    if (this.tab === "changes") {
-      if (ev.kind === "click") this.hooks.changesClick?.(this, ev.x, ev.y);
-      else this.hooks.changesKey?.(this, { kind: ev.kind === "wheel-down" ? "down" : "up", wheel: true });
+    const tab = this.tabHooks();
+    if (this.tab !== "board") {
+      // An installed surface: clicks hit its own zones (rows select, buttons
+      // act); the wheel is handed over as a key that says it was a wheel.
+      if (ev.kind === "click") tab?.click?.(this, ev.x, ev.y);
+      else tab?.key(this, { kind: ev.kind === "wheel-down" ? "down" : "up", wheel: true });
       return;
     }
     const zoneAt = (x: number, y: number): BoardAction | undefined =>
@@ -881,15 +894,9 @@ export class App {
         // Clicking the pane types into it in place — no full-screen takeover.
         this.focusPiPane();
         return;
-      case "tab":
-        this.tab = action.tab;
-        break;
       case "companion":
         // The top-bar alert badge: hand the keyboard to the companion column.
         this.openCompanion();
-        return;
-      case "key":
-        this.handleInput(Buffer.from(action.key, "utf8"));
         return;
     }
     this.repaint();
@@ -921,7 +928,7 @@ export class App {
       this.repaint();
       return;
     }
-    // The pi pane owns the keyboard while it is focused: j/k/q/1-5/? and every
+    // The pi pane owns the keyboard while it is focused: j/k/q/1-7/? and every
     // other board binding is just text as far as the session is concerned.
     // Ctrl-q — and only Ctrl-q — comes back to the board.
     if (this.tab === "board" && this.view.piFocus) {
@@ -943,7 +950,7 @@ export class App {
       return;
     }
     // A focused sidebar owns the keyboard, exactly as the pi pane does above:
-    // the companion is a live terminal, so j/k/1-5/? are just text to it.
+    // the companion is a live terminal, so j/k/1-7/? are just text to it.
     // Ctrl-q releases — the same chord, so there is ONE way out of every
     // embedded surface — and Esc drops the draft.
     if (this.sidebar?.focused) {
@@ -965,19 +972,16 @@ export class App {
     // 2026-09-02: the column is always at its full width — the operator's
     // layout never changes shape — so `\` is plain text for pi like any
     // other unclaimed printable.)
-    if (this.tab === "digest" && this.hooks.digestKey?.(this, key)) return;
-    if (this.tab === "deploy" && this.hooks.deployKey?.(this, key)) return;
-    // The metrics tab reads nav digits as TEXT inside its `# <pr> ⏎` box, and
-    // maps `1`–`4` back from their tab kinds itself (metricstab `keyChar`).
-    // `5` is newer than that map, so hand it over as the digit —
-    // otherwise `#5265` silently loses its 5. It cannot swallow the tab
-    // switch: outside the entry box the tab does not answer to `5`, so the
-    // hook returns false and the key falls through to the switch below.
-    const forTab = this.tab === "metrics" && key.kind === "tab-changes" ? ({ kind: "char", ch: "5" } as const) : key;
-    if (this.tab === "metrics" && this.hooks.metricsKey?.(this, forTab)) return;
-    if (this.tab === "changes" && this.hooks.changesKey?.(this, key)) return;
+    // The installed surface gets first crack at every key — including the
+    // nav digits, which the metrics tab reads as TEXT inside its `# <pr> ⏎`
+    // box (`keyChar` maps a tab kind back to its digit). Outside that box no
+    // tab answers to a digit, so the hook returns false and the key falls
+    // through to the switch below.
+    if (this.tabHooks()?.key(this, key)) return;
     // An unregistered printable is a message to the companion, not a dead
-    // key: focus the sidebar seeded with it (paste seeds whole).
+    // key: focus the sidebar seeded with it (paste seeds whole). Registered
+    // means "this frame answers to it" — the set is derived from
+    // the bar the tab is painting right now, never from a table.
     if (
       this.sidebar?.available() &&
       raw.length > 0 &&
@@ -985,7 +989,7 @@ export class App {
       raw >= " " &&
       raw !== "\x7f" && // backspace (DEL) is an edit, never draft text
       raw !== "\b" &&
-      !(raw.length === 1 && registeredKeys(this.tab).has(raw))
+      !(raw.length === 1 && this.registeredKeys().has(raw))
     ) {
       this.sidebar.focus(raw);
       this.repaint();
@@ -993,15 +997,13 @@ export class App {
     }
 
     // the verbs below belong to the BOARD's command bar, so they only
-    // answer on the board. Most of them act on its selected PR; `o`/`M` attach
-    // to fixed global sessions and act on no selection at all — they are here
-    // because they are board keys, not because of what they read. They used to
-    // run from any tab whose handler let them through: pressing `a` on the
-    // memory tab focused the board's pi pane behind your back, and `w` toggled
-    // a detail page you could not see. A verb with no meaning on the current
-    // surface must do nothing; the printable spellings are unregistered off
-    // the board, so they reach the companion column instead of dying here. The
-    // one exception is a live alert, which owns ⏎ from wherever you are.
+    // answer on the board. They used to run from any tab whose handler let
+    // them through: pressing `a` on the memory tab focused the board's pi pane
+    // behind your back, and `u` would have unwedged a PR nobody was looking
+    // at. A verb with no meaning on the current surface must do nothing; the
+    // printable spellings are unregistered off the board, so they reach the
+    // companion column instead of dying here. The one exception is a live
+    // alert, which owns ⏎ from wherever you are.
     if (this.tab !== "board" && BOARD_ONLY_VERBS.has(key.kind) && !(key.kind === "enter" && this.view.alertFocus)) return;
 
     switch (key.kind) {
@@ -1011,20 +1013,8 @@ export class App {
       case "help":
         this.view.help = true;
         break;
-      case "tab-board":
-        this.tab = "board";
-        break;
-      case "tab-digest":
-        this.tab = "digest";
-        break;
-      case "tab-deploy":
-        this.tab = "deploy";
-        break;
-      case "tab-metrics":
-        this.tab = "metrics";
-        break;
-      case "tab-changes":
-        this.tab = "changes";
+      case "tab":
+        this.tab = key.tab;
         break;
       case "up":
       case "down": {
@@ -1048,9 +1038,6 @@ export class App {
       case "events":
         this.view.eventsFocus = !this.view.eventsFocus;
         this.view.eventsScroll = 0;
-        break;
-      case "detail":
-        this.view.detailFull = !this.view.detailFull;
         break;
       case "refresh":
         void this.poller.tick();
@@ -1151,13 +1138,6 @@ export class App {
     this.repaint();
   }
 
-  /**
-   * Keys while the companion column has focus.
-   *
-   * Two modes in one surface: the draft line is a quick-send box (type, ⏎
-   * sends), but Ctrl-q releases and PgUp/PgDn walk the mirror's scrollback,
-   * so reading back through the conversation never means losing the draft.
-   */
   /**
    * Keys while the companion column has focus: RAW PASSTHROUGH to pi.
    *
@@ -1419,27 +1399,16 @@ export class App {
       this.out.write(frame.render());
       this.notifyRepaint();
     };
-    if (this.tab === "digest") {
-      paint(this.hooks.digestScreen?.(this, inner, rows), "digest tab lands in — [1] back to board");
-      return;
-    }
-    if (this.tab === "deploy") {
-      paint(this.hooks.deployScreen?.(this, inner, rows), "deploy tab not wired — [1] back to board");
-      return;
-    }
-    if (this.tab === "metrics") {
-      paint(this.hooks.metricsScreen?.(this, inner, rows), "metrics tab not wired — [1] back to board");
-      return;
-    }
-    if (this.tab === "changes") {
-      paint(this.hooks.changesScreen?.(this, inner, rows), "changes tab not wired — [1] back to board");
+    if (this.tab !== "board") {
+      paint(this.tabHooks()?.screen(this, inner, rows), `${this.tab} tab not wired — [1] back to board`);
       return;
     }
     this.view.now = this.now();
     // Same reason as the sidebar above: the PR's pi runs in a detached tmux
     // window stuck at 80×24, so without this it wraps at 80 columns however
-    // wide we paint the mirror. Fed here, applied by the next capture.
-    this.pi.setViewport(piPaneSize(inner, rows));
+    // wide we paint the mirror. Fed here, applied by the next capture — and
+    // sized against the bar rows THIS frame's board actually paints.
+    this.pi.setViewport(piPaneSize(inner, rows, boardBarHeight(this.view, inner)));
     paint(renderBoard(this.view, inner, rows), "");
   }
 }

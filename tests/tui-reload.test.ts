@@ -17,7 +17,6 @@ const SNAP: ReloadState = {
   pr: 5012,
   eventsScroll: 3,
   eventsFocus: true,
-  detailFull: false,
   sidebarWidth: 52,
   saved_at: "",
 };
@@ -179,7 +178,6 @@ describe("resume state", () => {
       pr: 7,
       eventsScroll: 0,
       eventsFocus: false,
-      detailFull: false,
       saved_at: "",
     });
   });

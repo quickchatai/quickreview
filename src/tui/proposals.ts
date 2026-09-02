@@ -1,4 +1,4 @@
-// Proposals half of the Memory & learning tab (§7/§8).
+// Rubric proposals — the PROPOSED pane of the `[7] feedback` tab (§7/§8).
 //
 // Three proposal kinds surface here:
 //   * Rubric proposals — authored by the COMPANION's `land` skill as

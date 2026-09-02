@@ -1,4 +1,4 @@
-// Metrics tab (key 5) — the aggregate dashboard: a Pulse-style stat
+// `[6] metrics` — the aggregate dashboard: a Pulse-style stat
 // strip for the selected window, then width-adaptive cards over the
 // MetricsPayload `qcr metrics --json` produces, plus a per-PR timeline
 // drill-down from `qcr metrics --pr <n> --json`.
@@ -18,9 +18,9 @@
 import type { Dist, DailyRow, MetricsPayload, MetricsWindow, OpsInfo, TimelinePayload } from "../metrics.js";
 import type { TuiConfig } from "../config.js";
 import type { App } from "./app.js";
-import { paintCmdBar } from "./cmdbar.js";
+import { barHeight, paintCmdBar, type BarButton, type LiveKeys } from "./cmdbar.js";
 import { HEAD_ARGV, logArgv, type LocalRunner } from "./deploytab.js";
-import type { BoardKey } from "./keys.js";
+import { keyChar, type BoardKey } from "./keys.js";
 // `MUTED` is LOAD-BEARING as of — it paints the TIME IN STATE card's
 // retired-state rows (see that card below). It was an unused import for a
 // while and reads like one at a glance, so: removing it is a compile error,
@@ -255,13 +255,19 @@ export function localHeadProbe(local: LocalRunner): LocalHeadProbe {
 
 export type MetricsWindowKey = "d7" | "d30" | "all";
 
+/**
+ * The window switcher. Hotkeys are LETTERS — week / month / all — because the
+ * digits `1`…`7` open the seven surfaces on every tab: the old `7`
+ * for the 7-day window would have been a tab digit that did something else on
+ * exactly one tab, which is the hidden-mode class the layout removed.
+ */
 export const WINDOW_LABELS: Array<{ key: MetricsWindowKey; label: string; hotkey: string }> = [
-  { key: "d7", label: "7d", hotkey: "7" },
-  { key: "d30", label: "30d", hotkey: "0" },
+  { key: "d7", label: "7d", hotkey: "w" },
+  { key: "d30", label: "30d", hotkey: "m" },
   { key: "all", label: "all", hotkey: "a" },
 ];
 
-export type MetricsAction = { t: "window"; window: MetricsWindowKey } | { t: "back" };
+export type MetricsAction = { t: "window"; window: MetricsWindowKey };
 
 export interface MetricsView {
   window: MetricsWindowKey;
@@ -717,10 +723,31 @@ export function timelineLines(tl: TimelinePayload, width: number, now: Date): st
 
 // ---- render -----------------------------------------------------------------
 
+/**
+ * What the metrics tab answers to on this frame: the `# <pr>` box owns the
+ * digits while it is open (`1`…`7` decode as tab switches, and `keyChar`
+ * folds them back — without registering them here `#5265` would lose its 5
+ * to the companion column); a drill-down answers to Esc; the dashboard to
+ * the window hotkeys and `#`. ⏎ is offered ONLY inside the box: the dashboard
+ * used to drill into the board's selected PR on a bare ⏎ that no bar or help
+ * text ever named (a key that acts must be painted).
+ */
+export function metricsKeys(view: MetricsView): LiveKeys {
+  if (view.prEntry !== undefined) {
+    return { bar: [{ key: "\r", label: "⏎ open" }, { key: "\x1b", label: "Esc cancel" }], inline: [..."0123456789"] };
+  }
+  if (view.drill) return { bar: [{ key: "\x1b", label: "Esc back" }], inline: [] };
+  const bar: BarButton[] = WINDOW_LABELS.map((w) => ({ key: w.hotkey, label: `${w.hotkey} ${w.label}` }));
+  bar.push({ key: "#", label: "# pr" });
+  return { bar, inline: [] };
+}
+
 export function renderMetrics(view: MetricsView, cols: number, rows: number): Frame {
   const frame = new Frame(cols, rows);
   const now = view.now ?? new Date();
   const drill = view.drill;
+  const live = metricsKeys(view);
+  const barRows = barHeight("metrics", cols, live.bar);
   frame.set(
     0,
     rule(cols, "┌", "┐", [
@@ -735,8 +762,8 @@ export function renderMetrics(view: MetricsView, cols: number, rows: number): Fr
     const lines = drill.payload
       ? timelineLines(drill.payload, cols - 4, now)
       : [drill.error ? `${FG.dim}metrics unavailable: ${drill.error}${RESET}` : `${FG.dim}loading timeline for #${drill.pr}…${RESET}`];
-    for (let r = 0; r < rows - 4; r++) frame.boxRow(1 + r, [{ text: ` ${lines[view.scroll + r] ?? ""}`, width: cols - 2 }]);
-    paintCmdBar(frame, "metrics", cols, rows);
+    for (let r = 0; r < rows - 2 - barRows; r++) frame.boxRow(1 + r, [{ text: ` ${lines[view.scroll + r] ?? ""}`, width: cols - 2 }]);
+    paintCmdBar(frame, "metrics", cols, rows, live.bar);
     frame.set(rows - 1, rule(cols, "└", "┘", []));
     return frame;
   }
@@ -750,11 +777,11 @@ export function renderMetrics(view: MetricsView, cols: number, rows: number): Fr
     frame.zones.push({ x1: z.x1, y1: 2, x2: z.x2, y2: 2, action: { t: "window", window: z.window } satisfies MetricsAction });
   }
 
-  const bodyRows = rows - 6; // top bar + switcher + stat strip + command bar (2 rows) + bottom
+  const bodyRows = rows - 4 - barRows; // top bar + switcher + stat strip + command bar + bottom
   if (!view.payload) {
     const msg = view.error ? `${FG.dim}metrics unavailable: ${view.error}${RESET}` : `${FG.dim}loading metrics…${RESET}`;
-    for (let r = 2; r <= rows - 4; r++) frame.boxRow(r, [{ text: r === 2 ? ` ${msg}` : "", width: cols - 2 }]);
-    paintCmdBar(frame, "metrics", cols, rows);
+    for (let r = 2; r <= rows - 2 - barRows; r++) frame.boxRow(r, [{ text: r === 2 ? ` ${msg}` : "", width: cols - 2 }]);
+    paintCmdBar(frame, "metrics", cols, rows, live.bar);
     frame.set(rows - 1, rule(cols, "└", "┘", []));
     return frame;
   }
@@ -777,7 +804,7 @@ export function renderMetrics(view: MetricsView, cols: number, rows: number): Fr
       widths.map((w, i) => ({ text: ` ${columns[i]?.[view.scroll + r] ?? ""}`, width: w })),
     );
   }
-  paintCmdBar(frame, "metrics", cols, rows);
+  paintCmdBar(frame, "metrics", cols, rows, live.bar);
   frame.set(rows - 1, rule(cols, "└", "┘", []));
   return frame;
 }
@@ -823,27 +850,6 @@ export class SshMetricsFetcher implements MetricsFetcher {
 // ---- hooks ------------------------------------------------------------------
 
 export const METRICS_TTL_MS = 60_000;
-
-/** Digits survive the tab-key mapping: 1/2/4 decode as tab switches, so PR
- * entry has to read them back off the key kind. */
-export function keyChar(key: BoardKey): string | undefined {
-  switch (key.kind) {
-    case "char":
-      return key.ch;
-    case "attach":
-      return "a"; // `a` is the board's full-screen-attach key; here it is the all-time window
-    case "tab-board":
-      return "1";
-    case "tab-digest":
-      return "2";
-    case "tab-deploy":
-      return "3";
-    case "tab-metrics":
-      return "4";
-    default:
-      return undefined;
-  }
-}
 
 export function installMetricsHooks(app: App, fetcher?: MetricsFetcher, probe?: LocalHeadProbe): MetricsView {
   const f = fetcher ?? new SshMetricsFetcher(app.cfg, app.ssh);
@@ -906,7 +912,7 @@ export function installMetricsHooks(app: App, fetcher?: MetricsFetcher, probe?: 
     app.repaint();
   };
 
-  app.hooks.metricsScreen = (theApp, cols, rows) => {
+  const screen = (theApp: App, cols: number, rows: number): Frame => {
     view.dryRun = theApp.view.dryRun;
     void load(); // TTL-gated: a repaint inside the window costs nothing
     const frame = renderMetrics(view, cols, rows);
@@ -914,7 +920,7 @@ export function installMetricsHooks(app: App, fetcher?: MetricsFetcher, probe?: 
     return frame;
   };
 
-  app.hooks.metricsClick = (theApp, x, y) => {
+  const click = (theApp: App, x: number, y: number): boolean => {
     if (!lastFrame) return false;
     for (let i = lastFrame.zones.length - 1; i >= 0; i--) {
       const z = lastFrame.zones[i]!;
@@ -931,7 +937,7 @@ export function installMetricsHooks(app: App, fetcher?: MetricsFetcher, probe?: 
     return false;
   };
 
-  app.hooks.metricsKey = (theApp, key: BoardKey): boolean => {
+  const onKey = (theApp: App, key: BoardKey): boolean => {
     // PR-entry mode owns every printable key until enter or Esc.
     if (view.prEntry !== undefined) {
       const ch = keyChar(key);
@@ -960,18 +966,19 @@ export function installMetricsHooks(app: App, fetcher?: MetricsFetcher, probe?: 
         view.scroll = key.kind === "down" ? view.scroll + 1 : Math.max(0, view.scroll - 1);
         theApp.repaint();
         return true;
-      case "enter": {
-        const pr = theApp.currentPr();
-        if (pr !== undefined) drillTo(pr);
-        return true;
-      }
       case "refresh":
         if (view.drill) drillTo(view.drill.pr);
         else void load(true);
         theApp.repaint();
         return true;
       case "attach":
+      case "message":
       case "char": {
+        // `a` and `m` decode as the board's verbs; `keyChar` folds them back
+        // to the letters this tab's switcher reads. A drill-down answers to
+        // Esc only; the dashboard's hotkeys are not its, so they reach the
+        // companion column from here.
+        if (view.drill) return false;
         const ch = keyChar(key);
         const w = WINDOW_LABELS.find((x) => x.hotkey === ch);
         if (w) {
@@ -992,5 +999,6 @@ export function installMetricsHooks(app: App, fetcher?: MetricsFetcher, probe?: 
     }
   };
 
+  app.hooks.tabs.metrics = { screen, click, key: onKey, keys: () => metricsKeys(view) };
   return view;
 }

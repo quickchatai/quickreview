@@ -1,4 +1,4 @@
-// Memory & learning tab — the TUI's view of memory, running
+// The memory tab's store — the TUI's view of memory, running
 // on OpenViking.
 //
 // The store itself lives behind the ONE seam (`src/memory/store.ts`)

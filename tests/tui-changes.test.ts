@@ -1,18 +1,12 @@
 // The change register (FT-0234): what counts as a feedback-derived change, how
-// reverts are read back out of git, that the list survives a restart, that the
-// revert is bounded (dirty tree, unknown sha, conflict) and confirmed, and —
-// the one that bites — that `5` and `y` are REGISTERED keys, so neither falls
-// through to the companion strip.
-import { EventEmitter } from "node:events";
+// reverts are read back out of git, that the list survives a restart, and that
+// the revert is bounded (dirty tree, unknown sha, conflict). The SURFACE that
+// paints it and confirms the revert is the feedback tab since FT-0398 —
+// tests/feedbacktab.test.ts.
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { TUI_DEFAULTS } from "../src/config.js";
-import { App, type Tab } from "../src/tui/app.js";
-import { registeredKeys, TAB_COMMANDS } from "../src/tui/cmdbar.js";
-import { decodeKey } from "../src/tui/keys.js";
-import { Frame, stripAnsi } from "../src/tui/paint.js";
 import {
   CHANGE_LOG_FORMAT,
   ChangeLog,
@@ -29,7 +23,6 @@ import {
   revertedSha,
   type ChangeEntry,
 } from "../src/tui/changelog-store.js";
-import { installChangesHooks, renderChanges, type ChangesView } from "../src/tui/changestab.js";
 import type { RemoteResult } from "../src/tui/remote.js";
 
 const FS = "\x1f";
@@ -246,196 +239,22 @@ describe("the revert, and everything it refuses", () => {
   });
 });
 
-describe("the tab", () => {
-  const view = (entries: ChangeEntry[]): ChangesView => ({
-    register: { version: 1, updated_at: "2026-08-25T10:00:00Z", entries, scanned: 40 },
-    sel: 0,
-    scroll: 0,
-    loading: false,
-    dryRun: false,
-    now: new Date("2026-08-25T11:00:00Z"),
-  });
-
-  const entry = (sha: string, subject: string, reverted?: { by: string; at: string }): ChangeEntry => ({
-    sha,
-    short: sha.slice(0, 7),
-    at: "2026-08-25T09:00:00Z",
-    author: "QCR Companion",
-    subject,
-    feedback_pr: "5270",
-    adjudication: "FT-0231",
-    ratified: 'he said "yes"',
-    first_seen: "2026-08-25T09:30:00Z",
-    ...(reverted ? { reverted } : {}),
-  });
-
-  it("paints the changes newest first, with their provenance and a reverted mark", () => {
-    const frame = renderChanges(view([entry("a".repeat(40), "newest change"), entry("b".repeat(40), "older change", { by: "ddddddd", at: "x" })]), 120, 30);
-    const text = frame.lines.map(stripAnsi).join("\n");
-    expect(text.indexOf("newest change")).toBeLessThan(text.indexOf("older change"));
-    expect(text).toContain("feedback #5270");
-    expect(text).toContain("FT-0231");
-    expect(text).toContain("reverted by ddddddd");
-    expect(text).toContain("5 changes"); // the command bar knows which tab it is on
-  });
-
-  it("an empty register says what puts a change on the list", () => {
-    const text = renderChanges(view([]), 120, 30).lines.map(stripAnsi).join("\n");
-    expect(text).toContain("Ratified-in-session:");
-  });
-
-  function appHarness() {
-    const out = new EventEmitter() as unknown as NodeJS.WriteStream;
-    (out as unknown as { columns: number }).columns = 120;
-    (out as unknown as { rows: number }).rows = 30;
-    out.write = (() => true) as never;
-    const input = new EventEmitter() as unknown as NodeJS.ReadStream;
-    (input as unknown as { isTTY: boolean }).isTTY = false;
-    input.resume = (() => input) as never;
-    input.pause = (() => input) as never;
-    const app = new App(TUI_DEFAULTS, async () => ({ ok: true, stdout: "", stderr: "", code: 0 }), out, input);
-    return app;
-  }
-
-  it("R arms and paints exactly what will run; y is what actually reverts", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "qcr-changes-"));
-    try {
-      const calls: string[][] = [];
-      const cl = new ChangeLog(new ChangeRegisterStore(dir), async (argv) => {
-        calls.push(argv);
-        return argv[1] === "log"
-          ? { ok: true, stdout: landed("a".repeat(40), "2026-08-25T09:00:00Z", "severity change"), stderr: "", code: 0 }
-          : { ok: true, stdout: "", stderr: "", code: 0 };
-      });
-      await cl.refresh();
-      const app = appHarness();
-      const v = installChangesHooks(app, cl);
-      app.tab = "changes";
-
-      expect(app.hooks.changesKey!(app, decodeKey(Buffer.from("R")))).toBe(true);
-      expect(v.armed).toBe("a".repeat(40));
-      expect(calls.some((a) => a[1] === "revert")).toBe(false); // armed is not done
-
-      const frame = app.hooks.changesScreen!(app, 120, 30);
-      const text = typeof frame === "string" ? frame : frame.lines.map(stripAnsi).join("\n");
-      expect(text).toContain("git revert --no-edit aaaaaaa");
-      expect(text).toContain("no push, no GitHub");
-      expect(text).toContain("y do it");
-
-      app.hooks.changesKey!(app, decodeKey(Buffer.from("y")));
-      await new Promise((r) => setTimeout(r, 5));
-      expect(calls.some((a) => a[1] === "revert")).toBe(true);
-      expect(v.armed).toBeUndefined();
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("any other key cancels an armed revert, and runs nothing", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "qcr-changes-"));
-    try {
-      const calls: string[][] = [];
-      const cl = new ChangeLog(new ChangeRegisterStore(dir), async (argv) => {
-        calls.push(argv);
-        return argv[1] === "log"
-          ? { ok: true, stdout: landed("a".repeat(40), "2026-08-25T09:00:00Z", "severity change"), stderr: "", code: 0 }
-          : { ok: true, stdout: "", stderr: "", code: 0 };
-      });
-      await cl.refresh();
-      const app = appHarness();
-      const v = installChangesHooks(app, cl);
-      app.tab = "changes";
-      app.hooks.changesKey!(app, decodeKey(Buffer.from("R")));
-      expect(app.hooks.changesKey!(app, decodeKey(Buffer.from("n")))).toBe(true);
-      expect(v.armed).toBeUndefined();
-      await new Promise((r) => setTimeout(r, 5));
-      expect(calls.some((a) => a[1] === "revert")).toBe(false);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-});
-
 describe("the companion is told to stamp it", () => {
-  it("prompts/companion.md documents the trailer block, the never-omitted key, and the tab that reads it", () => {
+  it("prompts/companion.md documents the trailer block, the never-omitted key, and the surface that reads it", () => {
     const prompt = readFileSync(join(process.cwd(), "prompts/companion.md"), "utf8");
     // The same three trailers the `land` skill promises — no competing set.
     for (const t of ["Feedback-PR:", "Adjudication:", "Ratified-in-session:"]) expect(prompt).toContain(t);
     expect(prompt).toMatch(/`Ratified-in-session:` is never omitted/);
     expect(prompt).toMatch(/last paragraph only/);
-    expect(prompt.replace(/\s+/g, " ")).toContain("`[5] changes` tab");
+    // FT-0398: the register is the CHANGED pane of the feedback tab; the old
+    // `[5] changes` tab is gone and the prompt must not send the companion there.
+    expect(prompt.replace(/\s+/g, " ")).toContain("`[7] feedback` tab");
+    expect(prompt).not.toMatch(/\[5\] changes/);
   });
 
   it("the land skill and the register agree on the identifying trailer", () => {
     const skill = readFileSync(join(process.cwd(), "skills/companion/land/SKILL.md"), "utf8");
     expect(skill).toContain(`${TRAILER_RATIFIED}:`);
     expect(skill).toMatch(/`Ratified-in-session:` is never omitted/);
-  });
-});
-
-describe("key routing — the tab's keys must never reach the companion strip", () => {
-  const TABS: Tab[] = ["board", "digest", "deploy", "metrics", "changes"];
-
-  it("`5` decodes to the changes tab", () => {
-    expect(decodeKey(Buffer.from("5"))).toEqual({ kind: "tab-changes" });
-  });
-
-  it("`5` is registered on EVERY tab — an unregistered printable focuses the companion column and is typed into pi", () => {
-    for (const tab of TABS) expect(registeredKeys(tab).has("5"), `5 unregistered on ${tab}`).toBe(true);
-  });
-
-  it("the changes tab's own keys (R, y) are registered there", () => {
-    expect(TAB_COMMANDS.changes.map((b) => b.key)).toContain("R");
-    for (const k of ["R", "y", "Y", "j", "k", "r"]) expect(registeredKeys("changes").has(k), `${k} unregistered`).toBe(true);
-  });
-
-  it("`5` still reaches the metrics tab's PR box as a DIGIT — #5265 must not lose its 5", async () => {
-    const out = new EventEmitter() as unknown as NodeJS.WriteStream;
-    (out as unknown as { columns: number }).columns = 120;
-    (out as unknown as { rows: number }).rows = 30;
-    out.write = (() => true) as never;
-    const input = new EventEmitter() as unknown as NodeJS.ReadStream;
-    (input as unknown as { isTTY: boolean }).isTTY = false;
-    input.resume = (() => input) as never;
-    input.pause = (() => input) as never;
-    const app = new App(TUI_DEFAULTS, async () => ({ ok: true, stdout: "", stderr: "", code: 0 }), out, input);
-    const { installMetricsHooks } = await import("../src/tui/metricstab.js");
-    const view = installMetricsHooks(app, { overall: async () => ({ error: "x" }), timeline: async () => ({ error: "x" }) });
-    const running = app.run();
-    app.tab = "metrics";
-    const type = (s: string) => (input as unknown as EventEmitter).emit("data", Buffer.from(s));
-    type("#");
-    for (const d of "5265") type(d);
-    expect(view.prEntry).toBe("5265");
-    type("\x1b"); // cancel the entry — outside it, 5 goes back to being the tab key
-    type("5");
-    expect(app.tab).toBe("changes");
-    app.quit();
-    await running;
-  });
-
-  it("an App keypress switches to the tab and routes into its handler", async () => {
-    const out = new EventEmitter() as unknown as NodeJS.WriteStream;
-    (out as unknown as { columns: number }).columns = 120;
-    (out as unknown as { rows: number }).rows = 30;
-    out.write = (() => true) as never;
-    const input = new EventEmitter() as unknown as NodeJS.ReadStream;
-    (input as unknown as { isTTY: boolean }).isTTY = false;
-    input.resume = (() => input) as never;
-    input.pause = (() => input) as never;
-    const app = new App(TUI_DEFAULTS, async () => ({ ok: true, stdout: "", stderr: "", code: 0 }), out, input);
-    const seen: string[] = [];
-    app.hooks.changesKey = (_a, key) => {
-      seen.push(key.kind);
-      return true;
-    };
-    app.hooks.changesScreen = (_a, cols, rows) => new Frame(cols, rows);
-    const running = app.run();
-    (input as unknown as EventEmitter).emit("data", Buffer.from("5"));
-    expect(app.tab).toBe("changes");
-    (input as unknown as EventEmitter).emit("data", Buffer.from("j"));
-    expect(seen).toContain("down");
-    app.quit();
-    await running;
   });
 });

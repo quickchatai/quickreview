@@ -4,7 +4,7 @@
 // --user service and said, in as many words, that it was "deliberately NOT
 // part of the TUI: `qcr tui` starting and stopping is not an event memory
 // should notice". That reasoning stands for the COMPANION — but it made the
-// TUI's own Memory & learning tab depend on a unit the operator had to install
+// TUI's own memory tab depend on a unit the operator had to install
 // first, and an uninstalled unit renders as MEMORY UNREACHABLE, which reads
 // like a broken server rather than a missing local service. The owner asked for
 // the forward to run inside the TUI (2026-08-21). This module is that, without
