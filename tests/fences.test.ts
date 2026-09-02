@@ -615,12 +615,13 @@ describe("what a built pass is told it may run is exactly what the guard lets th
         expect(ALLOWED_PROGRAMS, `${cmd}: '${program}' is a shape, not a program the sentence should list`).not.toContain(program);
       }
     }
-    // …and the shapes are exactly that narrow: the other `sh` form, `bash -c`,
+    // …and the shapes are exactly that narrow: the other `sh` form, a `bash -c`
+    // whose re-parsed payload is not itself an advertised program,
     // an unsanctioned script, other builtins — and a prefix in front of a
     // program the sentence does NOT advertise, which is what makes the prefix
     // a shape rather than a bypass.
     for (const cmd of [
-      "sh scripts/post-review.sh", "bash -c ls", "scripts/rogue.sh", "pwd", "command -v git", "type ls", "[ -f README.md ]",
+      "sh scripts/post-review.sh", "bash -c pwd", "bash -c 'python3 x.py'", "scripts/rogue.sh", "pwd", "command -v git", "type ls", "[ -f README.md ]",
       "env FOO=1 awk '{print $1}' README.md", "FOO=1 pwd", "env FOO=1 python3 x.py",
     ]) {
       expect(checkBashCommand(cmd).allowed, `${cmd} must be refused`).toBe(false);
