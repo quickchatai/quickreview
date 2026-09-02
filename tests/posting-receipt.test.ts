@@ -139,6 +139,17 @@ describe("guarded no-op record", () => {
     // A reply that landed AFTER the refusal is new evidence for the next
     // interaction, not a contradiction of this one.
     expect(guardedNoopMatchesMark(record, liveMark({ last_author_reply_at: "2026-09-01T19:40:00.000Z" }))).toBe(true);
+    // A live reply at or after the review but at or before the refusal means
+    // guard 2 would have answered "new evidence": the record did not read
+    // the mark it claims to have read.
+    expect(guardedNoopMatchesMark(record, liveMark({ last_author_reply_at: "2026-09-01T12:00:00.000Z" }))).toBe(false);
+    expect(guardedNoopMatchesMark(record, liveMark({ last_author_reply_at: "2026-09-01T19:31:15.348Z" }))).toBe(false);
+    expect(guardedNoopMatchesMark(record, liveMark({ last_author_reply_at: "2026-09-01T10:41:34.773Z" }))).toBe(false);
+    // A reply from BEFORE the review was already answered by it.
+    expect(guardedNoopMatchesMark(record, liveMark({ last_author_reply_at: "2026-09-01T09:00:00.000Z" }))).toBe(true);
+    // A refusal cannot precede the review it claims to have refused on.
+    const early = parsePostingReceipt(JSON.stringify(noop({ skipped_at: "2026-09-01T10:00:00.000Z" }))) as GuardedNoopReceipt;
+    expect(guardedNoopMatchesMark(early, liveMark())).toBe(false);
     expect(guardedNoopMatchesMark(record, undefined)).toBe(false);
     expect(guardedNoopMatchesMark(record, liveMark({ head_sha: "0000000" }))).toBe(false);
     expect(guardedNoopMatchesMark(record, liveMark({ reviewed_at: "2026-09-01T19:35:00.000Z" }))).toBe(false);

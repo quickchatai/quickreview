@@ -1134,7 +1134,8 @@ describe("guarded no-op settlement", () => {
       skip_reason: "no-new-evidence",
       intended_event: "REQUEST_CHANGES",
       mode: "dryrun",
-      skipped_at: "2026-08-13T11:59:59Z",
+      // The refusal happened a minute after the standing review was stamped.
+      skipped_at: new Date(Date.parse(mark.reviewed_at) + 60_000).toISOString(),
       standing_mark: {
         head_sha: mark.head_sha,
         reviewed_at: mark.reviewed_at,
@@ -1280,6 +1281,29 @@ describe("guarded no-op settlement", () => {
     expect(store.reviewedHead(506)?.last_author_reply_at).toBe("2099-01-01T00:00:00.000Z");
   });
 
+  it("a live author reply BETWEEN the review and the recorded refusal exposes a lookalike: guard 2 would have passed, so it fails loud", async () => {
+    const { roundId, mark } = skippedRound(513);
+    // The reply follows the review and predates the recorded refusal (review
+    // + 60s): at refusal time the live mark said "new evidence".
+    store.noteAuthorReply(513, new Date(Date.parse(mark.reviewed_at) + 30_000).toISOString());
+
+    expect(await watcher({ postingReceiptGraceS: 0 }).handleFile(write(513, 1, verdictFile({ pr: 513 })))).toBe(true);
+
+    expect(store.db.prepare("SELECT status, cancel_cause FROM rounds WHERE id = ?").get(roundId)).toEqual({ status: "cancelled", cancel_cause: "infrastructure_failure" });
+    expect(store.openReviewFailure(513)).toMatchObject({ stage: "posting_receipt", work_owed: 1 });
+    expect(events("posting_guarded_noop", 513)).toEqual([]);
+  });
+
+  it("a record written in the other mode is a config disagreement, not a settlement", async () => {
+    const { roundId, key, mark } = skippedRound(514);
+    writeGuardedNoop(514, 1, key, mark, { mode: "live" }); // the fixture daemon is dry_run = true
+
+    expect(await watcher({ postingReceiptGraceS: 0 }).handleFile(write(514, 1, verdictFile({ pr: 514 })))).toBe(true);
+
+    expect(store.db.prepare("SELECT status, cancel_cause FROM rounds WHERE id = ?").get(roundId)).toEqual({ status: "cancelled", cancel_cause: "infrastructure_failure" });
+    expect(store.openReviewFailure(514)?.detail).toContain("mode");
+  });
+
   it("a record whose standing mark no longer describes the live one is AMBIGUOUS and stays loud", async () => {
     const { roundId, key, mark } = skippedRound(507);
     // The live mark was re-stamped since the record was written.
@@ -1304,7 +1328,8 @@ describe("guarded no-op settlement", () => {
   });
 
   it("live mode: a bot review carrying this round's marker contradicts the record — GitHub's truth wins and the review links", async () => {
-    const { roundId, key } = skippedRound(509);
+    const { roundId, key, mark } = skippedRound(509);
+    writeGuardedNoop(509, 1, key, mark, { mode: "live" }); // a live daemon, a live record
     adapter.listReviewsFull = async () => [{
       id: 778,
       user: cfg.github.bot_login,

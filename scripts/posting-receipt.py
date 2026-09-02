@@ -147,7 +147,7 @@ def main() -> None:
             # into a refusal before it gets here; this is the fail-closed
             # second layer, so no attempt can be recorded over a skip either.
             raise SystemExit(f"posting-receipt: {key} was refused (no new evidence); refusing to record an attempted post over it")
-        if action == "prepare" and value.get("status") in ("prepared", "confirmed", "dryrun"):
+        if action == "prepare" and value.get("status") in ATTEMPTED:
             # Never turn confirmed back into prepared and never erase an
             # ambiguous POST window. The shell checks before calling too; this
             # is the fail-closed second layer.

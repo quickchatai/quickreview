@@ -56,6 +56,7 @@
 // The never-retract-an-approval invariant is structural: no event and no
 // transition in this module touches an existing review (spec §8).
 import type { PrLifecycleState, StateStore, TriggerProvenance } from "./state.js";
+import { standingLifecycleState, type StandingDecidedVerdict } from "./standing-review.js";
 import type { Verdict } from "./types.js";
 
 export type SmEventType =
@@ -265,6 +266,30 @@ export function applyEvent(
     store.logEvent("pr_transition", pr, { from, to, event: event.type, reason: opts.reason ?? null });
   }
   return { pr, from, to, changed };
+}
+
+/**
+ * Return a PR to the state its STANDING review put it in, with no round
+ * having decided anything new: the dispatch-time no-new-evidence
+ * skip and the posting-time guarded no-op both land here. A decided standing
+ * verdict replays as a `verdict` event — the same table a real verdict uses,
+ * so this can never reach a state a verdict could not. No decided verdict
+ * (a COMMENT-only mark) lands `tracked` via `round_overdue` with a null
+ * standing: known, nothing owed, never an approval. The caller owns the
+ * anomaly that explains WHY nothing stands; this only moves the row.
+ */
+export function restoreStandingLifecycle(
+  store: StateStore,
+  pr: number,
+  standing: StandingDecidedVerdict | null,
+  opts: { botLogin?: string; now?: () => Date; reason: string },
+): "awaiting_author" | "tracked" {
+  if (standing) {
+    applyEvent(store, pr, { type: "verdict", verdict: standing }, {}, opts);
+  } else {
+    applyEvent(store, pr, { type: "round_overdue", standing: null }, {}, opts);
+  }
+  return standingLifecycleState(standing);
 }
 
 /** Persist the dispatch-time migration gate on the PR row (used by dispatch). */

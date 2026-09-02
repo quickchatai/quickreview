@@ -144,14 +144,7 @@ function parseGuardedNoop(value: Partial<GuardedNoopReceipt> & { standing_mark?:
     intended_event: value.intended_event!,
     mode: value.mode,
     skipped_at: value.skipped_at,
-    standing_mark: {
-      head_sha: recorded.head_sha,
-      reviewed_at: recorded.reviewed_at!,
-      verdict: asRow.verdict,
-      posted_event: asRow.posted_event,
-      round_no: asRow.round_no,
-      last_author_reply_at: asRow.last_author_reply_at,
-    },
+    standing_mark: snapshotMark(asRow),
   };
 }
 
@@ -205,12 +198,29 @@ export function guardedNoopMatchesMark(noop: GuardedNoopReceipt, mark: ReviewedH
   if (!mark) return false;
   const live = snapshotMark(mark);
   const recorded = noop.standing_mark;
-  return live.head_sha.toLowerCase() === recorded.head_sha.toLowerCase()
-    && live.head_sha.toLowerCase() === noop.head_sha.toLowerCase()
-    && live.reviewed_at === recorded.reviewed_at
-    && live.verdict === recorded.verdict
-    && live.posted_event === recorded.posted_event
-    && live.round_no === recorded.round_no;
+  if (
+    live.head_sha.toLowerCase() !== recorded.head_sha.toLowerCase()
+    || live.head_sha.toLowerCase() !== noop.head_sha.toLowerCase()
+    || live.reviewed_at !== recorded.reviewed_at
+    || live.verdict !== recorded.verdict
+    || live.posted_event !== recorded.posted_event
+    || live.round_no !== recorded.round_no
+  ) return false;
+  // The live reply memory is the one field allowed to differ — but only
+  // FORWARD. A reply the LIVE mark carries at or after the review and at or
+  // before the recorded refusal means guard 2 would have answered "new
+  // evidence" at that moment: whoever wrote this record did not read the mark
+  // it claims to have read. Fail closed; the ordinary loud path takes over.
+  const reviewedMs = Date.parse(live.reviewed_at);
+  const skippedMs = Date.parse(noop.skipped_at);
+  // A refusal cannot precede the review it refused on.
+  if (skippedMs < reviewedMs) return false;
+  const reply = live.last_author_reply_at;
+  if (reply !== null) {
+    const replyMs = Date.parse(reply);
+    if (replyMs >= reviewedMs && replyMs <= skippedMs) return false;
+  }
+  return true;
 }
 
 export function readPostingReceipt(dir: string, pr: number, roundNo: number): PostingOutcome | undefined {

@@ -145,7 +145,7 @@ GUARD_STANDING_MARK_JSON=""   # the mark guard 2 refused on, as JSON (set on ref
 
 guard_require_new_evidence() { # guard_require_new_evidence <head-sha>
   guard_enabled skip_unchanged_head || return 0
-  local head="${1:-}" answer verdict
+  local head="${1:-}" answer answer_kind
   [[ -n "$head" ]] || return 0   # unknown head: guessing would suppress a real review
   answer="$(python3 - "$GUARD_STATE_DB" "$PR" "$head" <<'PY' 2>/dev/null || echo new
 import json, os, sqlite3, sys
@@ -183,8 +183,8 @@ else:
     print("stale\t" + json.dumps(mark, separators=(",", ":")))
 PY
 )"
-  verdict="${answer%%$'\t'*}"
-  if [[ "$verdict" == "stale" ]]; then
+  answer_kind="${answer%%$'\t'*}"
+  if [[ "$answer_kind" == "stale" ]]; then
     GUARD_STANDING_MARK_JSON="${answer#*$'\t'}"
     [[ "$GUARD_STANDING_MARK_JSON" == "$answer" ]] && GUARD_STANDING_MARK_JSON=""
     if declare -F guard_on_no_new_evidence >/dev/null; then

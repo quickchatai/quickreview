@@ -38,7 +38,7 @@ import { carryWithheldMark, classifyDelta, recheckFingerprint, type DeltaClass, 
 import { roundPostingKey } from "./posting-receipt.js";
 import { directiveVocabulary, isFirstPartyDirectivePath } from "./severity.js";
 import type { DispatchAnnouncer } from "./slack/announce.js";
-import { applyEvent, setPrGates } from "./statemachine.js";
+import { applyEvent, restoreStandingLifecycle, setPrGates } from "./statemachine.js";
 import type { PrStateRow, ReviewedHeadRow, StateStore } from "./state.js";
 import { snapshotMark, standingReview } from "./standing-review.js";
 import { higherTier, PASS_TIER_ORDER, roundPromptMarker } from "./types.js";
@@ -780,27 +780,20 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         };
         await consumeTriggers(deps, row.number, { markInProgress: false });
         store.logEvent("round_skipped_no_new_evidence", row.number, decision);
-        if (standing) {
-          log(`dispatch: #${row.number} skipped — no new evidence at ${row.head_sha.slice(0, 7)}; standing ${standing} stands`);
-          applyEvent(store, row.number, { type: "verdict", verdict: standing }, {}, {
-            botLogin: cfg.github.bot_login,
-            now,
-            reason: "no-new-evidence",
-          });
-        } else {
-          log(`dispatch: #${row.number} skipped — no new evidence at ${row.head_sha.slice(0, 7)}, and the mark carries no readable verdict (posted_event=${mark!.posted_event ?? "null"})`);
+        if (standingInfo.kind === "unknown") {
           store.logAnomaly(
             "standing_review_unknown",
             row.number,
             null,
-            `#${row.number} was re-triggered at ${row.head_sha.slice(0, 7)}, which is already reviewed with no author reply since, but the reviewed-head mark carries no verdict (posted_event=${mark!.posted_event ?? "null"}). No round was run — posting guard 2 would refuse its review — and no verdict was guessed; the PR is tracked until the author pushes or replies.`,
+            `#${row.number} was re-triggered at ${row.head_sha.slice(0, 7)}, which is already reviewed with no author reply since, but the reviewed-head mark carries no verdict (posted_event=${standingInfo.posted_event ?? "null"}). No round was run — posting guard 2 would refuse its review — and no verdict was guessed; the PR is tracked until the author pushes or replies.`,
           );
-          applyEvent(store, row.number, { type: "round_overdue", standing: null }, {}, {
-            botLogin: cfg.github.bot_login,
-            now,
-            reason: "no-new-evidence:standing-unknown",
-          });
         }
+        const restored = restoreStandingLifecycle(store, row.number, standing, {
+          botLogin: cfg.github.bot_login,
+          now,
+          reason: standing ? "no-new-evidence" : "no-new-evidence:standing-unknown",
+        });
+        log(`dispatch: #${row.number} skipped — no new evidence at ${row.head_sha.slice(0, 7)}; standing ${standing ?? "review (verdict unknown)"} stands, PR ${restored}`);
         continue;
       }
 

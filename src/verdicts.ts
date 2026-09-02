@@ -36,7 +36,7 @@ import {
 } from "./execboundary.js";
 import { auditExecViolationDetails, collectWindowLines, estimateUsd, measureRoundUsage, type ModelPricing, type UsageFs } from "./usage.js";
 import type { GateResult } from "./gate.js";
-import { applyEvent } from "./statemachine.js";
+import { applyEvent, restoreStandingLifecycle } from "./statemachine.js";
 import type { VerdictAnnouncer } from "./slack/announce.js";
 import { isLoudCancelCause, type CancelCause, type RoundRow, type StateStore } from "./state.js";
 import { enforceLedgerFreshness } from "./ledgercheck.js";
@@ -419,7 +419,14 @@ export class VerdictWatcher {
     // this round's marker at this head would prove it wrong — GitHub's truth
     // wins over the file, exactly as it wins over a missing file.
     let noop: GuardedNoopReceipt | undefined;
-    if (receiptIdentityOk && receipt && receipt.status === "skipped") noop = receipt;
+    let noopModeMismatch = false;
+    if (receiptIdentityOk && receipt && receipt.status === "skipped") {
+      // Same rule a `dryrun` receipt lives under: a record written in the
+      // other mode came from a script whose config disagrees with this
+      // daemon's, and that disagreement is not something to settle quietly.
+      if ((receipt.mode === "dryrun") === this.deps.cfg.dry_run) noop = receipt;
+      else noopModeMismatch = true;
+    }
     if (receiptIdentityOk && receipt && receipt.status !== "skipped") {
       if (receipt.status === "confirmed" && (!verdict || receiptMatchesVerdict(receipt, verdict))) {
         const persisted = this.deps.store.confirmRoundPosting(round.id, {
@@ -518,6 +525,9 @@ export class VerdictWatcher {
     }
 
     if (noop) return { kind: "skipped", noop };
+    if (noopModeMismatch) {
+      return { kind: "failed", detail: `guarded no-op record for ${round.posting_key} was written in ${this.deps.cfg.dry_run ? "live" : "dry-run"} mode; this daemon is not` };
+    }
 
     const origin = receiptIdentityOk && receipt && receipt.status !== "skipped" ? receipt.prepared_at : round.started_at;
     const graceS = this.deps.postingReceiptGraceS ?? this.deps.cfg.daemon.posting_receipt_grace_s ?? DEFAULT_POSTING_RECEIPT_GRACE_S;
@@ -542,13 +552,17 @@ export class VerdictWatcher {
    *   - no `review_failures` row, no retry budget, no Slack FAILED_LOUD, no
    *     replacement round, no escalation.
    *
-   * Consumed once: a round that is no longer running was settled by an
-   * earlier caller (the deadline sweep, the supervisor), and a verdict file
-   * that arrives afterwards is archived without touching anything.
+   * Consumed once: the claim is a FRESH read of the round row followed
+   * synchronously by the cancel — no await between them, so the deadline
+   * sweep and the verdict sweep (separate timers, each of which may have
+   * awaited a GitHub read in `postingProof`) cannot both win. The loser sees
+   * a round that is no longer running and archives its file without touching
+   * anything.
    *
-   * Returns `failed` — and touches nothing — when the record's standing mark
-   * no longer describes the live one. That is state changing under the
-   * record, which is ambiguous, and ambiguous stays loud.
+   * Returns `failed` — after handing the round to the ordinary loud path —
+   * when the record's standing mark no longer describes the live one. That is
+   * state changing under the record, which is ambiguous, and ambiguous stays
+   * loud.
    */
   private async settleGuardedNoop(
     round: RoundRow,
@@ -557,20 +571,24 @@ export class VerdictWatcher {
     verdict?: VerdictFile,
   ): Promise<"settled" | "replayed" | "failed"> {
     const { store, cfg, adapter } = this.deps;
-    if (round.status !== "running") {
+    // ---- the claim: fresh read → cancel, synchronously -----------------------
+    const fresh = this.runningRound(round.pr, round.round_no);
+    if (!fresh || fresh.id !== round.id || fresh.status !== "running") {
       store.logEvent("posting_guarded_noop_replayed", round.pr, {
         round_id: round.id,
         round_no: round.round_no,
         posting_key: round.posting_key,
         via,
-        round_status: round.status,
+        round_status: fresh?.status ?? "missing",
       });
-      this.log(`verdicts: #${round.pr} round ${round.round_no} guarded no-op already settled (${round.status}) — ${via} ignored`);
+      this.log(`verdicts: #${round.pr} round ${round.round_no} guarded no-op already settled (${fresh?.status ?? "missing"}) — ${via} ignored`);
       return "replayed";
     }
     const mark = store.reviewedHead(round.pr);
-    if (!guardedNoopMatchesMark(noop, mark)) return "failed";
-
+    if (!guardedNoopMatchesMark(noop, mark)) {
+      await this.failPostingProof(round, `guarded no-op record for ${round.posting_key} no longer matches the live reviewed-head mark`);
+      return "failed";
+    }
     const standingInfo = standingReview(mark);
     const standing: StandingDecidedVerdict | null = standingInfo.kind === "decided" ? standingInfo.verdict : null;
     const head7 = noop.head_sha.slice(0, 7);
@@ -580,20 +598,13 @@ export class VerdictWatcher {
         `standing ${standing ?? "review (verdict unknown)"} stands, nothing was posted`,
       "no_new_evidence",
     );
+    // ---- claimed; everything below may await ---------------------------------
     // The round ran a full review and burned its tokens: measured
     // like every other terminal path, never hidden behind a benign cause.
     this.measureUsage(round.pr, round.id, round.started_at, this.now().toISOString());
     await this.safe(() => adapter.removeLabel(round.pr, cfg.github.in_progress_label), `remove ${cfg.github.in_progress_label} on #${round.pr}`);
 
-    let restored: "awaiting_author" | "tracked";
-    if (standing) {
-      applyEvent(store, round.pr, { type: "verdict", verdict: standing }, {}, {
-        botLogin: cfg.github.bot_login,
-        now: () => this.now(),
-        reason: `posting-guarded-noop:${standing}`,
-      });
-      restored = standing === "REQUEST_CHANGES" ? "awaiting_author" : "tracked";
-    } else {
+    if (standingInfo.kind === "unknown") {
       // A COMMENT-only mark: guard 2 was right to refuse, and nothing here
       // may guess what that comment decided. Tracked, never an approve, with
       // an anomaly naming the shape.
@@ -602,16 +613,15 @@ export class VerdictWatcher {
         round.pr,
         round.round_no,
         `round ${round.round_no}'s review was refused by posting guard 2 at ${head7} (already reviewed, no author reply since), ` +
-          `but the reviewed-head mark carries no verdict (posted_event=${mark!.posted_event ?? "null"}). ` +
+          `but the reviewed-head mark carries no verdict (posted_event=${standingInfo.posted_event ?? "null"}). ` +
           `Nothing was posted and no verdict was guessed; the PR is tracked until the author pushes or replies.`,
       );
-      applyEvent(store, round.pr, { type: "round_overdue", standing: null }, {}, {
-        botLogin: cfg.github.bot_login,
-        now: () => this.now(),
-        reason: "posting-guarded-noop:standing-unknown",
-      });
-      restored = "tracked";
     }
+    const restored = restoreStandingLifecycle(store, round.pr, standing, {
+      botLogin: cfg.github.bot_login,
+      now: () => this.now(),
+      reason: standing ? `posting-guarded-noop:${standing}` : "posting-guarded-noop:standing-unknown",
+    });
     store.logEvent("posting_guarded_noop", round.pr, {
       stage: "posting",
       via,
@@ -750,12 +760,7 @@ export class VerdictWatcher {
         // guard 2 refused the post. The verdict in this file was never
         // published and is never applied — no label, no transition from it, no
         // reviewed-head mark, no escalation. The file is archived by the caller.
-        const settled = await this.settleGuardedNoop(round, proof.noop!, "verdict", v);
-        if (settled === "failed") {
-          await this.failPostingProof(round, `guarded no-op record for ${round.posting_key} no longer matches the live reviewed-head mark`);
-          return "failed";
-        }
-        return "applied";
+        return (await this.settleGuardedNoop(round, proof.noop!, "verdict", v)) === "failed" ? "failed" : "applied";
       }
       if (proof.kind === "failed") {
         await this.failPostingProof(round, proof.detail ?? "posting receipt invalid");
@@ -1550,12 +1555,7 @@ export class VerdictWatcher {
         // the session was refused by guard 2 and stopped without a
         // verdict file. The round is over and nothing is owed; the delivered
         // command stays whatever it is (an acked command proved delivery).
-        const settled = await this.settleGuardedNoop(round, proof.noop!, "settled_without_verdict");
-        if (settled === "failed") {
-          await this.failPostingProof(round, `guarded no-op record for ${round.posting_key} no longer matches the live reviewed-head mark`);
-          return "failed_loud";
-        }
-        return "settled";
+        return (await this.settleGuardedNoop(round, proof.noop!, "settled_without_verdict")) === "failed" ? "failed_loud" : "settled";
       }
       if (proof.kind === "confirmed") {
         await this.failPostingProof(
@@ -1921,10 +1921,7 @@ export class VerdictWatcher {
         if (proof.kind === "skipped") {
           // refused by guard 2, no verdict file by the deadline. Not
           // stuck, not failed — settled, and a late verdict file replays inertly.
-          const settled = await this.settleGuardedNoop(round, proof.noop!, "deadline");
-          if (settled === "failed") {
-            await this.failPostingProof(round, `guarded no-op record for ${round.posting_key} no longer matches the live reviewed-head mark`);
-          }
+          await this.settleGuardedNoop(round, proof.noop!, "deadline");
           continue;
         }
         if (proof.kind === "confirmed") {

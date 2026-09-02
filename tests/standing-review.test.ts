@@ -100,10 +100,23 @@ function tsFiles(dir: string): string[] {
   return out;
 }
 
-/** A direct read of `.verdict` off something that is a reviewed-head mark. The
- * identifier list is what the codebase calls the row today; a new spelling that
- * dodges it is caught by the consumer table below, which demands the import. */
-const RAW_MARK_VERDICT = /(?:reviewedHead\([^)]*\)|\b(?:mark|reviewed|prev))\s*!?\??\.\s*verdict\b/g;
+/** A direct read of `.verdict` off something that is a reviewed-head mark:
+ * an inline `reviewedHead(...)` call, the names the codebase gives the row
+ * today, or ANY identifier a file binds from `reviewedHead(` — so
+ * `const m = store.reviewedHead(pr); m.verdict` is caught too. */
+const RAW_MARK_VERDICT_BASE = /(?:reviewedHead\([^)]*\)|\b(?:mark|reviewed|prev))\s*!?\??\.\s*verdict\b/g;
+const BOUND_FROM_REVIEWED_HEAD = /(?:const|let|var)\s+(\w+)\s*(?::[^=\n]+)?=\s*[^;\n]*\breviewedHead\(/g;
+
+function rawMarkVerdictReads(text: string): string[] {
+  const hits = [...text.matchAll(RAW_MARK_VERDICT_BASE)].map((m) => m[0]);
+  const bound = new Set([...text.matchAll(BOUND_FROM_REVIEWED_HEAD)].map((m) => m[1]!));
+  for (const name of bound) {
+    if (name === "mark" || name === "reviewed" || name === "prev") continue; // already in the base pattern
+    const re = new RegExp(`\\b${name}\\s*!?\\??\\.\\s*verdict\\b`, "g");
+    hits.push(...[...text.matchAll(re)].map((m) => m[0]));
+  }
+  return hits;
+}
 
 /**
  * The lifecycle consumers of the mark, and the raw reads each is allowed to
@@ -138,7 +151,7 @@ describe("every lifecycle consumer reads the mark through standing-review (fence
       const rel = path.slice(ROOT.length + 1);
       if (rel === "src/standing-review.ts") continue;
       const text = readFileSync(path, "utf8");
-      const hits = [...text.matchAll(RAW_MARK_VERDICT)];
+      const hits = rawMarkVerdictReads(text);
       const budget = allowed.get(rel) ?? 0;
       if (hits.length > budget) {
         offenders.push(`${rel}: ${hits.length} raw mark.verdict read(s), ${budget} allowed — read it through standingReview/standingVerdict`);
@@ -149,6 +162,12 @@ describe("every lifecycle consumer reads the mark through standing-review (fence
 
   it("the state.ts allowance is exact, so a retired raw read lowers it rather than leaving slack", () => {
     const text = readFileSync(join(ROOT, "src/state.ts"), "utf8");
-    expect([...text.matchAll(RAW_MARK_VERDICT)]).toHaveLength(CONSUMERS.find((c) => c.file === "src/state.ts")!.rawReadsAllowed);
+    expect(rawMarkVerdictReads(text)).toHaveLength(CONSUMERS.find((c) => c.file === "src/state.ts")!.rawReadsAllowed);
+  });
+
+  it("the fence catches a mark bound to a fresh name, not only the spellings in use today", () => {
+    expect(rawMarkVerdictReads("const m = store.reviewedHead(pr);\nif (m?.verdict === 'APPROVE') {}")).toHaveLength(1);
+    expect(rawMarkVerdictReads("const row: ReviewedHeadRow | undefined = this.reviewedHead(n);\nreturn row!.verdict;")).toHaveLength(1);
+    expect(rawMarkVerdictReads("const v = verdictFile.verdict;")).toHaveLength(0);
   });
 });
