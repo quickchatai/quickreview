@@ -37,7 +37,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ALLOWED_PROGRAMS, checkBashCommand } from "../extensions/bash-guard.js";
-import { ALLOWED_COMMANDS_CLAUSE, EXECUTION_POLICY_ADDENDUM, PASS_ADDENDA, buildAgents } from "../src/include.js";
+import { ALLOWED_COMMANDS_CLAUSE, EXECUTION_POLICY_ADDENDUM, PASS_ADDENDA, buildAgents, identityVars } from "../src/include.js";
+import { renderOverseerSystemPrompt } from "../src/templates.js";
 import { loadProfileAddenda } from "../src/profiles.js";
 import { INITIAL_STATE, transition, type SmEvent } from "../src/statemachine.js";
 import { CANCEL_CAUSES, type PrLifecycleState } from "../src/state.js";
@@ -320,6 +321,21 @@ describe("[T12] the pi version pin is one fact, spelled the same everywhere", ()
     expect(rule7, "rule 7 no longer quotes a pi version in the shape this fence reads").toBeTruthy();
     expect(rule7, "rule 7's pi version drifted from config.toml — reconcile it").toBe(pins()["config.toml [pi] version"]);
   });
+
+  /**
+   * The deploy checklist quotes the pin too ("currently `…`"), and it sat at
+   * `0.84.1` after rule 7 was corrected — the same file said `0.84.4` two
+   * hundred lines later. An operator reads this one before every deploy.
+   *
+   * MUTATION: change the version after "currently" in the deploying skill —
+   * this fails.
+   */
+  it("the deploying skill's 'currently' pin quotes the real pi version", () => {
+    const skill = readFileSync(join(ROOT, ".claude", "skills", "deploying", "SKILL.md"), "utf8");
+    const quoted = /\*\*pi pin coherent\*\*[^\n]*\n[^\n]*\(currently `([^`]+)`\)/.exec(skill)?.[1];
+    expect(quoted, "the deploying skill no longer quotes the pin in the shape this fence reads").toBeTruthy();
+    expect(quoted, "the deploying skill's pi version drifted from config.toml — reconcile it").toBe(pins()["config.toml [pi] version"]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -551,6 +567,58 @@ describe("what a built pass is told it may run is exactly what the guard lets th
       } finally {
         rmSync(out, { recursive: true, force: true });
       }
+    }
+  });
+
+  /**
+   * The sentence lists PROGRAMS, and the guard admits a few SHAPES beyond
+   * any program: `cd` (a builtin — its argument is a path), `sh -n <file>`
+   * (a syntax check, the only `sh` form), an `env`/`VAR=val` prefix in front
+   * of an allowed program, and the sanctioned `scripts/*.sh` — directly or
+   * via `bash` — which are the session's posting route and are described to
+   * it separately. So "advertised ⇒ admitted" is the direction the fence
+   * above holds, and the prompt UNDER-advertises by exactly this list, which
+   * is harmless for a leaf. This test keeps that list true: a shape added to
+   * the guard without a line here, or one removed, fails.
+   *
+   * MUTATION: make `cd` fall through to the allowlist in checkProgram — the
+   * `cd /tmp` probe is then refused and this fails.
+   */
+  it("the guard's admissions beyond the advertised programs are exactly the documented shapes", () => {
+    for (const cmd of ["cd /tmp", "sh -n scripts/post-review.sh", "env FOO=1 cat README.md", "FOO=1 cat README.md", "bash scripts/post-review.sh", "scripts/reply-thread.sh 5 1 reply.md"]) {
+      const r = checkBashCommand(cmd);
+      expect(r.allowed, `documented shape refused: ${cmd} — ${r.reason ?? ""}`).toBe(true);
+      expect(ALLOWED_PROGRAMS, `${cmd} is a shape, not a program the sentence should list`).not.toContain(cmd.split(" ")[0]);
+    }
+    // …and the shapes are exactly that narrow.
+    for (const cmd of ["sh scripts/post-review.sh", "bash -c ls", "scripts/rogue.sh", "pwd", "command -v git", "type ls", "[ -f README.md ]"]) {
+      expect(checkBashCommand(cmd).allowed, `${cmd} must be refused`).toBe(false);
+    }
+  });
+
+  /**
+   * The overseer is the OTHER prompt a model reads on every day, and it too
+   * is composed: the frozen seed rendered, plus — when `[slack] enabled` —
+   * the non-seeded appendix, concatenated at spawn (`ensureOverseerSession`;
+   * `tests/slack-appendix.test.ts` proves this is the body that is spawned).
+   * The appendix is ours, and it still told the overseer "a PR stops for a
+   * person only when a round returns NEEDS_HUMAN" — the MC-48 sentence this
+   * ticket took out of src/commands.ts — plus that the seed still listed a
+   * command the 2026-08-18 reseed had removed.
+   *
+   * MUTATION: restore that sentence in prompts/slack-overseer-appendix.md —
+   * fails. Put `mark-escalation-worthy` into the seed's command list — fails.
+   */
+  it("the composed overseer body — seed rendered plus the Slack appendix — names neither the park nor NEEDS_HUMAN", () => {
+    const seed = readFileSync(join(ROOT, "prompts", "overseer-system.md"), "utf8");
+    const appendix = readFileSync(join(ROOT, "prompts", "slack-overseer-appendix.md"), "utf8");
+    const rendered = renderOverseerSystemPrompt(seed, identityVars({}));
+    // The appendix says the seed no longer lists the retired command; hold
+    // the fact the sentence rests on, not the sentence.
+    expect(rendered).not.toContain("mark-escalation-worthy");
+    for (const [label, body] of [["slack off", rendered], ["slack on", `${rendered}\n\n${appendix.trimEnd()}\n`]] as const) {
+      expect(body, `${label}: names NEEDS_HUMAN`).not.toMatch(/NEEDS_HUMAN/);
+      expect(body, `${label}: names the park`).not.toMatch(/\bpark(s|ed|ing)?\b/i);
     }
   });
 
