@@ -188,6 +188,11 @@ describe("recording at round start", () => {
     const watched = Object.keys(fp!.files ?? {});
     expect(watched.some((p) => p.endsWith("/.git/config"))).toBe(true);
     expect(watched.some((p) => p.endsWith("/pihome/.gitconfig"))).toBe(true);
+    // and this system's OWN policy surface under the sandbox root —
+    // the guards' config, the sanctioned scripts and the compiled guard.
+    expect(watched.some((p) => p.endsWith("/config.toml"))).toBe(true);
+    expect(watched.some((p) => p.endsWith("/scripts"))).toBe(true);
+    expect(watched.some((p) => p.endsWith("/dist"))).toBe(true);
   });
 
   // the audit trail — which tier held the veto in this round.

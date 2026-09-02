@@ -293,6 +293,9 @@ describe("exec-boundary anomaly tiers", () => {
     // Git config rewritten mid-round makes that round's output untrusted:
     // config-supplied shell turns a plain `git diff` into arbitrary execution.
     expect(anomalySeverity("git_config_modified")).toBe("wake");
+    // the boundary's OWN policy surface rewritten mid-round is worse
+    // still — every later round in the container runs under the rewrite.
+    expect(anomalySeverity("policy_surface_modified")).toBe("wake");
   });
 
   it("stays quiet on the sibling that is a record, not an alarm", () => {

@@ -29,10 +29,12 @@ import {
   type Config,
 } from "./config.js";
 import {
-  fingerprintRoundGitConfig,
+  fingerprintRoundIntegrity,
   gitConfigChangeMessage,
-  gitConfigChanges,
-  type GitConfigFingerprint,
+  integrityChanges,
+  policySurfaceChangeMessage,
+  splitIntegrityChanges,
+  type IntegrityFingerprint,
 } from "./execboundary.js";
 import { auditExecViolationDetails, collectWindowLines, estimateUsd, measureRoundUsage, type ModelPricing, type UsageFs } from "./usage.js";
 import type { GateResult } from "./gate.js";
@@ -1233,14 +1235,19 @@ export class VerdictWatcher {
   }
 
   /**
-   * did git's configuration change while this round ran?
+   * did git's configuration change while this round ran? And, since
+   *, did this system's OWN policy surface (config.toml, scripts/,
+   * dist/, extensions/, the seeds)?
    *
    * The write veto in the bash guard reads command strings, and five write
    * primitives on the guard's own read-only allowlist go straight past it —
    * `T=.git/config; cat p >> $T` cannot EVER be seen by a token scan, because
    * the target is a variable. This check does not look at commands at all: the
    * fingerprint was taken when `dispatch` prepared the worktree, and any
-   * difference now is a write the daemon did not make.
+   * difference now is a write the daemon did not make. The two families raise
+   * DIFFERENT anomalies, because they mean different things: a git change
+   * taints this round; a policy change rewrites the boundary every later round
+   * in the container runs under.
    *
    * Runs inside `measureUsage`, which is deliberately the one place that fires
    * on BOTH the verdict path and the anomaly/overdue path — a round that ends
@@ -1251,25 +1258,33 @@ export class VerdictWatcher {
    * NULL baseline is never read as "changed" (the same rule the receipt scan
    * had to learn: unknown is not evidence of loss).
    */
-  private checkGitConfigIntegrity(pr: number, roundId: number): void {
+  private checkRoundIntegrity(pr: number, roundId: number): void {
     const { cfg, store } = this.deps;
     try {
-      const before = store.roundGitConfig(roundId) as GitConfigFingerprint | undefined;
+      const before = store.roundGitConfig(roundId) as IntegrityFingerprint | undefined;
       if (!before || typeof before.digest !== "string") return; // no baseline — never judged
       const root = this.deps.root ?? sandboxRoot();
-      const after = fingerprintRoundGitConfig({
+      const after = fingerprintRoundIntegrity({
         clonePath: githubCloneDir(cfg.github),
         worktreePath: resolve(root, `wt/pr-${pr}`),
         piHome: join(root, "pihome"),
+        sandboxRoot: root,
       });
-      const changes = gitConfigChanges(before, after);
-      if (changes.length === 0) return;
-      store.logEvent("git_config_modified", pr, { round_id: roundId, changes });
-      const message = gitConfigChangeMessage(pr, changes);
-      store.logAnomaly("git_config_modified", pr, null, message, message);
-      this.log(`verdicts: #${pr} GIT CONFIG CHANGED DURING THE ROUND`, changes);
+      const { git, policy } = splitIntegrityChanges(integrityChanges(before, after), root);
+      if (git.length > 0) {
+        store.logEvent("git_config_modified", pr, { round_id: roundId, changes: git });
+        const message = gitConfigChangeMessage(pr, git);
+        store.logAnomaly("git_config_modified", pr, null, message, message);
+        this.log(`verdicts: #${pr} GIT CONFIG CHANGED DURING THE ROUND`, git);
+      }
+      if (policy.length > 0) {
+        store.logEvent("policy_surface_modified", pr, { round_id: roundId, changes: policy });
+        const message = policySurfaceChangeMessage(pr, policy);
+        store.logAnomaly("policy_surface_modified", pr, null, message, message);
+        this.log(`verdicts: #${pr} POLICY SURFACE CHANGED DURING THE ROUND`, policy);
+      }
     } catch (err) {
-      this.log(`verdicts: #${pr} git-config integrity check unavailable`, err);
+      this.log(`verdicts: #${pr} round integrity check unavailable`, err);
     }
   }
 
@@ -1306,7 +1321,7 @@ export class VerdictWatcher {
       // classified, so the durable event says WHICH policy was
       // crossed. Until then the audit matched interpreters only, and none of
       // the four chains proved would have produced a single line here.
-      this.checkGitConfigIntegrity(pr, roundId);
+      this.checkRoundIntegrity(pr, roundId);
 
       const violations = auditExecViolationDetails(collectWindowLines(opts));
       if (violations.length > 0) {

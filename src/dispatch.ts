@@ -15,7 +15,7 @@
 import { join, resolve } from "node:path";
 import type { Config } from "./config.js";
 import { githubCloneDir, sandboxRoot } from "./config.js";
-import { fingerprintRoundGitConfig } from "./execboundary.js";
+import { fingerprintRoundIntegrity } from "./execboundary.js";
 import type { GateResult } from "./gate.js";
 import type { PrFileEntry } from "./github.js";
 import { DJANGO_ECOSYSTEM, type Ecosystem } from "./ecosystem.js";
@@ -923,20 +923,22 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         });
       }
 
-      // the git-config fingerprint, taken HERE — after the worktree is
-      // materialised (so the tree is the one the round will read) and before
-      // the session hears about the round (so nothing it does is inside the
-      // baseline). `verdicts.measureUsage` re-checks it when the round ends.
-      // Best-effort in both directions: a fingerprint that cannot be taken
-      // leaves the round unchecked, which is the legacy behaviour — it
-      // never fails a round.
+      // the integrity fingerprint — git's config/hook files and, since
+      //, this system's own policy surface under the sandbox root —
+      // taken HERE: after the worktree is materialised (so the tree is the one
+      // the round will read) and before the session hears about the round (so
+      // nothing it does is inside the baseline). `verdicts.measureUsage`
+      // re-checks it when the round ends. Best-effort in both directions: a
+      // fingerprint that cannot be taken leaves the round unchecked, which is
+      // the legacy behaviour — it never fails a round.
       try {
         store.recordRoundGitConfig(
           roundId,
-          fingerprintRoundGitConfig({
+          fingerprintRoundIntegrity({
             clonePath: githubCloneDir(cfg.github),
             worktreePath: resolve(sandboxRoot(), worktreeFor(row.number)),
             piHome: join(sandboxRoot(), "pihome"),
+            sandboxRoot: sandboxRoot(),
           }),
         );
       } catch (err) {

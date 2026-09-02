@@ -18,10 +18,14 @@
 // session writes, which a command guard never sees. Two things changed here as
 // a result, and both are about the boundary rather than about any one attack:
 //
-//   · it now also vets the WRITE tools, on exactly one question — is this path
-//     part of git's configuration surface (`isGitConfigSurface`)? That closes
-//     the repo config scope, where a plain `git diff` executes a program named
-//     by `<clone>/.git/config` with no suspicious token in the command at all;
+//   · it now also vets the WRITE tools, on one question — is this path a
+//     PROTECTED write target (`isProtectedWriteTarget`)? That is git's
+//     configuration surface (`isGitConfigSurface`, — the repo config
+//     scope, where a plain `git diff` executes a program named by
+//     `<clone>/.git/config` with no suspicious token in the command at all)
+//     and,, this system's OWN policy surface (`isPolicySurface`
+//     — config.toml, the sanctioned scripts, the compiled guard, the seeds),
+//     which seven rounds of hardening had never protected;
 //   · the global/XDG/system scopes are closed OUTSIDE this file entirely, by
 //     `sessionGitConfigPins` in src/sessions.ts, which pins where git looks for
 //     configuration at spawn. That is not a rule this guard enforces; it is a
@@ -511,22 +515,31 @@ const COMMAND_INJECTING_ENV_RE = /^GIT_CONFIG_(KEY|VALUE)_\d+$/;
  * the approval-withheld state; `QCR_DRYRUN_DIR` relocates where a suppressed
  * intent is recorded, which is the only evidence a dry-run run leaves.
  *
- * SCOPE, stated so nobody reads this as more than it is: this closes the
- * ENV-PREFIX spelling of MC-05, not the class. Adversarial review found two
- * further routes to the same end — `bash -c '<sanctioned script> ; <anything>'`
- * past the segment policy, and a writable default config path (the config,
- * `guards.sh` and the posting scripts themselves can all simply be
- * overwritten). Both are their own follow-up tickets. A session that wants the
- * guards moved still has ways; it no longer has this one.
+ * SCOPE: this closes the ENV-PREFIX spelling of MC-05. The two further routes
+ * the review found — `bash -c '<sanctioned script> ; <anything>'` past
+ * the segment policy, and overwriting the config / `guards.sh` / the posting
+ * scripts / the compiled guard outright — are closed: the `bash -c`
+ * payload is re-parsed as its own command (`bashCPayload`, from
+ * `checkSegment`), and every policy-carrying file is unwritable at BOTH the
+ * write-tool and the shell-redirection boundary (`isPolicySurface`).
+ *
+ * `QCR_POSTING_RECEIPT_DIR` is HERE as, moved out of the
+ * "arguments" list below after the review flagged it as "closer to a
+ * relocator than to an argument". The ruling: it names a DIRECTORY, exactly
+ * like `QCR_DRYRUN_DIR` and `QCR_STATE_DB` beside it, not a per-call value like
+ * `QCR_EXPECTED_HEAD`; the daemon never sets it (it relies on the scripts'
+ * default `$ROOT/state/posting-receipts`, and `verdicts.ts` reads that same
+ * default), so blocking it breaks no dispatch path; and a session has no
+ * business moving where the posting RECEIPT — the record that settles a round —
+ * is written. It is a relocator, and it is refused.
  *
  * NOT here, deliberately: `QCR_EXPECTED_HEAD`, `QCR_POSTING_KEY`,
- * `QCR_ROUND_NO`, `QCR_POST_RESPONSE`, `QCR_POSTING_RECEIPT_DIR`. Those are
- * per-invocation ARGUMENTS the daemon hands the script — a session setting one
- * changes what this call is about, which the guards then check; it does not
- * change what the guards ARE. Blocking them would break the daemon's own
- * dispatch path.
+ * `QCR_ROUND_NO`, `QCR_POST_RESPONSE`. Those are per-invocation ARGUMENTS the
+ * daemon hands the script — a session setting one changes what this call is
+ * about, which the guards then check; it does not change what the guards ARE.
+ * Blocking them would break the daemon's own dispatch path.
  */
-const POLICY_RELOCATING_ENV = new Set(["QCR_CONFIG", "QCR_STATE_DB", "QCR_DRYRUN_DIR"]);
+const POLICY_RELOCATING_ENV = new Set(["QCR_CONFIG", "QCR_STATE_DB", "QCR_DRYRUN_DIR", "QCR_POSTING_RECEIPT_DIR"]);
 
 function envInjectionBlock(name: string): BashCheck | null {
   if (POLICY_RELOCATING_ENV.has(name)) {
@@ -540,8 +553,10 @@ function envInjectionBlock(name: string): BashCheck | null {
   );
 }
 
-/** One segment's program + args, env prefixes and subshell parens skipped. */
-function checkSegment(tokens: string[]): BashCheck {
+/** One segment's program + args, env prefixes and subshell parens skipped.
+ * `segment` is the RAW text the tokens came from — needed for `bash -c`, whose
+ * payload the whitespace split has already shredded (see `bashCPayload`). */
+function checkSegment(segment: string, tokens: string[], depth: number): BashCheck {
   let i = 0;
   let afterEnv = false;
   for (; i < tokens.length; i++) {
@@ -557,17 +572,181 @@ function checkSegment(tokens: string[]): BashCheck {
       afterEnv = true;
       continue;
     }
-    if (afterEnv && raw.startsWith("-")) continue; // env -i etc.
+    if (afterEnv && raw.startsWith("-")) {
+      // `env -S '<string>'` SPLITS its string into a program and arguments —
+      // a second command line inside this one. `env -S 'bash -c "git push"'`
+      // walked through the prior form of this guard (VERIFIED running).
+      // Nothing a reviewer does needs it.
+      if (/^-[A-Za-z0-9]*S|^--split-string/.test(raw)) {
+        return block("exec policy: 'env -S' assembles a second command line inside this one — the reviewer never launders a command through env");
+      }
+      continue; // env -i etc.
+    }
     if (/^\d*[<>]/.test(raw)) continue; // redirection remnant
     // Program token found.
     const rawArgs = tokens.slice(i + 1);
     const args = rawArgs.map((t) => t.replace(/^['"]+|['"]+$/g, ""));
-    return checkProgram(raw, args, rawArgs);
+    if (raw.slice(raw.lastIndexOf("/") + 1) === "bash") {
+      // `bash -c <payload>` is a whole command line inside ONE word, so it is
+      // judged from the RAW segment, never from these tokens (door 4).
+      const lifted = bashCPayload(segment);
+      if (lifted.kind === "payload") {
+        if (depth >= MAX_NESTED_COMMAND_DEPTH) return block("exec policy: 'bash -c' nested too deep to analyse — refused");
+        return checkBashCommand(lifted.payload, depth + 1);
+      }
+      if (lifted.kind === "unliftable") return block(lifted.reason);
+    }
+    return checkProgram(raw, args, rawArgs, depth);
   }
   return { allowed: true }; // empty segment
 }
 
-function checkProgram(prog: string, args: string[], rawArgs?: string[]): BashCheck {
+/** Deepest `bash -c` nesting the guard will unwrap before refusing outright —
+ * a bound, because a payload can itself be another `bash -c`. */
+const MAX_NESTED_COMMAND_DEPTH = 8;
+
+interface ShellWords {
+  words: string[];
+  /** A quote was still open at the end of the text. On a segment produced by
+   * `splitShellSegments` that means the segment was CUT at a `$(` or backtick:
+   * the rest of the word is assembled at runtime by a substitution. */
+  unterminated: boolean;
+}
+
+/**
+ * Split text into shell WORDS: quote-aware, DEQUOTED, split only on unquoted
+ * whitespace. `'…'`, `"…"` (with `\"` and `\\`), `$'…'` (ANSI-C: `\n`, `\t`,
+ * `\\`, `\'`, `\"`) and backslash escapes are all resolved, so what comes out
+ * is what bash would hand the program as argv. Unlike the whitespace re-split
+ * in `checkBashCommand`, this preserves separators (`;`, newline, `&&`) that
+ * live INSIDE a quoted word — which is exactly what a `bash -c` payload is.
+ */
+function shellWords(s: string): ShellWords {
+  const ANSI_C: Readonly<Record<string, string>> = { n: "\n", t: "\t", r: "\r", "\\": "\\", "'": "'", '"': '"' };
+  const words: string[] = [];
+  let cur = "";
+  let has = false;
+  let q: "'" | '"' | "$'" | null = null;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]!;
+    if (q === "'") {
+      if (ch === "'") q = null;
+      else cur += ch;
+      continue;
+    }
+    if (q === "$'") {
+      if (ch === "'") q = null;
+      else if (ch === "\\") {
+        const next = s[i + 1] ?? "";
+        cur += ANSI_C[next] ?? next;
+        i++;
+      } else cur += ch;
+      continue;
+    }
+    if (q === '"') {
+      if (ch === '"') q = null;
+      else if (ch === "\\" && (s[i + 1] === '"' || s[i + 1] === "\\")) {
+        cur += s[i + 1]!;
+        i++;
+      } else cur += ch;
+      continue;
+    }
+    if (ch === "$" && s[i + 1] === "'") {
+      q = "$'";
+      has = true;
+      i++;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      q = ch;
+      has = true;
+      continue;
+    }
+    if (ch === "\\") {
+      cur += s[i + 1] ?? "";
+      i++;
+      has = true;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      if (has) {
+        words.push(cur);
+        cur = "";
+        has = false;
+      }
+      continue;
+    }
+    cur += ch;
+    has = true;
+  }
+  if (has) words.push(cur);
+  return { words, unterminated: q !== null };
+}
+
+type LiftedPayload =
+  | { kind: "none" } // not a `bash -c` at all
+  | { kind: "payload"; payload: string } // the literal command string bash would run
+  | { kind: "unliftable"; reason: string }; // a `bash -c` whose payload this guard cannot read — refused
+
+/**
+ * The `bash -c` payload of a raw segment, dequoted with its inner separators
+ * intact. Env prefixes and `env` are stepped over (the prefix itself is vetted
+ * by `checkSegment`). Two shapes are `unliftable`, and both REFUSE rather than
+ * fall through to a weaker check:
+ *   · the payload is not literally present — the segment was cut at a `$(` or
+ *     backtick, so bash would run whatever the substitution produces
+ *     (`bash -c "$(cat x)"` — VERIFIED running the file's contents);
+ *   · an option that takes a VALUE sits before `-c` (`-o pipefail`, `-O …`,
+ *     `--rcfile f`, `--init-file f`), so which word is the payload depends on
+ *     bash's option table rather than on position (`bash -o pipefail -c '…'`
+ *     — VERIFIED running the payload).
+ * Nothing a reviewer does needs either. It is `bash` specifically: `sh -c` is
+ * refused outright.
+ */
+function bashCPayload(segment: string): LiftedPayload {
+  const { words, unterminated } = shellWords(segment);
+  let i = 0;
+  while (i < words.length) {
+    const w = words[i]!;
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) {
+      i++;
+      continue;
+    }
+    if (w === "env") {
+      i++;
+      while (i < words.length && words[i]!.startsWith("-")) i++;
+      continue;
+    }
+    break;
+  }
+  const prog = words[i];
+  if (prog === undefined || prog.slice(prog.lastIndexOf("/") + 1) !== "bash") return { kind: "none" };
+  for (let j = i + 1; j < words.length; j++) {
+    const w = words[j]!;
+    // A non-option, or `--` / `-` (end of options), before any -c: this is
+    // `bash <script>`, and checkProgram holds it to the sanctioned set.
+    if (!w.startsWith("-") || w === "-" || w === "--") return { kind: "none" };
+    if (/^-[A-Za-z]*[oO]/.test(w) || /^--(?:rcfile|init-file)/.test(w)) {
+      return {
+        kind: "unliftable",
+        reason: `exec policy: 'bash ${w} …' — an option taking a value before -c hides which word is the command string; refused`,
+      };
+    }
+    if (/^-[A-Za-z]*c[A-Za-z]*$/.test(w)) {
+      if (unterminated) {
+        return {
+          kind: "unliftable",
+          reason: "exec policy: this 'bash -c' payload is assembled at runtime by a substitution or an unclosed quote — the reviewer runs only commands the guard can read",
+        };
+      }
+      const next = words[j + 1];
+      return { kind: "payload", payload: (next === "--" ? words[j + 2] : next) ?? "" };
+    }
+  }
+  return { kind: "none" };
+}
+
+function checkProgram(prog: string, args: string[], rawArgs: string[] | undefined, depth: number): BashCheck {
   // Sanctioned scripts, invoked directly.
   const direct = sanctionedScript(prog);
   if (direct.name !== undefined || /(^|\/)scripts\//.test(prog)) {
@@ -583,12 +762,20 @@ function checkProgram(prog: string, args: string[], rawArgs?: string[]): BashChe
     return args[0] === "-n" ? { allowed: true } : block("exec policy: 'sh' is only allowed as 'sh -n' (syntax check)");
   }
   if (base === "bash") {
-    // bash may ONLY launch a sanctioned scripts/*.sh (flags before it allowed).
-    const target = args.find((a) => !a.startsWith("-"));
-    if (target !== undefined) {
-      const s = sanctionedScript(target);
-      if (s.sanctioned) return { allowed: true };
-      return block(`exec policy: 'bash ${target}' is not a sanctioned scripts/*.sh`);
+    // A `bash -c` with a readable payload never reaches here: `checkSegment`
+    // lifts it from the raw segment and re-parses it (door 4). What
+    // does reach here is `bash -c` through `xargs`, or a -c form
+    // `bashCPayload` did not recognise — and a command string nobody vetted
+    // must not run, so any -c BEFORE the script is refused. Otherwise bash may
+    // ONLY launch a sanctioned scripts/*.sh (flags before it allowed; anything
+    // after the script is the script's own argument).
+    for (const a of args) {
+      if (!a.startsWith("-")) {
+        return sanctionedScript(a).sanctioned ? { allowed: true } : block(`exec policy: 'bash ${a}' is not a sanctioned scripts/*.sh`);
+      }
+      if (/^-[A-Za-z]*c/.test(a)) {
+        return block("exec policy: this 'bash -c' carries a command string the guard cannot read (through xargs, or a form it does not lift) — refused");
+      }
     }
     return block("exec policy: 'bash' may only run sanctioned scripts/*.sh");
   }
@@ -599,7 +786,7 @@ function checkProgram(prog: string, args: string[], rawArgs?: string[]): BashChe
     const target = args.find((a) => !a.startsWith("-") && a !== "{}");
     if (target === undefined) return { allowed: true };
     const from = args.indexOf(target) + 1;
-    return checkProgram(target, args.slice(from), rawArgs?.slice(from));
+    return checkProgram(target, args.slice(from), rawArgs?.slice(from), depth);
   }
   if (ALLOWED.has(base)) {
     // Allowlisted for READING is not allowlisted outright: sed/sort/find each
@@ -790,32 +977,158 @@ export function isGitConfigSurface(path: string): boolean {
   return GIT_CONFIG_SURFACE_RE.some((re) => re.test(p));
 }
 
+/**
+ * This system's OWN policy-carrying surface — the analogue of
+ * `isGitConfigSurface`, one level out. `isGitConfigSurface` protects the files
+ * that turn an ordinary GIT command into shell execution; this protects the
+ * files that decide what every layer of THIS boundary does. A review session
+ * READS code (scoping rule 2); it never writes any of these, so a write to one
+ * is always a reconfiguration of its own controls:
+ *
+ *   · `config.toml`           — the guards' and the gate's configuration. The
+ *     posting scripts read `dry_run` and every `[guards]` knob out of it per
+ *     invocation, and `guard_enabled` treats a knob as ON unless it is literally
+ *     `false`, so ONE write turns guards 1-5 off and flips a dry-run install to
+ *     live on the next sanctioned post — hard rule 1, by a redirection.
+ *   · `scripts/**`            — the sanctioned posting route AND `guards.sh`,
+ *     the shell mirror of the one MutationGate. Overwriting one posts around it.
+ *   · `dist/**`               — the COMPILED artifacts the container actually
+ *     runs, `dist/extensions/bash-guard.js` among them: overwrite the compiled
+ *     guard and the boundary is off for every later round in that container.
+ *   · `extensions/**`         — the guard's own source and the other pi
+ *     extensions, which `deploy.sh sync` ships and the build compiles.
+ *   · `prompts/**`, `agents/**`, `seeds/**` — the frozen seeds (rule 6); the
+ *     `agents/` rule also covers the BUILT `state/agents/**` pass bodies pi
+ *     loads each round (a `state/agents/…` path has `agents/` after a slash).
+ *
+ * The list is OURS, closed and documented (docs/exec-boundary.md), not a list
+ * of attacks. `POLICY_SURFACE_FILES` / `POLICY_SURFACE_DIRS` — top-level names
+ * RELATIVE TO THE SANDBOX ROOT — are the ONE definition three consumers read:
+ * the write/edit tool veto and the shell-redirection scan (both through
+ * `isPolicySurface`, as a path SHAPE: the name after any prefix, because the
+ * guard does not know the session's cwd) and layer 4's round-boundary
+ * integrity check (`policySurfaceWatchPaths` in src/execboundary.ts, as
+ * concrete paths under the root — the one layer that also sees the write no
+ * command string can show, `T=config.toml; cat p > $T`). Being a SHAPE, the
+ * write veto also refuses `scripts/…`, `dist/…` etc. inside the REVIEWED
+ * repo's worktree; a reviewer never writes there either (scoping rule 2).
+ * `state/agents/**` — the BUILT pass bodies — is refused at the write boundary
+ * through the `agents/` shape but deliberately NOT watched by layer 4: the
+ * daemon itself rebuilds it mid-round on feedback ingest and the day change.
+ */
+export const POLICY_SURFACE_FILES = ["config.toml"] as const;
+export const POLICY_SURFACE_DIRS = ["scripts", "dist", "extensions", "prompts", "agents", "seeds"] as const;
+
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const POLICY_SURFACE_RE = [
+  new RegExp(`(^|/)(?:${POLICY_SURFACE_FILES.map(escapeRe).join("|")})$`),
+  new RegExp(`(^|/)(?:${POLICY_SURFACE_DIRS.map(escapeRe).join("|")})/.+`),
+];
+
+/** Is this path part of this system's own policy surface? Exported so both
+ * boundaries ask ONE question — see `POLICY_SURFACE_RE`. */
+export function isPolicySurface(path: string): boolean {
+  const p = path.replace(/^['"]+|['"]+$/g, "").replace(/\/+$/, "");
+  if (p.length === 0) return false;
+  return POLICY_SURFACE_RE.some((re) => re.test(p));
+}
+
+/** The full set a session may not write, from ONE definition: git's own config
+ * and hook surface and this system's policy surface. Both
+ * the write/edit tool veto (`checkWritePath`) and the shell-redirection / sed
+ * scan (`checkProtectedWrites`) refuse exactly this, so they cannot drift. */
+export function isProtectedWriteTarget(path: string): boolean {
+  return isGitConfigSurface(path) || isPolicySurface(path);
+}
+
+/** Veto reason for a policy-surface write target. */
+function policySurfaceWriteBlock(path: string): BashCheck {
+  return block(
+    `exec policy: '${path}' is part of this system's own policy surface (config.toml, scripts/, dist/, extensions/, prompts/agents/seeds) — writing it reconfigures the posting guards, the mutation gate or the compiled boundary itself. The reviewer reads code; it never edits its own controls.`,
+  );
+}
+
+/** Whichever refusal fits the target — git's config surface keeps its own,
+ * more specific message. */
+function protectedWriteBlock(path: string): BashCheck {
+  return isGitConfigSurface(path) ? gitConfigWriteBlock(path) : policySurfaceWriteBlock(path);
+}
+
 function gitConfigWriteBlock(path: string): BashCheck {
   return block(
     `exec policy: '${path}' is part of git's configuration surface — writing it makes an ORDINARY git command (a plain 'git diff') execute a program of the writer's choosing. The reviewer reads code; it never configures git.`,
   );
 }
 
+/** Operator token shapes AFTER `normalizeRedirections`: `>`/`>>`, optionally
+ * fd-prefixed, bare or with the target attached. */
+const REDIRECT_OP_RE = /^\d*>>?$/;
+const REDIRECT_OP_ATTACHED_RE = /^\d*>>?(.+)$/;
+
+/** A shell word with its quoting removed. bash opens `con"fig".toml`,
+ * `config\.toml` and `config.toml` as the SAME file, so a write target is
+ * judged by the name bash would open, not by its spelling — the first two
+ * walked past the git-config veto too (VERIFIED writing). */
+function dequote(word: string): string {
+  return word.replace(/["'\\]/g, "");
+}
+
 /**
- * Shell redirections whose target is git's config surface.
+ * Every spelling of an OUTPUT redirection, rewritten onto the canonical `>` /
+ * `>>` before anything else reads the command, so the write-target scan and
+ * the segment splitter both see one form. Exported because `src/usage.ts`
+ * borrows it the way it borrows `splitShellSegments` — the TOKENISER, not the
+ * policy. Bash has more of these than `>`:
+ *   · fd-dups (`2>&1`, `>&2`, `1>&-`) name no file and are dropped;
+ *   · `>&file`, `&>file`, `&>>file` write stdout+stderr to a FILE;
+ *   · `{v}>file` opens the file on a descriptor bash picks and stores in `v`;
+ *   · `<>file` opens read-write — `printf x 1<>config.toml` OVERWRITES it;
+ *   · `>|file` overrides noclobber.
+ * All five VERIFIED writing the target on this host. The prior scan knew `>`
+ * and `>>` only, so each was a bypass of the git-config veto as well
+ * (found while closing the policy surface).
+ */
+export function normalizeRedirections(cmd: string): string {
+  return cmd
+    .replace(/(?:\{[A-Za-z_][A-Za-z0-9_]*\}|\d*)>&\s*(?:\d+|-)(?=$|[\s;&|)])/g, " ") // fd-dup: names no file
+    .replace(/(?:\{[A-Za-z_][A-Za-z0-9_]*\}|\d*)>&/g, ">") // >&file
+    .replace(/&>/g, ">") // &>file, &>>file
+    .replace(/\{[A-Za-z_][A-Za-z0-9_]*\}(>>?|<>)/g, "$1") // {v}>file
+    .replace(/(\d*)<>/g, "$1>") // read-write open
+    .replace(/(>>?)\|/g, "$1"); // noclobber override
+}
+
+/**
+ * Shell redirections and `sed -i` whose target is a PROTECTED write surface —
+ * git's config/hook surface OR this system's own policy surface
+ *: config.toml, scripts/, dist/, extensions/, prompts/agents/seeds.
  *
  * The segment splitter deliberately skips redirection remnants when hunting for
- * the program token, so `printf '…' > .git/config` vets as `printf` and passes.
- * That is right for finding the PROGRAM and wrong for finding the TARGET, so
- * the target is asked about separately, over the raw command — the same shape
+ * the program token, so `cat evil > config.toml` and `printf '…' > .git/config`
+ * both vet as an allowlisted program (`cat`/`printf`) and pass the per-segment
+ * check. That is right for finding the PROGRAM and wrong for finding the TARGET,
+ * so the target is asked about separately, over the raw command — the same shape
  * `checkSecretPaths` already uses for the root-credential paths, and for the
- * same reason: the path, not the program, is what distinguishes it.
+ * same reason: the path, not the program, is what distinguishes it. This is one
+ * of the TWO boundaries `isProtectedWriteTarget` binds; the other is the
+ * write/edit tool veto in `checkWritePath`, and both read the same predicate so
+ * they cannot drift apart.
  *
- * `sed -i` is the other writer on the allowlist that takes its target as a
- * plain argument rather than after a `>`; it is covered by the same scan
- * because the argument is a token like any other.
+ * `tee`, `cp`, `mv` and `dd` are the other ways to write a named file, and they
+ * need no case here: none is on `ALLOWED`, so `checkProgram` refuses them
+ * outright whatever their target. `sort -o`, `find -fprintf` and `awk` are
+ * refused whole (reader-mode rules / off the allowlist), so they cannot reach a
+ * target either. `sed -i` is the one allowlisted writer that names its target as
+ * a plain argument rather than after a `>`, so it is covered by this scan. The
+ * redirection itself has more spellings than `>`/`>>` — see
+ * `normalizeRedirections`, which folds all of them onto those two first.
  */
-export function checkGitConfigWrites(cmd: string): BashCheck {
-  const tokens = cmd.split(/\s+/).filter((t) => t.length > 0);
+export function checkProtectedWrites(cmd: string): BashCheck {
+  const tokens = normalizeRedirections(cmd).split(/\s+/).filter((t) => t.length > 0);
   // `sed -i` / `sed -i.bak` / `sed -ne … -i` — the one allowlisted program that
   // rewrites a file named as a plain argument. When it is in play EVERY token
   // is a candidate target; being over-broad here costs a refusal on a command
-  // that also mentions a git config path, which no legitimate read does.
+  // that also mentions a protected path, which no legitimate read does.
   const sedInPlace =
     tokens.some((t) => /(^|\/)sed$/.test(t))
     && tokens.some((t) => /^-[a-zA-Z]*i([a-zA-Z]*)?([.'"].*)?$/.test(t) || t === "--in-place" || t.startsWith("--in-place="));
@@ -825,39 +1138,41 @@ export function checkGitConfigWrites(cmd: string): BashCheck {
     // attached form, which would otherwise swallow a bare `>>` by reading its
     // second `>` as the target (a real bug this ordering fixes, caught by the
     // `printf … >> .git/config` case and not by `> .git/config`).
-    if (/^\d*>>?$/.test(t)) {
+    if (REDIRECT_OP_RE.test(t)) {
       const target = tokens[i + 1];
-      if (target !== undefined && isGitConfigSurface(target)) return gitConfigWriteBlock(target);
+      if (target !== undefined && isProtectedWriteTarget(dequote(target))) return protectedWriteBlock(dequote(target));
       continue;
     }
     // `>path`, `>>path`, `2>path` — target attached to the operator.
-    const attached = /^\d*>>?(.+)$/.exec(t);
+    const attached = REDIRECT_OP_ATTACHED_RE.exec(t);
     if (attached) {
-      if (isGitConfigSurface(attached[1]!)) return gitConfigWriteBlock(attached[1]!);
+      const target = dequote(attached[1]!);
+      if (isProtectedWriteTarget(target)) return protectedWriteBlock(target);
       continue;
     }
-    if (sedInPlace && isGitConfigSurface(t)) return gitConfigWriteBlock(t);
+    if (sedInPlace && isProtectedWriteTarget(dequote(t))) return protectedWriteBlock(dequote(t));
   }
   return { allowed: true };
 }
 
 /** Pure policy check over a full bash command string: split into segments
  * (quote-aware) and vet each segment's first program token. */
-export function checkBashCommand(cmd: string): BashCheck {
-  const normalized = cmd.replace(/\d*>&\d*/g, " "); // 2>&1 etc. — not separators
+export function checkBashCommand(cmd: string, depth = 0): BashCheck {
+  const normalized = normalizeRedirections(cmd);
   // Checked over the WHOLE command, before the per-segment program check: the
   // programs that would read a root credential (cat, grep, jq…) are all
   // legitimately allowed, so the path is the only thing that distinguishes it.
   const secret = checkSecretPaths(normalized);
   if (!secret.allowed) return secret;
-  // Same shape, same reason: the git config surface. A redirection
+  // Same shape, same reason: a PROTECTED write surface — git's config surface
+  // and this system's own policy surface. A redirection
   // target is not a program token, so the per-segment walk below never sees it.
-  const gitCfg = checkGitConfigWrites(normalized);
-  if (!gitCfg.allowed) return gitCfg;
+  const protectedWrite = checkProtectedWrites(normalized);
+  if (!protectedWrite.allowed) return protectedWrite;
   for (const segment of splitShellSegments(normalized)) {
     const tokens = segment.trim().split(/\s+/).filter((t) => t.length > 0);
     if (tokens.length === 0) continue;
-    const res = checkSegment(tokens);
+    const res = checkSegment(segment, tokens, depth);
     if (!res.allowed) return res;
   }
   return { allowed: true };
@@ -989,12 +1304,17 @@ export function checkReaderModes(prog: string, args: readonly string[], rawArgs?
 }
 
 /**
- * The write/edit tools' policy check. One rule, one question — see
- * `isGitConfigSurface`. Everything else a session writes is allowed here; this
- * is not a write allowlist.
+ * The write/edit tools' policy check. The write half of the
+ * two boundaries `isProtectedWriteTarget` binds — the other is the shell
+ * redirection / `sed -i` scan in `checkProtectedWrites`, and both read the same
+ * predicate so a session cannot write through one what it is refused through the
+ * other. Refuses git's config/hook surface and this system's own policy surface
+ * (config.toml, scripts/, dist/, extensions/, prompts/agents/seeds); everything
+ * else a session writes — the verdict file, the ledger, /tmp bodies — is
+ * allowed. This is not a write allowlist.
  */
 export function checkWritePath(path: string): BashCheck {
-  return isGitConfigSurface(path) ? gitConfigWriteBlock(path) : { allowed: true };
+  return isProtectedWriteTarget(path) ? protectedWriteBlock(path) : { allowed: true };
 }
 
 /** Tool names that take a file path and write it. Kept broad on purpose: a

@@ -51,6 +51,7 @@
 
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
+import { POLICY_SURFACE_DIRS, POLICY_SURFACE_FILES } from "../extensions/bash-guard.js";
 
 // ---- git-config integrity (round 2) --------------------------------
 //
@@ -87,6 +88,16 @@ import { readFileSync, readdirSync } from "node:fs";
 // getting a clean round — or by naming a config location git reads that
 // `gitConfigWatchPaths` omits.
 //
+// widened the SAME check to this system's own policy surface —
+// `config.toml`, the sanctioned scripts, the compiled `dist/`, the extensions
+// and the frozen seeds (`policySurfaceWatchPaths`). The write veto refuses a
+// redirection or write-tool call onto those paths; this is what sees the one
+// spelling no string scan can, `T=config.toml; cat p > $T`. Same claim, second
+// path set: *the policy surface is unchanged between worktree preparation and
+// round measurement.* The set is read from ONE definition shared with the
+// guard (`POLICY_SURFACE_FILES` / `POLICY_SURFACE_DIRS`), so the write veto and
+// this check cannot protect different files.
+//
 // Known limits, stated rather than implied away:
 //   · It is a DETECTOR. The write lands; the round completes; the anomaly says
 //     so afterwards. It bounds the damage to one round, it does not prevent it.
@@ -97,9 +108,10 @@ import { readFileSync, readdirSync } from "node:fs";
 //   · `unreadable` is recorded distinctly from `absent`, so a permissions
 //     change is a change rather than silently matching.
 
-export interface GitConfigFingerprint {
+export interface IntegrityFingerprint {
   digest: string;
-  /** path → `sha256:<hex>` | "absent" | `dir:<hex>` */
+  /** watched path → `sha256:<hex>` (a file) | `dir:<hex>` (a directory, hashed
+   * recursively by content) | "absent" */
   files: Record<string, string>;
 }
 
@@ -145,25 +157,45 @@ export function gitConfigWatchPaths(opts: {
   return paths;
 }
 
+/**
+ * This system's own policy surface under the sandbox root — the
+ * files that decide what every layer of the exec boundary DOES. The names come
+ * from the guard's own definition, never a second list here.
+ */
+export function policySurfaceWatchPaths(sandboxRoot: string): string[] {
+  const root = sandboxRoot.replace(/\/+$/, "");
+  return [...POLICY_SURFACE_FILES, ...POLICY_SURFACE_DIRS].map((name) => `${root}/${name}`);
+}
+
+/** Deepest directory nesting the recursive hash follows — a bound against a
+ * symlink cycle, well above anything under the sandbox (dist/ is 4 deep). */
+const MAX_HASH_DEPTH = 16;
+
+/** One watched path's value: a file's content hash, a directory's RECURSIVE
+ * content hash (so a rewritten `scripts/guards.sh` changes `scripts`, not only
+ * a planted file — a listing hash would miss the rewrite), or "absent". */
+function hashPath(path: string, fs: FingerprintFs, depth: number): string {
+  try {
+    const raw = fs.readFile(path);
+    return `sha256:${fs.sha256(typeof raw === "string" ? raw : raw.toString("utf8"))}`;
+  } catch {
+    // Not a readable file — a directory, or nothing.
+    try {
+      const names = fs.readDir(path).sort();
+      if (depth <= 0) return `dir:${fs.sha256(names.join("\n"))}`;
+      return `dir:${fs.sha256(names.map((n) => `${n}=${hashPath(`${path}/${n}`, fs, depth - 1)}`).join("\n"))}`;
+    } catch {
+      return "absent";
+    }
+  }
+}
+
 /** Hash every watched path. Total: a missing or unreadable path is a RECORDED
  * value, never a throw — a fingerprint that fails to compute would silently
  * disable the check, which is the failure mode this whole ticket is about. */
-export function gitConfigFingerprint(paths: readonly string[], fs: FingerprintFs): GitConfigFingerprint {
+export function integrityFingerprint(paths: readonly string[], fs: FingerprintFs): IntegrityFingerprint {
   const files: Record<string, string> = {};
-  for (const path of [...paths].sort()) {
-    try {
-      const raw = fs.readFile(path);
-      files[path] = `sha256:${fs.sha256(typeof raw === "string" ? raw : raw.toString("utf8"))}`;
-    } catch {
-      // Not a readable file. A directory (hooks) hashes as its sorted listing:
-      // a planted hook changes the listing, and the listing does not churn.
-      try {
-        files[path] = `dir:${fs.sha256(fs.readDir(path).sort().join("\n"))}`;
-      } catch {
-        files[path] = "absent";
-      }
-    }
-  }
+  for (const path of [...paths].sort()) files[path] = hashPath(path, fs, MAX_HASH_DEPTH);
   return { digest: fs.sha256(Object.entries(files).map(([p, h]) => `${p}=${h}`).join("\n")), files };
 }
 
@@ -175,23 +207,34 @@ export const defaultFingerprintFs: FingerprintFs = {
   sha256: (data) => createHash("sha256").update(data).digest("hex"),
 };
 
+export interface RoundIntegrityOpts {
+  clonePath: string;
+  worktreePath?: string | undefined;
+  piHome?: string | undefined;
+  /** The sandbox root whose policy surface is watched; omitted ⇒
+   * git's paths only, which is what a caller with no sandbox has. */
+  sandboxRoot?: string | undefined;
+}
+
 /**
  * The whole round-side call in one place, so `dispatch.ts` (start) and
  * `verdicts.ts` (end) cannot compute it over DIFFERENT path sets — which would
  * turn every round into a false alarm and get the check switched off.
  */
-export function fingerprintRoundGitConfig(
-  opts: { clonePath: string; worktreePath?: string | undefined; piHome?: string | undefined },
-  fs: FingerprintFs = defaultFingerprintFs,
-): GitConfigFingerprint {
-  return gitConfigFingerprint(gitConfigWatchPaths(opts), fs);
+export function fingerprintRoundIntegrity(opts: RoundIntegrityOpts, fs: FingerprintFs = defaultFingerprintFs): IntegrityFingerprint {
+  const paths = gitConfigWatchPaths(opts);
+  if (opts.sandboxRoot !== undefined && opts.sandboxRoot.length > 0) paths.push(...policySurfaceWatchPaths(opts.sandboxRoot));
+  return integrityFingerprint(paths, fs);
+}
+
+export interface IntegrityChange {
+  path: string;
+  before: string;
+  after: string;
 }
 
 /** Which watched paths changed between the two fingerprints. Empty ⇒ clean. */
-export function gitConfigChanges(
-  before: GitConfigFingerprint,
-  after: GitConfigFingerprint,
-): Array<{ path: string; before: string; after: string }> {
+export function integrityChanges(before: IntegrityFingerprint, after: IntegrityFingerprint): IntegrityChange[] {
   if (before.digest === after.digest) return [];
   // Total over a malformed fingerprint rather than throwing on one. That is not
   // defensiveness for its own sake: it makes the caller's "no baseline ⇒ never
@@ -202,7 +245,7 @@ export function gitConfigChanges(
   const beforeFiles = before.files ?? {};
   const afterFiles = after.files ?? {};
   const paths = new Set([...Object.keys(beforeFiles), ...Object.keys(afterFiles)]);
-  const out: Array<{ path: string; before: string; after: string }> = [];
+  const out: IntegrityChange[] = [];
   for (const path of [...paths].sort()) {
     const b = beforeFiles[path] ?? "absent";
     const a = afterFiles[path] ?? "absent";
@@ -211,18 +254,49 @@ export function gitConfigChanges(
   return out;
 }
 
+/** The two families a change can belong to, because they mean different things
+ * to the operator and raise different anomalies: git's configuration
+ * (`git_config_modified`) and this system's own policy surface
+ * (`policy_surface_modified`). Membership is by the watched path, so
+ * a caller with no sandbox root has an empty policy half. */
+export function splitIntegrityChanges(
+  changes: readonly IntegrityChange[],
+  sandboxRoot: string | undefined,
+): { git: IntegrityChange[]; policy: IntegrityChange[] } {
+  const policyPaths = new Set(sandboxRoot ? policySurfaceWatchPaths(sandboxRoot) : []);
+  const git: IntegrityChange[] = [];
+  const policy: IntegrityChange[] = [];
+  for (const c of changes) (policyPaths.has(c.path) ? policy : git).push(c);
+  return { git, policy };
+}
+
 /** The operator-facing line. Names what a change MEANS, because the reader's
  * first question is "is this an attack or did the daemon do it?" */
-export function gitConfigChangeMessage(
-  pr: number,
-  changes: ReadonlyArray<{ path: string; before: string; after: string }>,
-): string {
+export function gitConfigChangeMessage(pr: number, changes: readonly IntegrityChange[]): string {
   return [
     `EXEC BOUNDARY — PR #${pr}: git's configuration changed DURING a round: ${changes.map((c) => c.path).join(", ")}.`,
     "Nothing the daemon does rewrites these files mid-round, so this is a session write. Config-supplied shell",
     "(alias.*, core.pager, diff.external, *.textconv, filter.*.clean, credential.helper, core.sshCommand) turns an",
     "ordinary `git diff` into arbitrary execution, so treat this round's output as untrusted until the file is read.",
     "Restore the file from the daemon's own provisioning, then read the session transcript for the write.",
+  ].join("\n");
+}
+
+/** The policy-surface twin. A changed root here is the boundary's
+ * OWN controls rewritten — config.toml decides dry_run and every posting
+ * guard, scripts/ is the gate's shell mirror, dist/ is the guard the container
+ * runs — so the message says which root moved and what to do; the round's
+ * output AND every later round in this container are suspect until the tree
+ * is restored from the deployed revision. */
+export function policySurfaceChangeMessage(pr: number, changes: readonly IntegrityChange[]): string {
+  return [
+    `EXEC BOUNDARY — PR #${pr}: this system's OWN policy surface changed DURING a round: ${changes.map((c) => c.path).join(", ")}.`,
+    "Nothing the daemon does rewrites these mid-round, so this is a session write that got past the write veto",
+    "(a variable-indirected redirection, most likely). config.toml carries dry_run and every posting-guard knob,",
+    "scripts/ is the mutation gate's shell mirror and dist/ is the compiled guard itself — so treat this round's",
+    "output as untrusted AND assume every later round in this container runs under a rewritten boundary.",
+    "Restore the tree from the deployed revision (`git status` / `git diff` in the sandbox names the file),",
+    "then read the session transcript for the write.",
   ].join("\n");
 }
 

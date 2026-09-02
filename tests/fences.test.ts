@@ -413,12 +413,12 @@ describe("no env prefix can move the posting guards' own configuration", () => {
    * write tool, turned guards 2-5 off on a real approval and could flip a
    * dry-run install into posting for real.
    *
-   * SCOPE: this fence covers the ENV-PREFIX spelling only. Adversarial review
-   * found two further routes to the same end — `bash -c '<sanctioned script> ;
-   * <anything>'` past the segment policy, and a writable default config path
-   * (the config, `guards.sh` and the posting scripts can all be overwritten
-   * outright). Both are follow-up tickets. Do not read a pass here as "the
-   * guards cannot be moved".
+   * SCOPE: this fence covers the ENV-PREFIX spelling. The two further routes
+   * the review named are now CLOSED by and fenced in
+   * tests/bash-guard.test.ts: `bash -c '<sanctioned> ; <anything>'` (the payload
+   * is re-parsed as its own command) and overwriting the config / `guards.sh` /
+   * the posting scripts / the compiled guard (the policy surface is unwritable
+   * at both boundaries). `QCR_POSTING_RECEIPT_DIR` joined this set there too.
    *
    * MUTATION: remove "QCR_CONFIG" from POLICY_RELOCATING_ENV in
    * extensions/bash-guard.ts — this fails.

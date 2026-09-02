@@ -1086,10 +1086,12 @@ export class StateStore {
       "ALTER TABLE rounds ADD COLUMN posted_event TEXT",
       "ALTER TABLE rounds ADD COLUMN posted_at TEXT",
       "ALTER TABLE rounds ADD COLUMN trigger_ts TEXT",
-      // the git-config fingerprint taken when this round's worktree
+      // the integrity fingerprint taken when this round's worktree
       // was prepared, re-checked when the round is measured. JSON
       // {digest, files} — the files map is kept so the anomaly can name WHICH
-      // path moved rather than only that something did.
+      // path moved rather than only that something did. Since the
+      // same row also carries this system's own policy surface (config.toml,
+      // scripts/, dist/, …); the column keeps its name.
       "ALTER TABLE rounds ADD COLUMN git_config_fingerprint TEXT",
       "ALTER TABLE bot_comments ADD COLUMN round_no INTEGER",
       // Measured usage — nullable, additive.
@@ -2367,9 +2369,10 @@ export class StateStore {
     return new Set(rows.map((r) => r.id));
   }
 
-  /**: stash the round-start git-config fingerprint. Best-effort by
-   * design — a store that cannot record it yields a round with no check, which
-   * is the legacy behaviour, never a failed round. */
+  /**: stash the round-start integrity fingerprint (git's config and,
+   *, the policy surface). Best-effort by design — a store that
+   * cannot record it yields a round with no check, which is the legacy
+   * behaviour, never a failed round. */
   recordRoundGitConfig(roundId: number, fingerprint: unknown): void {
     this.db.prepare("UPDATE rounds SET git_config_fingerprint = ? WHERE id = ?").run(JSON.stringify(fingerprint), roundId);
   }
