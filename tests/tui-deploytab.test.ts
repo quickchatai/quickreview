@@ -92,7 +92,7 @@ describe("RealDeployFetcher", () => {
       [diffStatArgv("aaa1111").join(" ")]: ok(" src/x.ts | 2 +-\n"),
     });
     const st = await f.load();
-    expect(st.deployed?.sha).toBe("aaa1111");
+    expect(st.deployed).toMatchObject({ sha: "aaa1111" });
     expect(st.head).toBe("bbb2222");
     expect(st.commits).toEqual(["bbb2222 fix the thing"]);
     expect(st.diffstat).toEqual([" src/x.ts | 2 +-"]);
@@ -105,12 +105,33 @@ describe("RealDeployFetcher", () => {
       [PLAN_ARGV.join(" ")]: fail("deploy.sh: refusing to deploy — the working tree is dirty:\n"),
     });
     const st = await f.load();
-    expect(st.deployed).toBeUndefined();
+    expect(st.deployed).toBe("absent"); // the VM answered: no marker file
     expect(st.commits).toBeUndefined();
     expect(st.dirty).toEqual([" M src/x.ts"]);
     // the refusal is shown verbatim as the plan
     expect(st.plan.join("\n")).toContain("refusing to deploy");
     expect(localCalls.some((c) => c.includes("log"))).toBe(false);
+  });
+
+  // `cat … || true` swallows a missing marker into empty output, so
+  // an ok/empty answer is a VM with no marker; a failed exec is a VM we could
+  // not ask. The two used to collapse into one `undefined`, which the tab AND
+  // the companion feed both read as "no marker".
+  it("an ssh that never answered is NOT a VM with no marker", async () => {
+    const { f, localCalls } = fetcherWith(fail("ssh: connect timed out"), {
+      [HEAD_ARGV.join(" ")]: ok("bbb2222\n"),
+      [DIRTY_ARGV.join(" ")]: ok(""),
+      [PLAN_ARGV.join(" ")]: ok("plan\n"),
+    });
+    const st = await f.load();
+    expect(st.deployed).toBeUndefined();
+    expect(st.containerStatus).toBeUndefined();
+    expect(localCalls.some((c) => c.includes("log"))).toBe(false);
+  });
+
+  it("a marker that exists but is garbage is unread, not absent", async () => {
+    const { f } = fetcherWith(ok("not-a-sha here\n"), { [HEAD_ARGV.join(" ")]: ok("bbb2222\n"), [DIRTY_ARGV.join(" ")]: ok(""), [PLAN_ARGV.join(" ")]: ok("") });
+    expect((await f.load()).deployed).toBeUndefined();
   });
 });
 
@@ -142,6 +163,16 @@ describe("deployLines", () => {
     expect(text).toContain("ccc3333 tui deploy tab");
     expect(text).toContain("dirty — 1 uncommitted (deploy.sh will refuse)");
     expect(text).toContain("plan — deploy.sh sync");
+  });
+
+  it("renders 'no marker' and 'could not read' as different sentences, and an unread HEAD as unknown", () => {
+    const absent = stripAnsi(deployLines(emptyState({ deployed: "absent", head: "ccc3333" }), 90).join("\n"));
+    expect(absent).toContain("no BUILD_SHA on the VM yet");
+    expect(absent).not.toContain("could not be read");
+    const unread = stripAnsi(deployLines(emptyState({ deployed: undefined, head: undefined }), 90).join("\n"));
+    expect(unread).toContain("could not be read");
+    expect(unread).not.toContain("no BUILD_SHA on the VM yet");
+    expect(unread).toContain("HEAD unknown");
   });
 
   it("flags a deployed sha unknown to local git instead of pretending 0 pending", () => {
@@ -480,7 +511,7 @@ describe("deploy tab keys", () => {
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
     let loads = 0;
     const st = installDeployHooks(app, {
-      load: async () => (loads++, { dirty: [], plan: ["plan — deploy.sh sync"], deployed: undefined, head: "abc1234" }),
+      load: async () => (loads++, { dirty: [], plan: ["plan — deploy.sh sync"], deployed: "absent" as const, head: "abc1234" }),
     });
     const run = app.run();
     streams.type("3");

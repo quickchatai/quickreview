@@ -183,6 +183,22 @@ export function finishedRounds(rounds: WhyRound[]): WhyRound[] {
   return rounds.filter((r) => r.status !== "running" && Number.isInteger(r.round_no)).sort((a, b) => a.round_no - b.round_no);
 }
 
+/** The finished rounds out of one `qcr why --json` answer, or `undefined`
+ * when the answer does not carry a round list at all. `[]` is reserved for a
+ * payload that SAID there are no rounds; a payload that said nothing about
+ * rounds is not that. */
+export function readWhyRounds(stdout: string): WhyRound[] | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null) return undefined;
+  const rounds = (parsed as { rounds?: unknown }).rounds;
+  return Array.isArray(rounds) ? finishedRounds(rounds as WhyRound[]) : undefined;
+}
+
 /** Cheap "has anything changed for this PR" key, read off the poll snapshot the
  * TUI already fetches. Unchanged ⇒ no `why` call at all, so the steady state
  * costs the copier ZERO extra ssh. */
@@ -336,12 +352,13 @@ export class EvidenceCopier {
   private async reconcilePr(pr: number, report: SweepReport): Promise<boolean> {
     const res = await this.ssh(this.cfg.ssh_host, whyArgv(this.cfg, pr), { timeoutMs: this.deps.timeoutMs });
     if (!res.ok) return this.fail(report, `pr-${pr}`, `evidence: #${pr} — could not read round list (ssh)`);
-    let rounds: WhyRound[];
-    try {
-      rounds = finishedRounds(((JSON.parse(res.stdout) as { rounds?: WhyRound[] }).rounds ?? []) as WhyRound[]);
-    } catch {
-      return this.fail(report, `pr-${pr}`, `evidence: #${pr} — unreadable round list`);
-    }
+    // The round list is what `qcr why --json` PROVES; anything else that came
+    // back — a wrapper's own JSON, an older build's shape, a torn write — is an
+    // unreadable list, not an empty one. Reading it as empty would retire this
+    // PR's signature with nothing copied, and nothing would ever retry it
+    //.
+    const rounds = readWhyRounds(res.stdout);
+    if (rounds === undefined) return this.fail(report, `pr-${pr}`, `evidence: #${pr} — unreadable round list`);
     const pending = rounds.filter((r) => !this.store.has(pr, r.round_no));
     if (pending.length === 0) return true;
     let complete = true;

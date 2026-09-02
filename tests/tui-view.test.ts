@@ -78,7 +78,7 @@ describe("buildTuiView — the derived state behind the frame", () => {
     const v = buildTuiView({ now: NOW, tab: "deploy", snapshot: snap(), deploy: DEPLOY });
     // Deploy first is not cosmetic — it is the trigger for the whole ticket.
     expect(Object.keys(v)[1]).toBe("deploy");
-    expect(v.deploy.deployed_sha).toBe("aaa1111");
+    expect(v.deploy.deployed).toMatchObject({ sha: "aaa1111" });
     expect(v.deploy.head).toBe("bbb2222");
     expect(v.deploy.dirty_files).toBe(1);
     expect(v.deploy.pending_commit_count).toBe(2);
@@ -137,6 +137,58 @@ describe("buildTuiView — the derived state behind the frame", () => {
   });
 });
 
+// the second half of the honest-unknown rule, at the surface where
+// it costs most: this object is handed to a model that repeats it to the owner
+// in prose. A dropped key rendered as nothing, and nothing read as "nothing to
+// report", so an ssh that never answered became a VM with no deployed commit.
+// The deliverable is the RENDERED line, so the tests below read what the
+// `tui_deploy` tool actually says.
+describe("a failed read reaches the companion as UNKNOWN, never as an absent line", () => {
+  // The deploy tab loaded, but the VM never answered and local git failed:
+  // every one of these is a fact the TUI tried to fetch and could not.
+  const UNREAD = { loaded: true, deployed: undefined, head: undefined, dirty: undefined, containerStatus: undefined };
+
+  it("publishes null for each unread field — never a dropped key", () => {
+    const v = buildTuiView({ now: NOW, tab: "deploy", deploy: UNREAD });
+    expect(v.deploy.deployed).toBeNull();
+    expect(v.deploy.head).toBeNull();
+    expect(v.deploy.container_status).toBeNull();
+    // Serialised, the keys survive — `undefined` would have vanished here.
+    expect(Object.keys(JSON.parse(JSON.stringify(v.deploy)) as object)).toEqual(expect.arrayContaining(["deployed", "head", "container_status"]));
+  });
+
+  it("…and tui_deploy RENDERS each as an explicit UNKNOWN — the line the companion actually reads", () => {
+    const answer = deployAnswer(publish(buildTuiView({ now: NOW, tab: "deploy", deploy: UNREAD })), NOW);
+    expect(answer).toContain("VM is running: UNKNOWN");
+    expect(answer).toContain("local HEAD: UNKNOWN");
+    expect(answer).toContain("container: UNKNOWN");
+    expect(answer).not.toMatch(/never deployed|no container/);
+  });
+
+  it("genuine absence is its own sentence: a VM with no marker, a container docker does not list", () => {
+    const v = buildTuiView({ now: NOW, tab: "deploy", deploy: { loaded: true, deployed: "absent", head: "bbb2222", dirty: [], containerStatus: "" } });
+    expect(v.deploy.deployed).toBe("absent");
+    expect(v.deploy.container_status).toBe("");
+    const answer = deployAnswer(publish(v), NOW);
+    expect(answer).toContain("never deployed to it");
+    expect(answer).toContain("docker lists no container");
+    expect(answer).not.toMatch(/VM is running: UNKNOWN|local HEAD: UNKNOWN|container: UNKNOWN/);
+    // (With no marker there is nothing to diff against, so the pending count
+    // is honestly unknown — that line is's and unchanged here.)
+  });
+
+  it("the renderer holds the line on its own: a loaded view.json missing the keys entirely still says UNKNOWN", () => {
+    writeFileSync(
+      join(dir, "view.json"),
+      JSON.stringify({ written_at: NOW.toISOString(), deploy: { loaded: true, dirty_files: 0, pending_commits: [], pending_commit_count: 0 } }),
+    );
+    const answer = deployAnswer(dir, NOW);
+    expect(answer).toContain("VM is running: UNKNOWN");
+    expect(answer).toContain("local HEAD: UNKNOWN");
+    expect(answer).toContain("container: UNKNOWN");
+  });
+});
+
 describe("clampScreen — plain text, never escape sequences", () => {
   it("strips SGR, OSC-8 hyperlinks and stray control bytes; keeps newlines", () => {
     const painted = "[1;32mgreen[0m\n]8;;https://xlink]8;;\nbell";
@@ -160,7 +212,7 @@ describe("FeedWriter.writeView", () => {
     const v = buildTuiView({ now: NOW, tab: "board", snapshot: snap(), deploy: DEPLOY, screen: "[1mBOARD[0m\nrow" });
     expect(w.writeView(v, "[1mBOARD[0m\nrow", 1_000)).toBe(true);
     expect(readFileSync(w.screenPath, "utf8")).toBe("BOARD\nrow");
-    expect((JSON.parse(readFileSync(w.viewPath, "utf8")) as TuiView).deploy.deployed_sha).toBe("aaa1111");
+    expect((JSON.parse(readFileSync(w.viewPath, "utf8")) as TuiView).deploy.deployed).toMatchObject({ sha: "aaa1111" });
     expect(readdirSync(dir).filter((f) => f.endsWith(".tmp"))).toEqual([]);
   });
 

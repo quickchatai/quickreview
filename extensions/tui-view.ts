@@ -136,6 +136,26 @@ function fmt(label: string, value: unknown): string | undefined {
   return `${label}: ${typeof value === "object" ? JSON.stringify(value) : String(value)}`;
 }
 
+/** The VM's BUILD_SHA marker as `view.json` carries it: its fields, the
+ * string `"absent"` for a VM this system has never deployed to, or `null`
+ * for a read that failed. Three different sentences — a VM that was never
+ * deployed to and a VM that could not be asked must not read alike. */
+function deployedLines(value: unknown): Array<string | undefined> {
+  if (value === "absent") {
+    return ["VM is running: no BUILD_SHA marker on the VM — this system has never deployed to it (the first deploy writes one)"];
+  }
+  if (typeof value !== "object" || value === null) return [fmt("VM is running", null)];
+  const marker = value as { sha?: unknown; at?: unknown; mode?: unknown };
+  return [fmt("VM is running", marker.sha), fmt("deployed at", marker.at), fmt("deploy mode", marker.mode)];
+}
+
+/** `""` is docker's own answer — it listed no container by that name — and
+ * is said as such rather than dropped like a blank field. */
+function containerLine(status: unknown): string | undefined {
+  if (status === "") return "container: docker lists no container by that name (never created, or removed)";
+  return fmt("container", status);
+}
+
 // ---- the three answers ------------------------------------------------------
 
 export function screenAnswer(dir: string, now: Date): string {
@@ -160,14 +180,15 @@ export function deployAnswer(dir: string, now: Date): string {
   }
   const commits = Array.isArray(d.pending_commits) ? (d.pending_commits as string[]) : [];
   const lines = [
-    fmt("VM is running", d.deployed_sha),
-    fmt("deployed at", d.deployed_at),
-    fmt("deploy mode", d.deployed_mode),
-    fmt("local HEAD", d.head),
+    ...deployedLines(d.deployed),
+    // A key the producer did not write at all is read as unread, never as
+    // absent: once the tab has loaded, every one of these is a fact the TUI
+    // either fetched or failed to fetch.
+    fmt("local HEAD", d.head ?? null),
     fmt("dirty files in the local checkout", d.dirty_files),
     fmt("commits waiting to ship", d.pending_commit_count),
     fmt("diffstat", d.diffstat_summary),
-    fmt("container", d.container_status),
+    containerLine(d.container_status ?? null),
     fmt("run in flight", d.run),
   ].filter((l): l is string => l !== undefined);
   const tail = commits.length > 0 ? `\n\nPending commits (newest first):\n${commits.join("\n")}` : "";

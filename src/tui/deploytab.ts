@@ -93,7 +93,14 @@ export function parseBuildSha(stdout: string): DeployedMarker | undefined {
 export interface DeployState {
   loaded: boolean;
   loading: boolean;
-  deployed?: DeployedMarker;
+  /** The VM's BUILD_SHA marker: the marker when read; `"absent"` when the VM
+   * carries none (this system has never deployed to it — the first deploy
+   * writes one); `undefined` until fetched, and after a fetch whose ssh or
+   * docker read never answered. An unanswered read says NOTHING about what
+   * the VM runs, so it must never render or publish as "no marker"
+   *. */
+  deployed?: DeployedMarker | "absent";
+  /** Local HEAD; `undefined` when `git rev-parse` could not be read. */
   head?: string;
   /** Uncommitted paths, or `undefined` when `git status` could not be read.
    * NOT an empty array in that case: an unread tree rendered as a
@@ -180,7 +187,9 @@ export class RealDeployFetcher implements DeployFetcher {
       this.local(DIRTY_ARGV),
       this.local(PLAN_ARGV),
     ]);
-    const deployed = marker.ok ? parseBuildSha(marker.stdout) : undefined;
+    // `buildShaArgv` swallows a missing file into empty output, so an ok/empty
+    // answer is a VM with no marker; a failed exec is a VM we could not ask.
+    const deployed = marker.ok ? (marker.stdout.trim() === "" ? "absent" : parseBuildSha(marker.stdout)) : undefined;
     const out: Omit<DeployState, "loaded" | "loading" | "scroll"> = {
       deployed,
       containerStatus: status.ok ? status.stdout.trim() : undefined,
@@ -189,7 +198,7 @@ export class RealDeployFetcher implements DeployFetcher {
       // A refusal exits non-zero with the reason on stderr — that IS the plan.
       plan: (plan.ok ? plan.stdout : `${plan.stdout}${plan.stderr}`).split("\n"),
     };
-    if (deployed) {
+    if (typeof deployed === "object") {
       const [log, stat] = await Promise.all([this.local(logArgv(deployed.sha)), this.local(diffStatArgv(deployed.sha))]);
       // A sha local git doesn't know (rewritten history?) leaves these
       // undefined and the render says so instead of pretending "0 pending".
@@ -210,18 +219,21 @@ function section(title: string, subtitle: string): string {
 export function deployLines(st: DeployState, width: number): string[] {
   if (!st.loaded) return [`${MUTED}loading…${DRESET}`];
   const lines: string[] = [];
-  const dep = st.deployed;
+  const dep = typeof st.deployed === "object" ? st.deployed : undefined;
   const depText = dep
     ? `${STRONG}${dep.sha}${DRESET}${dep.at ? ` ${FG.dim}${dep.at}${RESET}` : ""}${dep.mode ? ` ${FG.dim}(${dep.mode})${RESET}` : ""}`
-    : `${FG.dim}unknown — no BUILD_SHA on the VM yet (the next deploy writes it)${RESET}`;
+    : st.deployed === "absent"
+      ? `${FG.dim}unknown — no BUILD_SHA on the VM yet (the next deploy writes it)${RESET}`
+      : `${WARN}unknown — the VM's BUILD_SHA could not be read (ssh/docker failed); r retries${DRESET}`;
   lines.push(truncate(`${section("DEPLOYED", "what the VM runs")}  ${depText}`, width));
+  const headText = st.head ? `${STRONG}${st.head}${DRESET}` : `${WARN}HEAD unknown — git rev-parse failed${DRESET}`;
   const cleanliness =
     st.dirty === undefined
       ? `${WARN}unknown — git status could not be read${DRESET}`
       : st.dirty.length === 0
         ? `${OK}clean${DRESET}`
         : `${BAD}dirty — ${st.dirty.length} uncommitted (deploy.sh will refuse)${DRESET}`;
-  lines.push(truncate(`${section("LOCAL", "this working copy")}     ${STRONG}${st.head ?? "?"}${DRESET}  ${cleanliness}`, width));
+  lines.push(truncate(`${section("LOCAL", "this working copy")}     ${headText}  ${cleanliness}`, width));
   for (const d of (st.dirty ?? []).slice(0, 8)) lines.push(truncate(`    ${FG.dim}${d}${RESET}`, width));
   if ((st.dirty?.length ?? 0) > 8) lines.push(`    ${FG.dim}… ${st.dirty!.length - 8} more${RESET}`);
   lines.push("");
