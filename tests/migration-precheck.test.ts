@@ -148,7 +148,7 @@ describe("migration collision pre-check", () => {
     // normally with the PR's verdict untouched.
     expect(adapter.reviews.some((r) => r.event === "REQUEST_CHANGES")).toBe(false);
     expect(orders).toHaveLength(1);
-    expect(store.roundsFor(41)[0]?.verdict ?? null).toBeNull();
+    expect(store.roundsFor(41)[0]).toMatchObject({ verdict: null, preflight_posting_state: "executed" });
   });
 
   it("routes the comment through the MutationGate as a create_review intent", async () => {
@@ -517,5 +517,6 @@ describe("migration collision pre-check", () => {
 
     expect(orders).toHaveLength(1);
     expect(events("migration_precheck_failed", 48)).toHaveLength(1);
+    expect(store.roundsFor(48)[0]?.preflight_posting_state).toBe("ambiguous");
   });
 });
