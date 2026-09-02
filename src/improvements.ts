@@ -111,10 +111,29 @@ export interface DiffstatVerdict {
   lines: number;
 }
 
+/**
+ * A cap this check can compare against: a finite, non-negative number. The
+ * type says every cap is a number; until `parseConfig` cast the TOML
+ * section into that type, so a key missing from an operator's file reached
+ * here as `undefined` — and `files > undefined` is `false`, which PASSED the
+ * cap. `parseCaps` now refuses such a config at startup; this is the check's
+ * own belt, so its answer never depends on who built the `caps` it was handed.
+ * A cap it cannot compare against is a refusal, never a pass: the improvement
+ * channel is the one place this system pushes code.
+ */
+function usableCap(value: number): boolean {
+  return Number.isFinite(value) && value >= 0;
+}
+
 /** ≤ max_lines total (additions+deletions), ≤ max_files, no denylisted path. */
 export function checkDiffstat(entries: NumstatEntry[], caps: Config["caps"]): DiffstatVerdict {
   const files = entries.length;
   const lines = entries.reduce((n, e) => n + e.additions + e.deletions, 0);
+  for (const key of ["improvement_pr_max_files", "improvement_pr_max_lines"] as const) {
+    if (!usableCap(caps[key])) {
+      return { ok: false, reason: `caps.${key} is not a usable cap (${String(caps[key])}) — refusing rather than filing uncapped`, files, lines };
+    }
+  }
   const prefixes = caps.improvement_pr_deny_prefixes ?? IMPROVEMENT_DENY_PREFIXES_DEFAULT;
   const denied = entries.filter((e) => deniedPath(e.path, prefixes)).map((e) => e.path);
   const binary = entries.filter((e) => e.binary).map((e) => e.path);

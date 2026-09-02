@@ -108,6 +108,23 @@ describe("parseNumstat / deniedPath / checkDiffstat", () => {
     expect(checkDiffstat([], cfg.caps).ok).toBe(false);
     expect(checkDiffstat(parseNumstat("-\t-\tx.png"), cfg.caps).reason).toContain("binary");
   });
+
+  // `files > undefined` is false, so a cap that never arrived PASSED.
+  // The type says number; the config cast used to let undefined through. The
+  // check refuses on anything it cannot compare against, before any pass.
+  it.each([
+    ["improvement_pr_max_files", undefined],
+    ["improvement_pr_max_files", Number.NaN],
+    ["improvement_pr_max_files", -1],
+    ["improvement_pr_max_lines", undefined],
+    ["improvement_pr_max_lines", Number.POSITIVE_INFINITY],
+  ] as const)("cannot pass a cap comparison against an unusable %s (%s)", (key, value) => {
+    const caps = { ...cfg.caps, [key]: value as unknown as number };
+    const tiny = checkDiffstat(parseNumstat(numstat([[1, 0, "src/a.ts"]])), caps);
+    expect(tiny.ok).toBe(false);
+    expect(tiny.reason).toContain(`caps.${key}`);
+    expect(tiny.reason).toContain("refusing");
+  });
 });
 
 describe("rate caps from StateStore.filedSince", () => {

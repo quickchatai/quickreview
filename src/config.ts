@@ -1162,6 +1162,36 @@ function req(obj: Record<string, unknown>, key: string): unknown {
   return v;
 }
 
+/**
+ * `[caps]` parsed with each numeric cap CHECKED, not cast. This
+ * section used to be spread into `Config["caps"]` through an `as`, so a key
+ * missing from an operator's file reached `checkDiffstat` as `undefined` —
+ * and `files > undefined` is `false`, i.e. the cap passed. A cap the daemon
+ * cannot compare against is a startup refusal: the improvement channel is the
+ * one place this system pushes code, and it must never run uncapped.
+ */
+export function parseCaps(raw: Record<string, unknown>): Config["caps"] {
+  const cap = (key: string): number => {
+    const v = raw[key];
+    if (typeof v !== "number" || !Number.isFinite(v) || v < 0) {
+      throw new Error(`config.toml [caps]: ${key} must be a non-negative number (got ${JSON.stringify(v)})`);
+    }
+    return v;
+  };
+  const prefixes = raw.improvement_pr_deny_prefixes;
+  if (prefixes !== undefined && !(Array.isArray(prefixes) && prefixes.every((x) => typeof x === "string"))) {
+    throw new Error(`config.toml [caps]: improvement_pr_deny_prefixes must be an array of strings (got ${JSON.stringify(prefixes)})`);
+  }
+  return {
+    improvement_pr_max_lines: cap("improvement_pr_max_lines"),
+    improvement_pr_max_files: cap("improvement_pr_max_files"),
+    improvement_pr_per_day: cap("improvement_pr_per_day"),
+    improvement_pr_per_week: cap("improvement_pr_per_week"),
+    issues_per_day: cap("issues_per_day"),
+    improvement_pr_deny_prefixes: Array.isArray(prefixes) ? [...(prefixes as string[])] : [...IMPROVEMENT_DENY_PREFIXES_DEFAULT],
+  };
+}
+
 /** The shipped improvement-PR path denylist: the exact pre-lift
  * hardcode. Lives here (not in improvements.ts) so config carries the default
  * without a runtime import cycle. */
@@ -1227,10 +1257,7 @@ export function parseConfig(toml: string): Config {
       timezone: ops.timezone,
       ...(req(raw, "eod") as Partial<Config["eod"]>),
     } as Config["eod"],
-    caps: {
-      improvement_pr_deny_prefixes: [...IMPROVEMENT_DENY_PREFIXES_DEFAULT],
-      ...(req(raw, "caps") as Partial<Config["caps"]>),
-    } as Config["caps"],
+    caps: parseCaps(req(raw, "caps") as Record<string, unknown>),
     models: parseModels(req(raw, "models") as Record<string, any>),
     pi: {
       subagent_max_concurrency: 4,
