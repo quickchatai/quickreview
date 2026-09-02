@@ -44,6 +44,13 @@ const WAKE_KINDS: ReadonlySet<string> = new Set([
   "overdue",
   "pass_plan_mismatch",
   "migration_precheck_degraded",
+  // the same check, quieter the other way — collisions found, but
+  // the GitHub COMMENT withheld because the event log holds a collision-
+  // comment row it cannot read. Nothing self-heals: every later collision
+  // comment on that PR stays withheld until a human repairs the row, so it is
+  // human-attention grade — and it fires at most once per PR by construction
+  // (`StateStore.anomalyRaised` gates it in dispatch), so it cannot spam.
+  "migration_collision_comment_withheld",
   // x: a ledger still stale AFTER its one re-nudge — the
   // session ignored the nudge, a human-attention grade. First-detection
   // "ledger_stale" stays quiet: the nudge is the response.

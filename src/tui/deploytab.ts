@@ -95,11 +95,14 @@ export interface DeployState {
   loading: boolean;
   /** The VM's BUILD_SHA marker: the marker when read; `"absent"` when the VM
    * carries none (this system has never deployed to it — the first deploy
-   * writes one); `undefined` until fetched, and after a fetch whose ssh or
-   * docker read never answered. An unanswered read says NOTHING about what
-   * the VM runs, so it must never render or publish as "no marker"
-   *. */
-  deployed?: DeployedMarker | "absent";
+   * writes one); `"unparseable"` when the file is there but is not a
+   * `<sha> <iso> <mode>` line (the read succeeded — the content is the
+   * problem, and a redeploy rewrites it); `undefined` until fetched, and
+   * after a fetch whose ssh or docker read never answered. Three different
+   * facts, three different sentences: an unanswered read says NOTHING about
+   * what the VM runs, so it must never render or publish as "no marker" —
+   * and a corrupt marker must never be blamed on ssh. */
+  deployed?: DeployedMarker | "absent" | "unparseable";
   /** Local HEAD; `undefined` when `git rev-parse` could not be read. */
   head?: string;
   /** Uncommitted paths, or `undefined` when `git status` could not be read.
@@ -188,8 +191,13 @@ export class RealDeployFetcher implements DeployFetcher {
       this.local(PLAN_ARGV),
     ]);
     // `buildShaArgv` swallows a missing file into empty output, so an ok/empty
-    // answer is a VM with no marker; a failed exec is a VM we could not ask.
-    const deployed = marker.ok ? (marker.stdout.trim() === "" ? "absent" : parseBuildSha(marker.stdout)) : undefined;
+    // answer is a VM with no marker; ok/garbage is a marker we read but could
+    // not parse; a failed exec is a VM we could not ask.
+    const deployed = marker.ok
+      ? marker.stdout.trim() === ""
+        ? "absent"
+        : (parseBuildSha(marker.stdout) ?? "unparseable")
+      : undefined;
     const out: Omit<DeployState, "loaded" | "loading" | "scroll"> = {
       deployed,
       containerStatus: status.ok ? status.stdout.trim() : undefined,
@@ -224,7 +232,9 @@ export function deployLines(st: DeployState, width: number): string[] {
     ? `${STRONG}${dep.sha}${DRESET}${dep.at ? ` ${FG.dim}${dep.at}${RESET}` : ""}${dep.mode ? ` ${FG.dim}(${dep.mode})${RESET}` : ""}`
     : st.deployed === "absent"
       ? `${FG.dim}unknown — no BUILD_SHA on the VM yet (the next deploy writes it)${RESET}`
-      : `${WARN}unknown — the VM's BUILD_SHA could not be read (ssh/docker failed); r retries${DRESET}`;
+      : st.deployed === "unparseable"
+        ? `${WARN}unknown — the VM's BUILD_SHA was read but is not a <sha> <iso> <mode> line (corrupt marker; the next deploy rewrites it)${DRESET}`
+        : `${WARN}unknown — the VM's BUILD_SHA could not be read (ssh/docker failed); r retries${DRESET}`;
   lines.push(truncate(`${section("DEPLOYED", "what the VM runs")}  ${depText}`, width));
   const headText = st.head ? `${STRONG}${st.head}${DRESET}` : `${WARN}HEAD unknown — git rev-parse failed${DRESET}`;
   const cleanliness =

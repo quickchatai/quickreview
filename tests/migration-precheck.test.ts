@@ -311,6 +311,58 @@ describe("migration collision pre-check", () => {
     expect(orders[0]?.migration_precheck_degraded).toBeFalsy();
   });
 
+  // A withheld comment is QUIETER than a posted one, and the torn row stays
+  // torn on every later round — so the operator hears about it through the
+  // same channel a degraded pre-check uses: a durable anomaly + overseer wake.
+  it("a withheld collision comment raises an overseer anomaly that names the torn row", async () => {
+    queue(58);
+    adapter.files = [file("backend/chat/migrations/0042_x.py")];
+    store.db
+      .prepare("INSERT INTO events (ts, kind, pr, payload) VALUES (?, 'migration_collision_comment', 58, ?)")
+      .run("2026-08-18T10:00:00Z", "{torn");
+    const overseer: string[] = [];
+    const policy = new AnomalyWakePolicy({
+      injectOverseer: async (m) => {
+        overseer.push(m);
+      },
+    });
+    store.setAnomalySink((sig) => policy.onAnomaly(sig));
+
+    await dispatchOnce({ cfg, store, adapter, hooks: hooks(orders), prepareWorktree: tree, listBaseMigrations: async () => BASE_MIGRATIONS });
+
+    expect(orders).toHaveLength(1);
+    expect(store.anomalies()).toEqual([
+      expect.objectContaining({ kind: "migration_collision_comment_withheld", pr: 58, round_no: orders[0]!.round_no }),
+    ]);
+    const wake = overseer.join("\n");
+    expect(wake).toContain("WITHHELD");
+    expect(wake).toContain("migration_collision_comment");
+    expect(wake).toContain("pr = 58");
+  });
+
+  it("…once per PR: a PR already told stays told, while another anomaly kind on it does not count", async () => {
+    queue(59);
+    adapter.files = [file("backend/chat/migrations/0042_x.py")];
+    store.db
+      .prepare("INSERT INTO events (ts, kind, pr, payload) VALUES (?, 'migration_collision_comment', 59, ?)")
+      .run("2026-08-18T10:00:00Z", "{torn");
+    // An earlier round already raised it (the torn row was there then too).
+    store.logAnomaly("migration_collision_comment_withheld", 59, 1, "already told");
+    // Another PR's alert, and another kind on THIS PR, are not this PR's alert.
+    store.logAnomaly("migration_collision_comment_withheld", 60, 1, "someone else");
+    store.logAnomaly("migration_precheck_degraded", 59, 1, "unrelated kind");
+    expect(store.anomalyRaised("migration_collision_comment_withheld", 59)).toBe(true);
+    expect(store.anomalyRaised("migration_collision_comment_withheld", 61)).toBe(false);
+    expect(store.anomalyRaised("migration_precheck_degraded", 60)).toBe(false);
+
+    await dispatchOnce({ cfg, store, adapter, hooks: hooks(orders), prepareWorktree: tree, listBaseMigrations: async () => BASE_MIGRATIONS });
+
+    // The withhold itself is still recorded on every round; only the alert is deduplicated.
+    expect(events("migration_collision_comment_withheld", 59)).toHaveLength(1);
+    expect(adapter.intents.filter((i) => i.kind === "create_review")).toHaveLength(0);
+    expect(store.anomalies().filter((a) => a.pr === 59 && a.kind === "migration_collision_comment_withheld")).toHaveLength(1);
+  });
+
   it("says nothing when the PR's migration number is free", async () => {
     queue(44);
     adapter.files = [file("backend/chat/migrations/0043_free.py")];

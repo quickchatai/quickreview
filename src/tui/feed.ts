@@ -72,10 +72,12 @@ export interface ViewDeploy {
   loading?: boolean;
   /** The VM's BUILD_SHA marker — the commit it is actually running. `"absent"`
    * is a VM this system has never deployed to (the first deploy writes the
-   * marker); `null` is a read that failed and says NOTHING about what the VM
-   * runs. Never a dropped key: the companion's renderer shows an
-   * absent key as nothing at all, and "nothing" read as "nothing to report". */
-  deployed: { sha: string; at?: string; mode?: string } | "absent" | null;
+   * marker); `"unparseable"` is a marker the TUI read but could not parse (a
+   * corrupt file, not a failed read); `null` is a read that failed and says
+   * NOTHING about what the VM runs. Never a dropped key: the
+   * companion's renderer shows an absent key as nothing at all, and "nothing"
+   * read as "nothing to report". */
+  deployed: { sha: string; at?: string; mode?: string } | "absent" | "unparseable" | null;
   /** Local HEAD in the sandbox checkout; `null` when git could not be read. */
   head: string | null;
   /** `null` when the working tree could not be read — never 0. */
@@ -164,8 +166,9 @@ export interface ViewSource {
     loaded: boolean;
     loading?: boolean;
     /** Structural echo of `DeployState.deployed`: the marker, `"absent"` for a
-     * VM with none, `undefined` for a read that failed. */
-    deployed?: { sha: string; at?: string; mode?: string } | "absent";
+     * VM with none, `"unparseable"` for a marker that is not a marker line,
+     * `undefined` for a read that failed. */
+    deployed?: { sha: string; at?: string; mode?: string } | "absent" | "unparseable";
     head?: string;
     /** undefined = git status could not be read, not "clean". */
     dirty: string[] | undefined;

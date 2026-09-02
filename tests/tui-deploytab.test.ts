@@ -129,9 +129,12 @@ describe("RealDeployFetcher", () => {
     expect(localCalls.some((c) => c.includes("log"))).toBe(false);
   });
 
-  it("a marker that exists but is garbage is unread, not absent", async () => {
-    const { f } = fetcherWith(ok("not-a-sha here\n"), { [HEAD_ARGV.join(" ")]: ok("bbb2222\n"), [DIRTY_ARGV.join(" ")]: ok(""), [PLAN_ARGV.join(" ")]: ok("") });
-    expect((await f.load()).deployed).toBeUndefined();
+  // The read SUCCEEDED here — the content is the problem — so it is neither a
+  // missing marker nor an ssh failure, and neither of those sentences is true.
+  it("a marker that exists but is garbage is unparseable — not absent, not unread", async () => {
+    const { f, localCalls } = fetcherWith(ok("not-a-sha here\n"), { [HEAD_ARGV.join(" ")]: ok("bbb2222\n"), [DIRTY_ARGV.join(" ")]: ok(""), [PLAN_ARGV.join(" ")]: ok("") });
+    expect((await f.load()).deployed).toBe("unparseable");
+    expect(localCalls.some((c) => c.includes("log"))).toBe(false);
   });
 });
 
@@ -173,6 +176,12 @@ describe("deployLines", () => {
     expect(unread).toContain("could not be read");
     expect(unread).not.toContain("no BUILD_SHA on the VM yet");
     expect(unread).toContain("HEAD unknown");
+    // A corrupt marker was READ — blaming ssh/docker for it would be false.
+    const corrupt = stripAnsi(deployLines(emptyState({ deployed: "unparseable", head: "ccc3333" }), 160).join("\n"));
+    expect(corrupt).toContain("corrupt marker");
+    expect(corrupt).not.toContain("could not be read");
+    expect(corrupt).not.toContain("no BUILD_SHA on the VM yet");
+    expect(corrupt).not.toContain("nothing to deploy");
   });
 
   it("flags a deployed sha unknown to local git instead of pretending 0 pending", () => {

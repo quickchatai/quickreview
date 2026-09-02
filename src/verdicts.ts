@@ -277,7 +277,7 @@ export function validateVerdict(raw: unknown): ParsedVerdict {
  *. Exhausting it this way ends in FAILED_LOUD and `u`, which is the
  * recoverable direction; the other direction is a loop past the cap.
  */
-export function selfRequeuesSpent(spend: SelfRequeueSpend): number {
+function selfRequeuesSpent(spend: SelfRequeueSpend): number {
   return spend.at_head + spend.unattributed;
 }
 

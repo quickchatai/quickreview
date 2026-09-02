@@ -137,12 +137,17 @@ function fmt(label: string, value: unknown): string | undefined {
 }
 
 /** The VM's BUILD_SHA marker as `view.json` carries it: its fields, the
- * string `"absent"` for a VM this system has never deployed to, or `null`
- * for a read that failed. Three different sentences — a VM that was never
- * deployed to and a VM that could not be asked must not read alike. */
+ * string `"absent"` for a VM this system has never deployed to, the string
+ * `"unparseable"` for a marker the TUI read but could not parse, or `null`
+ * for a read that failed. Four different sentences — a VM that was never
+ * deployed to, a VM whose marker is corrupt and a VM that could not be asked
+ * must not read alike. */
 function deployedLines(value: unknown): Array<string | undefined> {
   if (value === "absent") {
     return ["VM is running: no BUILD_SHA marker on the VM — this system has never deployed to it (the first deploy writes one)"];
+  }
+  if (value === "unparseable") {
+    return ["VM is running: UNKNOWN — the VM's BUILD_SHA marker was read but is not a <sha> <iso> <mode> line (corrupt marker; the next deploy rewrites it)"];
   }
   if (typeof value !== "object" || value === null) return [fmt("VM is running", null)];
   const marker = value as { sha?: unknown; at?: unknown; mode?: unknown };

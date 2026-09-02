@@ -177,6 +177,17 @@ describe("a failed read reaches the companion as UNKNOWN, never as an absent lin
     // is honestly unknown — that line is's and unchanged here.)
   });
 
+  it("a marker the TUI read but could not parse is its own sentence — not 'never deployed', not 'could not read'", () => {
+    const v = buildTuiView({ now: NOW, tab: "deploy", deploy: { loaded: true, deployed: "unparseable", head: "bbb2222", dirty: [], containerStatus: "Up 2 hours" } });
+    expect(v.deploy.deployed).toBe("unparseable");
+    const answer = deployAnswer(publish(v), NOW);
+    expect(answer).toContain("VM is running: UNKNOWN");
+    expect(answer).toContain("corrupt marker");
+    expect(answer).not.toContain("never deployed");
+    expect(answer).not.toContain("VM is running: UNKNOWN (the TUI has not been able to read this)");
+    // (No sha to diff against, so the pending count is honestly UNKNOWN —'s line, unchanged.)
+  });
+
   it("the renderer holds the line on its own: a loaded view.json missing the keys entirely still says UNKNOWN", () => {
     writeFileSync(
       join(dir, "view.json"),

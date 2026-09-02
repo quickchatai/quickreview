@@ -92,6 +92,12 @@ export interface EcosystemPreCheckIo {
  *                     nothing ran, nothing degraded, nothing to say.
  *   * `"checked"`   — the check ran; `collisions` is what it found (usually
  *                     empty, and already delivered as a COMMENT when not).
+ *                     `comment_withheld` marks the one checked round whose
+ *                     COMMENT was deliberately NOT posted: the ledger holds a
+ *                     comment row it cannot read. The caller owes
+ *                     the operator an anomaly for it — a withheld comment is
+ *                     quieter than a posted one, and the ratified bar is
+ *                     "more reliable, never quieter".
  *   * `"degraded"`  — the check EXISTS but could not run this round (no base
  *                     reader, no base sha, or the base read threw) while the
  *                     PR touches migrations. The ratified never-quieter path:
@@ -100,7 +106,7 @@ export interface EcosystemPreCheckIo {
  */
 export type EcosystemPreCheckOutcome =
   | { status: "off" }
-  | { status: "checked"; collisions: MigrationCollision[] }
+  | { status: "checked"; collisions: MigrationCollision[]; comment_withheld?: true }
   | { status: "degraded" };
 
 /** The slice of a RoundOrder the gate note renders from — structural, so a
@@ -286,7 +292,7 @@ async function djangoPreCheck(io: EcosystemPreCheckIo, round: EcosystemRound): P
       fingerprint,
       reason: "unreadable_comment_row",
     });
-    return { status: "checked", collisions };
+    return { status: "checked", collisions, comment_withheld: true };
   }
   try {
     const body = renderMigrationCollisionComment({

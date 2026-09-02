@@ -32,8 +32,8 @@ function storeWithPolicy(opts: { nowMs?: () => number; failInject?: boolean } = 
 }
 
 describe("anomalySeverity — the map", () => {
-  it("wake classes: malformed/overdue verdicts, plan≠executed, degraded migration pre-check", () => {
-    for (const kind of ["malformed", "overdue", "pass_plan_mismatch", "migration_precheck_degraded"]) {
+  it("wake classes: malformed/overdue verdicts, plan≠executed, degraded migration pre-check, withheld collision comment", () => {
+    for (const kind of ["malformed", "overdue", "pass_plan_mismatch", "migration_precheck_degraded", "migration_collision_comment_withheld"]) {
       expect(anomalySeverity(kind), kind).toBe("wake");
     }
   });

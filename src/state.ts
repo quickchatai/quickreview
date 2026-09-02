@@ -976,8 +976,9 @@ export interface SelfRequeueSpend {
 
 /** One string field out of an event payload, or `undefined` when the payload
  * is null, is not JSON, or does not carry that field as a string. The two
- * per-PR ledger reads above build their three-state answers on this: a row
- * that yields `undefined` is UNREADABLE, never a row that "did not match". */
+ * per-PR ledger reads in `StateStore` (`migrationCollisionCommented`,
+ * `selfRequeueSpend`) build their three-state answers on this: a row that
+ * yields `undefined` is UNREADABLE, never a row that "did not match". */
 function readStringField(payload: string | null, field: string): string | undefined {
   if (!payload) return undefined;
   try {
@@ -3489,6 +3490,17 @@ export class StateStore {
    * logAnomaly sits inside posting paths and stays sync. */
   setAnomalySink(sink: (signal: AnomalyRecord & { injectMessage?: string | undefined }) => void): void {
     this.anomalySink = sink;
+  }
+
+  /** Whether an anomaly of this kind was ever recorded on this PR — the
+   * once-per-PR gate for an alert whose cause persists across rounds (a torn
+   * ledger row is torn on every round until someone repairs it, and one
+   * overseer wake per round would bury the anomalies that need reading). An
+   * anomaly row whose own payload cannot be read never counts as "already
+   * raised": that reading would silence the alert on the strength of nothing. */
+  anomalyRaised(kind: string, pr: number): boolean {
+    const rows = this.db.prepare("SELECT payload FROM events WHERE kind = 'anomaly' AND pr = ?").all(pr) as Array<{ payload: string | null }>;
+    return rows.some((r) => readStringField(r.payload, "kind") === kind);
   }
 
   /** Recorded anomalies, newest last. The query the inject files never allowed. */

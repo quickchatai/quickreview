@@ -212,12 +212,20 @@ function alreadyConsumed(err: unknown): boolean {
  * finding class for exactly that round (see src/include.ts,
  * MIGRATION_NUMBERING_ADDENDUM) — and raises the overseer anomaly. "off"
  * takes none of those paths: configured-off is not degradation.
+ *
+ * A WITHHELD comment (the ledger holds a collision-comment row it cannot
+ * read, so a duplicate cannot be ruled out) is the other way a
+ * checked round gets quieter, and it gets the same operator surface: an
+ * overseer anomaly, raised ONCE per PR (`StateStore.anomalyRaised`) because
+ * the torn row is torn on every round until someone repairs it, and one wake
+ * per round would bury the anomalies that need reading. The event itself is
+ * logged on every withheld round — only the alert is deduplicated.
  */
 async function ecosystemPreCheck(
   deps: DispatchDeps,
   eco: Ecosystem,
   args: { pr: number; files: PrFileEntry[]; head_sha: string; base_ref: string; base_sha: string },
-): Promise<{ collisions: MigrationCollision[]; degraded: boolean }> {
+): Promise<{ collisions: MigrationCollision[]; degraded: boolean; commentWithheld: boolean }> {
   const outcome = await eco.preCheck(
     {
       logEvent: (kind, pr, payload) => deps.store.logEvent(kind, pr, payload),
@@ -231,6 +239,7 @@ async function ecosystemPreCheck(
   return {
     collisions: outcome.status === "checked" ? outcome.collisions : [],
     degraded: outcome.status === "degraded",
+    commentWithheld: outcome.status === "checked" && outcome.comment_withheld === true,
   };
 }
 
@@ -975,6 +984,27 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
               "see the migration_precheck_skipped/failed event on this PR.",
             "The round prompt tells the session to check base-branch migration-number collisions itself, so nothing is lost — " +
               "but a recurring degraded pre-check means the base clone or worktree preparation is broken and needs a look.",
+          ].join("\n"),
+        );
+      }
+      // A withheld collision COMMENT is an anomaly too: the round
+      // still hears the collisions through the gate note, but every later
+      // collision comment on this PR stays withheld until the torn ledger row
+      // is repaired — a human has to know that, once.
+      if (precheck.commentWithheld && !store.anomalyRaised("migration_collision_comment_withheld", row.number)) {
+        store.logAnomaly(
+          "migration_collision_comment_withheld",
+          row.number,
+          roundNo,
+          "migration collision COMMENT withheld: the event log holds a migration_collision_comment row for this PR that cannot be read, " +
+            "so a duplicate cannot be ruled out; the collisions still ride the round prompt",
+          [
+            `ANOMALY (migration-precheck) — PR #${row.number} round ${roundNo}`,
+            "The migration-number pre-check found collisions but WITHHELD the GitHub comment: the event log holds a " +
+              "migration_collision_comment row for this PR whose payload cannot be read, so posting could duplicate an earlier comment.",
+            "The session still hears the collisions through the round prompt's gate note, so nothing is lost this round — " +
+              "but EVERY collision comment on this PR stays withheld until that row is repaired or deleted " +
+              `(events table, kind = 'migration_collision_comment', pr = ${row.number}; see the migration_collision_comment_withheld events).`,
           ].join("\n"),
         );
       }
