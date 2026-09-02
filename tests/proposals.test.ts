@@ -12,6 +12,7 @@ import {
   acceptProposal,
   configPatchViolation,
   fenceRanges,
+  fenceSourceFrom,
   improvementsArgv,
   listRubricProposals,
   parseImprovements,
@@ -24,6 +25,7 @@ import {
   rubricDir,
   targetsAllowed,
   validSlug,
+  type FenceSource,
 } from "../src/tui/proposals.js";
 
 const cfg = {
@@ -188,7 +190,7 @@ describe("proposal kinds (config beside rubric)", () => {
 const FENCED = ["intro line", "", "<!-- RATIFIED ci-gate — do not edit; owner only -->", "ratified line A", "ratified line B", "<!-- /RATIFIED ci-gate -->", "outro line", ""].join("\n");
 
 describe("patch vetting — RATIFIED fences (rule 6, structural)", () => {
-  const read = (rel: string): string | null => (rel === "prompts/round-first.md" ? FENCED : null);
+  const read = (rel: string): FenceSource => (rel === "prompts/round-first.md" ? { state: "content", content: FENCED } : { state: "absent" });
 
   it("fenceRanges returns 1-based inclusive ranges, markers included; unterminated protects to EOF", () => {
     expect(fenceRanges(FENCED)).toEqual([{ start: 3, end: 6 }]);
@@ -215,15 +217,35 @@ describe("patch vetting — RATIFIED fences (rule 6, structural)", () => {
     const patch = `--- a/prompts/round-first.md\n+++ b/prompts/round-first.md\n@@ -7,1 +7,3 @@\n outro line\n+<!-- RATIFIED fake — do not edit; owner only -->\n+ridden-in text\n`;
     expect(patchFenceViolation(patch, read)).toMatch(/adds a RATIFIED fence marker/);
     const close = `--- a/agents/pass-x.md\n+++ b/agents/pass-x.md\n@@ -1,1 +1,2 @@\n body\n+<!-- /RATIFIED sneaky -->\n`;
-    expect(patchFenceViolation(close, () => "body\n")).toMatch(/adds a RATIFIED fence marker/);
+    expect(patchFenceViolation(close, () => ({ state: "content", content: "body\n" }))).toMatch(/adds a RATIFIED fence marker/);
+  });
+
+  // the guard fails CLOSED. It refuses at the `--- ` line, before it
+  // has looked at a single hunk, because it cannot know what it would be
+  // touching — and it refuses even for a patch that would have been clean.
+  it("refuses on an unreadable target, whatever the hunks do", () => {
+    const unreadable = (): FenceSource => ({ state: "unreadable", reason: "EACCES" });
+    const outside = `--- a/prompts/round-first.md\n+++ b/prompts/round-first.md\n@@ -7,1 +7,2 @@\n outro line\n+one more outro line\n`;
+    expect(patchFenceViolation(outside, unreadable)).toMatch(/cannot read prompts\/round-first\.md to check its RATIFIED fences \(EACCES\)/);
+    expect(patchFenceViolation(outside, unreadable)).toMatch(/an unreadable file is not an unfenced one/);
+
+    // fenceSourceFrom is the production reader: ENOENT is the ONLY absence.
+    const dir = mkdtempSync(join(tmpdir(), "fence-src-"));
+    mkdirSync(join(dir, "agents"), { recursive: true });
+    expect(fenceSourceFrom(dir, "agents/nope.md")).toEqual({ state: "absent" });
+    writeFileSync(join(dir, "agents/real.md"), "body\n");
+    expect(fenceSourceFrom(dir, "agents/real.md")).toEqual({ state: "content", content: "body\n" });
+    mkdirSync(join(dir, "agents/adir.md"));
+    expect(fenceSourceFrom(dir, "agents/adir.md").state).toBe("unreadable");
+    rmSync(dir, { recursive: true, force: true });
   });
 
   it("passes edits strictly outside the fence, and new files with no fence", () => {
     const outside = `--- a/prompts/round-first.md\n+++ b/prompts/round-first.md\n@@ -7,1 +7,2 @@\n outro line\n+one more outro line\n`;
     expect(patchFenceViolation(outside, read)).toBeNull();
     const fresh = `--- /dev/null\n+++ b/agents/pass-new.md\n@@ -0,0 +1,1 @@\n+brand new body\n`;
-    expect(patchFenceViolation(fresh, () => null)).toBeNull();
-    expect(patchFenceViolation(PATCH, () => "line one\nline two\n")).toBeNull();
+    expect(patchFenceViolation(fresh, () => ({ state: "absent" }))).toBeNull();
+    expect(patchFenceViolation(PATCH, () => ({ state: "content", content: "line one\nline two\n" }))).toBeNull();
   });
 });
 
@@ -357,6 +379,48 @@ describe("acceptProposal (local dirs, fake git)", () => {
     expect(res.ok).toBe(false);
     expect(res.message).toMatch(/RATIFIED fence/);
     expect(gitCalls).toHaveLength(0);
+  });
+
+  // the guard used to `catch → null`, making EACCES/EISDIR
+  // indistinguishable from ENOENT, and `null` reads as "no fences". So ONE
+  // unreadable target let a patch reaching inside an owner-fenced region be
+  // accepted, applied and committed — a rule-6 bright-line bypass with a local
+  // commit behind it. It fails CLOSED now.
+  it("refuses when a fence target cannot be READ — an unreadable file is not an unfenced one", async () => {
+    // A directory where the file should be: readFileSync raises EISDIR, which
+    // the old catch-all folded into "this file does not exist yet".
+    mkdirSync(join(root, "prompts/round-first.md"), { recursive: true });
+    propose(
+      "fence-ride-unreadable",
+      `--- a/prompts/round-first.md\n+++ b/prompts/round-first.md\n@@ -3,4 +3,4 @@\n <!-- RATIFIED ci-gate — do not edit; owner only -->\n-ratified line A\n+quietly weakened line A\n ratified line B\n <!-- /RATIFIED ci-gate -->\n`,
+    );
+    const gitCalls: string[][] = [];
+    const res = await acceptProposal(
+      {
+        git: {
+          run: (cmd, args) => {
+            gitCalls.push([cmd, ...args]);
+            return Promise.resolve("");
+          },
+        },
+        repoRoot: root,
+        today: () => "2026-08-20",
+      },
+      "fence-ride-unreadable",
+    );
+    expect(res.ok).toBe(false);
+    expect(res.message).toMatch(/cannot read prompts\/round-first\.md to check its RATIFIED fences/);
+    expect(gitCalls).toHaveLength(0); // never applied, never committed
+    expect(existsSync(join(root, "state/rubric/fence-ride-unreadable"))).toBe(true);
+  });
+
+  it("a target the patch CREATES is still fine — absent is not unreadable", async () => {
+    propose("brand-new", `--- /dev/null\n+++ b/agents/pass-new.md\n@@ -0,0 +1,1 @@\n+brand new body\n`);
+    const res = await acceptProposal(
+      { git: { run: () => Promise.resolve("") }, repoRoot: root, today: () => "2026-08-20" },
+      "brand-new",
+    );
+    expect(res.ok).toBe(true);
   });
 
   it("accepts a config proposal: applies + commits, no ratification bookkeeping, dir removed", async () => {

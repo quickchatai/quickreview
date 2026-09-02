@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { bashBlockReason, frozenPaths, writeBlockReason, REGISTRY_FIXTURES } from "../extensions/companion-guard.js";
+import activate, { bashBlockReason, frozenPaths, readSeedManifest, writeBlockReason, REGISTRY_FIXTURES } from "../extensions/companion-guard.js";
 
 describe("bashBlockReason", () => {
   it("vetoes the rule-8 GitHub/deploy family", () => {
@@ -53,7 +53,7 @@ describe("frozenPaths + writeBlockReason", () => {
   );
 
   it("freezes exactly the manifest plus the two registry fixtures", () => {
-    const frozen = frozenPaths(root);
+    const frozen = frozenPaths(readSeedManifest(root));
     expect(frozen.has("agents/pass-baseline.md")).toBe(true);
     expect(frozen.has("prompts/conversation-system.md")).toBe(true);
     for (const f of REGISTRY_FIXTURES) expect(frozen.has(f)).toBe(true);
@@ -61,14 +61,14 @@ describe("frozenPaths + writeBlockReason", () => {
   });
 
   it("vetoes frozen writes by relative or absolute path, with the rule-6 reason", () => {
-    const frozen = frozenPaths(root);
+    const frozen = frozenPaths(readSeedManifest(root));
     expect(writeBlockReason("agents/pass-baseline.md", root, frozen)).toMatch(/rule 6/);
     expect(writeBlockReason(join(root, "agents/pass-baseline.md"), root, frozen)).toMatch(/frozen seed/);
     expect(writeBlockReason("tests/fixtures/ratified-divergence.json", root, frozen)).toMatch(/two sanctioned writers/);
   });
 
   it("allows everything else — ours-to-edit files are NOT in the manifest, so they pass", () => {
-    const frozen = frozenPaths(root);
+    const frozen = frozenPaths(readSeedManifest(root));
     expect(writeBlockReason("prompts/round-1.md", root, frozen)).toBeUndefined();
     expect(writeBlockReason("agents/pass-intent.md", root, frozen)).toBeUndefined();
     expect(writeBlockReason("src/tui/app.ts", root, frozen)).toBeUndefined();
@@ -77,18 +77,188 @@ describe("frozenPaths + writeBlockReason", () => {
   });
 
   it("degrades to fixtures-only when the manifest is unreadable — never wedges pi", () => {
-    const frozen = frozenPaths(join(root, "nowhere"));
+    const frozen = frozenPaths(readSeedManifest(join(root, "nowhere")));
     expect(frozen.size).toBe(REGISTRY_FIXTURES.length);
     expect(writeBlockReason("tests/fixtures/seed-manifest.json", join(root, "nowhere"), frozen)).toMatch(/rule 6/);
   });
 
+  // a manifest that names NO files disarms the rule-6 veto for every
+  // seed just as completely as an unparseable one. Classifying it as a good
+  // read of nothing is how the degradation went silent — the warning below is
+  // keyed on the read, so this must be `unreadable`, same as
+  // CandidateStore.read's "no candidates array".
+  it("a manifest that names no files is UNREADABLE, not a good read of nothing", () => {
+    const empty = mkdtempSync(join(tmpdir(), "companion-guard-empty-"));
+    mkdirSync(join(empty, "tests/fixtures"), { recursive: true });
+    const at = join(empty, "tests/fixtures/seed-manifest.json");
+
+    writeFileSync(at, "{}");
+    expect(readSeedManifest(empty)).toEqual({ state: "unreadable", reason: "no files object" });
+    writeFileSync(at, JSON.stringify({ files: {} }));
+    expect(readSeedManifest(empty)).toEqual({ state: "unreadable", reason: "manifest lists no files" });
+    writeFileSync(at, JSON.stringify({ files: [] }));
+    expect(readSeedManifest(empty)).toEqual({ state: "unreadable", reason: "no files object" });
+    writeFileSync(at, JSON.stringify({ files: null }));
+    expect(readSeedManifest(empty).state).toBe("unreadable");
+
+    // TOP-LEVEL non-objects. `null` is the one that bit: it parses, and
+    // reaching for `.files` on it THROWS out of the pi tool_call handler —
+    // no DEGRADED line, no veto, the silent outcome this classification
+    // exists to prevent. Every check here must be total on an `unknown`.
+    for (const scalar of ["null", "3", '"a string"', "true", "[]"]) {
+      writeFileSync(at, scalar);
+      expect(() => readSeedManifest(empty)).not.toThrow();
+      expect(readSeedManifest(empty).state, `top-level ${scalar}`).toBe("unreadable");
+    }
+    writeFileSync(at, "null");
+    expect(readSeedManifest(empty)).toEqual({ state: "unreadable", reason: "manifest is not an object" });
+
+    // One real entry and it is a good read again.
+    writeFileSync(at, JSON.stringify({ files: { "agents/pass-baseline.md": "x" } }));
+    expect(readSeedManifest(empty)).toEqual({ state: "manifest", files: ["agents/pass-baseline.md"] });
+    rmSync(empty, { recursive: true, force: true });
+  });
+
   it("the REAL repo manifest freezes the seeds and spares what is ours", () => {
     const repoRoot = join(import.meta.dirname, "..");
-    const frozen = frozenPaths(repoRoot);
+    const frozen = frozenPaths(readSeedManifest(repoRoot));
     expect(frozen.has("agents/pass-baseline.md")).toBe(true);
     // rule 6's ours-to-edit list must never be vetoed:
     for (const ours of ["prompts/companion.md", "agents/pass-intent.md", "agents/pass-placement.md"]) {
       expect(frozen.has(ours)).toBe(false);
+    }
+  });
+});
+
+// ruling on the "judged-lesser" fail-open here: the fail-open itself
+// is CONFIRMED deliberate (see the `frozenPaths` docstring — this guard is
+// belt, tests/seed-integrity.test.ts is the brace, and failing closed would
+// veto every write the companion makes over a fixture problem). What was NOT
+// deliberate is that the degraded set was CACHED for the life of the session.
+describe("activate — a degraded manifest read is never cached", () => {
+  it("retries on the next write, so a transient unreadable manifest costs one tool call", () => {
+    const dir = mkdtempSync(join(tmpdir(), "companion-guard-act-"));
+    mkdirSync(join(dir, "tests/fixtures"), { recursive: true });
+    let handler: ((e: unknown) => { block?: boolean; reason?: string } | undefined) | undefined;
+    const pi = {
+      on: (_name: string, h: (e: unknown) => { block?: boolean; reason?: string } | undefined) => {
+        handler = h;
+      },
+    };
+    const prevRoot = process.env.QCR_ROOT;
+    const realError = console.error;
+    const errs: string[] = [];
+    process.env.QCR_ROOT = dir;
+    console.error = (...args: unknown[]): void => {
+      errs.push(args.map(String).join(" "));
+    };
+    try {
+      activate(pi as never);
+      const write = (path: string): { block?: boolean; reason?: string } | undefined => handler!({ toolName: "write", input: { path } });
+
+      // No manifest: degraded — the seed is NOT vetoed, the fixtures still are.
+      expect(write("agents/pass-baseline.md")).toBeUndefined();
+      expect(write("tests/fixtures/ratified-divergence.json")?.block).toBe(true);
+      expect(errs.filter((e) => e.includes("DEGRADED"))).toHaveLength(1); // said once, not per call
+
+      // The manifest becomes readable. The old code cached the degraded set on
+      // the first write/edit, so this stayed permitted for the whole session —
+      // a rule-6 veto silently switched off by one bad moment.
+      writeFileSync(join(dir, "tests/fixtures/seed-manifest.json"), JSON.stringify({ files: { "agents/pass-baseline.md": "x" } }));
+      expect(write("agents/pass-baseline.md")?.reason).toMatch(/rule 6/);
+
+      // A GOOD read is still cached — the set changes only on a reseed, and a
+      // reseed restarts everything.
+      rmSync(join(dir, "tests/fixtures/seed-manifest.json"));
+      expect(write("agents/pass-baseline.md")?.reason).toMatch(/rule 6/);
+    } finally {
+      console.error = realError;
+      if (prevRoot === undefined) delete process.env.QCR_ROOT;
+      else process.env.QCR_ROOT = prevRoot;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // regression: an EMPTY manifest disarms the veto for every seed. It
+  // has to be as loud as a torn one — this printed 0 warnings until the read
+  // started classifying it.
+  // The same handler, driven over every useless payload shape. The assertion
+  // that matters is that NONE of them throws out of `pi.on("tool_call", …)`:
+  // what pi's dispatcher does with an exception there is VERIFY-ON-PIN, and a
+  // throw skips both the DEGRADED line and the veto.
+  it.each([
+    ["null", "manifest is not an object"],
+    ["3", "manifest is not an object"],
+    ["[]", "manifest is not an object"],
+    ["{}", "no files object"],
+    ['{"files":null}', "no files object"],
+    ['{"files":[]}', "no files object"],
+    ['{"files":{}}', "manifest lists no files"],
+    ["{not json", "JSON"],
+  ])("a %s manifest degrades loudly through activate, never throws", (payload, expected) => {
+    const dir = mkdtempSync(join(tmpdir(), "companion-guard-shape-"));
+    mkdirSync(join(dir, "tests/fixtures"), { recursive: true });
+    writeFileSync(join(dir, "tests/fixtures/seed-manifest.json"), payload);
+    let handler: ((e: unknown) => { block?: boolean; reason?: string } | undefined) | undefined;
+    const pi = {
+      on: (_name: string, h: (e: unknown) => { block?: boolean; reason?: string } | undefined) => {
+        handler = h;
+      },
+    };
+    const prevRoot = process.env.QCR_ROOT;
+    const realError = console.error;
+    const errs: string[] = [];
+    process.env.QCR_ROOT = dir;
+    console.error = (...args: unknown[]): void => {
+      errs.push(args.map(String).join(" "));
+    };
+    try {
+      activate(pi as never);
+      expect(() => handler!({ toolName: "write", input: { path: "agents/pass-baseline.md" } })).not.toThrow();
+      expect(errs.filter((e) => e.includes("DEGRADED"))).toHaveLength(1);
+      expect(errs[0]).toContain(expected);
+      // The fixtures are still vetoed on every one of these shapes.
+      expect(handler!({ toolName: "write", input: { path: "tests/fixtures/ratified-divergence.json" } })?.block).toBe(true);
+    } finally {
+      console.error = realError;
+      if (prevRoot === undefined) delete process.env.QCR_ROOT;
+      else process.env.QCR_ROOT = prevRoot;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("an empty manifest degrades LOUDLY, and is retried rather than cached", () => {
+    const dir = mkdtempSync(join(tmpdir(), "companion-guard-empty-act-"));
+    mkdirSync(join(dir, "tests/fixtures"), { recursive: true });
+    writeFileSync(join(dir, "tests/fixtures/seed-manifest.json"), JSON.stringify({ files: {} }));
+    let handler: ((e: unknown) => { block?: boolean; reason?: string } | undefined) | undefined;
+    const pi = {
+      on: (_name: string, h: (e: unknown) => { block?: boolean; reason?: string } | undefined) => {
+        handler = h;
+      },
+    };
+    const prevRoot = process.env.QCR_ROOT;
+    const realError = console.error;
+    const errs: string[] = [];
+    process.env.QCR_ROOT = dir;
+    console.error = (...args: unknown[]): void => {
+      errs.push(args.map(String).join(" "));
+    };
+    try {
+      activate(pi as never);
+      const write = (path: string): { block?: boolean; reason?: string } | undefined => handler!({ toolName: "write", input: { path } });
+      expect(write("agents/pass-baseline.md")).toBeUndefined(); // fail-open, as ruled
+      expect(errs.filter((e) => e.includes("DEGRADED"))).toHaveLength(1); // but never silent
+      expect(errs[0]).toMatch(/manifest lists no files/);
+
+      // Not cached: the moment the manifest is real, the veto is back.
+      writeFileSync(join(dir, "tests/fixtures/seed-manifest.json"), JSON.stringify({ files: { "agents/pass-baseline.md": "x" } }));
+      expect(write("agents/pass-baseline.md")?.reason).toMatch(/rule 6/);
+    } finally {
+      console.error = realError;
+      if (prevRoot === undefined) delete process.env.QCR_ROOT;
+      else process.env.QCR_ROOT = prevRoot;
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

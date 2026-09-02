@@ -230,14 +230,42 @@ export function fenceRanges(content: string): Array<{ start: number; end: number
 }
 
 /**
+ * What a fence-source read of a patch target found. `absent` (the patch
+ * creates the file, so it has no fences yet) and `unreadable` (it exists and
+ * we could not see it) are SEPARATE answers on purpose — see
+ * `patchFenceViolation`.
+ */
+export type FenceSource = { state: "content"; content: string } | { state: "absent" } | { state: "unreadable"; reason: string };
+
+/** The production `FenceSource` reader. ENOENT is the only absence; every
+ * other errno is an unreadable file and therefore a refusal. */
+export function fenceSourceFrom(repoRoot: string, rel: string): FenceSource {
+  try {
+    return { state: "content", content: readFileSync(join(repoRoot, rel), "utf8") };
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code === "ENOENT") return { state: "absent" };
+    return { state: "unreadable", reason: code ?? (err instanceof Error ? err.message : String(err)) };
+  }
+}
+
+/**
  * Rule 6's structural half of the accept path: a changes.patch that touches
  * lines inside a RATIFIED fence — or that carries a fence marker on an added
  * line (minting/moving a fence) — is refused before git ever sees it.
  *
- * `readFile` resolves a target's CURRENT content (null = file does not exist
- * yet, so it has no fences). Returns the refusal message, or null when clean.
+ * `readFile` resolves a target's CURRENT content. It has three answers and
+ * they are not interchangeable: `absent` is a file the patch creates, which
+ * genuinely has no fences; `unreadable` is a file whose fences we could not
+ * look at, and that is a REFUSAL. This guard fails CLOSED — the old
+ * `catch → null` made EACCES/EISDIR indistinguishable from ENOENT, so one
+ * unreadable target let a patch reaching inside an owner-fenced region be
+ * accepted, applied and committed: a rule-6 bright-line bypass with a local
+ * commit behind it.
+ *
+ * Returns the refusal message, or null when clean.
  */
-export function patchFenceViolation(patch: string, readFile: (rel: string) => string | null): string | null {
+export function patchFenceViolation(patch: string, readFile: (rel: string) => FenceSource): string | null {
   let file: string | null = null;
   let ranges: Array<{ start: number; end: number }> = [];
   let oldLine = 0;
@@ -246,8 +274,11 @@ export function patchFenceViolation(patch: string, readFile: (rel: string) => st
     if (line.startsWith("--- ")) {
       const m = /^--- (?:[ab]\/)?(\S+)/.exec(line);
       file = m && m[1] !== "/dev/null" ? m[1]! : null;
-      const content = file === null ? null : readFile(file);
-      ranges = content === null ? [] : fenceRanges(content);
+      const source = file === null ? ({ state: "absent" } as const) : readFile(file);
+      if (source.state === "unreadable") {
+        return `refused: cannot read ${file} to check its RATIFIED fences (${source.reason}) — an unreadable file is not an unfenced one`;
+      }
+      ranges = source.state === "content" ? fenceRanges(source.content) : [];
       inHunk = false;
       continue;
     }
@@ -335,13 +366,7 @@ export async function acceptProposal(deps: AcceptDeps, slug: string): Promise<{ 
     const cfgViolation = configPatchViolation(patch);
     if (cfgViolation !== null) return { ok: false, message: cfgViolation };
   }
-  const fence = patchFenceViolation(patch, (rel) => {
-    try {
-      return readFileSync(join(deps.repoRoot, rel), "utf8");
-    } catch {
-      return null;
-    }
-  });
+  const fence = patchFenceViolation(patch, (rel) => fenceSourceFrom(deps.repoRoot, rel));
   if (fence !== null) return { ok: false, message: fence };
   try {
     await deps.git.run("git", ["apply", "--check", "-"], patch);

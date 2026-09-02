@@ -23,12 +23,15 @@ import {
   parseConversation,
   readFirstRunMarker,
   readRolloverState,
+  readRolloverStateFile,
   renderDayOpen,
   renderFirstRun,
   snapshotSummary,
   todayDate,
   writeRolloverState,
   SUMMARY_MAX_CHARS,
+  type RolloverState,
+  type RolloverStateRead,
   type Turn,
 } from "../src/tui/rollover.js";
 
@@ -136,29 +139,50 @@ describe("ops-day derivation", () => {
 });
 
 describe("rollover decision", () => {
+  const stored = (value: RolloverState): RolloverStateRead => ({ state: "state", value });
+
   it("first run records the day without touching the conversation", () => {
-    expect(decideRollover("2026-08-14", undefined)).toEqual({ kind: "first-run", today: "2026-08-14" });
+    expect(decideRollover("2026-08-14", { state: "absent" })).toEqual({ kind: "first-run", today: "2026-08-14" });
   });
 
   it("same day is a no-op, and a backwards clock never rotates", () => {
-    expect(decideRollover("2026-08-14", { last_open_date: "2026-08-14", updated_at: "" }).kind).toBe("same-day");
-    expect(decideRollover("2026-08-13", { last_open_date: "2026-08-14", updated_at: "" }).kind).toBe("same-day");
+    expect(decideRollover("2026-08-14", stored({ last_open_date: "2026-08-14", updated_at: "" })).kind).toBe("same-day");
+    expect(decideRollover("2026-08-13", stored({ last_open_date: "2026-08-14", updated_at: "" })).kind).toBe("same-day");
   });
 
   it("an earlier recorded day rolls over and names the previous day", () => {
-    expect(decideRollover("2026-08-14", { last_open_date: "2026-08-13", updated_at: "" })).toEqual({
+    expect(decideRollover("2026-08-14", stored({ last_open_date: "2026-08-13", updated_at: "" }))).toEqual({
       kind: "rollover",
       today: "2026-08-14",
       previous: "2026-08-13",
     });
   });
 
-  it("round-trips its state file and rejects a corrupt one", () => {
+  // an UNREADABLE state file is not a fresh installation. It used to
+  // decide `first-run`, which recorded today over it — so nothing rolled over,
+  // nothing was deferred, and the retry could never happen.
+  it("an unreadable state file decides NOTHING — it is not a first run", () => {
+    expect(decideRollover("2026-08-14", { state: "unreadable", reason: "torn" })).toEqual({
+      kind: "unknown",
+      today: "2026-08-14",
+      reason: "torn",
+    });
+  });
+
+  it("round-trips its state file, and keeps absent apart from unreadable", () => {
     const p = join(dir, "state", "rollover.json");
+    expect(readRolloverStateFile(p)).toEqual({ state: "absent" }); // nothing written yet
     writeRolloverState(p, { last_open_date: "2026-08-13", updated_at: "x", last_archive: "/a" });
     expect(readRolloverState(p)?.last_open_date).toBe("2026-08-13");
+    expect(readRolloverStateFile(p).state).toBe("state");
+
     writeFileSync(p, "{not json");
-    expect(readRolloverState(p)).toBeUndefined();
+    expect(readRolloverState(p)).toBeUndefined(); // the display collapse still collapses
+    expect(readRolloverStateFile(p).state).toBe("unreadable");
+
+    // Valid JSON with no usable date is unreadable too, never absent.
+    writeFileSync(p, JSON.stringify({ updated_at: "x" }));
+    expect(readRolloverStateFile(p)).toEqual({ state: "unreadable", reason: "no usable last_open_date" });
   });
 });
 
@@ -385,6 +409,119 @@ describe("the rollover sequence", () => {
     expect(report.steps[0]).toBe("no previous conversation found");
     expect(report.archivedTo).toBeUndefined();
     expect(readFileSync(report.dayOpenFile!, "utf8")).toContain("Good morning");
+  });
+
+  // a lost `docker exec` is not an empty volume. Both reads used to
+  // return "" on failure, so the rollover archived nothing, compacted zero
+  // turns, published "nothing happened yesterday" to the companion as its
+  // opening context — and then recorded the day, so it never retried.
+  describe("a lost docker exec defers the day instead of fabricating one", () => {
+    /** Fails every exec whose script contains `failOn`; OK (from the table)
+     * otherwise. The container-recreate race companion.ts documents. */
+    function flakyDocker(failOn: string, answers: Record<string, string> = {}): { runner: DockerRunner; calls: string[][] } {
+      const calls: string[][] = [];
+      const runner: DockerRunner = async (argv) => {
+        calls.push(argv);
+        const script = argv[argv.length - 1] ?? "";
+        if (script.includes(failOn)) return { ok: false, stdout: "", stderr: "Error: No such container: companion", code: 1 };
+        for (const [needle, out] of Object.entries(answers)) if (script.includes(needle)) return OK(out);
+        return OK();
+      };
+      return { runner, calls };
+    }
+
+    const statePath = (): string => join(dir, "state", "rollover.json");
+
+    it("a failed listing writes no day-open, kills nothing and leaves the day UNRECORDED", async () => {
+      writeRolloverState(statePath(), { last_open_date: "2026-08-13", updated_at: "" });
+      const { runner, calls } = flakyDocker("ls -1t");
+      const report = await rollover(runner).run();
+
+      expect(report.verdict.kind).toBe("rollover");
+      expect(report.deferred).toMatch(/could not list the previous conversation/);
+      expect(report.dayOpen).toBeUndefined();
+      expect(report.dayOpenFile).toBeUndefined();
+      // Nothing after the listing ran: no archive, no read, and above all no
+      // kill-session — yesterday's conversation is still there to roll over.
+      expect(calls.map((c) => c.join(" ")).some((s) => s.includes("kill-session"))).toBe(false);
+      expect(calls).toHaveLength(1);
+      // And the day is NOT recorded, so the next start retries the whole thing.
+      expect(readRolloverState(statePath())?.last_open_date).toBe("2026-08-13");
+      const retry = await rollover(flakyDocker("nothing-fails", { "ls -1t": "" }).runner).run();
+      expect(retry.verdict.kind).toBe("rollover");
+      expect(retry.deferred).toBeUndefined();
+      expect(readRolloverState(statePath())?.last_open_date).toBe("2026-08-14");
+    });
+
+    it("a failed conversation read defers too — an unread conversation is not an empty one", async () => {
+      writeRolloverState(statePath(), { last_open_date: "2026-08-13", updated_at: "" });
+      const { runner, calls } = flakyDocker("tail -c", { "ls -1t": "/home/companion/.pi/agent/sessions/companion/abc.jsonl\n" });
+      const report = await rollover(runner).run();
+
+      expect(report.deferred).toMatch(/could not read .*abc\.jsonl/);
+      expect(report.dayOpenFile).toBeUndefined();
+      expect(calls.map((c) => c.join(" ")).some((s) => s.includes("kill-session"))).toBe(false);
+      expect(readRolloverState(statePath())?.last_open_date).toBe("2026-08-13");
+    });
+
+    //, and it GATES the two above: a torn rollover.json used to read
+    // as a fresh installation, so `record()` stamped today over it and the
+    // whole sequence — docker calls, deferral, retry — never happened.
+    it("an unreadable state file defers everything, records nothing and never re-fires the interview", async () => {
+      const p = statePath();
+      mkdirSync(dirname(p), { recursive: true });
+      const TORN = '{\n  "last_open_date": "2026-08-13"';
+      writeFileSync(p, TORN);
+      const { runner, calls } = fakeDocker({ "ls -1t": "/x/abc.jsonl\n" });
+
+      const report = await rollover(runner, { firstRun: true }).run();
+
+      expect(report.verdict.kind).toBe("unknown");
+      expect(report.deferred).toMatch(/exists but cannot be read/);
+      expect(calls).toEqual([]); // nothing was asked of the container
+      expect(report.dayOpenFile).toBeUndefined();
+      // The state file is untouched — not stamped with today, so the next
+      // start still sees the problem instead of a silently "rolled over" day.
+      expect(readFileSync(p, "utf8")).toBe(TORN);
+      // And the first-run interview did NOT fire: interviewDue(marker,
+      // undefined) is true, so continuing past the deferral would re-greet an
+      // installation that was set up months ago.
+      expect(report.interviewFile).toBeUndefined();
+
+      // Repaired: the deferred rollover actually happens on the next start.
+      writeRolloverState(p, { last_open_date: "2026-08-13", updated_at: "" });
+      const retry = await rollover(fakeDocker({ "ls -1t": "" }).runner).run();
+      expect(retry.verdict.kind).toBe("rollover");
+      expect(retry.deferred).toBeUndefined();
+      expect(readRolloverState(p)?.last_open_date).toBe("2026-08-14");
+    });
+
+    it("record() keeps the interview mark from the state run() already read, not a second read", async () => {
+      const p = statePath();
+      writeRolloverState(p, { last_open_date: "2026-08-13", updated_at: "", first_run_interviewed: "2026-07-01" });
+      await rollover(fakeDocker({ "ls -1t": "" }).runner).run();
+      expect(readRolloverState(p)?.first_run_interviewed).toBe("2026-07-01");
+      expect(readRolloverState(p)?.last_open_date).toBe("2026-08-14");
+    });
+
+    it("an empty volume is still a real answer — it rolls over and says so", async () => {
+      writeRolloverState(statePath(), { last_open_date: "2026-08-13", updated_at: "" });
+      const report = await rollover(fakeDocker({ "ls -1t": "" }).runner).run();
+      expect(report.deferred).toBeUndefined();
+      expect(report.steps[0]).toBe("no previous conversation found");
+      expect(readRolloverState(statePath())?.last_open_date).toBe("2026-08-14");
+    });
+
+    it("a failed ARCHIVE is loud but not a deferral — the day-open is still assembled from real turns", async () => {
+      writeRolloverState(statePath(), { last_open_date: "2026-08-13", updated_at: "" });
+      const convo = JSON.stringify({ role: "assistant", content: "PR 5012 stalled overnight" });
+      const { runner } = flakyDocker("mkdir -p", { "ls -1t": "/x/abc.jsonl\n", "tail -c": convo });
+      const report = await rollover(runner).run();
+      expect(report.deferred).toBeUndefined();
+      expect(report.archivedTo).toBeUndefined();
+      expect(report.steps.some((s) => s.includes("archive FAILED"))).toBe(true);
+      expect(readFileSync(report.dayOpenFile!, "utf8")).toContain("PR 5012 stalled overnight");
+    });
   });
 
   it("QCR_FAKE_TODAY drives the whole sequence (how the smoke script fakes a day)", async () => {
