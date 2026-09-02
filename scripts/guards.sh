@@ -259,17 +259,25 @@ guard_ci_state() { # guard_ci_state <head-sha> — green|red|pending|none|unknow
   runs="$(guard_api_get "/repos/$REPO/commits/$head/check-runs?per_page=100")"
   status="$(guard_api_get "/repos/$REPO/commits/$head/status?per_page=100")"
   # Mirrors src/cigate.ts classifyCi — keep the two in step.
-  # Latest-run-per-name (the owner, 2026-08-19): GitHub auto-cancels superseded
-  # runs; only the most recent run of each check name counts. group_by sorts,
-  # so max_by(started_at) with a "" fallback keeps the newest; commit statuses
-  # are already deduped per context by the combined endpoint.
+  # Latest-run-per-name (the owner, 2026-08-19; rule stated exactly on
+  # src/cigate.ts latestRunPerName): GitHub auto-cancels superseded
+  # runs; only the most recent run of each check name counts. Recency collapses
+  # ONLY check-runs that carry a started_at (latest wins, equal start → later
+  # list position); a run WITHOUT one never competes with a timestamped one —
+  # it is kept beside it and counts on its own, the last such per name. Commit
+  # statuses carry no time and are never grouped with check-runs at all: a
+  # status under the same context as a check-run is a second check, and a
+  # failing one must never be masked by a passing run of that name.
   GUARD_CI_RUNS="$runs" GUARD_CI_STATUS="$status" jq -rn '
     [env.GUARD_CI_RUNS // "", env.GUARD_CI_STATUS // ""]
     | map(select(. != "") | try fromjson catch empty) as $docs
     | if ($docs | length) == 0 then "unknown"
       else
         ( [ [ $docs[] | select(type == "object") | (.check_runs? // [])[] ]
-            | group_by(.name // "check")[] | max_by(.started_at // "")
+            | to_entries | map(.value + { qcr_idx: .key })
+            | group_by(.name // "check")[]
+            | ( [ .[] | select((.started_at // "") != "") ] | select(length > 0) | max_by([.started_at, .qcr_idx]) ),
+              ( [ .[] | select((.started_at // "") == "") ] | select(length > 0) | max_by(.qcr_idx) )
             | [ ((.status // "") | tostring | ascii_downcase),
                 ((.conclusion // "") | tostring | ascii_downcase) ] ]
         + [ $docs[] | select(type == "object") | (.statuses? // [])[]

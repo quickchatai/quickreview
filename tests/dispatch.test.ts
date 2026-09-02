@@ -11,7 +11,7 @@ import { applyEvent } from "../src/statemachine.js";
 import { PASS_TIER_ORDER } from "../src/types.js";
 import { renderRoundPrompt, roundTemplateFile } from "../src/templates.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
-import type { ContextAssembler } from "../src/memory/context.js";
+import type { ContextAssembler, MemoryRead } from "../src/memory/context.js";
 
 const baseCfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
 
@@ -146,6 +146,90 @@ describe("roundTypeFor", () => {
     expect(roundTypeFor(row, 0)).toBe("first");
     expect(roundTypeFor(row, 2)).toBe("re-review");
     expect(roundTypeFor({ stale_recheck: 1 } as any, 2)).toBe("staleness");
+  });
+});
+
+describe("pre-fanout recovery dispatch", () => {
+  it("binds one daemon recovery instruction to the exact ordinary successor order", async () => {
+    queue(5467, "2026-09-02T15:00:00Z", { head: "recovery-head" });
+    const completed = store.startRound(5467, "first", ["pass-baseline"], 75);
+    store.finishRound(completed, "REQUEST_CHANGES", null);
+    const prior = store.startRound(5467, "re-review", ["pass-baseline"], 75);
+    store.createSessionCommand({
+      id: "cmd-old", pr: 5467, session: "pr-5467", kind: "round", round_no: 2,
+      payload_sha256: "a".repeat(64), payload_path: "/payload/old.md", inject_path: "/inject/old.md",
+      next_check_at: "2026-09-02T15:00:00Z",
+    });
+    store.failPendingSessionCommand("cmd-old", "pre-fanout stall");
+    store.markRoundCancelled(prior, "pre-fanout stall", "infrastructure_failure");
+    store.recordRoundRecoveryInstruction({
+      pr: 5467,
+      target_round_no: 3,
+      target_head_sha: "recovery-head",
+      stage: "first_pass_start",
+      source_incident_id: null,
+      source_command_id: "cmd-old",
+      source_round_no: 2,
+      immediate_attempt: 2,
+      retry_epoch: 1,
+    });
+    adapter.files.set(5467, [file("backend/service.py", 20, 3)]);
+    const { hooks, orders } = recordingHooks();
+    const template = readFileSync(resolve(process.cwd(), "prompts/round-re-review.md"), "utf8");
+
+    await dispatchOnce({
+      cfg: baseCfg,
+      store,
+      adapter,
+      hooks,
+      renderPrompt: (order, memory) => renderRoundPrompt(template, order, memory),
+    });
+
+    expect(orders).toHaveLength(1);
+    expect(orders[0]!.order).toMatchObject({
+      pr: 5467,
+      round_no: 3,
+      head_sha: "recovery-head",
+      recovery: {
+        stage: "first_pass_start",
+        source_command_id: "cmd-old",
+        source_round_no: 2,
+        target_head_sha: "recovery-head",
+        retry_epoch: 1,
+      },
+    });
+    expect(orders[0]!.prompt).toContain("RECOVERY — PRE-FANOUT STALL");
+    expect(orders[0]!.prompt).toContain("launch every planned discovery pass");
+  });
+
+  it("never applies an orphaned recovery instruction to a newer prepared head", async () => {
+    queue(5468, "2026-09-02T15:00:00Z", { head: "old-head" });
+    const prior = store.startRound(5468, "first", ["pass-baseline"], 75);
+    store.createSessionCommand({
+      id: "cmd-old-head", pr: 5468, session: "pr-5468", kind: "round", round_no: 1,
+      payload_sha256: "b".repeat(64), payload_path: "/payload/old-head.md", inject_path: "/inject/old-head.md",
+      next_check_at: "2026-09-02T15:00:00Z",
+    });
+    store.failPendingSessionCommand("cmd-old-head", "pre-fanout stall");
+    store.markRoundCancelled(prior, "pre-fanout stall", "infrastructure_failure");
+    store.recordRoundRecoveryInstruction({
+      pr: 5468, target_round_no: 2, target_head_sha: "old-head", stage: "first_pass_start",
+      source_incident_id: null, source_command_id: "cmd-old-head", source_round_no: 1,
+      immediate_attempt: 2, retry_epoch: 0,
+    });
+    queue(5468, "2026-09-02T15:01:00Z", { head: "new-head" });
+    adapter.files.set(5468, [file("backend/service.py", 20, 3)]);
+    const { hooks, orders } = recordingHooks();
+
+    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+
+    expect(orders).toHaveLength(1);
+    expect(orders[0]!.order).toMatchObject({ round_no: 2, head_sha: "new-head" });
+    expect(orders[0]!.order.recovery).toBeUndefined();
+    const mismatch = store.db.prepare(
+      "SELECT payload FROM events WHERE kind='round_recovery_instruction_not_applied' AND pr=5468",
+    ).get() as { payload: string };
+    expect(JSON.parse(mismatch.payload)).toMatchObject({ stored_head_sha: "old-head", prepared_head_sha: "new-head" });
   });
 });
 
@@ -1263,23 +1347,32 @@ describe("system re-trigger short-circuit", () => {
 // context block reach the prompt, the call happens exactly once per round, and
 // a memory outage can neither block nor delay a review.
 describe("round-memory seeding", () => {
+  const read = (text: string): MemoryRead => ({ status: "read", text });
+  const unreadable = (reason: string): MemoryRead => ({ status: "unreadable", reason });
+
   class Assembler implements ContextAssembler {
     heads = 0;
     contexts = 0;
     queries: string[] = [];
     constructor(
-      private readonly head = "STANDING: approvals are final.",
-      private readonly block = "PRECEDENT: #4000 settled the retry budget.",
+      private readonly head: MemoryRead = read("STANDING: approvals are final."),
+      private readonly block: MemoryRead = read("PRECEDENT: #4000 settled the retry budget."),
     ) {}
-    async pinnedHead(): Promise<string> {
+    async pinnedHead(): Promise<MemoryRead> {
       this.heads += 1;
       return this.head;
     }
-    async contextBlock(query: string, _opts: { maxTokens: number }): Promise<string> {
+    async contextBlock(query: string, _opts: { maxTokens: number }): Promise<MemoryRead> {
       this.contexts += 1;
       this.queries.push(query);
       return this.block;
     }
+  }
+
+  function anomalies(pr: number): string[] {
+    return (store.db.prepare("SELECT payload FROM events WHERE pr = ? AND kind = 'anomaly'").all(pr) as Array<{ payload: string }>).map(
+      (r) => (JSON.parse(r.payload) as { kind: string }).kind,
+    );
   }
 
   function memoryEvents(pr: number): Array<Record<string, unknown>> {
@@ -1313,7 +1406,7 @@ describe("round-memory seeding", () => {
     // worktree was prepared to.
     expect(assembler.queries[0]).toContain("Cap the retry budget");
     expect(assembler.queries[0]).toContain("api");
-    expect(memoryEvents(70)).toMatchObject([{ degraded: false, round_no: 1 }]);
+    expect(memoryEvents(70)).toMatchObject([{ degraded: false, round_no: 1, head_state: "populated" }]);
   });
 
   it("makes EXACTLY one context call per round — never one per pass, never two per round", async () => {
@@ -1387,8 +1480,103 @@ describe("round-memory seeding", () => {
     expect(JSON.stringify(memoryEvents(74)[0]!["gaps"])).toContain("ECONNREFUSED");
   });
 
+  // the path every adopter takes first: a healthy store with nothing
+  // pinned yet. The round is seeded normally, told memory had nothing to add,
+  // and the operator hears nothing — EMPTY IS NOT DEGRADED.
+  it("a fresh install (healthy store, nothing pinned) is NOT degraded: no unavailable note, no anomaly", async () => {
+    queue(78, "2026-08-20T09:00:00Z");
+    adapter.files.set(78, [file("a.ts")]);
+    const fresh = new Assembler(read(""), read(""));
+    const { hooks, orders } = recordingHooks();
+    const tpl = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile("first")), "utf8");
+
+    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks, memory: { assembler: fresh }, renderPrompt: (o, mem) => renderRoundPrompt(tpl, o, mem) });
+
+    expect(orders).toHaveLength(1);
+    expect(orders[0]!.prompt).not.toContain("MEMORY UNAVAILABLE");
+    expect(orders[0]!.prompt).not.toContain("STANDING INSTRUCTIONS");
+    expect(orders[0]!.prompt).toContain("had nothing to add");
+    expect(memoryEvents(78)).toMatchObject([{ degraded: false, gaps: [], head_state: "empty", head_chars: 0, block_chars: 0 }]);
+    expect(anomalies(78)).toEqual([]);
+  });
+
+  // review: EMPTY IS NOT DEGRADED made one state silent that used to be
+  // loud — a store that answered "nothing pinned" on an install whose previous
+  // round carried standing instructions (a container recreated without its
+  // volume). The transition itself gets ONE anomaly; a fresh install never
+  // sees it, and it never repeats.
+  it("populated → empty with the store readable raises pinned_head_emptied exactly once", async () => {
+    const tpl = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile("first")), "utf8");
+    const { hooks, orders } = recordingHooks();
+    const injected: string[] = [];
+    store.setAnomalySink((signal) => injected.push(signal.injectMessage ?? ""));
+    const run = async (pr: number, ts: string, assembler: ContextAssembler) => {
+      queue(pr, ts);
+      adapter.files.set(pr, [file("a.ts")]);
+      await dispatchOnce({ cfg: baseCfg, store, adapter, hooks, memory: { assembler }, renderPrompt: (o, mem) => renderRoundPrompt(tpl, o, mem) });
+    };
+
+    await run(80, "2026-08-20T09:00:00Z", new Assembler());
+    expect(anomalies(80)).toEqual([]);
+
+    // The volume is gone: the store is up and answers "nothing pinned".
+    await run(81, "2026-08-20T09:10:00Z", new Assembler(read(""), read("")));
+    expect(memoryEvents(81)).toMatchObject([{ degraded: false, head_state: "empty" }]);
+    expect(anomalies(81)).toEqual(["pinned_head_emptied"]);
+    expect(injected).toHaveLength(1);
+    expect(injected[0]).toContain("pinned area is EMPTY");
+    expect(injected[0]).toContain("#80");
+    expect(injected[0]).toContain(String("STANDING: approvals are final.".length));
+    // The round itself was normal: no unavailable note, dispatched.
+    expect(orders[1]!.prompt).not.toContain("MEMORY UNAVAILABLE");
+
+    // Still empty next round: the baseline is now the empty row — no repeat.
+    await run(82, "2026-08-20T09:20:00Z", new Assembler(read(""), read("")));
+    expect(anomalies(82)).toEqual([]);
+    expect(injected).toHaveLength(1);
+  });
+
+  it("an unreadable round between the two does not hide the transition — the baseline is the last READ head", async () => {
+    const { hooks } = recordingHooks();
+    const run = async (pr: number, ts: string, assembler: ContextAssembler) => {
+      queue(pr, ts);
+      adapter.files.set(pr, [file("a.ts")]);
+      await dispatchOnce({ cfg: baseCfg, store, adapter, hooks, memory: { assembler } });
+    };
+    await run(83, "2026-08-20T09:00:00Z", new Assembler());
+    await run(84, "2026-08-20T09:10:00Z", new Assembler(unreadable("connect ECONNREFUSED"), read("")));
+    expect(anomalies(84)).toEqual(["round_memory_degraded"]);
+    await run(85, "2026-08-20T09:20:00Z", new Assembler(read(""), read("")));
+    expect(anomalies(85)).toEqual(["pinned_head_emptied"]);
+  });
+
+  it("an UNREADABLE store still degrades, still alerts the operator, and names what is missing", async () => {
+    queue(79, "2026-08-20T09:00:00Z");
+    adapter.files.set(79, [file("a.ts")]);
+    const dead = new Assembler(unreadable("ls viking://user/reviewer/memories: connect ECONNREFUSED 127.0.0.1:1933"), read(""));
+    const { hooks, orders } = recordingHooks();
+    const tpl = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile("first")), "utf8");
+    const injected: string[] = [];
+    store.setAnomalySink((signal) => injected.push(signal.injectMessage ?? ""));
+
+    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks, memory: { assembler: dead }, renderPrompt: (o, mem) => renderRoundPrompt(tpl, o, mem) });
+
+    expect(orders).toHaveLength(1);
+    expect(orders[0]!.prompt).toContain("MEMORY UNAVAILABLE THIS ROUND");
+    expect(store.getPr(79)!.state).toBe("reviewing");
+    expect(memoryEvents(79)).toMatchObject([{ degraded: true, head_state: "unread", gaps: [{ part: "head", reason: expect.stringContaining("unreadable: ls viking://") }] }]);
+    expect(anomalies(79)).toEqual(["round_memory_degraded"]);
+    // The operator's alert says what is actually missing — here the head
+    // only; the context search answered (with nothing), so it is not claimed
+    // lost — and carries the reason.
+    expect(injected).toHaveLength(1);
+    expect(injected[0]).toContain("no standing-instructions head.");
+    expect(injected[0]).not.toContain("no recalled context");
+    expect(injected[0]).toContain("ECONNREFUSED");
+  });
+
   it("keeps alerting bounded while the store stays down — the per-round record does not thin", async () => {
-    const down = new Assembler("", "");
+    const down = new Assembler(unreadable("connect ECONNREFUSED"), unreadable("connect ECONNREFUSED"));
     const { hooks } = recordingHooks();
     for (const [pr, ts] of [[75, "2026-08-20T09:00:00Z"], [76, "2026-08-20T09:10:00Z"]] as const) {
       queue(pr, ts);

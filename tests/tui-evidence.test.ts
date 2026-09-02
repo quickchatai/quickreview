@@ -18,6 +18,7 @@ import {
   manifestArgv,
   parseManifest,
   prSignature,
+  readWhyRounds,
   type WhyRound,
 } from "../src/tui/evidence.js";
 import type { RemoteResult, SshRunner } from "../src/tui/remote.js";
@@ -124,6 +125,16 @@ describe("evidence argv", () => {
     expect(files.map((f) => f.role)).toEqual(["transcript", "verdict"]);
   });
 
+  // `[]` is reserved for a payload that SAID there are no rounds.
+  it("readWhyRounds: a payload without a round list is undefined — never []", () => {
+    expect(readWhyRounds(JSON.stringify({ rounds: [] }))).toEqual([]);
+    expect(readWhyRounds(JSON.stringify({ rounds: [round(2), round(1, "running")] }))).toEqual([round(2)]);
+    expect(readWhyRounds(JSON.stringify({ pr: 1, known: false }))).toBeUndefined();
+    expect(readWhyRounds(JSON.stringify({ rounds: "none" }))).toBeUndefined();
+    expect(readWhyRounds("null")).toBeUndefined();
+    expect(readWhyRounds("{torn")).toBeUndefined();
+  });
+
   it("copies dead rounds too — a round that died is the episode worth having", () => {
     const got = finishedRounds([round(3, "running"), round(1, "expired"), round(2, "cancelled")]);
     expect(got.map((r) => r.round_no)).toEqual([1, 2]); // sorted, running excluded
@@ -221,6 +232,40 @@ describe("EvidenceCopier", () => {
     await c.sweep(snap);
     expect(store.has(5306, 1)).toBe(false);
     // No throw, no rejection: the poll loop never learns anything went wrong.
+  });
+
+  // `rounds ?? []` read a degraded answer (valid JSON, no round list)
+  // as "nothing to copy", and the sweep then retired the PR's signature: a
+  // transient failure became a round that was never copied and never retried.
+  it("a `why` answer with no round list is unreadable, not empty — the PR is retried, not retired", async () => {
+    const inner = fakeVm([round(1)]);
+    const degraded = { on: true };
+    let whys = 0;
+    const ssh: SshRunner = async (host, argv, opts) => {
+      const script = argv.join(" ");
+      if (script.includes("cli.js") && script.includes("why")) {
+        whys += 1;
+        if (degraded.on) return OK(JSON.stringify({ pr: 5306, error: "state.db is locked" }));
+      }
+      return inner.ssh(host, argv, opts);
+    };
+    const notices: string[] = [];
+    const c = copier(ssh, notices);
+    const snap = snapshot([{ number: 5306, rounds: 1 }]);
+
+    await c.sweep(snap);
+    await c.sweep(snap);
+    // Two sweeps, two `why` calls: the signature was NOT retired on the
+    // degraded answer, and the failure was announced once.
+    expect(whys).toBe(2);
+    expect(store.has(5306, 1)).toBe(false);
+    expect(notices).toEqual(["evidence: #5306 — unreadable round list"]);
+
+    degraded.on = false;
+    await c.sweep(snap);
+    expect(store.has(5306, 1)).toBe(true);
+    await c.sweep(snap);
+    expect(whys).toBe(3); // reconciled now — the steady state costs nothing
   });
 
   it("a permanently failing PR does not starve the others", async () => {

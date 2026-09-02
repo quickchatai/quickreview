@@ -274,6 +274,37 @@ export function renderAddableLenses(addable: string[]): string {
   return addable.length > 0 ? addable.join(", ") : "(none — every known lens is already planned)";
 }
 
+/**'s changed-behavior receipt. The daemon binds it to one successor
+ * order; ordinary rounds render nothing. It does not change the plan or move
+ * scheduling into the daemon — it tells the fresh parent how to execute the
+ * same plan without repeating the proven pre-fanout stall. */
+export function renderRoundRecoveryNote(order: RoundOrder): string {
+  const recovery = order.recovery;
+  if (!recovery) return "";
+  const kind = recovery.source_incident_id
+    ? recovery.retry_epoch > 0
+      ? `delayed circuit-breaker retry epoch ${recovery.retry_epoch}`
+      : "delayed circuit-breaker retry (new head; backoff reset)"
+    : `immediate retry ${recovery.immediate_attempt}`;
+  const discovery = order.pass_plan.filter((pass) => pass.lens !== "pass-validate").map((pass) => pass.agent);
+  return [
+    "",
+    "**RECOVERY — PRE-FANOUT STALL.** This fresh parent is the exact successor",
+    `to round ${recovery.source_round_no}, command \`${recovery.source_command_id}\`, which was`,
+    `accepted but launched no planned lens before its absolute lease (${kind}).`,
+    `This order is bound to head \`${recovery.target_head_sha}\`; its discovery fanout is:`,
+    "",
+    ...discovery.map((agent) => `- \`${agent}\``),
+    "",
+    "Do not repeat the failed sequence. Read only the compact PR context and",
+    "ledger facts needed to make the task strings self-contained, then launch every planned discovery pass",
+    "in one assistant turn. Broad parent source/diff inspection happens only after that fanout is running.",
+    "Assign each prior open finding to a lens and require that lens to verify it",
+    "mechanically before hunting anything new. The pass plan, head and gate notes",
+    "below remain authoritative; this note changes ordering, never scope or safety.",
+  ].join("\n");
+}
+
 /**
  * The full variable set every round template may reference.
  *
@@ -307,6 +338,7 @@ export function roundVars(
     lenses: order.lenses.join(", "),
     pass_plan: renderPassPlan(order.pass_plan),
     addable_lenses: renderAddableLenses(order.addable_lenses),
+    recovery_note: renderRoundRecoveryNote(order),
     base_ref: order.base_ref || NO_BASE,
     base_sha: order.base_sha || NO_BASE,
     merge_base: order.merge_base || NO_BASE,

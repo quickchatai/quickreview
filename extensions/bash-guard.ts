@@ -68,12 +68,22 @@ import type { Pi, ToolCallEvent } from "@earendil-works/pi-coding-agent";
  * a `w` flag on a non-`/` `s` delimiter — is declared in
  * docs/exec-boundary.md and covered by the integrity check when it lands on a
  * config file.
+ *
+ * Exported in ORDER because the sentence every built pass reads ("Allowed
+ * commands: …", `src/include.ts`) is rendered from this array: the
+ * prompt kept advertising `awk` after it came off this list, and a model
+ * told a tool exists and then refused reads the refusal as a malfunction. The
+ * enforcing half is the only author of the advertised half;
+ * `tests/fences.test.ts` holds the advertised set equal to this array, runs
+ * every advertised program through `checkBashCommand` (from source), and
+ * separately checks the rendered sentence against `dist/src/include.js`.
  */
-const ALLOWED = new Set([
+export const ALLOWED_PROGRAMS: readonly string[] = [
   "git", "rg", "grep", "cat", "ls", "find", "head", "tail", "wc", "jq", "sed",
   "sort", "uniq", "diff", "gh", "echo", "printf", "cut", "tr", "xargs",
   "dirname", "basename", "test", "true", "false", "date", "nl", "stat",
-]);
+];
+const ALLOWED = new Set(ALLOWED_PROGRAMS);
 
 /** Programs whose whole point is to run code the caller supplies. They are off
  * ALLOWED, so the generic refusal already covers them — this exists only so the
@@ -1181,10 +1191,11 @@ export function checkBashCommand(cmd: string, depth = 0): BashCheck {
 /**
  * The read-only programs that are not read-only (round 2).
  *
- * `awk`, `sed`, `sort` and `find` are on ALLOWED because a reviewer greps and
- * slices text all day. Each also has a mode that WRITES A FILE or RUNS A
- * COMMAND, and a review session needs none of them. Until this existed, all of
- * these were permitted and all are VERIFIED on this host:
+ * `sed`, `sort` and `find` are on ALLOWED (`awk` was too, until round
+ * 3 took it off — see the note at the end of this table) because a reviewer
+ * greps and slices text all day. Each also has a mode that WRITES A FILE or
+ * RUNS A COMMAND, and a review session needs none of them. Until this existed,
+ * all of these were permitted and all are VERIFIED on this host:
  *
  *   sed -n 'w .git/config' payload            → wrote it; plain `git diff` then ran <cmd>
  *   sort -o .git/config payload               → same
