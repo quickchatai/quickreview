@@ -1178,17 +1178,20 @@ export function parseCaps(raw: Record<string, unknown>): Config["caps"] {
     }
     return v;
   };
-  const prefixes = raw.improvement_pr_deny_prefixes;
-  if (prefixes !== undefined && !(Array.isArray(prefixes) && prefixes.every((x) => typeof x === "string"))) {
+  const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
+  const denyPrefixes = (): string[] => {
+    const prefixes = raw.improvement_pr_deny_prefixes;
+    if (prefixes === undefined) return [...IMPROVEMENT_DENY_PREFIXES_DEFAULT];
+    if (isStrings(prefixes)) return [...prefixes];
     throw new Error(`config.toml [caps]: improvement_pr_deny_prefixes must be an array of strings (got ${JSON.stringify(prefixes)})`);
-  }
+  };
   return {
     improvement_pr_max_lines: cap("improvement_pr_max_lines"),
     improvement_pr_max_files: cap("improvement_pr_max_files"),
     improvement_pr_per_day: cap("improvement_pr_per_day"),
     improvement_pr_per_week: cap("improvement_pr_per_week"),
     issues_per_day: cap("issues_per_day"),
-    improvement_pr_deny_prefixes: Array.isArray(prefixes) ? [...(prefixes as string[])] : [...IMPROVEMENT_DENY_PREFIXES_DEFAULT],
+    improvement_pr_deny_prefixes: denyPrefixes(),
   };
 }
 

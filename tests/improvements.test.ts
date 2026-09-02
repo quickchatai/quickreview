@@ -153,6 +153,37 @@ describe("rate caps from StateStore.filedSince", () => {
     expect(issueRateReason(store, cfg.caps, now)).toContain("issue day cap");
     store.close();
   });
+
+  // review round 1: `day >= undefined` is false, so a rate cap that
+  // never arrived was UNCAPPED — the same fail-open checkDiffstat carried, on
+  // the same caps object, with the same startup-parser as the only belt. The
+  // rate checks refuse on a cap they cannot compare against, even at zero
+  // filings, whoever built the caps.
+  it.each([
+    ["improvement_pr_per_day", undefined],
+    ["improvement_pr_per_day", Number.NaN],
+    ["improvement_pr_per_week", -1],
+    ["improvement_pr_per_week", Number.POSITIVE_INFINITY],
+  ] as const)("the improvement-PR rate check cannot pass against an unusable %s (%s)", (key, value) => {
+    const now = new Date("2026-08-13T10:00:00Z");
+    const store = new StateStore(":memory:", () => now);
+    const reason = improvementRateReason(store, { ...cfg.caps, [key]: value as unknown as number }, now);
+    expect(reason).toContain(`caps.${key}`);
+    expect(reason).toContain("refusing");
+    store.close();
+  });
+
+  it.each([
+    ["issues_per_day", undefined],
+    ["issues_per_day", "3"],
+  ] as const)("the issue rate check cannot pass against an unusable %s (%s)", (key, value) => {
+    const now = new Date("2026-08-13T10:00:00Z");
+    const store = new StateStore(":memory:", () => now);
+    const reason = issueRateReason(store, { ...cfg.caps, [key]: value as unknown as number }, now);
+    expect(reason).toContain(`caps.${key}`);
+    expect(reason).toContain("refusing");
+    store.close();
+  });
 });
 
 describe("issue dedup — normalized-token Jaccard", () => {

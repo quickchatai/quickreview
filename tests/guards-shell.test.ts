@@ -272,6 +272,21 @@ describe("scripts/approve-pr.sh — guard 4 (red CI hard-gates APPROVE)", () => 
     expect(res.out).toContain("CI is pending");
   });
 
+  it.each([
+    ["queued", null, "CI is pending"],
+    ["completed", "failure", "CI is red"],
+  ] as const)("a %s/%s check-run with a null started_at is never masked by a passing status of its name", async (status, conclusion, message) => {
+    // Review round 1: the gate route collapsed this untimestamped
+    // run with the same-named status and read green; the shell never grouped
+    // them and was right. Pinned so the shell can never regress to match.
+    checkRuns = [{ name: "ci", status, conclusion, started_at: null }];
+    statuses = [{ context: "ci", state: "success" }];
+    const res = await run("approve-pr.sh", ["5180", bodyFile()]);
+    expect(res.ok).toBe(false);
+    expect(res.out).toContain(message);
+    expect(dryrunRecords()).toEqual([]);
+  });
+
   it("a passing status beside a passing run of its name still approves", async () => {
     checkRuns = [{ name: "ci", status: "completed", conclusion: "success", started_at: "2026-09-01T10:00:00Z" }];
     statuses = [{ context: "ci", state: "success" }];

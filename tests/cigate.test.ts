@@ -41,7 +41,7 @@ afterEach(() => {
   rmSync(dryrunDir, { recursive: true, force: true });
 });
 
-const run = (status: string, conclusion: string | null, name = "test"): CheckSummary => ({ name, status, conclusion });
+const run = (status: string, conclusion: string | null, name = "test"): CheckSummary => ({ name, source: "check_run", status, conclusion });
 const done = (conclusion: string, name = "test"): CheckSummary => run("completed", conclusion, name);
 
 // ---- the classifier --------------------------------------------------------
@@ -114,7 +114,7 @@ describe("latest-run-per-name", () => {
       classifyCi([at(done("success", "sync"), "2026-08-19T08:00:00Z"), at(run("in_progress", null, "sync"), "2026-08-19T08:10:00Z")]),
     ).toBe("pending");
   });
-  it("entries without started_at resolve by list position — later wins", () => {
+  it("check-runs without started_at resolve by list position — later wins", () => {
     expect(classifyCi([done("cancelled", "sync"), done("success", "sync")])).toBe("green");
     expect(classifyCi([done("success", "sync"), done("cancelled", "sync")])).toBe("red");
   });
@@ -125,10 +125,14 @@ describe("latest-run-per-name", () => {
 // `started_at` to "", so an entry WITHOUT a timestamp always lost the name
 // collision to one WITH a timestamp — and the adapter sets `started_at` on
 // every check-run and on no commit status, so a failing status under the same
-// context as a passing check-run was masked, and red CI read green. The rule
-// now: recency collapses only timestamped entries; an untimestamped entry
-// stands beside them and counts on its own. Every row below is an input the
-// real adapter produces, driven through the real adapter's own payload shapes.
+// context as a passing check-run was masked, and red CI read green. The first
+// fix keyed the rule on the timestamp and left the inverse hole: an
+// UNTIMESTAMPED check-run collapsed with a same-named status by list position,
+// and the adapter lists statuses last, so a queued or failed null-start run
+// plus a passing status read green (review round 1). The rule now keys on the
+// KIND the adapter stamps: only check-runs collapse, a status never does.
+// Every row below is an input the real adapter produces, driven through the
+// real adapter's own payload shapes.
 describe("— a same-named commit status is a second check, never a superseded run", () => {
   const TS = "2026-09-01T10:00:00Z";
   const minter = { appJwt: () => "jwt", installationToken: async () => "tok", invalidate: () => {} } as unknown as TokenMinter;
@@ -170,24 +174,50 @@ describe("— a same-named commit status is a second check, never a superseded r
     expect(classifyCi(await adapterChecks([passingRun], [statusOf("success")]))).toBe("green");
   });
 
+  it("the adapter stamps the kind — it is the only writer of `source`", async () => {
+    const [runRow, statusRow] = await adapterChecks([passingRun], [statusOf("success")]);
+    expect(runRow).toMatchObject({ name: "ci", source: "check_run", started_at: TS });
+    expect(statusRow).toMatchObject({ name: "ci", source: "status" });
+    expect("started_at" in statusRow!).toBe(false);
+  });
+
   it("a check-run with a null started_at is never read as superseded by an older timestamped run", () => {
     // GitHub's schema makes started_at nullable on check-runs; the adapter
     // passes null through. "Unknown when" is not "older than everything".
-    const queued: CheckSummary = { name: "ci", status: "queued", conclusion: null, started_at: null };
-    const failed: CheckSummary = { name: "ci", status: "completed", conclusion: "failure", started_at: null };
-    const passed: CheckSummary = { ...passingRun };
+    const queued: CheckSummary = { name: "ci", source: "check_run", status: "queued", conclusion: null, started_at: null };
+    const failed: CheckSummary = { name: "ci", source: "check_run", status: "completed", conclusion: "failure", started_at: null };
+    const passed: CheckSummary = { source: "check_run", ...passingRun };
     expect(classifyCi([passed, queued])).toBe("pending");
     expect(classifyCi([queued, passed])).toBe("pending");
     expect(classifyCi([passed, failed])).toBe("red");
     expect(classifyCi([failed, passed])).toBe("red");
   });
 
-  it("states the rule: timestamped entries collapse (equal start → later wins), untimestamped ones stand beside them, last per name", () => {
-    const a: CheckSummary = { name: "ci", status: "completed", conclusion: "success", started_at: TS };
-    const b: CheckSummary = { name: "ci", status: "completed", conclusion: "failure", started_at: TS };
-    const older: CheckSummary = { name: "ci", status: "completed", conclusion: "cancelled", started_at: "2026-09-01T09:00:00Z" };
-    const u1: CheckSummary = { name: "ci", status: "completed", conclusion: "failure" };
-    const u2: CheckSummary = { name: "ci", status: "completed", conclusion: "success", started_at: "" }; // "" carries no time
+  it.each([
+    ["queued", null, "pending"],
+    ["completed", "failure", "red"],
+  ] as const)("a %s/%s check-run with a null started_at is never masked by a passing status of its name, in either order", async (status, conclusion, expected) => {
+    // Review round 1: the timestamp-keyed rule collapsed an
+    // untimestamped check-run with a same-named status by list position, and
+    // the adapter always lists statuses after check-runs — so the status won
+    // and the head read green on the gate route while guards.sh said red.
+    const nullStart = { name: "ci", status, conclusion, started_at: null };
+    const mixed = await adapterChecks([nullStart], [statusOf("success")]);
+    expect(mixed).toHaveLength(2);
+    expect(classifyCi(mixed)).toBe(expected);
+    expect(classifyCi([...mixed].reverse())).toBe(expected);
+    // Control: distinct names answer the same, so nothing but the collapse changed.
+    expect(classifyCi(await adapterChecks([nullStart], [statusOf("success", "other")]))).toBe(expected);
+  });
+
+  it("states the rule: only check-runs collapse (timed: latest start, equal → later; untimed: last per name); a status never does", () => {
+    const a: CheckSummary = { name: "ci", source: "check_run", status: "completed", conclusion: "success", started_at: TS };
+    const b: CheckSummary = { name: "ci", source: "check_run", status: "completed", conclusion: "failure", started_at: TS };
+    const older: CheckSummary = { name: "ci", source: "check_run", status: "completed", conclusion: "cancelled", started_at: "2026-09-01T09:00:00Z" };
+    const u1: CheckSummary = { name: "ci", source: "check_run", status: "completed", conclusion: "failure" };
+    const u2: CheckSummary = { name: "ci", source: "check_run", status: "completed", conclusion: "success", started_at: "" }; // "" carries no time
+    const s1: CheckSummary = { name: "ci", source: "status", status: "completed", conclusion: "failure" };
+    const s2: CheckSummary = { name: "ci", source: "status", status: "completed", conclusion: "success" };
     // Equal start: the later list position wins, in either order.
     expect(latestRunPerName([a, b])).toEqual([b]);
     expect(latestRunPerName([b, a])).toEqual([a]);
@@ -197,9 +227,18 @@ describe("— a same-named commit status is a second check, never a superseded r
     // One timestamped survivor AND one untimestamped survivor per name, list order kept.
     expect(latestRunPerName([older, u1, a, u2])).toEqual([a, u2]);
     expect(latestRunPerName([u1, a])).toEqual([u1, a]);
-    // Among untimestamped entries the last one wins.
+    // Among untimestamped check-runs the last one wins.
     expect(latestRunPerName([u1, u2])).toEqual([u2]);
     expect(latestRunPerName([u2, u1])).toEqual([u1]);
+    // A status is never collapsed: not with a timestamped run of its name, not
+    // with an untimestamped one, not with another status — in either order.
+    expect(latestRunPerName([a, s1])).toEqual([a, s1]);
+    expect(latestRunPerName([s1, a])).toEqual([s1, a]);
+    expect(latestRunPerName([u1, s2])).toEqual([u1, s2]);
+    expect(latestRunPerName([s2, u1])).toEqual([s2, u1]);
+    expect(latestRunPerName([s1, s2])).toEqual([s1, s2]);
+    // The whole zoo at once: one timed survivor, one untimed survivor, every status.
+    expect(latestRunPerName([older, s1, u1, a, u2, s2])).toEqual([s1, a, u2, s2]);
   });
 });
 

@@ -35,19 +35,30 @@ import type { Config } from "./config.js";
 import { applyEvent } from "./statemachine.js";
 import type { StateStore } from "./state.js";
 
-/** One check at a head, as GitHub's check-runs / statuses APIs report it. */
+/**
+ * One check at a head, as GitHub's check-runs / statuses APIs report it.
+ *
+ * `source` says which of the two APIs it came from, and the adapter
+ * (`github.ts listChecks`) is its ONLY writer. It is the carrier the
+ * latest-run rule keys on: a check-run can supersede an older
+ * check-run of its name; a commit status never supersedes anything and is
+ * never superseded. Without the kind on the row, a status and a check-run of
+ * one name are told apart only by whether `started_at` happens to be set —
+ * and a check-run GitHub reports with a null start then reads as a status.
+ */
 export interface CheckSummary {
   name: string;
+  /** `check_run` from the check-runs API; `status` from the combined status
+   * endpoint (which already dedupes statuses per context). */
+  source: "check_run" | "status";
   /** `queued` | `in_progress` | `completed` (statuses map onto these). */
   status: string;
   /** `success` | `failure` | `cancelled` | `timed_out` | `skipped` | … */
   conclusion: string | null;
   /** When the run started — the recency key for latest-run-per-name
    * (the owner, 2026-08-19). Set on check-runs (nullable in GitHub's schema)
-   * and NEVER on commit statuses: the combined status endpoint already
-   * dedupes those per context, and the adapter does not carry a time for
-   * them. `latestRunPerName` treats an absent value as "no timestamp",
-   * never as "older than everything" — see its rule. */
+   * and NEVER on commit statuses: the adapter does not carry a time for
+   * them, and `latestRunPerName` does not collapse them at all. */
   started_at?: string | null;
 }
 
@@ -77,45 +88,55 @@ const UNFINISHED = new Set(["queued", "in_progress", "waiting", "pending", "requ
  * the original any-run rule every such head classified red forever and no
  * withheld approval could ever release.
  *
- * The rule, exactly:
+ * The rule, exactly, keyed on `source`:
  *
- *  - Recency is `started_at`, and it collapses ONLY entries that carry one.
- *    Among timestamped entries of one name the latest start wins; an equal
- *    start resolves to the later list position.
- *  - An entry WITHOUT a timestamp never competes with one that has one — in
- *    either direction. It stands beside that name's latest timestamped run
- *    and counts on its own. A missing timestamp is not "older than
- *    everything": it is unknown, and unknown is never read as superseded.
- *  - Among untimestamped entries of one name, the later list position wins.
+ *  - Only CHECK-RUNS collapse. Among check-runs of one name that carry a
+ *    `started_at`, the latest start wins; an equal start resolves to the
+ *    later list position. A check-run WITHOUT a timestamp (null in GitHub's
+ *    schema) never competes with a timestamped one in either direction — it
+ *    stands beside that name's latest timestamped run and counts on its own;
+ *    among untimestamped check-runs of one name the later list position wins.
+ *    A missing timestamp is unknown, never "older than everything".
+ *  - A COMMIT STATUS is never collapsed with anything — not with a check-run
+ *    of its name, not with another status. The combined status endpoint
+ *    already dedupes per context, and a status under the same context as a
+ *    check-run is a second check, not a superseded run.
  *
- * Why the middle clause exists: the adapter (`github.ts listChecks`) always
- * sets `started_at` on a check-run and never on a commit status, so the mixed
- * case is the ONLY case it produces for a name collision — a repo whose CI
- * posts a status under the same context as a check-run. The original code
- * defaulted an absent value to `""`, so a failing status could never beat a
- * same-named passing check-run, and the head read green — "Red CI hard-gates
- * APPROVE" defeated by an ordinary configuration. The same default let a
- * queued check-run with a null `started_at` lose to the older completed run
- * of its name. Both now count. `scripts/guards.sh` and `scripts/pr-checks.sh`
- * apply the identical rule; keep the three in step.
+ * Why the kind and not the timestamp decides: the adapter sets `started_at`
+ * on every check-run and on no status, so the original `?? ""` default let a
+ * failing status lose a name collision to a passing check-run and the head
+ * read green — "Red CI hard-gates APPROVE" defeated by an ordinary
+ * configuration. The first fix keyed on the timestamp instead and left the
+ * inverse hole: an UNTIMESTAMPED check-run (queued, or failed with a null
+ * start) was collapsed with a same-named status by list position, and since
+ * the adapter lists statuses after check-runs the status always won — red or
+ * pending read green. `scripts/guards.sh` never grouped statuses with
+ * check-runs at all; this is that rule, so the two copies are identical
+ * rather than claimed identical. `scripts/pr-checks.sh` reads check-runs only
+ * and applies the check-run clause. Keep the three in step.
  */
 export function latestRunPerName(checks: readonly CheckSummary[]): CheckSummary[] {
   interface Kept {
     check: CheckSummary;
     idx: number;
   }
-  const timed = new Map<string, Kept & { at: string }>();
-  const untimed = new Map<string, Kept>();
+  const kept: Kept[] = [];
+  const timedRuns = new Map<string, Kept & { at: string }>();
+  const untimedRuns = new Map<string, Kept>();
   checks.forEach((check, idx) => {
-    const at = check.started_at || null; // "" carries no time either
-    if (at === null) {
-      untimed.set(check.name, { check, idx });
+    if (check.source !== "check_run") {
+      kept.push({ check, idx }); // a status is never collapsed, in either direction
       return;
     }
-    const prev = timed.get(check.name);
-    if (!prev || at >= prev.at) timed.set(check.name, { check, idx, at });
+    const at = check.started_at || null; // "" carries no time either
+    if (at === null) {
+      untimedRuns.set(check.name, { check, idx });
+      return;
+    }
+    const prev = timedRuns.get(check.name);
+    if (!prev || at >= prev.at) timedRuns.set(check.name, { check, idx, at });
   });
-  return [...timed.values(), ...untimed.values()].sort((x, y) => x.idx - y.idx).map((e) => e.check);
+  return [...kept, ...timedRuns.values(), ...untimedRuns.values()].sort((x, y) => x.idx - y.idx).map((e) => e.check);
 }
 
 /**
