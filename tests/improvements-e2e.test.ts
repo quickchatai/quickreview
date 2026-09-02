@@ -1,6 +1,6 @@
-// The improvement channel END TO END against REAL git — the second
-// test in the suite that drives real git, beside worktrees.test.ts, and for
-// the same reason: the thing under test is where git runs. For the channel's whole
+// The improvement channel END TO END against REAL git — beside
+// worktrees.test.ts, one of the two tests whose THING UNDER TEST is where git
+// runs (others merely init a scratch repo for a script). For the channel's whole
 // life every git step ran with no cwd, in the daemon's own checkout — a repo
 // with no remote — so the push could never succeed; a fake runner that
 // discarded its cwd kept the suite green over it. Reading the guard cannot

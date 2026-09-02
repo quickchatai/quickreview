@@ -4,12 +4,16 @@
   minute); a single file as `timeout 120 npx vitest run tests/<file>.test.ts`.
   Never `--reporter=basic`.
 - Everything mocks I/O: fake fetch/adapters, `StateStore(":memory:")`, temp
-  dirs. The two that drive REAL git: `worktrees.test.ts` (scratch git repo
-  subprocesses) and `improvements-e2e.test.ts` (the improvement
-  channel against a scratch clone with a bare "remote" — the push, the caps
-  and the dry-run suppression observed on the remote, through the production
-  git runner; no network). Other tests that spawn a real local subprocess do
-  so for a shell script or a CLI of this repo, never for a network or a VM —
+  dirs. Two exercise git as the THING UNDER TEST: `worktrees.test.ts`
+  (scratch git repo subprocesses) and `improvements-e2e.test.ts` (:
+  the improvement channel against a scratch clone with a bare "remote" — the
+  push, the caps and the dry-run suppression observed on the remote, through
+  the production git runner; no network). Three more shell out to git on the
+  way to something else: `deploy.test.ts` and `publish-snapshot.test.ts`
+  `init` a scratch repo for the script under test, `publishability.test.ts`
+  runs `ls-files` on this checkout to enumerate what it lints. Other tests
+  that spawn a real local subprocess do so for a shell script or a CLI of
+  this repo, never for a network or a VM —
   `guards-shell.test.ts` (the real scripts against a loopback HTTP stub — the
   shell/gate parity proof, same cases as `guards.test.ts`), `pr-self-shell`,
   `fences-gate`/`fences-cigate`, `shellquote`, `collect-secrets`, `deploy`
