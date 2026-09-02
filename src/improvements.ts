@@ -144,10 +144,37 @@ export interface DiffstatVerdict {
   lines: number;
 }
 
+/**
+ * A cap this module can compare against: a finite, non-negative number. The
+ * type says every cap is a number; until `parseConfig` cast the TOML
+ * section into that type, so a key missing from an operator's file reached
+ * here as `undefined` — and `files > undefined` is `false`, which PASSED the
+ * cap. `parseCaps` now refuses such a config at startup; this is the cap
+ * checks' own belt, so their answers never depend on who built the `caps`
+ * they were handed — which is why it takes `unknown` and narrows, rather than
+ * trusting the type it exists to distrust. A cap that cannot be compared
+ * against is a refusal, never a pass: the improvement channel is the one
+ * place this system pushes code.
+ */
+function usableCap(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+/** The refusal every cap comparison in this module returns on a cap it cannot
+ * compare against, or `null` when every named cap is usable. */
+function unusableCapReason(caps: Config["caps"], keys: ReadonlyArray<keyof Config["caps"]>): string | null {
+  for (const key of keys) {
+    if (!usableCap(caps[key])) return `caps.${key} is not a usable cap (${String(caps[key])}) — refusing rather than filing uncapped`;
+  }
+  return null;
+}
+
 /** ≤ max_lines total (additions+deletions), ≤ max_files, no denylisted path. */
 export function checkDiffstat(entries: NumstatEntry[], caps: Config["caps"]): DiffstatVerdict {
   const files = entries.length;
   const lines = entries.reduce((n, e) => n + e.additions + e.deletions, 0);
+  const unusable = unusableCapReason(caps, ["improvement_pr_max_files", "improvement_pr_max_lines"]);
+  if (unusable !== null) return { ok: false, reason: unusable, files, lines };
   const prefixes = caps.improvement_pr_deny_prefixes ?? IMPROVEMENT_DENY_PREFIXES_DEFAULT;
   const denied = entries.filter((e) => deniedPath(e.path, prefixes)).map((e) => e.path);
   const binary = entries.filter((e) => e.binary).map((e) => e.path);
@@ -183,6 +210,8 @@ function daysAgoIso(now: Date, days: number): string {
 }
 
 export function improvementRateReason(store: StateStore, caps: Config["caps"], now: Date): string | null {
+  const unusable = unusableCapReason(caps, ["improvement_pr_per_day", "improvement_pr_per_week"]);
+  if (unusable !== null) return unusable; // `day >= undefined` is false: uncapped, the same fail-open as checkDiffstat's
   const day = store.filedSince("improvement_pr", startOfDayIso(now));
   if (day >= caps.improvement_pr_per_day) {
     return `improvement-PR day cap reached (${day}/${caps.improvement_pr_per_day})`;
@@ -195,6 +224,8 @@ export function improvementRateReason(store: StateStore, caps: Config["caps"], n
 }
 
 export function issueRateReason(store: StateStore, caps: Config["caps"], now: Date): string | null {
+  const unusable = unusableCapReason(caps, ["issues_per_day"]);
+  if (unusable !== null) return unusable;
   const day = store.filedSince("issue", startOfDayIso(now));
   return day >= caps.issues_per_day ? `issue day cap reached (${day}/${caps.issues_per_day})` : null;
 }

@@ -116,7 +116,10 @@ export type VerdictName = Verdict;
 const VERDICT_RENDER: Record<VerdictName, { glyph: string; label: string }> = {
   APPROVE: { glyph: "✅", label: "APPROVED" },
   REQUEST_CHANGES: { glyph: "🔧", label: "CHANGES REQUESTED" },
-  NEEDS_HUMAN: { glyph: "🚨", label: "NEEDS A HUMAN" },
+  // Legacy verdict: older prompts still emit it; the daemon lands it
+  // as `tracked` — review posted, no approval, the AI keeps driving. The label
+  // must not claim a person is needed, because nothing waits on one.
+  NEEDS_HUMAN: { glyph: "🚨", label: "UNDECIDED (legacy verdict)" },
 };
 
 export interface VerdictMessageInput {
@@ -139,7 +142,8 @@ export function verdictMessage(cfg: Config, m: VerdictMessageInput): string {
   if (m.summary !== null && m.summary.trim() !== "") lines.push(escapeMrkdwn(m.summary));
   lines.push(`<${m.review_url ?? prUrl(cfg, m.pr)}|review on GitHub>`);
   if (m.verdict === "NEEDS_HUMAN") {
-    lines.push(`parked for a person — ${ownerRef(cfg)}, the merge decision is yours`);
+    // No owner ping: there is no park and no decision waiting on a person.
+    lines.push("legacy undecided verdict — landed as tracked: review posted, no approval, the automated review continues");
   }
   return lines.join("\n");
 }

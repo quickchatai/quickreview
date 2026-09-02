@@ -10,6 +10,7 @@ import {
   githubCloneDir,
   ingressHostnameFile,
   loadConfig,
+  parseCaps,
   parseConfig,
   tierModel,
 } from "../src/config.js";
@@ -202,6 +203,33 @@ describe("[caps] improvement_pr_deny_prefixes", () => {
       'issues_per_day = 3\nimprovement_pr_deny_prefixes = ["db/"]',
     );
     expect(parseConfig(toml).caps.improvement_pr_deny_prefixes).toEqual(["db/"]);
+  });
+});
+
+// the section used to be spread through an `as` cast, so a missing
+// or garbage cap parsed fine and reached `checkDiffstat` as undefined.
+describe("[caps] every numeric cap is checked at parse time", () => {
+  const base = readFileSync(configPath, "utf8");
+  const ok = { improvement_pr_max_lines: 50, improvement_pr_max_files: 3, improvement_pr_per_day: 1, improvement_pr_per_week: 3, issues_per_day: 3 };
+
+  it("parses the fixture's caps as numbers", () => {
+    expect(parseConfig(base).caps).toEqual({ ...ok, improvement_pr_deny_prefixes: [...IMPROVEMENT_DENY_PREFIXES_DEFAULT] });
+  });
+
+  it.each(Object.keys(ok))("refuses to load a config whose [caps] omits %s", (key) => {
+    const without = base.replace(new RegExp(`^${key} = .*$`, "m"), "");
+    expect(without).not.toContain(`${key} =`);
+    expect(() => parseConfig(without)).toThrow(`[caps]: ${key} must be a non-negative number (got undefined)`);
+  });
+
+  it("refuses a cap that is not a non-negative finite number", () => {
+    for (const bad of ['"3"', "-1", "true", "nan", "inf"]) {
+      const toml = base.replace(/^improvement_pr_max_files = 3$/m, `improvement_pr_max_files = ${bad}`);
+      expect(() => parseConfig(toml), bad).toThrow("[caps]: improvement_pr_max_files must be a non-negative number");
+    }
+    expect(() => parseCaps({ ...ok, improvement_pr_deny_prefixes: "db/" })).toThrow("improvement_pr_deny_prefixes must be an array of strings");
+    expect(() => parseCaps({ ...ok, improvement_pr_deny_prefixes: [1] })).toThrow("improvement_pr_deny_prefixes must be an array of strings");
+    expect(parseCaps(ok).improvement_pr_max_files).toBe(3);
   });
 });
 

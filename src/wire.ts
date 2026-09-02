@@ -412,9 +412,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // exists, and both degrade to "no memory" rather than to an error.
   let memoryStore: MemoryStore | null = null;
   let memoryAssembler: ContextAssembler | null = null;
+  const notBuiltYet = { status: "unreadable", reason: "memory store not built yet (daemon still starting)" } as const;
   const lateAssembler: ContextAssembler = {
-    pinnedHead: () => (memoryAssembler ? memoryAssembler.pinnedHead() : Promise.resolve("")),
-    contextBlock: (q, o) => (memoryAssembler ? memoryAssembler.contextBlock(q, o) : Promise.resolve("")),
+    pinnedHead: () => (memoryAssembler ? memoryAssembler.pinnedHead() : Promise.resolve(notBuiltYet)),
+    contextBlock: (q, o) => (memoryAssembler ? memoryAssembler.contextBlock(q, o) : Promise.resolve(notBuiltYet)),
   };
 
   // the profile-selected ecosystem seam, loaded ONCE at assembly (a
@@ -543,7 +544,23 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       // become ready, so it starts warming while everything below builds. A
       // missing binary (any dev PC) is reported once and never retried; a
       // crash is respawned on a capped backoff ladder, forever.
-      openviking = new OpenVikingSupervisor({ cfg: cfg.openviking, log });
+      openviking = new OpenVikingSupervisor({
+        cfg: cfg.openviking,
+        log,
+        // The reviewer's memory root does not exist on a fresh server until
+        // something creates it. The TUI does this for the companion's sake;
+        // the daemon does it here for its own, each time the server comes up,
+        // so the round path's first sweep lists a real (empty) tree instead
+        // of leaning on how the server spells a missing one.
+        onReady: () => {
+          const store = memoryStore;
+          if (!store?.ensureWritable) return;
+          void store.ensureWritable().then(
+            (res) => log(`openviking ready: memory root ${res.ok ? "ready" : "NOT ready"} — ${res.message}`),
+            (err) => log("openviking ready: memory root check failed", err),
+          );
+        },
+      });
       openviking.start();
 
       // Bind the daemon's durable command slot before any PR session is
