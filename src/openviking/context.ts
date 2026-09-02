@@ -8,12 +8,13 @@
 // drift.
 //
 // This module is where that contract is honoured against a real network. Every
-// path out of here has exactly three outcomes: the text, "", or "" — there is
-// no fourth. `assembleRoundMemory` already caps both calls with a deadline and
-// swallows throws, so this file could in principle be sloppier; it is not,
-// because a store that throws would spend the round's whole memory deadline
-// getting to the same empty string, and "memory must never DELAY a round" is
-// half of the invariant.
+// path out of here has exactly three outcomes: the text, an empty text, or
+// `unreadable` with the reason — there is no fourth, and nothing is thrown.
+// `assembleRoundMemory` already caps both calls with a deadline and swallows
+// throws, so this file could in principle be sloppier; it is not, because a
+// store that throws would spend the round's whole memory deadline getting to
+// the same answer, and "memory must never DELAY a round" is half of the
+// invariant.
 //
 // The two halves are asymmetric on purpose:
 //
@@ -26,7 +27,7 @@
 //     server-side, pasted verbatim. Determinism is pinned inside the client
 //     (`rewrite`/`query_expansion` off) rather than requested here, so this
 //     module cannot ask for an LLM in the daemon's hot path even by accident.
-import type { ContextAssembler } from "../memory/context.js";
+import type { ContextAssembler, MemoryRead } from "../memory/context.js";
 import type { ContextSearchOptions, ContextSearchResult, OpenVikingClient } from "./client.js";
 import type { OpenVikingStore } from "./store.js";
 
@@ -68,22 +69,31 @@ export class OpenVikingContextAssembler implements ContextAssembler {
   /**
    * The owner's pinned standing instructions, oldest first, verbatim.
    *
-   * "" means the store did not answer OR nothing is pinned — the round path
-   * treats both as a gap on purpose (`degraded` in `RoundMemory`), because a
-   * healthy store with a pinned head always has something to say and an empty
-   * head is therefore evidence, not silence.
+   * Three answers, kept apart: the text; `text: ""` when the sweep
+   * read the whole store and nothing in it is pinned — every fresh install,
+   * and not a gap; and `unreadable` when any part of the store could not be
+   * read. The last is strict on purpose: the head is EXACT and GUARANTEED, so
+   * a sweep that skipped even one entry cannot vouch that no standing
+   * instruction was in it, and says so rather than delivering a head that
+   * might be missing one.
    */
-  async pinnedHead(): Promise<string> {
+  async pinnedHead(): Promise<MemoryRead> {
     try {
-      const entries = await this.store.read();
-      return entries
+      const { entries, unread } = await this.store.sweep();
+      if (unread.length > 0) {
+        const reason = unread.length === 1 ? unread[0]! : `${unread[0]} (+${unread.length - 1} more)`;
+        this.log(`openviking: pinned head unreadable (${reason}) — the round proceeds without standing instructions`);
+        return { status: "unreadable", reason };
+      }
+      const text = entries
         .filter((e) => e.pinned)
         .map((e) => e.text.trim())
         .filter((t) => t !== "")
         .join("\n\n");
+      return { status: "read", text };
     } catch (err) {
       this.log("openviking: pinned head unavailable — the round proceeds without standing instructions", err);
-      return "";
+      return { status: "unreadable", reason: String(err) };
     }
   }
 
@@ -94,7 +104,7 @@ export class OpenVikingContextAssembler implements ContextAssembler {
    * did the budgeting, and a second renderer here would be a second place for
    * the token budget to be wrong.
    */
-  async contextBlock(query: string, opts: { maxTokens: number }): Promise<string> {
+  async contextBlock(query: string, opts: { maxTokens: number }): Promise<MemoryRead> {
     try {
       const search: ContextSearchOptions = {
         maxTokens: opts.maxTokens,
@@ -105,14 +115,14 @@ export class OpenVikingContextAssembler implements ContextAssembler {
       const res = await this.client.searchContext(query, search);
       if (!res.ok) {
         this.lastSearch = null;
-        return "";
+        return { status: "unreadable", reason: `search ${res.code}: ${res.message}` };
       }
       this.lastSearch = res.result;
-      return res.result.rendered;
+      return { status: "read", text: res.result.rendered };
     } catch (err) {
       this.lastSearch = null;
       this.log("openviking: context search failed — the round proceeds memory-less", err);
-      return "";
+      return { status: "unreadable", reason: String(err) };
     }
   }
 }

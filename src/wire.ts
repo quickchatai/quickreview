@@ -409,9 +409,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // exists, and both degrade to "no memory" rather than to an error.
   let memoryStore: MemoryStore | null = null;
   let memoryAssembler: ContextAssembler | null = null;
+  const notBuiltYet = { status: "unreadable", reason: "memory store not built yet (daemon still starting)" } as const;
   const lateAssembler: ContextAssembler = {
-    pinnedHead: () => (memoryAssembler ? memoryAssembler.pinnedHead() : Promise.resolve("")),
-    contextBlock: (q, o) => (memoryAssembler ? memoryAssembler.contextBlock(q, o) : Promise.resolve("")),
+    pinnedHead: () => (memoryAssembler ? memoryAssembler.pinnedHead() : Promise.resolve(notBuiltYet)),
+    contextBlock: (q, o) => (memoryAssembler ? memoryAssembler.contextBlock(q, o) : Promise.resolve(notBuiltYet)),
   };
 
   // the profile-selected ecosystem seam, loaded ONCE at assembly (a

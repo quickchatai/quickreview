@@ -171,6 +171,26 @@ export function entryFrom(id: string, text: string, modTime: string): MemoryEntr
   };
 }
 
+/**
+ * What one sweep of the store produced: the entries, plus every part
+ * of the store the sweep could NOT read.
+ *
+ * `read()` collapses this to the entries, which is the right answer for a
+ * timeline ("nothing to show"). The round path's pinned head must not
+ * collapse it: a store that could not be listed and a pinned area nobody has
+ * written to yet are different facts, and only the first is an outage.
+ */
+export interface MemorySweep {
+  entries: MemoryEntry[];
+  /** One line per failed listing or entry read (`ls <uri>: <message>`,
+   * `read <uri>: <message>`). Empty ⇒ `entries` is the whole store. A
+   * NOT_FOUND is deliberately NOT recorded here: a root or category nobody
+   * has written into yet is ABSENT (the server 404s it until the first write
+   * creates it — see `create()`), and absent is known-empty, not unreadable;
+   * an entry listed a moment ago and gone now is a race, not an outage. */
+  unread: string[];
+}
+
 export interface OpenVikingStoreOptions {
   client: OpenVikingClient;
   /** Defaults to the client's own `user/<user>/memories` root. */
@@ -202,8 +222,8 @@ export class OpenVikingStore implements MemoryStore {
   private readonly concurrency: number;
   private readonly cacheTtlMs: number;
 
-  private cache: { at: number; entries: MemoryEntry[] } | null = null;
-  private inFlight: Promise<MemoryEntry[]> | null = null;
+  private cache: { at: number; sweep: MemorySweep } | null = null;
+  private inFlight: Promise<MemorySweep> | null = null;
 
   constructor(opts: OpenVikingStoreOptions) {
     this.client = opts.client;
@@ -262,35 +282,50 @@ export class OpenVikingStore implements MemoryStore {
    *
    * Total by construction: a server that is down yields `[]`, and a single
    * unreadable file is skipped rather than losing the sweep. `[]` therefore
-   * means "nothing to show" for BOTH an empty store and an absent one — which
-   * is the right answer for a timeline and the wrong one for an alert, so the
-   * gaps are logged and pushed to the client's `onGap` sink on the way past.
+   * means "nothing to show" for BOTH an empty store and an unread one — the
+   * right answer for a timeline. A caller that must tell the two apart (the
+   * round's pinned head) uses `sweep()`, which keeps the distinction.
    */
   async read(): Promise<MemoryEntry[]> {
+    return (await this.sweep()).entries;
+  }
+
+  /**
+   * The same sweep, with the parts it could not read kept beside the entries.
+   * Cached and single-flight exactly like `read()` — the two share one sweep,
+   * so the round path and the TUI poll never double the server's load.
+   */
+  async sweep(): Promise<MemorySweep> {
     const fresh = this.cache && this.now().getTime() - this.cache.at < this.cacheTtlMs;
-    if (fresh && this.cache) return this.cache.entries;
+    if (fresh && this.cache) return this.cache.sweep;
     // One sweep at a time: the round path and the TUI poll can both land here.
     if (this.inFlight) return this.inFlight;
-    this.inFlight = this.sweep().finally(() => {
+    this.inFlight = this.runSweep().finally(() => {
       this.inFlight = null;
     });
     return this.inFlight;
   }
 
-  private async sweep(): Promise<MemoryEntry[]> {
-    const files = await this.listFiles();
+  private async runSweep(): Promise<MemorySweep> {
+    const unread: string[] = [];
+    const files = await this.listFiles(unread);
     const entries: MemoryEntry[] = [];
     await pool(files, this.concurrency, async (file) => {
-      const res = await this.client.readContent(this.uriOf(file.id));
-      if (!res.ok) return;
+      const uri = this.uriOf(file.id);
+      const res = await this.client.readContent(uri);
+      if (!res.ok) {
+        if (res.code !== "NOT_FOUND") unread.push(`read ${uri}: ${res.message}`);
+        return;
+      }
       const entry = entryFrom(file.id, res.result, file.modTime);
       if (entry.text === "") return;
       if (entry.tags.some((t) => t.toLowerCase() === RETIRED_TAG)) return;
       entries.push(entry);
     });
     entries.sort((a, b) => (a.ts !== b.ts ? (a.ts < b.ts ? -1 : 1) : a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-    this.cache = { at: this.now().getTime(), entries };
-    return entries;
+    const sweep: MemorySweep = { entries, unread };
+    this.cache = { at: this.now().getTime(), sweep };
+    return sweep;
   }
 
   /**
@@ -299,10 +334,16 @@ export class OpenVikingStore implements MemoryStore {
    * deeper tree would need a recursive walk, and a recursive walk against a
    * store this system fully owns would only ever be finding files it did not
    * write.
+   *
+   * A listing that fails is recorded in `unread` — except NOT_FOUND, which is
+   * an absent directory and therefore a known-empty one (see `MemorySweep`).
    */
-  private async listFiles(): Promise<Array<{ id: string; modTime: string }>> {
+  private async listFiles(unread: string[]): Promise<Array<{ id: string; modTime: string }>> {
     const top = await this.client.ls(this.root);
-    if (!top.ok) return [];
+    if (!top.ok) {
+      if (top.code !== "NOT_FOUND") unread.push(`ls ${this.root}: ${top.message}`);
+      return [];
+    }
     const out: Array<{ id: string; modTime: string }> = [];
     const dirs: string[] = [];
     for (const row of top.result) {
@@ -313,8 +354,12 @@ export class OpenVikingStore implements MemoryStore {
       }
     }
     await pool(dirs, this.concurrency, async (dir) => {
-      const sub = await this.client.ls(`${this.root}/${dir}`);
-      if (!sub.ok) return;
+      const uri = `${this.root}/${dir}`;
+      const sub = await this.client.ls(uri);
+      if (!sub.ok) {
+        if (sub.code !== "NOT_FOUND") unread.push(`ls ${uri}: ${sub.message}`);
+        return;
+      }
       for (const row of sub.result) {
         if (!row.isDir && isTextFile(row.name)) out.push({ id: `${dir}/${row.name}`, modTime: row.modTime });
       }

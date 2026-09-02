@@ -346,6 +346,10 @@ async function seedRoundMemory(
   if (!mem.degraded) return mem;
 
   log(`dispatch: #${order.pr} round ${order.round_no} seeded memory-less (${describeGaps(mem)})`);
+  const missing = [
+    ...(mem.gaps.some((g) => g.part === "head") ? ["no standing-instructions head"] : []),
+    ...(mem.gaps.some((g) => g.part === "context") ? ["no recalled context"] : []),
+  ].join(" and ");
   const nowMs = (deps.now ? deps.now() : new Date()).getTime();
   const cooldownMs = (seed.alertCooldownMin ?? 60) * 60_000;
   const last = memoryAlertAt.get(deps.store);
@@ -358,8 +362,7 @@ async function seedRoundMemory(
     `context store did not answer at round build (${describeGaps(mem)}); the round was dispatched memory-less`,
     [
       `ANOMALY (memory) — PR #${order.pr} round ${order.round_no}`,
-      `The context store did not answer when this round was built (${describeGaps(mem)}), so the round prompt carries ` +
-        "no standing-instructions head and no recalled context.",
+      `The context store did not answer when this round was built (${describeGaps(mem)}), so the round prompt carries ${missing}.`,
       "The round itself was dispatched normally and on time — memory never blocks or delays a review. But a memory " +
         "engine that stays down means every round is running blind: check the openviking supervisor's status " +
         "(state/status.json) and the daemon log.",

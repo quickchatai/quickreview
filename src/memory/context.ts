@@ -18,33 +18,61 @@
 //     requested from this path even by accident. The daemon has no LLM in its
 //     hot path and its prompts must be reproducible from the round order.
 //   * MEMORY NEVER BLOCKS OR DELAYS A ROUND. Both assembler methods resolve
-//     with an empty string when memory is unavailable — they never reject —
-//     and this module additionally caps them with a deadline and swallows a
-//     throw, so the worst case is a memory-less prompt `timeoutMs` later.
+//     — with the text, or with the reason it could not be read — and never
+//     reject; this module additionally caps them with a deadline and swallows
+//     a throw, so the worst case is a memory-less prompt `timeoutMs` later.
 //     Every gap is reported back (`gaps`, `degraded`) for the caller to log
 //     and alert on; none of them is ever a reason to hold a round.
+//   * EMPTY IS NOT DEGRADED. A store that answers with nothing —
+//     no pinned entries yet, nothing recalled for this PR — has ANSWERED, and
+//     that is a different thing from a store that could not be read. Every
+//     adopter's first review runs against a healthy store with an empty
+//     pinned area; telling that round its memory is unavailable, and alarming
+//     the operator about it hourly, read as a broken install. So the seam
+//     carries the distinction (`MemoryRead`) instead of collapsing both into
+//     "", and only a read that did not happen is ever a gap.
 //
 // Nothing here knows about HTTP or OpenViking: an implementation
 // of `ContextAssembler` is injected (see src/dispatch.ts `DispatchDeps.memory`).
 
 /**
+ * What one read of memory produced: the text the store holds — `""` when it
+ * holds nothing, which is an ANSWER — or the reason the read could not happen.
+ *
+ * The two arms are the whole point of the type. A pinned area nobody has
+ * written to yet and a server that refused the connection both used to come
+ * back as "", and the round path had to treat "" as an outage because the
+ * head is guaranteed whenever the store is up. That made every fresh install
+ * look broken. Now an implementation says which it was, and the round path
+ * believes it.
+ */
+export type MemoryRead =
+  | { readonly status: "read"; readonly text: string }
+  | { readonly status: "unreadable"; readonly reason: string };
+
+/**
  * The seam the round path reads memory through.
  *
- * Both methods RESOLVE with an empty string when memory is unavailable — they
- * never reject. That is the degradation contract: a caller can always paste
- * what it gets, and "" simply means "this round goes memory-less".
+ * Both methods RESOLVE with a `MemoryRead` — they never reject, and a store
+ * that is down is reported as `unreadable`, not thrown. That is the
+ * degradation contract: a caller can always render what it gets, and a round
+ * with nothing readable simply goes memory-less.
  */
 export interface ContextAssembler {
-  /** The always-present head: the owner's pinned standing instructions, already rendered. */
-  pinnedHead(): Promise<string>;
-  /** One deterministic, budgeted context block for this query. */
-  contextBlock(query: string, opts: { maxTokens: number }): Promise<string>;
+  /** The owner's pinned standing instructions, already rendered. `text: ""`
+   * means nothing is pinned — a fact about a healthy store, not a gap. */
+  pinnedHead(): Promise<MemoryRead>;
+  /** One deterministic, budgeted context block for this query. `text: ""`
+   * means memory had nothing to say about this PR. */
+  contextBlock(query: string, opts: { maxTokens: number }): Promise<MemoryRead>;
 }
 
-/** One half of the seed that did not arrive, and why. */
+/** One half of the seed that did not ARRIVE, and why. An empty answer is not
+ * a gap — it never appears here. */
 export interface MemoryGap {
   part: "head" | "context";
-  /** `empty` (the store answered with nothing), `timeout`, or `error: …`. */
+  /** `timeout`, `unreadable: …` (the implementation said why), or `error: …`
+   * (a client that broke the contract and threw). */
   reason: string;
 }
 
@@ -54,7 +82,8 @@ export interface RoundMemory {
    * wired at all (stub-wired daemon core, unit tests) and the prompt carries
    * no memory sections whatsoever — that is not a gap and never alerts. */
   asked: boolean;
-  /** The pinned standing instructions, verbatim. Empty ⇒ they did not arrive. */
+  /** The pinned standing instructions, verbatim. Empty ⇒ nothing is pinned,
+   * OR the head did not arrive — `gaps` says which (a `head` gap ⇒ unread). */
   head: string;
   /** The one budgeted context block, verbatim. Empty ⇒ nothing to paste. */
   block: string;
@@ -63,15 +92,15 @@ export interface RoundMemory {
   query: string;
   /** The token budget the block was requested under. */
   max_tokens: number;
-  /** Memory did not answer as it should have: a timeout, a throw, or an empty
-   * pinned head (the head is guaranteed present whenever the store is up, so
-   * an empty one means the store did not answer). An empty context block on
-   * its own is NOT degraded — a healthy store may simply have nothing to say
-   * about this PR. */
+  /** Some half of memory did not ARRIVE: a timeout, an `unreadable` answer or
+   * a throw. Exactly `gaps.length > 0`. An empty head or an empty block on
+   * its own is NOT degraded — the store answered, and had nothing pinned or
+   * nothing to say about this PR. */
   degraded: boolean;
   /** The block came back over the char budget and was cut. */
   clamped: boolean;
-  /** Every half that came back empty or failed. Empty when the seed is whole. */
+  /** Every half that did not arrive. Empty when memory answered — with text
+   * or with nothing. */
   gaps: MemoryGap[];
   /** Wall-clock ms the assembly took (bounded by `timeoutMs`). */
   ms: number;
@@ -185,14 +214,16 @@ export function roundContextQuery(input: { title: string; files: readonly Contex
 const TIMED_OUT = Symbol("memory-timeout");
 
 /**
- * Run `fn` with a deadline, turning every failure mode into "" plus a gap.
+ * Run `fn` with a deadline, turning every way the text can fail to arrive —
+ * a timeout, an `unreadable` answer, a throw — into "" plus a gap. A `read`
+ * answer is returned as its text, empty or not, and is never a gap.
  * The timer is cleared on settle and unref'd where the runtime allows it, so a
  * slow memory call can neither delay the round nor keep the process alive.
  */
 async function guarded(
   part: MemoryGap["part"],
   timeoutMs: number,
-  fn: () => Promise<string>,
+  fn: () => Promise<MemoryRead>,
   gaps: MemoryGap[],
   log: (msg: string, extra?: unknown) => void,
 ): Promise<string> {
@@ -212,7 +243,12 @@ async function guarded(
       log(`memory: ${part} timed out after ${timeoutMs}ms — round proceeds memory-less`);
       return "";
     }
-    return typeof value === "string" ? value : "";
+    if (value.status === "unreadable") {
+      gaps.push({ part, reason: `unreadable: ${clamp(collapse(value.reason), 200)}` });
+      log(`memory: ${part} unreadable (${value.reason}) — round proceeds memory-less`);
+      return "";
+    }
+    return value.text;
   } catch (err) {
     // The contract says these never reject; if one does, that is a bug in the
     // client, not a reason to lose a review round.
@@ -259,22 +295,35 @@ export async function assembleRoundMemory(
   const block = clamped ? `${rawBlock.slice(0, charBudget).trimEnd()}\n… (context block cut at the round's char budget)` : rawBlock;
   if (clamped) log(`memory: context block over budget (${rawBlock.length} chars) — cut to ${charBudget}`);
 
-  if (head.trim() === "" && !gaps.some((g) => g.part === "head")) gaps.push({ part: "head", reason: "empty" });
-  if (block.trim() === "" && !gaps.some((g) => g.part === "context")) gaps.push({ part: "context", reason: "empty" });
-
   return {
     asked: true,
     head: head.trim(),
     block: block.trim(),
     query,
     max_tokens: maxTokens,
-    // An empty context block is an ordinary answer; an absent HEAD, a timeout
-    // or an error is the store failing to serve.
-    degraded: gaps.some((g) => g.part === "head" || g.reason !== "empty"),
+    // Only a read that did not happen is a gap. An empty head and an empty
+    // block are answers — a fresh install has nothing pinned and a healthy
+    // store may have nothing to say about this PR — and neither degrades.
+    degraded: gaps.length > 0,
     clamped,
     gaps,
     ms: Math.max(0, now() - started),
   };
+}
+
+/**
+ * Which of the three states the pinned head is in, spelled out so a caller
+ * never has to reconstruct it from `head` and `gaps`:
+ *
+ *   `populated`  — standing instructions arrived and are in the prompt;
+ *   `empty`      — the store answered and nothing is pinned (a fresh install,
+ *                  or an owner who has not written any yet) — NOT degraded;
+ *   `unread`     — the head did not arrive (timeout, unreadable, throw) and
+ *                  the round is degraded.
+ */
+export function pinnedHeadState(mem: RoundMemory): "populated" | "empty" | "unread" {
+  if (mem.gaps.some((g) => g.part === "head")) return "unread";
+  return mem.head === "" ? "empty" : "populated";
 }
 
 /** One-line human summary of what did not arrive — for logs and the prompt. */
@@ -321,6 +370,13 @@ export function renderPinnedHeadSection(mem: RoundMemory, ownerName?: string): s
  * degraded note is deliberately un-dramatic — a memory-less round is a normal
  * round, and a session that starts hunting for the memory server instead of
  * reviewing has turned a soft dependency into a hard one.
+ *
+ * WHO IS TOLD when memory is down: the SESSION (this note) and the OPERATOR
+ * (the `round_memory_degraded` anomaly to the overseer, src/dispatch.ts) —
+ * never the PR. The note says so in as many words: the posted review is about
+ * the code, and an outage on the reviewer's side is the operator's to read
+ * about, not the author's. Any doc that claims the review "says so" is wrong;
+ * it is the operator who is told.
  */
 export function renderContextBlockSection(mem: RoundMemory): string {
   if (!mem.asked) return "";
@@ -332,8 +388,9 @@ export function renderContextBlockSection(mem: RoundMemory): string {
       "nothing else: the round is not blocked, not delayed and not degraded in any",
       "other way, every gate and posting rule still applies, and your verdict is",
       "decided on the code exactly as always. Do not wait for memory, do not retry",
-      "it in a loop, and do not mention it in the posted review — the daemon has",
-      "already alerted the overseer.",
+      "it in a loop, and do not mention it in the posted review — the operator is",
+      "told through the daemon's own alert, and the PR's author is not the one who",
+      "needs to know.",
     ].join("\n");
   }
   if (mem.block === "") {

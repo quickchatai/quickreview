@@ -8,11 +8,13 @@ import {
   describeGaps,
   ensurePinnedHead,
   MEMORY_LESS,
+  pinnedHeadState,
   renderContextBlockSection,
   renderPinnedHeadSection,
   roundContextQuery,
   ROUND_CONTEXT_DEFAULTS,
   type ContextAssembler,
+  type MemoryRead,
   type RoundMemory,
 } from "../src/memory/context.js";
 import { renderRoundPrompt, roundTemplateFile, roundVars } from "../src/templates.js";
@@ -56,6 +58,9 @@ function seeded(over: Partial<RoundMemory> = {}): RoundMemory {
   };
 }
 
+const read = (text: string): MemoryRead => ({ status: "read", text });
+const unreadable = (reason: string): MemoryRead => ({ status: "unreadable", reason });
+
 /** Counts every call, so "exactly one context call" is measurable. */
 class CountingAssembler implements ContextAssembler {
   head = 0;
@@ -63,18 +68,18 @@ class CountingAssembler implements ContextAssembler {
   queries: string[] = [];
   optsSeen: Array<Record<string, unknown>> = [];
   constructor(
-    private readonly headText = "HEAD TEXT",
-    private readonly blockText = "BLOCK TEXT",
+    private readonly headAnswer: MemoryRead = read("HEAD TEXT"),
+    private readonly blockAnswer: MemoryRead = read("BLOCK TEXT"),
   ) {}
-  async pinnedHead(): Promise<string> {
+  async pinnedHead(): Promise<MemoryRead> {
     this.head += 1;
-    return this.headText;
+    return this.headAnswer;
   }
-  async contextBlock(query: string, opts: { maxTokens: number }): Promise<string> {
+  async contextBlock(query: string, opts: { maxTokens: number }): Promise<MemoryRead> {
     this.context += 1;
     this.queries.push(query);
     this.optsSeen.push({ ...opts });
-    return this.blockText;
+    return this.blockAnswer;
   }
 }
 
@@ -130,16 +135,24 @@ describe("assembleRoundMemory", () => {
     expect(mem.gaps).toEqual([]);
   });
 
-  it("degrades on the contract's unavailable answer (empty strings, no rejection)", async () => {
-    const mem = await assembleRoundMemory(new CountingAssembler("", ""), "q");
+  it("degrades on the contract's unavailable answer (`unreadable`, no rejection)", async () => {
+    const mem = await assembleRoundMemory(new CountingAssembler(unreadable("ls viking://user/reviewer/memories: ECONNREFUSED"), unreadable("search transport: ECONNREFUSED")), "q");
     expect(mem).toMatchObject({ asked: true, head: "", block: "", degraded: true });
-    expect(describeGaps(mem)).toContain("head: empty");
+    expect(describeGaps(mem)).toContain("head: unreadable: ls viking://user/reviewer/memories: ECONNREFUSED");
+    expect(describeGaps(mem)).toContain("context: unreadable: search transport");
   });
 
   it("an empty context block with a live head is NOT degraded — memory just had nothing", async () => {
-    const mem = await assembleRoundMemory(new CountingAssembler("HEAD", ""), "q");
+    const mem = await assembleRoundMemory(new CountingAssembler(read("HEAD"), read("")), "q");
     expect(mem.degraded).toBe(false);
-    expect(mem.gaps).toEqual([{ part: "context", reason: "empty" }]);
+    expect(mem.gaps).toEqual([]);
+  });
+
+  it("clamps a runaway unreadable reason before it reaches the prompt", async () => {
+    const mem = await assembleRoundMemory(new CountingAssembler(unreadable(`x${"y".repeat(5000)}\n\nz`)), "q");
+    const gap = mem.gaps.find((g) => g.part === "head")!;
+    expect(gap.reason.length).toBeLessThanOrEqual("unreadable: ".length + 200);
+    expect(gap.reason).not.toContain("\n");
   });
 
   it("caps a hung store at the deadline instead of holding the round", async () => {
@@ -168,11 +181,61 @@ describe("assembleRoundMemory", () => {
   });
 
   it("clamps a block that ignores its budget", async () => {
-    const fat = new CountingAssembler("HEAD", "x".repeat(10_000));
+    const fat = new CountingAssembler(read("HEAD"), read("x".repeat(10_000)));
     const mem = await assembleRoundMemory(fat, "q", { maxTokens: 100 });
     expect(mem.clamped).toBe(true);
     expect(mem.block.length).toBeLessThan(1000);
     expect(mem.block).toContain("cut at the round's char budget");
+  });
+});
+
+// a fresh install has a healthy store and nothing pinned. That round
+// must not be told its memory is unavailable, and the operator must not be
+// alarmed about it: EMPTY IS NOT DEGRADED. The three states are kept apart
+// here, each under its own name.
+describe("the three states of the pinned head", () => {
+  it("healthy-and-populated: the head arrives, nothing is a gap", async () => {
+    const mem = await assembleRoundMemory(new CountingAssembler(read("Standing: approvals are final."), read("")), "q");
+    expect(pinnedHeadState(mem)).toBe("populated");
+    expect(mem).toMatchObject({ head: "Standing: approvals are final.", degraded: false, gaps: [] });
+    expect(renderPinnedHeadSection(mem)).toContain("STANDING INSTRUCTIONS");
+  });
+
+  it("healthy-and-empty (a fresh install): nothing pinned is an ANSWER — not degraded, no gap, no unavailable note", async () => {
+    const mem = await assembleRoundMemory(new CountingAssembler(read(""), read("")), "q");
+    expect(pinnedHeadState(mem)).toBe("empty");
+    expect(mem).toMatchObject({ asked: true, head: "", block: "", degraded: false, gaps: [] });
+    // The prompt: no head section (there are no standing instructions to
+    // frame) and the honest "had nothing to add" — never MEMORY UNAVAILABLE.
+    expect(renderPinnedHeadSection(mem)).toBe("");
+    const section = renderContextBlockSection(mem);
+    expect(section).toContain("had nothing to add");
+    expect(section).not.toContain("MEMORY UNAVAILABLE");
+  });
+
+  it("unreadable: a store that could not be read is degraded and says why", async () => {
+    const mem = await assembleRoundMemory(new CountingAssembler(unreadable("ls viking://user/reviewer/memories: connect ECONNREFUSED"), read("")), "q");
+    expect(pinnedHeadState(mem)).toBe("unread");
+    expect(mem.degraded).toBe(true);
+    expect(mem.gaps).toEqual([{ part: "head", reason: "unreadable: ls viking://user/reviewer/memories: connect ECONNREFUSED" }]);
+    expect(renderContextBlockSection(mem)).toContain("MEMORY UNAVAILABLE THIS ROUND");
+    expect(renderContextBlockSection(mem)).toContain("ECONNREFUSED");
+  });
+
+  it("a timed-out and a throwing head are `unread` too — the state is about arrival, not about text", async () => {
+    const hung = await assembleRoundMemory({ pinnedHead: () => new Promise(() => {}), contextBlock: async () => read("") }, "q", { timeoutMs: 20 });
+    expect(pinnedHeadState(hung)).toBe("unread");
+    const thrown = await assembleRoundMemory({ pinnedHead: () => Promise.reject(new Error("boom")), contextBlock: async () => read("") }, "q");
+    expect(pinnedHeadState(thrown)).toBe("unread");
+  });
+
+  it("the whole prompt for a fresh install carries neither the unavailable note nor a dangling head", () => {
+    const tpl = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile("first")), "utf8");
+    const fresh = renderRoundPrompt(tpl, { ...order, round_type: "first" }, seeded({ head: "", block: "", gaps: [] }));
+    expect(fresh).not.toContain("MEMORY UNAVAILABLE");
+    expect(fresh).not.toContain("STANDING INSTRUCTIONS");
+    expect(fresh).toContain("had nothing to add");
+    expect(fresh).not.toContain("{{");
   });
 });
 
@@ -202,6 +265,10 @@ describe("memory sections in the round prompt", () => {
     expect(note).toContain("MEMORY UNAVAILABLE THIS ROUND");
     expect(note).toContain("not blocked");
     expect(note).toMatch(/do not retry\s+it in a loop/i);
+    // Who is told: the session here, the operator through the
+    // anomaly — never the PR. The note says so, and names the operator.
+    expect(note).toMatch(/do not mention it in the posted review/);
+    expect(note).toMatch(/the operator is\s+told/);
   });
 
   it("says so when memory answered but had nothing to add", () => {

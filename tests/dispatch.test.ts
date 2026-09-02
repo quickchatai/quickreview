@@ -11,7 +11,7 @@ import { applyEvent } from "../src/statemachine.js";
 import { PASS_TIER_ORDER } from "../src/types.js";
 import { renderRoundPrompt, roundTemplateFile } from "../src/templates.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
-import type { ContextAssembler } from "../src/memory/context.js";
+import type { ContextAssembler, MemoryRead } from "../src/memory/context.js";
 
 const baseCfg: Config = parseConfig(readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
 
@@ -1258,23 +1258,32 @@ describe("system re-trigger short-circuit", () => {
 // context block reach the prompt, the call happens exactly once per round, and
 // a memory outage can neither block nor delay a review.
 describe("round-memory seeding", () => {
+  const read = (text: string): MemoryRead => ({ status: "read", text });
+  const unreadable = (reason: string): MemoryRead => ({ status: "unreadable", reason });
+
   class Assembler implements ContextAssembler {
     heads = 0;
     contexts = 0;
     queries: string[] = [];
     constructor(
-      private readonly head = "STANDING: approvals are final.",
-      private readonly block = "PRECEDENT: #4000 settled the retry budget.",
+      private readonly head: MemoryRead = read("STANDING: approvals are final."),
+      private readonly block: MemoryRead = read("PRECEDENT: #4000 settled the retry budget."),
     ) {}
-    async pinnedHead(): Promise<string> {
+    async pinnedHead(): Promise<MemoryRead> {
       this.heads += 1;
       return this.head;
     }
-    async contextBlock(query: string, _opts: { maxTokens: number }): Promise<string> {
+    async contextBlock(query: string, _opts: { maxTokens: number }): Promise<MemoryRead> {
       this.contexts += 1;
       this.queries.push(query);
       return this.block;
     }
+  }
+
+  function anomalies(pr: number): string[] {
+    return (store.db.prepare("SELECT payload FROM events WHERE pr = ? AND kind = 'anomaly'").all(pr) as Array<{ payload: string }>).map(
+      (r) => (JSON.parse(r.payload) as { kind: string }).kind,
+    );
   }
 
   function memoryEvents(pr: number): Array<Record<string, unknown>> {
@@ -1382,8 +1391,53 @@ describe("round-memory seeding", () => {
     expect(JSON.stringify(memoryEvents(74)[0]!["gaps"])).toContain("ECONNREFUSED");
   });
 
+  // the path every adopter takes first: a healthy store with nothing
+  // pinned yet. The round is seeded normally, told memory had nothing to add,
+  // and the operator hears nothing — EMPTY IS NOT DEGRADED.
+  it("a fresh install (healthy store, nothing pinned) is NOT degraded: no unavailable note, no anomaly", async () => {
+    queue(78, "2026-08-20T09:00:00Z");
+    adapter.files.set(78, [file("a.ts")]);
+    const fresh = new Assembler(read(""), read(""));
+    const { hooks, orders } = recordingHooks();
+    const tpl = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile("first")), "utf8");
+
+    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks, memory: { assembler: fresh }, renderPrompt: (o, mem) => renderRoundPrompt(tpl, o, mem) });
+
+    expect(orders).toHaveLength(1);
+    expect(orders[0]!.prompt).not.toContain("MEMORY UNAVAILABLE");
+    expect(orders[0]!.prompt).not.toContain("STANDING INSTRUCTIONS");
+    expect(orders[0]!.prompt).toContain("had nothing to add");
+    expect(memoryEvents(78)).toMatchObject([{ degraded: false, gaps: [], head_chars: 0, block_chars: 0 }]);
+    expect(anomalies(78)).toEqual([]);
+  });
+
+  it("an UNREADABLE store still degrades, still alerts the operator, and names what is missing", async () => {
+    queue(79, "2026-08-20T09:00:00Z");
+    adapter.files.set(79, [file("a.ts")]);
+    const dead = new Assembler(unreadable("ls viking://user/reviewer/memories: connect ECONNREFUSED 127.0.0.1:1933"), read(""));
+    const { hooks, orders } = recordingHooks();
+    const tpl = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile("first")), "utf8");
+    const injected: string[] = [];
+    store.setAnomalySink((signal) => injected.push(signal.injectMessage ?? ""));
+
+    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks, memory: { assembler: dead }, renderPrompt: (o, mem) => renderRoundPrompt(tpl, o, mem) });
+
+    expect(orders).toHaveLength(1);
+    expect(orders[0]!.prompt).toContain("MEMORY UNAVAILABLE THIS ROUND");
+    expect(store.getPr(79)!.state).toBe("reviewing");
+    expect(memoryEvents(79)).toMatchObject([{ degraded: true, gaps: [{ part: "head", reason: expect.stringContaining("unreadable: ls viking://") }] }]);
+    expect(anomalies(79)).toEqual(["round_memory_degraded"]);
+    // The operator's alert says what is actually missing — here the head
+    // only; the context search answered (with nothing), so it is not claimed
+    // lost — and carries the reason.
+    expect(injected).toHaveLength(1);
+    expect(injected[0]).toContain("no standing-instructions head.");
+    expect(injected[0]).not.toContain("no recalled context");
+    expect(injected[0]).toContain("ECONNREFUSED");
+  });
+
   it("keeps alerting bounded while the store stays down — the per-round record does not thin", async () => {
-    const down = new Assembler("", "");
+    const down = new Assembler(unreadable("connect ECONNREFUSED"), unreadable("connect ECONNREFUSED"));
     const { hooks } = recordingHooks();
     for (const [pr, ts] of [[75, "2026-08-20T09:00:00Z"], [76, "2026-08-20T09:10:00Z"]] as const) {
       queue(pr, ts);
