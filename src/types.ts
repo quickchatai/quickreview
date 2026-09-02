@@ -101,6 +101,21 @@ export interface PassPlanEntry {
   raisable_to: string[];
 }
 
+export interface RoundRecoveryContext {
+  /** Only the exact, pre-publication stage is eligible for automatic replay. */
+  stage: "first_pass_start";
+  source_round_no: number;
+  source_command_id: string;
+  /** The head this successor order actually reviews. */
+  target_head_sha: string;
+  /** 1..N inside the ordinary immediate retry burst. */
+  immediate_attempt: number;
+  /** Zero for immediate retries; increments for each delayed circuit-breaker
+   * generation and is carried through any same-generation fast retries. */
+  retry_epoch: number;
+  source_incident_id?: string;
+}
+
 export interface RoundOrder {
   pr: number;
   title: string;
@@ -161,6 +176,9 @@ export interface RoundOrder {
    * evaluates and delivers those itself, with no model in the loop.
    */
   escalation_targets?: string[];
+  /**: daemon-authored, exact predecessor identity for a fresh parent
+   * recovering a proven pre-fanout stall. Absent on ordinary rounds. */
+  recovery?: RoundRecoveryContext;
   /** The sha the worktree is ACTUALLY at — reconciled against the fetched
    * `refs/pull/<n>/head` before the order is built, not the webhook snapshot. */
   head_sha: string;

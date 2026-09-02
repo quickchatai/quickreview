@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import activate from "../extensions/round-progress.js";
-import { parseRoundProgress } from "../src/round-progress.js";
+import { parseRoundProgress, roundExecutionStage } from "../src/round-progress.js";
 import type { PiEventHandler } from "@earendil-works/pi-coding-agent";
 
 const dirs: string[] = [];
@@ -72,9 +72,14 @@ describe("round progress extension", () => {
         command_id: "cmd-5408",
         command_sha256: "a".repeat(64),
         command_accepted_at: expect.any(String),
+        preparing_at: expect.any(String),
         first_lens_started_at: expect.any(String),
+        fanout_started_at: expect.any(String),
         active_tool: "subagent: pass-security",
       });
+      expect(running.preparing_at).toBe(running.command_accepted_at);
+      expect(running.fanout_started_at).toBe(running.first_lens_started_at);
+      expect(roundExecutionStage(parseRoundProgress(JSON.stringify(running))!, ["pass-security", "pass-validate"])).toBe("fanout-started");
       expect(running.agents).toEqual([expect.objectContaining({
         agent: "pass-security",
         status: "running",
@@ -94,6 +99,7 @@ describe("round progress extension", () => {
       await emit("agent_settled");
       const done = JSON.parse(readFileSync(path, "utf8"));
       expect(done.parent_status).toBe("settled");
+      expect(roundExecutionStage(parseRoundProgress(JSON.stringify(done))!, ["pass-security"])).toBe("finalized");
       expect(done.agents[0]).toMatchObject({
         agent: "pass-security",
         status: "completed",
@@ -103,6 +109,50 @@ describe("round progress extension", () => {
         finished_at: expect.any(String),
       });
       expect(done.last_activity).toContain("session settled");
+    } finally {
+      process.env = previous;
+    }
+  });
+
+  it("records native tasks[] parallel fanout at tool start, before any progress update", async () => {
+    const root = mkdtempSync(join(tmpdir(), "qcr-progress-"));
+    dirs.push(root);
+    const previous = { ...process.env };
+    process.env.QCR_SANDBOX_ROOT = root;
+    process.env.QCR_SESSION_NAME = "pr-5467";
+    process.env.QCR_PR = "5467";
+    const handlers = new Map<string, PiEventHandler[]>();
+    const pi = { on(name: string, handler: PiEventHandler) { handlers.set(name, [...(handlers.get(name) ?? []), handler]); } };
+    const emit = async (name: string, event: Record<string, unknown> = {}) => {
+      for (const handler of handlers.get(name) ?? []) await handler(event);
+    };
+    try {
+      activate(pi as never);
+      await emit("agent_start");
+      await emit("message_start", { message: { role: "user", content: [{ type: "text", text: [
+        `<!-- qcr-command:cmd-native:${"b".repeat(64)} -->`,
+        "**Worktree**: `/worktree` @ `head-native`",
+        "export QCR_ROUND_NO=10",
+      ].join("\n") }] } });
+      await emit("tool_execution_start", {
+        toolName: "subagent",
+        toolCallId: "parallel-1",
+        args: {
+          tasks: [
+            { agent: "pass-baseline--sol-med", task: "baseline" },
+            { agent: "pass-security--sol-high", task: "security" },
+          ],
+        },
+      });
+
+      const snapshot = parseRoundProgress(readFileSync(join(root, "state", "round-progress", "pr-5467.json"), "utf8"))!;
+      expect(snapshot).toMatchObject({ round_no: 10, head_sha: "head-native" });
+      expect(snapshot.fanout_started_at).toBe(snapshot.first_lens_started_at);
+      expect(snapshot.agents).toEqual(expect.arrayContaining([
+        expect.objectContaining({ execution_id: "parallel-1:pass-baseline--sol-med", status: "running" }),
+        expect.objectContaining({ execution_id: "parallel-1:pass-security--sol-high", status: "running" }),
+      ]));
+      expect(roundExecutionStage(snapshot, ["pass-baseline", "pass-security", "pass-validate"])).toBe("fanout-started");
     } finally {
       process.env = previous;
     }
@@ -131,7 +181,9 @@ describe("round progress extension", () => {
       await emit("message_update");
       const later = JSON.parse(readFileSync(path, "utf8"));
       expect(later.command_accepted_at).toBe(first.command_accepted_at);
+      expect(later.preparing_at).toBe(first.preparing_at);
       expect(later.first_lens_started_at).toBe(first.first_lens_started_at);
+      expect(later.fanout_started_at).toBe(first.fanout_started_at);
       expect(later.agents[0].started_at).toBe(first.agents[0].started_at);
 
       await emit("tool_execution_end", { toolName: "subagent", toolCallId: "lens-1", result: { details: { results: [{ agent: "pass-security", exitCode: 0 }] } } });
@@ -155,19 +207,30 @@ describe("round progress extension", () => {
       session: "pr-5408",
       run_started_at: "2026-08-28T09:00:00Z",
       updated_at: "2026-08-28T09:01:00Z",
-      parent_status: "active",
+      parent_status: "active" as const,
       last_activity_at: "2026-08-28T09:01:00Z",
       last_activity: "working",
       agents: [],
     };
     expect(parseRoundProgress(JSON.stringify(legacy))?.version).toBe(1);
+    expect(roundExecutionStage({
+      ...legacy,
+      version: 2,
+      command_id: "cmd-1",
+      command_sha256: "a".repeat(64),
+      command_accepted_at: "2026-08-28T09:00:10Z",
+      preparing_at: "2026-08-28T09:00:10Z",
+      last_activity: "compact context read",
+    }, ["pass-baseline"])).toBe("preparing");
     expect(parseRoundProgress(JSON.stringify({
       ...legacy,
       version: 2,
       command_id: "cmd-1",
       command_sha256: "a".repeat(64),
       command_accepted_at: "2026-08-28T09:00:10Z",
+      preparing_at: "2026-08-28T09:00:10Z",
       first_lens_started_at: "2026-08-28T09:00:05Z",
+      fanout_started_at: "2026-08-28T09:00:05Z",
     }))).toBeUndefined();
   });
 

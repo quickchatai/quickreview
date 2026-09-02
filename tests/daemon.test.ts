@@ -165,6 +165,167 @@ describe("daemon wiring", () => {
     }
   });
 
+  it("complete pre-fanout failure chain self-heals through the daemon without duplicate ownership", async () => {
+    let clock = new Date("2026-09-02T15:00:00.000Z");
+    store.close();
+    store = new StateStore(":memory:", () => clock);
+    store.upsertPr({
+      number: PR, state: "queued", head_sha: "headsha1", title: "test PR", author: "someone",
+      trigger_ts: clock.toISOString(), trigger_provenance: "human", stale_recheck: 0, migration_gate: 0,
+    });
+    mkdirSync(join(root, "state", "round-progress"), { recursive: true });
+    const recorded: string[] = [];
+    const orders: Array<{ round_no: number; head_sha: string; lenses: string[]; recovery?: unknown }> = [];
+    const killed: number[] = [];
+    const loaded = loadConfig(join(process.cwd(), "tests/fixtures/config.toml"));
+    const cfg = {
+      ...loaded,
+      dry_run: true,
+      daemon: {
+        ...loaded.daemon,
+        max_self_requeues: 2,
+        round_first_pass_max_min: 5,
+        round_passes_max_min: 35,
+        session_command_running_max_min: 45,
+      },
+    };
+    const daemon = createDaemon({
+      cfg,
+      root,
+      store,
+      adapter: fakeAdapter(recorded, join(root, "state", "dryrun")),
+      hooks: {
+        async dispatchRound(order) {
+          orders.push(order);
+          store.createSessionCommand({
+            id: `cmd-${order.round_no}`, pr: order.pr, session: `pr-${order.pr}`,
+            kind: "round", round_no: order.round_no, payload_sha256: `${order.round_no}`.repeat(64),
+            payload_path: `/payload/${order.round_no}.md`, inject_path: `/inject/${order.round_no}.md`,
+            next_check_at: clock.toISOString(),
+          });
+        },
+        async inject() {}, async injectOverseer() {}, async archiveAndClose() {},
+        async killSession(pr) { killed.push(pr); },
+      },
+      now: () => clock,
+      listen: false,
+      log: () => {},
+    });
+    const accept = (roundNo: number, withFanout = false): void => {
+      const id = `cmd-${roundNo}`;
+      const next = new Date(clock.getTime() + 45 * 60_000).toISOString();
+      expect(store.claimSessionCommand(id, `owner-${roundNo}`, next)).toBeDefined();
+      expect(store.markSessionCommandStarted(id, `owner-${roundNo}`, next)).toBe(true);
+      const discovery = orders.find((order) => order.round_no === roundNo)!.lenses.find((lens) => lens !== "pass-validate")!;
+      writeFileSync(join(root, "state", "round-progress", `pr-${PR}.json`), JSON.stringify({
+        version: 2, pr: PR, session: `pr-${PR}`,
+        run_started_at: clock.toISOString(), updated_at: clock.toISOString(), parent_status: "active",
+        command_id: id, command_sha256: `${roundNo}`.repeat(64), command_accepted_at: clock.toISOString(),
+        preparing_at: clock.toISOString(), round_no: roundNo, head_sha: "headsha1",
+        ...(withFanout ? { first_lens_started_at: clock.toISOString(), fanout_started_at: clock.toISOString() } : {}),
+        last_activity_at: clock.toISOString(), last_activity: withFanout ? `${discovery} running` : "compact context preparation",
+        agents: withFanout ? [{
+          execution_id: `fanout-${roundNo}:${discovery}`, agent: `${discovery}--sol-med`, status: "running",
+          duration_ms: 0, tool_count: 0, started_at: clock.toISOString(),
+        }] : [],
+      }));
+    };
+
+    await daemon.pump();
+    for (const roundNo of [1, 2, 3]) {
+      expect(orders.at(-1)?.round_no).toBe(roundNo);
+      accept(roundNo);
+      clock = new Date(clock.getTime() + 5 * 60_000);
+      await daemon.scanRoundStages();
+      if (roundNo < 3) await daemon.pump();
+    }
+
+    const debt = store.openReviewFailure(PR)!;
+    expect(debt).toMatchObject({ stage: "first_pass_start", next_action: "retry_wait", attempts: 2 });
+    expect(debt.next_retry_at).toBe(new Date(clock.getTime() + 15 * 60_000).toISOString());
+    expect(killed).toEqual([PR, PR, PR]);
+    expect(store.runningRounds()).toHaveLength(0);
+
+    clock = new Date(debt.next_retry_at!);
+    expect(await daemon.retryDueReviewFailures()).toBe(1);
+    expect(orders.at(-1)).toMatchObject({ round_no: 4, head_sha: "headsha1", recovery: expect.any(Object) });
+    accept(4, true);
+    await daemon.scanRoundStages();
+
+    expect(store.runningRounds()).toHaveLength(1);
+    expect(store.runningRounds()[0]).toMatchObject({ round_no: 4, fanout_started_at: clock.toISOString() });
+    expect(store.selfRequeueCount(PR, "headsha1")).toBe(0);
+    expect(store.openReviewFailure(PR)).toBeUndefined();
+    expect((store.db.prepare("SELECT COUNT(*) AS c FROM session_commands WHERE pr=?").get(PR) as { c: number }).c).toBe(4);
+    expect(recorded).not.toContain("create_review");
+    expect(await daemon.retryDueReviewFailures()).toBe(0);
+    expect(orders).toHaveLength(4);
+  });
+
+  it("due retry re-enters the one dispatch pump exactly once", async () => {
+    let clock = new Date("2026-09-02T15:00:00.000Z");
+    store.close();
+    store = new StateStore(":memory:", () => clock);
+    store.upsertPr({
+      number: PR, state: "reviewing", head_sha: "headsha1", title: "test PR", author: "someone",
+      trigger_ts: "2026-09-02T14:00:00.000Z", trigger_provenance: "human",
+      stale_recheck: 0, migration_gate: 0,
+    });
+    const sourceRound = store.startRound(PR, "re-review", ["pass-baseline", "pass-validate"], 75);
+    store.stampPostingKey(sourceRound, `v1:${PR}:1:headsha1`);
+    store.createSessionCommand({
+      id: "cmd-prepass", pr: PR, session: `pr-${PR}`, kind: "round", round_no: 1,
+      payload_sha256: "a".repeat(64), payload_path: "/payload/source.md", inject_path: "/inject/source.md",
+      next_check_at: clock.toISOString(),
+    });
+    const failure = store.terminalizeInfrastructureReviewFailure({
+      pr: PR, round_id: sourceRound, round_no: 1, command_id: "cmd-prepass", head_sha: "headsha1",
+      stage: "first_pass_start", detail: "accepted preparation launched no planned discovery lens",
+      attempts: 2, retry_cap: 2, summary: "bounded pre-fanout recovery exhausted",
+    })!;
+    expect(failure.next_retry_at).toBe("2026-09-02T15:15:00.000Z");
+
+    const recorded: string[] = [];
+    const orders: Array<{ round_no: number; head_sha: string; recovery?: unknown }> = [];
+    const daemon = createDaemon({
+      cfg: { ...loadConfig(join(process.cwd(), "tests/fixtures/config.toml")), dry_run: true },
+      root,
+      store,
+      adapter: fakeAdapter(recorded, join(root, "state", "dryrun")),
+      hooks: {
+        async dispatchRound(order) {
+          orders.push(order);
+          store.createSessionCommand({
+            id: `cmd-target-${order.round_no}`, pr: order.pr, session: `pr-${order.pr}`,
+            kind: "round", round_no: order.round_no, payload_sha256: "b".repeat(64),
+            payload_path: `/payload/${order.round_no}.md`, inject_path: `/inject/${order.round_no}.md`,
+            next_check_at: clock.toISOString(),
+          });
+        },
+        async inject() {}, async injectOverseer() {}, async archiveAndClose() {},
+      },
+      listen: false,
+      log: () => {},
+    });
+
+    clock = new Date("2026-09-02T15:15:00.000Z");
+    expect(await daemon.retryDueReviewFailures()).toBe(1);
+    expect(orders).toEqual([expect.objectContaining({ round_no: 2, head_sha: "headsha1", recovery: expect.any(Object) })]);
+    expect(store.roundsFor(PR)).toMatchObject([
+      { round_no: 1, status: "cancelled" },
+      { round_no: 2, status: "running" },
+    ]);
+    expect(store.getSessionCommand("cmd-prepass")?.status).toBe("cancelled");
+    expect(store.getSessionCommand("cmd-target-2")?.status).toBe("pending");
+    expect(store.openReviewFailure(PR)).toBeUndefined();
+    expect(recorded).not.toContain("create_review");
+
+    // Same due tick (or a concurrent timer) owns neither another round nor
+    // another Pi command after the first transaction consumed the debt.
+    expect(await daemon.retryDueReviewFailures()).toBe(0);
+    expect(orders).toHaveLength(1);
+  });
+
   /**
    * the author's "I want a human" is recorded, not dropped.
    *
