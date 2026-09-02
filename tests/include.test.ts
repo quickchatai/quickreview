@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  ALLOWED_COMMANDS_CLAUSE,
   EXECUTION_POLICY_ADDENDUM,
   PASS_ADDENDA,
   VALIDATE_PASS,
@@ -808,7 +809,7 @@ describe("the built pass contract (rules)", () => {
     expect(baseline).toContain("This is a required step, not an optional one");
     // Satisfiable by reading alone — the execution policy is not widened.
     expect(baseline).toContain("satisfiable with grep alone");
-    expect(baseline).toContain("Allowed commands: git, rg, grep, cat, ls, find");
+    expect(baseline).toContain(`Allowed commands: ${ALLOWED_COMMANDS_CLAUSE}.`);
     expect(composeAddendum("pass-baseline")).toContain("shared or global machinery");
     expect(addendaForPass("pass-baseline").map((a) => a.id)).toContain("baseline-shared-machinery");
     expect(addendaForPass("pass-security").map((a) => a.id)).not.toContain("baseline-shared-machinery");
@@ -958,8 +959,9 @@ describe("the built pass contract (rules)", () => {
         if (!text.includes(phrase)) continue;
         expect(text.indexOf(section)).toBeGreaterThan(text.indexOf(phrase));
       }
-      // The policy itself is unchanged and still names the allowlist.
-      expect(text).toContain("Allowed commands: git, rg, grep, cat, ls, find");
+      // The policy itself is unchanged and still names the allowlist — pinned
+      // on the rendered constant, never on a prefix of the list.
+      expect(text).toContain(`Allowed commands: ${ALLOWED_COMMANDS_CLAUSE}.`);
       expect(text).toContain("never re-run or trigger anything");
     }
   });

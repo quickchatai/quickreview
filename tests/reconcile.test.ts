@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
+import type { CheckSummary } from "../src/cigate.js";
 import { parseConfig, type Config } from "../src/config.js";
 import type { PrRef, StalePr } from "../src/github.js";
 import { roundTypeFor } from "../src/dispatch.js";
@@ -72,7 +73,7 @@ class FakeGitHub implements ReconcileAdapter {
     return this.stale;
   }
   /** Checks per head sha; a head with no entry has no checks (`none`). */
-  checksAt = new Map<string, Array<{ name: string; status: string; conclusion: string | null }>>();
+  checksAt = new Map<string, CheckSummary[]>();
 
   async listChecks(ref: string) {
     this.calls.push(`listChecks:${ref}`);
@@ -451,8 +452,8 @@ describe("reconcileOnce", () => {
 describe("withheld-approval backstop", () => {
   // The webhook `ci_completed` is the fast path; this is the reconcile sweep
   // cigate.ts promises for a lost delivery.
-  const green = [{ name: "ci", status: "completed", conclusion: "success" }];
-  const red = [{ name: "ci", status: "completed", conclusion: "failure" }];
+  const green: CheckSummary[] = [{ name: "ci", source: "check_run", status: "completed", conclusion: "success" }];
+  const red: CheckSummary[] = [{ name: "ci", source: "check_run", status: "completed", conclusion: "failure" }];
 
   it("requeues a withheld PR when CI is green at the recorded head (webhook lost)", async () => {
     seed(70, "tracked");

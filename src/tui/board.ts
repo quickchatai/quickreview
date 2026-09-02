@@ -13,7 +13,7 @@ import { ACCENT, ACCENT_BG, HEADING, MUTED, RESET as DRESET, STRONG, WARN, modeB
 import { Frame, displayWidth, fit, rule, sanitizeText, stripAnsi, truncate, wrap } from "./paint.js";
 import type { PiPaneView } from "./pipane.js";
 import type { Health } from "./poll.js";
-import type { LiveAgentProgress, RoundProgressSnapshot } from "../round-progress.js";
+import { lensForAgent, roundExecutionStage, type LiveAgentProgress, type RoundProgressSnapshot } from "../round-progress.js";
 import type { ConnectionDiagnosis } from "./sshtriage.js";
 import { FG, RESET, fmtAge, legendLine, osc8, prUrl, stateColor, verdictChip } from "./theme.js";
 
@@ -299,7 +299,16 @@ function oneLine(value: string): string {
   return sanitizeText(value).replace(/\s+/g, " ").trim();
 }
 
-type CurrentRound = Pick<WhyPayload["rounds"][number], "round_no" | "status" | "started_at" | "deadline_at" | "lenses" | "validate_tier">;
+type CurrentRound = Pick<WhyPayload["rounds"][number], "round_no" | "status" | "started_at" | "deadline_at" | "lenses" | "validate_tier"> & {
+  command_id?: string;
+  command_sha256?: string;
+  head_sha?: string;
+  stage_deadlines?: {
+    first_pass_start: string;
+    passes_complete: string;
+    running_hard_bound: string;
+  };
+};
 
 function currentProgressLines(
   round: CurrentRound,
@@ -319,13 +328,18 @@ function currentProgressLines(
     : "deadline unavailable";
   lines.push(truncate(section("CURRENT REVIEW", `round ${round.round_no} · ${elapsed} elapsed · ${deadlineText}`), width));
 
-  // A sticky session may have processed another wake before this round. Only a
-  // run born at/after the round start is evidence about THIS round.
-  const current = progress && progress.pr > 0 && Number.isFinite(started) && Date.parse(progress.run_started_at) >= started - 2_000
+  // A sticky session may process neighboring wakes at nearly identical times.
+  // Only the exact durable delivery + prompt-derived round/head identity may
+  // paint THIS round; timestamp proximity is not identity.
+  const current = progress?.version === 2
+    && round.command_id !== undefined && progress.command_id === round.command_id
+    && round.command_sha256 !== undefined && progress.command_sha256 === round.command_sha256
+    && round.head_sha !== undefined && progress.head_sha === round.head_sha
+    && progress.round_no === round.round_no
     ? progress
     : undefined;
   const planned = round.lenses.split(",").map((x) => x.trim()).filter(Boolean);
-  const byName = new Map((current?.agents ?? []).map((agent) => [agent.agent, agent]));
+  const byName = new Map((current?.agents ?? []).map((agent) => [lensForAgent(agent.agent), agent]));
 
   if (!current) {
     lines.push(truncate(`  ${FG.dim}? parent · live progress unavailable${RESET}`, width));
@@ -341,7 +355,16 @@ function currentProgressLines(
   const signal = signalAge >= 60_000 ? `SILENT ${durationLabel(signalAge)}` : `signal ${durationLabel(signalAge)} ago`;
   const parentColor = signalAge >= 120_000 ? FG.anomaly : current.parent_status === "active" ? FG.accent : FG.dim;
   const active = current.active_tool ? ` · ${oneLine(current.active_tool)}` : "";
-  lines.push(truncate(`  ${parentColor}parent ${current.parent_status.toUpperCase()} · ${signal}${active}${RESET}`, width));
+  const stage = roundExecutionStage(current, planned);
+  const stageDeadline = stage === "accepted" || stage === "preparing"
+    ? round.stage_deadlines?.first_pass_start
+    : stage === "fanout-started"
+      ? round.stage_deadlines?.passes_complete
+      : undefined;
+  const due = stageDeadline
+    ? ` · stage ${Date.parse(stageDeadline) >= nowMs ? `due in ${durationLabel(Date.parse(stageDeadline) - nowMs)}` : `OVERDUE ${durationLabel(nowMs - Date.parse(stageDeadline))}`}`
+    : "";
+  lines.push(truncate(`  ${parentColor}parent ${current.parent_status.toUpperCase()} · ${stage}${due} · ${signal}${active}${RESET}`, width));
 
   const agentLine = (name: string, agent: LiveAgentProgress | undefined): string => {
     const tier = name === "pass-validate" && round.validate_tier ? ` · ${round.validate_tier}` : "";
@@ -359,7 +382,7 @@ function currentProgressLines(
   for (const name of planned) lines.push(truncate(agentLine(name, byName.get(name)), width));
   // The parent may justify and add a lens outside the dispatch plan. Those
   // agents are real work too; omitting them would make "all agents" false.
-  for (const agent of current.agents.filter((item) => !planned.includes(item.agent))) {
+  for (const agent of current.agents.filter((item) => !planned.includes(lensForAgent(item.agent)))) {
     const rendered = agentLine(agent.agent, agent).replace(`${RESET}`, ` · added${RESET}`);
     lines.push(truncate(rendered, width));
   }
@@ -403,7 +426,10 @@ export function detailLines(
       `${FG.anomaly}${STRONG}FAILED_LOUD${RESET}${FG.anomaly} · ${pr.review_failure.stage}${command}${round} · attempt ${pr.review_failure.attempts}/${pr.review_failure.retry_cap} · ${fmtAge(pr.review_failure.failed_at, now)} old${RESET}`,
       width,
     ));
-    lines.push(truncate(`${FG.anomaly}${oneLine(pr.review_failure.detail)} · press u to recover${RESET}`, width));
+    const retry = pr.review_failure.next_action === "retry_wait" && pr.review_failure.next_retry_at
+      ? `auto retry ${pr.review_failure.next_retry_at.slice(11, 16)}Z · epoch ${pr.review_failure.retry_epoch} · u now`
+      : "press u to recover";
+    lines.push(truncate(`${FG.anomaly}${oneLine(pr.review_failure.detail)} · ${retry}${RESET}`, width));
   }
   lines.push(`${FG.dim}${"─".repeat(Math.max(0, width))}${RESET}`);
   // status.json advances every poll and therefore owns CURRENT timing/plan;

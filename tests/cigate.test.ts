@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ciBlocksApproval,
   classifyCi,
+  latestRunPerName,
   retryWithheldApproval,
   withheldApprovalNote,
   withholdApproval,
@@ -18,7 +19,8 @@ import { parseConfig, GUARDS_DEFAULTS, type Config } from "../src/config.js";
 import { dispatchOnce, type DispatchAdapter } from "../src/dispatch.js";
 import { MutationGate, type GateResult, type MutationIntent } from "../src/gate.js";
 import { makePostingGuard, type GuardAdapter } from "../src/guards.js";
-import type { PrFileEntry } from "../src/github.js";
+import { GitHubAdapter, type PrFileEntry } from "../src/github.js";
+import type { FetchFn, TokenMinter } from "../src/githubAuth.js";
 import { StateStore } from "../src/state.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
 import { applyInterpretation, interpretEvent } from "../src/webhook.js";
@@ -39,7 +41,7 @@ afterEach(() => {
   rmSync(dryrunDir, { recursive: true, force: true });
 });
 
-const run = (status: string, conclusion: string | null, name = "test"): CheckSummary => ({ name, status, conclusion });
+const run = (status: string, conclusion: string | null, name = "test"): CheckSummary => ({ name, source: "check_run", status, conclusion });
 const done = (conclusion: string, name = "test"): CheckSummary => run("completed", conclusion, name);
 
 // ---- the classifier --------------------------------------------------------
@@ -112,9 +114,131 @@ describe("latest-run-per-name", () => {
       classifyCi([at(done("success", "sync"), "2026-08-19T08:00:00Z"), at(run("in_progress", null, "sync"), "2026-08-19T08:10:00Z")]),
     ).toBe("pending");
   });
-  it("entries without started_at resolve by list position — later wins", () => {
+  it("check-runs without started_at resolve by list position — later wins", () => {
     expect(classifyCi([done("cancelled", "sync"), done("success", "sync")])).toBe("green");
     expect(classifyCi([done("success", "sync"), done("cancelled", "sync")])).toBe("red");
+  });
+});
+
+//. The audit read `latestRunPerName`, called it honest and
+// cleared it; one constructed input broke it. Recency defaulted an absent
+// `started_at` to "", so an entry WITHOUT a timestamp always lost the name
+// collision to one WITH a timestamp — and the adapter sets `started_at` on
+// every check-run and on no commit status, so a failing status under the same
+// context as a passing check-run was masked, and red CI read green. The first
+// fix keyed the rule on the timestamp and left the inverse hole: an
+// UNTIMESTAMPED check-run collapsed with a same-named status by list position,
+// and the adapter lists statuses last, so a queued or failed null-start run
+// plus a passing status read green (review round 1). The rule now keys on the
+// KIND the adapter stamps: only check-runs collapse, a status never does.
+// Every row below is an input the real adapter produces, driven through the
+// real adapter's own payload shapes.
+describe("— a same-named commit status is a second check, never a superseded run", () => {
+  const TS = "2026-09-01T10:00:00Z";
+  const minter = { appJwt: () => "jwt", installationToken: async () => "tok", invalidate: () => {} } as unknown as TokenMinter;
+
+  /** The real `listChecks` over the two endpoints it reads, with GitHub's own
+   * response shapes: check-runs carry `name`/`status`/`conclusion`/`started_at`,
+   * the combined status carries `statuses[].context`/`state`. */
+  async function adapterChecks(checkRuns: unknown[], statuses: unknown[]): Promise<CheckSummary[]> {
+    const fetchFn = (async (url: string | URL) => {
+      const u = String(url);
+      const payload = u.includes("/check-runs") ? { check_runs: checkRuns } : u.includes("/status") ? { state: "x", statuses } : null;
+      if (payload === null) throw new Error(`unexpected ${u}`);
+      return { ok: true, status: 200, json: async () => payload, text: async () => JSON.stringify(payload) } as unknown as Response;
+    }) as unknown as FetchFn;
+    const gate = new MutationGate(true, dryrunDir, async () => ({}));
+    return new GitHubAdapter(cfg, minter, gate, fetchFn, "https://api.github.com").listChecks(HEAD);
+  }
+  const passingRun = { name: "ci", status: "completed", conclusion: "success", started_at: TS };
+  const statusOf = (state: string, context = "ci") => ({ context, state });
+
+  it.each([
+    ["failure", "red"],
+    ["error", "red"],
+    ["pending", "pending"],
+  ] as const)("a %s commit status under a passing check-run's name reads %s, in both orders", async (state, expected) => {
+    // The ticket's table, through the adapter: the two of them, the status
+    // alone, and distinct names as the control that nothing else changed.
+    const mixed = await adapterChecks([passingRun], [statusOf(state)]);
+    expect(mixed).toHaveLength(2);
+    expect(classifyCi(mixed)).toBe(expected);
+    // The adapter always lists check-runs first; the classifier must not
+    // depend on that, so the same summaries reversed must agree.
+    expect(classifyCi([...mixed].reverse())).toBe(expected);
+    expect(classifyCi(await adapterChecks([], [statusOf(state)]))).toBe(expected);
+    expect(classifyCi(await adapterChecks([passingRun], [statusOf(state, "other")]))).toBe(expected);
+  });
+
+  it("a passing status beside a passing run of its name is still green — the fix admits only what is really there", async () => {
+    expect(classifyCi(await adapterChecks([passingRun], [statusOf("success")]))).toBe("green");
+  });
+
+  it("the adapter stamps the kind — it is the only writer of `source`", async () => {
+    const [runRow, statusRow] = await adapterChecks([passingRun], [statusOf("success")]);
+    expect(runRow).toMatchObject({ name: "ci", source: "check_run", started_at: TS });
+    expect(statusRow).toMatchObject({ name: "ci", source: "status" });
+    expect("started_at" in statusRow!).toBe(false);
+  });
+
+  it("a check-run with a null started_at is never read as superseded by an older timestamped run", () => {
+    // GitHub's schema makes started_at nullable on check-runs; the adapter
+    // passes null through. "Unknown when" is not "older than everything".
+    const queued: CheckSummary = { name: "ci", source: "check_run", status: "queued", conclusion: null, started_at: null };
+    const failed: CheckSummary = { name: "ci", source: "check_run", status: "completed", conclusion: "failure", started_at: null };
+    const passed: CheckSummary = { source: "check_run", ...passingRun };
+    expect(classifyCi([passed, queued])).toBe("pending");
+    expect(classifyCi([queued, passed])).toBe("pending");
+    expect(classifyCi([passed, failed])).toBe("red");
+    expect(classifyCi([failed, passed])).toBe("red");
+  });
+
+  it.each([
+    ["queued", null, "pending"],
+    ["completed", "failure", "red"],
+  ] as const)("a %s/%s check-run with a null started_at is never masked by a passing status of its name, in either order", async (status, conclusion, expected) => {
+    // Review round 1: the timestamp-keyed rule collapsed an
+    // untimestamped check-run with a same-named status by list position, and
+    // the adapter always lists statuses after check-runs — so the status won
+    // and the head read green on the gate route while guards.sh said red.
+    const nullStart = { name: "ci", status, conclusion, started_at: null };
+    const mixed = await adapterChecks([nullStart], [statusOf("success")]);
+    expect(mixed).toHaveLength(2);
+    expect(classifyCi(mixed)).toBe(expected);
+    expect(classifyCi([...mixed].reverse())).toBe(expected);
+    // Control: distinct names answer the same, so nothing but the collapse changed.
+    expect(classifyCi(await adapterChecks([nullStart], [statusOf("success", "other")]))).toBe(expected);
+  });
+
+  it("states the rule: only check-runs collapse (timed: latest start, equal → later; untimed: last per name); a status never does", () => {
+    const a: CheckSummary = { name: "ci", source: "check_run", status: "completed", conclusion: "success", started_at: TS };
+    const b: CheckSummary = { name: "ci", source: "check_run", status: "completed", conclusion: "failure", started_at: TS };
+    const older: CheckSummary = { name: "ci", source: "check_run", status: "completed", conclusion: "cancelled", started_at: "2026-09-01T09:00:00Z" };
+    const u1: CheckSummary = { name: "ci", source: "check_run", status: "completed", conclusion: "failure" };
+    const u2: CheckSummary = { name: "ci", source: "check_run", status: "completed", conclusion: "success", started_at: "" }; // "" carries no time
+    const s1: CheckSummary = { name: "ci", source: "status", status: "completed", conclusion: "failure" };
+    const s2: CheckSummary = { name: "ci", source: "status", status: "completed", conclusion: "success" };
+    // Equal start: the later list position wins, in either order.
+    expect(latestRunPerName([a, b])).toEqual([b]);
+    expect(latestRunPerName([b, a])).toEqual([a]);
+    // A later start beats an earlier one wherever it sits in the list.
+    expect(latestRunPerName([a, older])).toEqual([a]);
+    expect(latestRunPerName([older, a])).toEqual([a]);
+    // One timestamped survivor AND one untimestamped survivor per name, list order kept.
+    expect(latestRunPerName([older, u1, a, u2])).toEqual([a, u2]);
+    expect(latestRunPerName([u1, a])).toEqual([u1, a]);
+    // Among untimestamped check-runs the last one wins.
+    expect(latestRunPerName([u1, u2])).toEqual([u2]);
+    expect(latestRunPerName([u2, u1])).toEqual([u1]);
+    // A status is never collapsed: not with a timestamped run of its name, not
+    // with an untimestamped one, not with another status — in either order.
+    expect(latestRunPerName([a, s1])).toEqual([a, s1]);
+    expect(latestRunPerName([s1, a])).toEqual([s1, a]);
+    expect(latestRunPerName([u1, s2])).toEqual([u1, s2]);
+    expect(latestRunPerName([s2, u1])).toEqual([s2, u1]);
+    expect(latestRunPerName([s1, s2])).toEqual([s1, s2]);
+    // The whole zoo at once: one timed survivor, one untimed survivor, every status.
+    expect(latestRunPerName([older, s1, u1, a, u2, s2])).toEqual([s1, a, u2, s2]);
   });
 });
 

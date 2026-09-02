@@ -101,14 +101,18 @@ describe("validateCommand — whitelist", () => {
     expect(validateCommand({ command: "retry-thread-decision", comment_id: "5001" }).ok).toBe(false);
     expect(validateCommand({ command: "retry-thread-decision", comment_id: 5001, force: true }).ok).toBe(false);
     expect(validateCommand("nope").ok).toBe(false);
-    // The overseer's frozen system prompt still advertises the retired
-    // command, so the rejection must say WHY, not just "unknown".
+    // A session on an older prompt can still emit the retired command, so
+    // the rejection must say WHY, not just "unknown".
     const retired = validateCommand({ command: "mark-escalation-worthy", pr: 1, reason: "x" });
     // Narrow before reading `reason` — it lives only on the refusal arm, and
     // reading it off the union asserted against `undefined`.
     if (retired.ok) throw new Error("mark-escalation-worthy must be refused");
     expect(retired.reason).toMatch(/RETIRED on 2026-08-18/);
-    expect(retired.reason).toMatch(/NEEDS_HUMAN/);
+    // The hint is read by a model. It used to say "a PR only stops for a
+    // person when a round returns NEEDS_HUMAN" — the park retired
+    // (MC-48). MUTATION: restore that sentence — both fail.
+    expect(retired.reason).not.toMatch(/NEEDS_HUMAN|\bpark/);
+    expect(retired.reason).toMatch(/decides APPROVE or REQUEST_CHANGES on the merits/);
     expect(validateCommand([{ command: "rerun-round", pr: 1 }]).ok).toBe(false);
     expect(validateCommand(null).ok).toBe(false);
   });

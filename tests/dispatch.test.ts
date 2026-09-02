@@ -149,6 +149,90 @@ describe("roundTypeFor", () => {
   });
 });
 
+describe("pre-fanout recovery dispatch", () => {
+  it("binds one daemon recovery instruction to the exact ordinary successor order", async () => {
+    queue(5467, "2026-09-02T15:00:00Z", { head: "recovery-head" });
+    const completed = store.startRound(5467, "first", ["pass-baseline"], 75);
+    store.finishRound(completed, "REQUEST_CHANGES", null);
+    const prior = store.startRound(5467, "re-review", ["pass-baseline"], 75);
+    store.createSessionCommand({
+      id: "cmd-old", pr: 5467, session: "pr-5467", kind: "round", round_no: 2,
+      payload_sha256: "a".repeat(64), payload_path: "/payload/old.md", inject_path: "/inject/old.md",
+      next_check_at: "2026-09-02T15:00:00Z",
+    });
+    store.failPendingSessionCommand("cmd-old", "pre-fanout stall");
+    store.markRoundCancelled(prior, "pre-fanout stall", "infrastructure_failure");
+    store.recordRoundRecoveryInstruction({
+      pr: 5467,
+      target_round_no: 3,
+      target_head_sha: "recovery-head",
+      stage: "first_pass_start",
+      source_incident_id: null,
+      source_command_id: "cmd-old",
+      source_round_no: 2,
+      immediate_attempt: 2,
+      retry_epoch: 1,
+    });
+    adapter.files.set(5467, [file("backend/service.py", 20, 3)]);
+    const { hooks, orders } = recordingHooks();
+    const template = readFileSync(resolve(process.cwd(), "prompts/round-re-review.md"), "utf8");
+
+    await dispatchOnce({
+      cfg: baseCfg,
+      store,
+      adapter,
+      hooks,
+      renderPrompt: (order, memory) => renderRoundPrompt(template, order, memory),
+    });
+
+    expect(orders).toHaveLength(1);
+    expect(orders[0]!.order).toMatchObject({
+      pr: 5467,
+      round_no: 3,
+      head_sha: "recovery-head",
+      recovery: {
+        stage: "first_pass_start",
+        source_command_id: "cmd-old",
+        source_round_no: 2,
+        target_head_sha: "recovery-head",
+        retry_epoch: 1,
+      },
+    });
+    expect(orders[0]!.prompt).toContain("RECOVERY — PRE-FANOUT STALL");
+    expect(orders[0]!.prompt).toContain("launch every planned discovery pass");
+  });
+
+  it("never applies an orphaned recovery instruction to a newer prepared head", async () => {
+    queue(5468, "2026-09-02T15:00:00Z", { head: "old-head" });
+    const prior = store.startRound(5468, "first", ["pass-baseline"], 75);
+    store.createSessionCommand({
+      id: "cmd-old-head", pr: 5468, session: "pr-5468", kind: "round", round_no: 1,
+      payload_sha256: "b".repeat(64), payload_path: "/payload/old-head.md", inject_path: "/inject/old-head.md",
+      next_check_at: "2026-09-02T15:00:00Z",
+    });
+    store.failPendingSessionCommand("cmd-old-head", "pre-fanout stall");
+    store.markRoundCancelled(prior, "pre-fanout stall", "infrastructure_failure");
+    store.recordRoundRecoveryInstruction({
+      pr: 5468, target_round_no: 2, target_head_sha: "old-head", stage: "first_pass_start",
+      source_incident_id: null, source_command_id: "cmd-old-head", source_round_no: 1,
+      immediate_attempt: 2, retry_epoch: 0,
+    });
+    queue(5468, "2026-09-02T15:01:00Z", { head: "new-head" });
+    adapter.files.set(5468, [file("backend/service.py", 20, 3)]);
+    const { hooks, orders } = recordingHooks();
+
+    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+
+    expect(orders).toHaveLength(1);
+    expect(orders[0]!.order).toMatchObject({ round_no: 2, head_sha: "new-head" });
+    expect(orders[0]!.order.recovery).toBeUndefined();
+    const mismatch = store.db.prepare(
+      "SELECT payload FROM events WHERE kind='round_recovery_instruction_not_applied' AND pr=5468",
+    ).get() as { payload: string };
+    expect(JSON.parse(mismatch.payload)).toMatchObject({ stored_head_sha: "old-head", prepared_head_sha: "new-head" });
+  });
+});
+
 describe("recording at round start", () => {
   it("stamps the diffstat off the files list and the pr_state trigger_ts", async () => {
     queue(21, "2026-08-13T09:00:00Z");
