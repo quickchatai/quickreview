@@ -109,23 +109,30 @@ export type AppSelfConfigKind = (typeof APP_SELF_CONFIG_KINDS)[number];
  */
 export type ReviewPurpose = "migration_precheck" | "escalation";
 
+/**
+ * The identity fields are `readonly` for the same reason the gate freezes the
+ * snapshot it hands a guard (see `execute`): a guard's authority ends at
+ * `body` and `note` (GUARD_REWRITABLE_FIELDS), and a first-party guard that
+ * assigns to `intent.kind` should fail to compile before it fails at runtime.
+ * Rewrites are spreads into a new object, which is what the shipped guards do.
+ */
 export interface MutationIntent {
-  kind: MutationKind;
+  readonly kind: MutationKind;
   /** REST method+path for API intents; "git" for pushes. */
-  method: "POST" | "PATCH" | "PUT" | "DELETE" | "git";
-  path: string;
+  readonly method: "POST" | "PATCH" | "PUT" | "DELETE" | "git";
+  readonly path: string;
   body?: unknown;
   /** Human-readable one-liner for the dry-run record / event log. */
   note: string;
-  pr?: number;
+  readonly pr?: number;
   /** Internal provenance for a mechanically-authored review. Absent means a
    * substantive review. It never enters the GitHub body; posting guards use
    * it only to keep mechanical pre-check output from claiming the head. */
-  reviewPurpose?: ReviewPurpose;
+  readonly reviewPurpose?: ReviewPurpose;
   /** Execute even in dry-run. Only `supersede_own_review` may set this: the
    * session-side posting leakage is accepted (the owner, 2026-08-13), so the
    * cleanup of that leakage must be real too. Noise-reducing only. */
-  forceLive?: boolean;
+  readonly forceLive?: boolean;
 }
 
 export interface GateResult {
@@ -159,17 +166,20 @@ export type MutationExecutor = (intent: MutationIntent) => Promise<unknown>;
  * The seam cannot widen. `execute` throws if a performer accompanies any method
  * other than `"git"` OR any kind other than `push_branch` — `method` is a free
  * field with no relation to `kind`, so the method check alone would let any
- * kind ride the performer. Both are checked again on the intent a guard hands
- * back (`admit` runs twice), and a guard cannot change either field in the
- * first place (`GUARD_REWRITABLE_FIELDS`).
+ * kind ride the performer. Both are checked again on the intent that comes out
+ * of the guard step (`admit` runs twice), and that intent is compared field by
+ * field against the frozen snapshot the guard was handed
+ * (`GUARD_REWRITABLE_FIELDS`), so a guard has no way to change either.
  */
 export type GitPerformer = () => Promise<unknown>;
 
 /** A guard's answer: refuse (`block`), or let it through — optionally with a
  * rewritten intent (the human-approval downgrade posts a COMMENT instead of a
- * REQUEST_CHANGES). Returning `{}` means "no opinion". A rewrite may differ
- * from the admitted intent in `body` and `note` ONLY (GUARD_REWRITABLE_FIELDS);
- * the gate refuses any other difference. */
+ * REQUEST_CHANGES). Returning `{}` means "no opinion". The intent a guard
+ * receives is a FROZEN snapshot (in-place edits throw); the intent that goes
+ * on is a fresh copy of whatever the guard returned (or the snapshot itself),
+ * and it may differ from the snapshot in `body` and `note` ONLY
+ * (GUARD_REWRITABLE_FIELDS) — the gate refuses any other difference. */
 export interface GuardDecision {
   block?: string;
   intent?: MutationIntent;
@@ -197,6 +207,19 @@ export interface GuardDecision {
  * shape that left this seam open. So a guard's authority is stated positively
  * and exhaustively. A field added to MutationIntent later is identity by
  * default and stays un-rewritable until someone puts it here on purpose.
+ *
+ * How the comparison is made to mean something (review, round 1): a
+ * check on what a guard RETURNS is only a check if the guard cannot change the
+ * object it was HANDED — `MutationIntent` is a plain object, and a guard that
+ * assigned `intent.kind = …` and returned `{}` (or returned that same object)
+ * executed the assigned kind through the compiled gate. So `execute` snapshots
+ * the admitted intent into a FROZEN shallow copy before any guard sees it
+ * (strict-mode ESM: the assignment throws inside the guard), snapshots the
+ * returned intent again into a plain copy (so a getter cannot answer one thing
+ * to this check and another to the executor), compares the two, and
+ * re-admits the copy that will execute — unconditionally, whether or not the
+ * guard returned an intent. The snapshot is shallow on purpose: `body` is the
+ * guard's to rewrite, and re-admission reads it by value after the guard.
  */
 export const GUARD_REWRITABLE_FIELDS = ["body", "note"] as const satisfies readonly (keyof MutationIntent)[];
 
@@ -258,8 +281,8 @@ function admit(intent: MutationIntent, perform: GitPerformer | undefined): void 
   }
   // The git performer exists for `method: "git"` and nothing else:
   // otherwise it would be a second executor, i.e. a way to run an arbitrary
-  // mutation the REST executor never saw. Checked before the guards so the
-  // refusal is unconditional.
+  // mutation the REST executor never saw. Refused regardless of what any guard
+  // says — admission is not a guard's to soften.
   if (perform && intent.method !== "git") {
     throw new Error(`gate: a git performer is only allowed for method "git", not ${intent.method} (${intent.kind})`);
   }
@@ -311,8 +334,13 @@ export class MutationGate {
   }
 
   async execute(intentIn: MutationIntent, perform?: GitPerformer): Promise<GateResult> {
-    let intent = intentIn;
-    admit(intent, perform);
+    admit(intentIn, perform);
+    // What was admitted, as a FROZEN shallow snapshot. The guards see this
+    // object and nothing else: an in-place assignment to it throws (strict-mode
+    // ESM), so the only way a guard can change anything is to RETURN a new
+    // intent, and that is the one thing the gate checks. The caller's object
+    // is neither handed on nor executed.
+    let intent: MutationIntent = Object.freeze({ ...intentIn });
     // Posting-time guards run BEFORE the dry-run branch: a mutation a guard
     // refuses is neither executed nor recorded, so the dry-run evidence shows
     // the same behaviour the live path would have had.
@@ -323,21 +351,27 @@ export class MutationGate {
         await this.guard.after?.(intent, blocked);
         return blocked;
       }
-      if (decision.intent) {
-        // A guard may soften the mutation (guards 1 and 4 rewrite the review
-        // body and the note), never change which mutation it is: every field
-        // outside GUARD_REWRITABLE_FIELDS must come back identical.
-        guardRewriteCheck(intent, decision.intent);
-        intent = decision.intent;
-        // And what executes is re-admitted IN FULL — kind against
-        // MUTATION_KINDS, forceLive against its single permitted kind, the
-        // performer's method/kind, reviewPurpose against the rewritten body —
-        // on the object that will execute, not inferred from the check above.
-        // Only the reviewPurpose leg can still fail here today (guard 1 really
-        // does rewrite the event); the rest is what keeps that true if the
-        // field list is ever widened.
-        admit(intent, perform);
-      }
+      // Whatever came back — a rewrite, or the snapshot itself when the guard
+      // had no opinion — is copied ONCE into a plain object, and that copy is
+      // what is compared, admitted and executed. Copying is what makes the
+      // comparison final: a returned object with a getter (or a proxy) could
+      // otherwise answer this check with one value and the executor with
+      // another. Both checks run unconditionally; `return {}` is not a way
+      // around them.
+      const post: MutationIntent = Object.freeze({ ...(decision.intent ?? intent) });
+      // A guard may soften the mutation (guards 1 and 4 rewrite the review
+      // body and the note), never change which mutation it is: every field
+      // outside GUARD_REWRITABLE_FIELDS must be identical to the snapshot.
+      guardRewriteCheck(intent, post);
+      // And what executes is re-admitted IN FULL — kind against
+      // MUTATION_KINDS, forceLive against its single permitted kind, the
+      // performer's method/kind, reviewPurpose against the rewritten body —
+      // on the object that will execute, not inferred from the check above.
+      // Only the reviewPurpose leg can still fail here today (guard 1 really
+      // does rewrite the event); the rest is what keeps that true if the
+      // field list is ever widened.
+      admit(post, perform);
+      intent = post;
     }
     // The app-self-config class (see APP_SELF_CONFIG_KINDS): executes for real
     // even in dry-run — the ratified rule-1 amendment — and every execution is
@@ -362,10 +396,10 @@ export class MutationGate {
     }
     // A `method: "git"` intent runs its performer; everything else runs the
     // REST executor (which still throws on "git", so a git intent that arrives
-    // without a performer cannot execute). By this line `intent` has passed
-    // admission — twice, if a guard rewrote it — and the rewrite cannot have
-    // touched `method` or `kind`, so the performer only ever runs against the
-    // push_branch it was handed in for.
+    // without a performer cannot execute). By this line `intent` is a frozen
+    // copy that has passed admission — twice, if a guard was installed — and
+    // that matched the admitted snapshot on `method` and `kind`, so the
+    // performer only ever runs against the push_branch it was handed in for.
     const response = perform ? await perform() : await this.executor(intent);
     const executed: GateResult = { executed: true, response };
     await this.guard?.after?.(intent, executed);

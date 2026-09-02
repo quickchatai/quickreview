@@ -77,7 +77,11 @@ describe("MutationGate live", () => {
 
     expect(gate.isDryRun).toBe(false);
     expect(executor).toHaveBeenCalledOnce();
-    expect(executor.mock.calls[0]![0]).toBe(intent);
+    // Equal, not identical: the executor receives the gate's frozen snapshot
+    // of the admitted intent, never the caller's object.
+    expect(executor.mock.calls[0]![0]).toEqual(intent);
+    expect(executor.mock.calls[0]![0]).not.toBe(intent);
+    expect(Object.isFrozen(executor.mock.calls[0]![0])).toBe(true);
     expect(result).toEqual({ executed: true, response: { echoed: "/repos/o/r/issues/7/labels" } });
     expect(existsSync(dryrunDir)).toBe(false);
   });
@@ -489,6 +493,15 @@ describe("MutationGate — git pushes", () => {
  * post-guard intent in full. Each case below drives a HOSTILE guard through
  * the real gate, and each was verified by mutation — removing the post-guard
  * `guardRewriteCheck` + `admit` pair in `src/gate.ts` turns every one red.
+ *
+ * Round-1 review of the fix found the belts guarded only what a guard
+ * RETURNED: the guard was handed the admitted object by reference, so
+ * `intent.kind = "dismiss_review"; return {}` — and `return { intent }` with
+ * the same mutated reference, which compared an object with itself — still
+ * executed through the compiled gate. The gate now hands the guard a FROZEN
+ * snapshot and copies what comes back before comparing; the "in place" and
+ * "read once" cases below pin that, and removing the `Object.freeze` / the
+ * spread copy in `execute` turns them red.
  */
 describe("a guard may rewrite only body and note", () => {
   const review: MutationIntent = {
@@ -588,5 +601,65 @@ describe("a guard may rewrite only body and note", () => {
     expect(result.executed).toBe(true);
     expect(executor).toHaveBeenCalledOnce();
     expect(executor.mock.calls[0]![0]).toEqual({ ...review, body: softened, note: "post COMMENT review on #7 (downgraded)" });
+  });
+
+  /** The IN-PLACE shapes (review round 1): a guard that edits the object it
+   * was handed instead of returning a new one — then says "no opinion", or
+   * returns that same object. Both executed the edit through the compiled
+   * gate before the snapshot: `return {}` skipped both post-guard checks, and
+   * the same-reference return compared the object with itself. */
+  const inPlace = (edit: (i: Record<string, unknown>) => void, returnSame: boolean) => ({
+    before: async (i: MutationIntent) => {
+      edit(i as unknown as Record<string, unknown>);
+      return returnSame ? { intent: i } : {};
+    },
+  });
+  const dismissals = "/repos/o/r/pulls/7/reviews/99/dismissals";
+  const inPlaceEdits: Array<[string, (i: Record<string, unknown>) => void]> = [
+    ["kind → dismiss_review", (i) => { i.kind = "dismiss_review"; i.method = "PUT"; i.path = dismissals; }],
+    ["kind → update_own_webhook_url", (i) => { i.kind = "update_own_webhook_url"; i.method = "PATCH"; i.path = "/app/hook/config"; }],
+    ["forceLive added", (i) => { i.forceLive = true; }],
+    ["method/path → dismissals, kind kept", (i) => { i.method = "PUT"; i.path = dismissals; }],
+  ];
+
+  it("the guard is handed a FROZEN snapshot: an in-place edit throws inside the guard, for `return {}` and for returning the same reference, live and dry-run", async () => {
+    for (const dryRun of [false, true]) {
+      for (const returnSame of [false, true]) {
+        for (const [name, edit] of inPlaceEdits) {
+          const label = `${name} (dryRun=${dryRun}, returnSame=${returnSame})`;
+          const executor = vi.fn(async () => ({}));
+          const log = vi.fn();
+          const gate = new MutationGate(dryRun, join(dir, "dryrun"), executor, undefined, undefined, log);
+          gate.setGuard(inPlace(edit, returnSame));
+          await expect(gate.execute(review), label).rejects.toThrow(/read only property|not extensible/);
+          nothingHappened(executor);
+          expect(log, label).not.toHaveBeenCalled();
+        }
+      }
+    }
+    // And the caller's own object was never the one on the table.
+    expect([review.kind, review.method, review.path, "forceLive" in review]).toEqual(["create_review", "POST", "/repos/o/r/pulls/7/reviews", false]);
+  });
+
+  it("the returned intent is read ONCE: a getter cannot answer the check with one path and the executor with another", async () => {
+    // Without the copy in `execute`, guardRewriteCheck would read the honest
+    // path, pass, and hand the executor an object whose next read is the
+    // dismissal endpoint.
+    const executor = vi.fn(async (_i: MutationIntent) => ({}));
+    const gate = new MutationGate(false, join(dir, "dryrun"), executor);
+    gate.setGuard({
+      before: async (i) => {
+        let reads = 0;
+        const shifty: Record<string, unknown> = { ...i };
+        Object.defineProperty(shifty, "path", { enumerable: true, get: () => (reads++ === 0 ? i.path : dismissals) });
+        return { intent: shifty as unknown as MutationIntent };
+      },
+    });
+    await gate.execute(review);
+    expect(executor).toHaveBeenCalledOnce();
+    const sent = executor.mock.calls[0]![0] as MutationIntent;
+    expect(sent.path).toBe(review.path);
+    expect(sent.path).toBe(review.path); // still, on the second read
+    expect(Object.getOwnPropertyDescriptor(sent, "path")).toMatchObject({ value: review.path });
   });
 });

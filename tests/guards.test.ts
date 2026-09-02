@@ -245,8 +245,7 @@ describe("guard 2 — the same head is never reviewed twice", () => {
 
   it("does not let a mechanical migration pre-check COMMENT mark the head reviewed", async () => {
     const { gate, executor } = harness();
-    const intent = reviewIntent("COMMENT");
-    intent.reviewPurpose = "migration_precheck";
+    const intent: MutationIntent = { ...reviewIntent("COMMENT"), reviewPurpose: "migration_precheck" };
 
     expect((await gate.execute(intent)).executed).toBe(true);
     expect(executor).toHaveBeenCalledTimes(1); // still gated and posted
