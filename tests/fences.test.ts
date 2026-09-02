@@ -38,6 +38,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ALLOWED_PROGRAMS, checkBashCommand } from "../extensions/bash-guard.js";
 import { ALLOWED_COMMANDS_CLAUSE, EXECUTION_POLICY_ADDENDUM, PASS_ADDENDA, buildAgents, identityVars } from "../src/include.js";
+import { postTag } from "../src/severity.js";
 import { renderOverseerSystemPrompt } from "../src/templates.js";
 import { loadProfileAddenda } from "../src/profiles.js";
 import { INITIAL_STATE, transition, type SmEvent } from "../src/statemachine.js";
@@ -574,24 +575,54 @@ describe("what a built pass is told it may run is exactly what the guard lets th
    * The sentence lists PROGRAMS, and the guard admits a few SHAPES beyond
    * any program: `cd` (a builtin — its argument is a path), `sh -n <file>`
    * (a syntax check, the only `sh` form), an `env`/`VAR=val` prefix in front
-   * of an allowed program, and the sanctioned `scripts/*.sh` — directly or
+   * of an ALLOWED program, and the sanctioned `scripts/*.sh` — directly or
    * via `bash` — which are the session's posting route and are described to
    * it separately. So "advertised ⇒ admitted" is the direction the fence
-   * above holds, and the prompt UNDER-advertises by exactly this list, which
-   * is harmless for a leaf. This test keeps that list true: a shape added to
-   * the guard without a line here, or one removed, fails.
+   * above holds, and the prompt UNDER-advertises by these shapes, which is
+   * harmless for a leaf.
+   *
+   * What this test holds, precisely: each documented shape is ADMITTED and
+   * is genuinely a shape rather than a program the sentence forgot (the
+   * token the guard resolves is either a non-program — `cd`, `sh`, `bash`, a
+   * script path — or, for the prefix forms, an already-advertised program);
+   * and a fixed list of near-misses is REFUSED. It is an enumeration, not a
+   * derivation: a NEW shape admitted by the guard does not fail here — the
+   * "advertised ⇒ admitted" fence above and the guard's own suite are where a
+   * widened allowlist shows — but a documented shape narrowing, or a
+   * near-miss opening, does.
    *
    * MUTATION: make `cd` fall through to the allowlist in checkProgram — the
    * `cd /tmp` probe is then refused and this fails.
    */
-  it("the guard's admissions beyond the advertised programs are exactly the documented shapes", () => {
-    for (const cmd of ["cd /tmp", "sh -n scripts/post-review.sh", "env FOO=1 cat README.md", "FOO=1 cat README.md", "bash scripts/post-review.sh", "scripts/reply-thread.sh 5 1 reply.md"]) {
+  it("the guard admits the documented shapes beyond the advertised programs, and refuses their near-misses", () => {
+    // [command, the token the guard resolves as the program]
+    const shapes: readonly (readonly [string, string])[] = [
+      ["cd /tmp", "cd"],
+      ["sh -n scripts/post-review.sh", "sh"],
+      ["env FOO=1 cat README.md", "cat"],
+      ["FOO=1 cat README.md", "cat"],
+      ["bash scripts/post-review.sh", "bash"],
+      ["scripts/reply-thread.sh 5 1 reply.md", "scripts/reply-thread.sh"],
+    ];
+    for (const [cmd, program] of shapes) {
       const r = checkBashCommand(cmd);
       expect(r.allowed, `documented shape refused: ${cmd} — ${r.reason ?? ""}`).toBe(true);
-      expect(ALLOWED_PROGRAMS, `${cmd} is a shape, not a program the sentence should list`).not.toContain(cmd.split(" ")[0]);
+      if (program === "cat") {
+        // A prefix is a shape only because what follows it is still vetted:
+        // the program after the prefix must be one the sentence advertises.
+        expect(ALLOWED_PROGRAMS, `${cmd}: the prefixed program must be advertised`).toContain(program);
+      } else {
+        expect(ALLOWED_PROGRAMS, `${cmd}: '${program}' is a shape, not a program the sentence should list`).not.toContain(program);
+      }
     }
-    // …and the shapes are exactly that narrow.
-    for (const cmd of ["sh scripts/post-review.sh", "bash -c ls", "scripts/rogue.sh", "pwd", "command -v git", "type ls", "[ -f README.md ]"]) {
+    // …and the shapes are exactly that narrow: the other `sh` form, `bash -c`,
+    // an unsanctioned script, other builtins — and a prefix in front of a
+    // program the sentence does NOT advertise, which is what makes the prefix
+    // a shape rather than a bypass.
+    for (const cmd of [
+      "sh scripts/post-review.sh", "bash -c ls", "scripts/rogue.sh", "pwd", "command -v git", "type ls", "[ -f README.md ]",
+      "env FOO=1 awk '{print $1}' README.md", "FOO=1 pwd", "env FOO=1 python3 x.py",
+    ]) {
       expect(checkBashCommand(cmd).allowed, `${cmd} must be refused`).toBe(false);
     }
   });
@@ -635,5 +666,44 @@ describe("what a built pass is told it may run is exactly what the guard lets th
     const compiled = (await import(dist)) as { EXECUTION_POLICY_ADDENDUM: string };
     expect(compiled.EXECUTION_POLICY_ADDENDUM).toBe(EXECUTION_POLICY_ADDENDUM);
     expect(compiled.EXECUTION_POLICY_ADDENDUM).not.toMatch(/\bawk\b/);
+  });
+});
+
+describe("the prose beside the posting map says what the map does (MC-45)", () => {
+  /**
+   * `src/severity.ts` is where the directive gate was first built and
+   * where reshaped it, and its module header outlived both: it kept
+   * asserting that a first-party directive injection "never blocks" and
+   * "posts as a [question]" while `postTag`, four lines below, mapped exactly
+   * that finding to a blocker. A header that contradicts its own function is
+   * the MC-45 defect, and a grep-shaped sweep missed it twice because the
+   * paragraph also mentioned the park's retirement, which READ as fixed.
+   *
+   * The fence pairs the two halves: the behaviour (a surviving P0/P1/P2
+   * injection on a first-party directive path blocks) and the prose (no
+   * "never blocks", no "posts as a [question]", no present-tense "parks").
+   *
+   * MUTATION: put "never blocks — directive text inside a directive file is
+   * the file doing its job. The finding posts as a [question]" back into the
+   * header — fails. Restore "the ONLY session-side input that parks a PR" on
+   * `needsHuman` — fails.
+   */
+  it("src/severity.ts no longer claims a first-party directive injection never blocks, and postTag agrees", () => {
+    const src = readFileSync(join(ROOT, "src", "severity.ts"), "utf8");
+    // The directive paragraph is the last one of the module header; the
+    // paragraph above it legitimately says `contrived` "never blocks".
+    const header = src.slice(0, src.indexOf("\nimport "));
+    const directive = header.slice(header.indexOf("//"));
+    expect(directive.length, "the paragraph is the header's last").toBeGreaterThan(0);
+    expect(directive).toMatch(/FT-\d{4}/);
+    expect(directive).not.toMatch(/never blocks/);
+    expect(directive).not.toMatch(/posts as a \[question\]/);
+    expect(src, "present-tense park narration").not.toMatch(/\bparks\b/);
+    for (const path of ["CLAUDE.md", ".claude/skills/x/SKILL.md", "prompts/system.md"]) {
+      const ctx = { kind: "injection", path };
+      expect(postTag("P0", 1, "routine", ctx), path).toBe("blocker");
+      expect(postTag("P1", 0.9, "routine", ctx), path).toBe("blocker");
+      expect(postTag("P2", 0.9, "routine", ctx), path).toBe("blocker");
+    }
   });
 });
