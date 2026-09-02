@@ -187,7 +187,9 @@ export interface MemorySweep {
    * NOT_FOUND is deliberately NOT recorded here: a root or category nobody
    * has written into yet is ABSENT (the server 404s it until the first write
    * creates it — see `create()`), and absent is known-empty, not unreadable;
-   * an entry listed a moment ago and gone now is a race, not an outage. */
+   * an entry listed a moment ago and gone now is a race, not an outage — but
+   * EVERY listed entry gone is recorded here, because a listing the content
+   * contradicts cannot vouch for an empty head. */
   unread: string[];
 }
 
@@ -310,11 +312,13 @@ export class OpenVikingStore implements MemoryStore {
     const unread: string[] = [];
     const files = await this.listFiles(unread);
     const entries: MemoryEntry[] = [];
+    let vanished = 0;
     await pool(files, this.concurrency, async (file) => {
       const uri = this.uriOf(file.id);
       const res = await this.client.readContent(uri);
       if (!res.ok) {
-        if (res.code !== "NOT_FOUND") unread.push(`read ${uri}: ${res.message}`);
+        if (res.code === "NOT_FOUND") vanished += 1;
+        else unread.push(`read ${uri}: ${res.message}`);
         return;
       }
       const entry = entryFrom(file.id, res.result, file.modTime);
@@ -322,6 +326,14 @@ export class OpenVikingStore implements MemoryStore {
       if (entry.tags.some((t) => t.toLowerCase() === RETIRED_TAG)) return;
       entries.push(entry);
     });
+    // One file gone between the listing and the read is a race (the companion
+    // can forget an entry; this store never deletes). EVERY listed file gone
+    // is not a race — it is a server whose listing and content disagree — and
+    // a head built on it could be missing every standing instruction, so it
+    // is unread rather than an exact, empty answer.
+    if (files.length > 0 && vanished === files.length) {
+      unread.push(`read ${this.root}: all ${files.length} listed files answered NOT_FOUND — the listing and the content disagree`);
+    }
     entries.sort((a, b) => (a.ts !== b.ts ? (a.ts < b.ts ? -1 : 1) : a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     const sweep: MemorySweep = { entries, unread };
     this.cache = { at: this.now().getTime(), sweep };

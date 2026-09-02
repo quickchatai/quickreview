@@ -213,10 +213,18 @@ export function roundContextQuery(input: { title: string; files: readonly Contex
 
 const TIMED_OUT = Symbol("memory-timeout");
 
+/** A short, log-safe spelling of a value that broke the contract. */
+function describeValue(value: unknown): string {
+  if (value === null) return "null";
+  if (typeof value === "string") return `a string (${value.length} chars)`;
+  return typeof value === "object" ? `an object with keys [${Object.keys(value).join(", ")}]` : `a ${typeof value}`;
+}
+
 /**
  * Run `fn` with a deadline, turning every way the text can fail to arrive —
- * a timeout, an `unreadable` answer, a throw — into "" plus a gap. A `read`
- * answer is returned as its text, empty or not, and is never a gap.
+ * a timeout, an `unreadable` answer, a throw, a settled value that is not a
+ * `MemoryRead` at all — into "" plus a gap. A `read` answer is returned as its
+ * text, empty or not, and is never a gap.
  * The timer is cleared on settle and unref'd where the runtime allows it, so a
  * slow memory call can neither delay the round nor keep the process alive.
  */
@@ -248,7 +256,14 @@ async function guarded(
       log(`memory: ${part} unreadable (${value.reason}) — round proceeds memory-less`);
       return "";
     }
-    return value.text;
+    if (value.status === "read") return value.text;
+    // Unreachable from a TypeScript caller, reachable from an assembler built
+    // against the legacy contract (a bare string). A broken client is a
+    // gap, never a rejection — "total" has to hold for the value, not only
+    // for the type.
+    gaps.push({ part, reason: `error: assembler returned ${describeValue(value)}, not a MemoryRead` });
+    log(`memory: ${part} answered outside the contract — round proceeds memory-less`, value);
+    return "";
   } catch (err) {
     // The contract says these never reject; if one does, that is a bug in the
     // client, not a reason to lose a review round.

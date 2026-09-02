@@ -695,6 +695,30 @@ describe("a dead server cannot make a caller throw", () => {
     await expect(assembler2.pinnedHead()).resolves.toMatchObject({ status: "unreadable", reason: expect.stringContaining(doomed) });
   });
 
+  it("EVERY listed file answering NOT_FOUND is not a race — the sweep is unread, and the head with it", async () => {
+    const server = new FakeOpenViking();
+    const { store } = wire(server);
+    await store.apply({ op: "note", text: "#pinned keep this" });
+    await store.apply({ op: "note", text: "#feedback and this" });
+    const realFetch = server.fetch;
+    const client2 = new OpenVikingClient({
+      baseUrl: BASE,
+      apiKey: KEY,
+      user: "reviewer",
+      // The listing still names both files; every read says they are gone.
+      fetchFn: (url, init) =>
+        url.includes("/content/read")
+          ? Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve('{"status":"error","result":null,"error":{"code":"NOT_FOUND","message":"no such file"}}') })
+          : realFetch(url, init),
+    });
+    const store2 = new OpenVikingStore({ client: client2, now: () => NOW, cacheTtlMs: 0 });
+    const sweep = await store2.sweep();
+    expect(sweep.entries).toEqual([]);
+    expect(sweep.unread).toEqual([expect.stringContaining("all 2 listed files answered NOT_FOUND")]);
+    const assembler2 = new OpenVikingContextAssembler({ client: client2, store: store2 });
+    await expect(assembler2.pinnedHead()).resolves.toMatchObject({ status: "unreadable" });
+  });
+
   it("a file that vanished between the listing and the read is a race, not an unread store", async () => {
     const server = new FakeOpenViking();
     const { store } = wire(server);
@@ -717,6 +741,45 @@ describe("a dead server cannot make a caller throw", () => {
     expect(sweep.unread).toEqual([]);
     expect(sweep.entries.map((e) => e.text)).toEqual(["#pinned keep this"]);
   });
+});
+
+// ---- the key never leaves the client ----------------------------------------
+
+// review: the unread/reason chain now carries server and transport
+// messages into the round prompt, the round_memory_seeded event, the overseer
+// anomaly and the daemon log. A server body that echoes the bearer key must be
+// scrubbed where the failure is BUILT, not only on the client's own log line.
+describe("a failure message never carries the key", () => {
+  const echoing = (arm: "envelope" | "transport"): HttpFetch =>
+    arm === "envelope"
+      ? () =>
+          Promise.resolve({
+            ok: false,
+            status: 403,
+            text: () => Promise.resolve(JSON.stringify({ status: "error", result: null, error: { code: "PERMISSION_DENIED", message: `denied for bearer ${KEY}` } })),
+          })
+      : () => Promise.reject(new Error(`connect failed while sending Authorization: Bearer ${KEY}`));
+
+  for (const arm of ["envelope", "transport"] as const) {
+    it(`${arm}: the sweep, the head, the block, the gap sink and the log are all scrubbed`, async () => {
+      const log: string[] = [];
+      const gaps: string[] = [];
+      const client = new OpenVikingClient({ baseUrl: BASE, apiKey: KEY, user: "reviewer", fetchFn: echoing(arm), log: (m) => log.push(m), onGap: (g) => gaps.push(g.message) });
+      const store = new OpenVikingStore({ client, now: () => NOW, cacheTtlMs: 0 });
+      const assembler = new OpenVikingContextAssembler({ client, store, log: (m) => log.push(m) });
+
+      const sweep = await store.sweep();
+      const head = await assembler.pinnedHead();
+      const block = await assembler.contextBlock("q", { maxTokens: 100 });
+      const everything = JSON.stringify({ sweep, head, block, gaps, log });
+      expect(everything).not.toContain(KEY);
+      expect(everything).toContain("<redacted>");
+      // And the failure is still a failure — redaction does not soften it.
+      expect(sweep.unread.length).toBeGreaterThan(0);
+      expect(head.status).toBe("unreadable");
+      expect(block.status).toBe("unreadable");
+    });
+  }
 });
 
 // ---- the pinned head --------------------------------------------------------

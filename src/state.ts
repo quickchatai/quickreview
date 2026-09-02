@@ -3383,6 +3383,25 @@ export class StateStore {
 
   // ---- event log ---------------------------------------------------------
 
+  /**
+   * The most recent `round_memory_seeded` row whose pinned head was READ
+   * (`head_state` populated or empty) — the baseline dispatch compares a
+   * newly-empty head against (review: populated → empty across a
+   * restart is otherwise silent). Rows written before `head_state` existed
+   * are not candidates, so a deploy never fires the transition by itself.
+   */
+  lastReadPinnedHead(): { pr: number | null; ts: string; head_chars: number } | null {
+    const row = this.db
+      .prepare(
+        "SELECT pr, ts, json_extract(payload, '$.head_chars') AS head_chars FROM events " +
+          "WHERE kind = 'round_memory_seeded' AND json_extract(payload, '$.head_state') IN ('populated', 'empty') " +
+          "ORDER BY id DESC LIMIT 1",
+      )
+      .get() as { pr: number | null; ts: string; head_chars: number | null } | undefined;
+    if (!row) return null;
+    return { pr: row.pr, ts: row.ts, head_chars: typeof row.head_chars === "number" ? row.head_chars : 0 };
+  }
+
   logEvent(kind: string, pr: number | null, payload?: unknown): void {
     this.db
       .prepare("INSERT INTO events (ts, kind, pr, payload) VALUES (?, ?, ?, ?)")

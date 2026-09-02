@@ -1317,7 +1317,7 @@ describe("round-memory seeding", () => {
     // worktree was prepared to.
     expect(assembler.queries[0]).toContain("Cap the retry budget");
     expect(assembler.queries[0]).toContain("api");
-    expect(memoryEvents(70)).toMatchObject([{ degraded: false, round_no: 1 }]);
+    expect(memoryEvents(70)).toMatchObject([{ degraded: false, round_no: 1, head_state: "populated" }]);
   });
 
   it("makes EXACTLY one context call per round — never one per pass, never two per round", async () => {
@@ -1407,8 +1407,58 @@ describe("round-memory seeding", () => {
     expect(orders[0]!.prompt).not.toContain("MEMORY UNAVAILABLE");
     expect(orders[0]!.prompt).not.toContain("STANDING INSTRUCTIONS");
     expect(orders[0]!.prompt).toContain("had nothing to add");
-    expect(memoryEvents(78)).toMatchObject([{ degraded: false, gaps: [], head_chars: 0, block_chars: 0 }]);
+    expect(memoryEvents(78)).toMatchObject([{ degraded: false, gaps: [], head_state: "empty", head_chars: 0, block_chars: 0 }]);
     expect(anomalies(78)).toEqual([]);
+  });
+
+  // review: EMPTY IS NOT DEGRADED made one state silent that used to be
+  // loud — a store that answered "nothing pinned" on an install whose previous
+  // round carried standing instructions (a container recreated without its
+  // volume). The transition itself gets ONE anomaly; a fresh install never
+  // sees it, and it never repeats.
+  it("populated → empty with the store readable raises pinned_head_emptied exactly once", async () => {
+    const tpl = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile("first")), "utf8");
+    const { hooks, orders } = recordingHooks();
+    const injected: string[] = [];
+    store.setAnomalySink((signal) => injected.push(signal.injectMessage ?? ""));
+    const run = async (pr: number, ts: string, assembler: ContextAssembler) => {
+      queue(pr, ts);
+      adapter.files.set(pr, [file("a.ts")]);
+      await dispatchOnce({ cfg: baseCfg, store, adapter, hooks, memory: { assembler }, renderPrompt: (o, mem) => renderRoundPrompt(tpl, o, mem) });
+    };
+
+    await run(80, "2026-08-20T09:00:00Z", new Assembler());
+    expect(anomalies(80)).toEqual([]);
+
+    // The volume is gone: the store is up and answers "nothing pinned".
+    await run(81, "2026-08-20T09:10:00Z", new Assembler(read(""), read("")));
+    expect(memoryEvents(81)).toMatchObject([{ degraded: false, head_state: "empty" }]);
+    expect(anomalies(81)).toEqual(["pinned_head_emptied"]);
+    expect(injected).toHaveLength(1);
+    expect(injected[0]).toContain("pinned area is EMPTY");
+    expect(injected[0]).toContain("#80");
+    expect(injected[0]).toContain(String("STANDING: approvals are final.".length));
+    // The round itself was normal: no unavailable note, dispatched.
+    expect(orders[1]!.prompt).not.toContain("MEMORY UNAVAILABLE");
+
+    // Still empty next round: the baseline is now the empty row — no repeat.
+    await run(82, "2026-08-20T09:20:00Z", new Assembler(read(""), read("")));
+    expect(anomalies(82)).toEqual([]);
+    expect(injected).toHaveLength(1);
+  });
+
+  it("an unreadable round between the two does not hide the transition — the baseline is the last READ head", async () => {
+    const { hooks } = recordingHooks();
+    const run = async (pr: number, ts: string, assembler: ContextAssembler) => {
+      queue(pr, ts);
+      adapter.files.set(pr, [file("a.ts")]);
+      await dispatchOnce({ cfg: baseCfg, store, adapter, hooks, memory: { assembler } });
+    };
+    await run(83, "2026-08-20T09:00:00Z", new Assembler());
+    await run(84, "2026-08-20T09:10:00Z", new Assembler(unreadable("connect ECONNREFUSED"), read("")));
+    expect(anomalies(84)).toEqual(["round_memory_degraded"]);
+    await run(85, "2026-08-20T09:20:00Z", new Assembler(read(""), read("")));
+    expect(anomalies(85)).toEqual(["pinned_head_emptied"]);
   });
 
   it("an UNREADABLE store still degrades, still alerts the operator, and names what is missing", async () => {
@@ -1425,7 +1475,7 @@ describe("round-memory seeding", () => {
     expect(orders).toHaveLength(1);
     expect(orders[0]!.prompt).toContain("MEMORY UNAVAILABLE THIS ROUND");
     expect(store.getPr(79)!.state).toBe("reviewing");
-    expect(memoryEvents(79)).toMatchObject([{ degraded: true, gaps: [{ part: "head", reason: expect.stringContaining("unreadable: ls viking://") }] }]);
+    expect(memoryEvents(79)).toMatchObject([{ degraded: true, head_state: "unread", gaps: [{ part: "head", reason: expect.stringContaining("unreadable: ls viking://") }] }]);
     expect(anomalies(79)).toEqual(["round_memory_degraded"]);
     // The operator's alert says what is actually missing — here the head
     // only; the context search answered (with nothing), so it is not claimed

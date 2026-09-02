@@ -229,6 +229,19 @@ describe("the three states of the pinned head", () => {
     expect(pinnedHeadState(thrown)).toBe("unread");
   });
 
+  it("an assembler answering outside the contract (a bare string) is an error gap, never a rejection", async () => {
+    // The legacy shape. Unreachable from TypeScript; reachable from a
+    // client compiled against the old seam. "Total" has to hold for the value.
+    const legacy = { pinnedHead: async () => "OLD HEAD", contextBlock: async () => "OLD BLOCK" } as unknown as ContextAssembler;
+    const mem = await assembleRoundMemory(legacy, "q");
+    expect(pinnedHeadState(mem)).toBe("unread");
+    expect(mem).toMatchObject({ head: "", block: "", degraded: true });
+    expect(mem.gaps).toEqual([
+      { part: "head", reason: expect.stringMatching(/^error: assembler returned a string \(8 chars\), not a MemoryRead$/) },
+      { part: "context", reason: expect.stringMatching(/^error: assembler returned a string/) },
+    ]);
+  });
+
   it("the whole prompt for a fresh install carries neither the unavailable note nor a dangling head", () => {
     const tpl = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile("first")), "utf8");
     const fresh = renderRoundPrompt(tpl, { ...order, round_type: "first" }, seeded({ head: "", block: "", gaps: [] }));

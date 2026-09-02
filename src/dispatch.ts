@@ -28,6 +28,7 @@ import { hasNewEvidence } from "./guards.js";
 import {
   assembleRoundMemory,
   describeGaps,
+  pinnedHeadState,
   MEMORY_LESS,
   roundContextQuery,
   ROUND_CONTEXT_DEFAULTS,
@@ -331,11 +332,17 @@ async function seedRoundMemory(
       gaps: [{ part: "head", reason: `error: ${String(err)}` }],
     };
   }
+  const headState = pinnedHeadState(mem);
+  // The baseline for the one transition that is silent by construction: a
+  // readable store whose pinned area went from populated to empty. Read
+  // BEFORE this round's row is written, and only when it could matter.
+  const previousHead = headState === "empty" ? deps.store.lastReadPinnedHead() : null;
   deps.store.logEvent("round_memory_seeded", order.pr, {
     round_id: order.round_id,
     round_no: order.round_no,
     query: mem.query,
     max_tokens: mem.max_tokens,
+    head_state: headState,
     head_chars: mem.head.length,
     block_chars: mem.block.length,
     clamped: mem.clamped,
@@ -343,6 +350,27 @@ async function seedRoundMemory(
     gaps: mem.gaps,
     ms: mem.ms,
   });
+  if (previousHead && previousHead.head_chars > 0) {
+    // EMPTY IS NOT DEGRADED made a genuinely empty pinned area a
+    // healthy answer — which is right for a fresh install and wrong for a
+    // container recreated without its data volume, where the same answer
+    // used to be loud. One anomaly on the transition itself restores that
+    // signal deliberately; the next round's baseline is this empty row, so
+    // it cannot repeat. An owner who unpinned their last standing instruction
+    // sees it once too, and knows why.
+    deps.store.logAnomaly(
+      "pinned_head_emptied",
+      order.pr,
+      order.round_no,
+      `the pinned area read as EMPTY with the store readable; the last seeded round (#${previousHead.pr ?? "?"} at ${previousHead.ts}) carried ${previousHead.head_chars} chars of standing instructions`,
+      [
+        `ANOMALY (memory) — PR #${order.pr} round ${order.round_no}`,
+        `The memory store answered, and the pinned area is EMPTY. At the last seeded round (#${previousHead.pr ?? "?"}, ${previousHead.ts}) it held ${previousHead.head_chars} chars of standing instructions.`,
+        "If nobody unpinned them on purpose, the store lost its data — a container recreated without its state volume looks exactly like this. " +
+          "Check the openviking data directory on the state volume and the TUI's memory tab. The round was dispatched normally; this fires once, on the transition.",
+      ].join("\n"),
+    );
+  }
   if (!mem.degraded) return mem;
 
   log(`dispatch: #${order.pr} round ${order.round_no} seeded memory-less (${describeGaps(mem)})`);

@@ -3,9 +3,10 @@
 //
 // The interface itself belongs to the round-seeding slice
 // (`src/memory/context.ts`) and is IMPORTED, not restated: its contract — both
-// methods resolve with "" when memory is unavailable, neither ever rejects —
-// is the load-bearing part, and a second declaration of it would be free to
-// drift.
+// methods resolve with a `MemoryRead`, `read` with the text ("" when the store
+// holds nothing, which is an answer) or `unreadable` with the reason, and
+// neither ever rejects — is the load-bearing part, and a second declaration of
+// it would be free to drift.
 //
 // This module is where that contract is honoured against a real network. Every
 // path out of here has exactly three outcomes: the text, an empty text, or
