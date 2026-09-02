@@ -16,7 +16,7 @@
 // (`src/levers.ts`) bound a session's `drain`/`pause-pr` and never an
 // operator's. A file in the operator directory without the seal is served as
 // a session's, loudly.
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, watch, writeFileSync, type FSWatcher } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, watch, writeFileSync, type FSWatcher } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { StateStore } from "./state.js";
 import type { FileOutcome, ImprovementPayload, IssuePayload } from "./improvements.js";
@@ -533,16 +533,28 @@ export interface CommandTierGate {
 
 // ---- the operator seal -------------------------------------------
 
-/** What the watcher can learn about a path's owner and mode. Injected so the
- * sealed case — a ROOT-owned directory — is testable by a process that is
- * not root; the real one is `processOperatorSeal()`. */
+/** What a path IS, as `lstat` sees it — a symlink is reported as itself,
+ * never as what it points at. */
+export type PathKind = "dir" | "file" | "symlink" | "other";
+
+export interface PathIdentity {
+  uid: number;
+  gid: number;
+  /** Permission bits only (`& 0o7777`). */
+  mode: number;
+  kind: PathKind;
+}
+
+/** What the watcher can learn about a path's owner, mode and kind. Injected
+ * so the sealed case — a ROOT-owned directory — is testable by a process that
+ * is not root; the real one is `processOperatorSeal()`. */
 export interface OperatorSeal {
   /** The daemon's effective uid — the uid every pi session runs as too. */
   euid: number;
   /** The daemon's supplementary groups (for the group-write bit). */
   gids: readonly number[];
   /** `null` when the path does not exist. */
-  stat(path: string): { uid: number; gid: number; mode: number } | null;
+  stat(path: string): PathIdentity | null;
 }
 
 export function processOperatorSeal(): OperatorSeal {
@@ -551,8 +563,11 @@ export function processOperatorSeal(): OperatorSeal {
     gids: process.getgroups?.() ?? [],
     stat(path) {
       try {
-        const s = statSync(path);
-        return { uid: s.uid, gid: s.gid, mode: s.mode & 0o7777 };
+        // lstat, not stat: the seal is a claim about the path the operator's
+        // tools wrote, and a symlink planted at that path must show as one.
+        const s = lstatSync(path);
+        const kind: PathKind = s.isSymbolicLink() ? "symlink" : s.isDirectory() ? "dir" : s.isFile() ? "file" : "other";
+        return { uid: s.uid, gid: s.gid, mode: s.mode & 0o7777, kind };
       } catch {
         return null;
       }
@@ -561,7 +576,7 @@ export function processOperatorSeal(): OperatorSeal {
 }
 
 /** Could a process with `seal`'s identity write this path? */
-function writableBy(seal: OperatorSeal, s: { uid: number; gid: number; mode: number }): boolean {
+function writableBy(seal: OperatorSeal, s: PathIdentity): boolean {
   if (s.uid === seal.euid) return true;
   if ((s.mode & 0o002) !== 0) return true;
   return seal.gids.includes(s.gid) && (s.mode & 0o020) !== 0;
@@ -570,20 +585,53 @@ function writableBy(seal: OperatorSeal, s: { uid: number; gid: number; mode: num
 export type SealVerdict = { sealed: true } | { sealed: false; reason: string };
 
 /**
- * Is `file` in `dir` the OPERATOR's? It is exactly when neither the directory
- * nor the file could have been written by the daemon's own identity — the
- * identity every session shares. Anything else (the directory made by the
- * daemon's uid, a group- or world-writable mode, a file the daemon could
- * edit) is not a seal, and the verdict says which.
+ * Is `file` in `dir` the OPERATOR's? It is exactly when the directory is a
+ * real directory and the file a real file, and neither could have been
+ * written by the daemon's own identity — the identity every session shares.
+ * Anything else (a symlink standing in for the directory — the parent
+ * `commands/` is the daemon's, so a session can plant one — the directory
+ * made by the daemon's uid, a group- or world-writable mode, a file the
+ * daemon could edit) is not a seal, and the verdict says which.
  */
 export function operatorSealVerdict(seal: OperatorSeal, dir: string, file: string): SealVerdict {
   const d = seal.stat(dir);
   if (!d) return { sealed: false, reason: "operator directory missing" };
+  if (d.kind !== "dir") return { sealed: false, reason: `operator directory is a ${d.kind}, not a directory` };
   if (writableBy(seal, d)) return { sealed: false, reason: `operator directory is writable by uid ${seal.euid} (owner ${d.uid}, mode ${d.mode.toString(8)})` };
   const f = seal.stat(file);
   if (!f) return { sealed: false, reason: "command file vanished" };
+  if (f.kind !== "file") return { sealed: false, reason: `command file is a ${f.kind}, not a regular file` };
   if (writableBy(seal, f)) return { sealed: false, reason: `command file is writable by uid ${seal.euid} (owner ${f.uid}, mode ${f.mode.toString(8)})` };
   return { sealed: true };
+}
+
+/**
+ * The identity of one VERSION of an operator command file — the key the
+ * handled-ledger is written under (review round 1). The operator's
+ * directory is not the daemon's to archive from, so "handled" has to be
+ * remembered; remembering the NAME alone would make every re-used name a
+ * one-shot (the documented manual fallback re-used one, and its second write
+ * was silently ignored). Inode + mtime + size change on every rewrite that
+ * matters — the operator's tools land files by tmp+mv, a new inode each time
+ * — and stay put across the sweeps that re-see an unchanged file. `null`
+ * when the file is gone.
+ */
+export function operatorCommandVersion(path: string): string | null {
+  try {
+    const s = statSync(path, { bigint: true });
+    return `${basename(path)}:${s.ino}:${s.mtimeNs}:${s.size}`;
+  } catch {
+    return null;
+  }
+}
+
+/** The inode at `path` — what `fs.watch` binds to — or `null` when nothing is there. */
+function inodeAt(path: string): bigint | null {
+  try {
+    return statSync(path, { bigint: true }).ino;
+  } catch {
+    return null;
+  }
 }
 
 export interface CommandWatcherOptions {
@@ -628,6 +676,8 @@ export class CommandWatcher {
   private readonly now: () => Date;
   private readonly log: (line: string) => void;
   private watcher: FSWatcher | null = null;
+  /** The inode `watcher` is bound to — `fs.watch` follows the inode, not the path. */
+  private watchedIno: bigint | null = null;
   private parentWatcher: FSWatcher | null = null;
   private sweepTimer: NodeJS.Timeout | null = null;
   private readonly inFlight = new Set<string>();
@@ -657,11 +707,7 @@ export class CommandWatcher {
   async start(): Promise<void> {
     this.ensureDirs();
     await this.sweep();
-    if (!this.attachDirWatch() && this.opts.operator) {
-      this.parentWatcher = watch(dirname(this.dir), (_event, filename) => {
-        if (filename?.toString() === basename(this.dir)) void this.enqueueSweep();
-      });
-    }
+    if (!this.opts.operator) this.attachDirWatch();
     const interval = this.opts.sweepIntervalMs ?? 15_000;
     if (this.opts.operator && interval > 0) {
       this.sweepTimer = setInterval(() => void this.enqueueSweep(), interval);
@@ -672,7 +718,8 @@ export class CommandWatcher {
   /** Watch the served directory when it exists. True once watching. */
   private attachDirWatch(): boolean {
     if (this.watcher) return true;
-    if (!existsSync(this.dir)) return false;
+    const ino = inodeAt(this.dir);
+    if (ino === null) return false;
     this.watcher = watch(this.dir, (_event, filename) => {
       if (!filename) {
         void this.enqueueSweep();
@@ -682,14 +729,38 @@ export class CommandWatcher {
       if (!name.endsWith(".json")) return;
       void this.enqueue(join(this.dir, name));
     });
+    this.watchedIno = ino;
     this.parentWatcher?.close();
     this.parentWatcher = null;
     return true;
   }
 
-  stop(): void {
+  private detachDirWatch(): void {
     this.watcher?.close();
     this.watcher = null;
+    this.watchedIno = null;
+  }
+
+  /**
+   * Operator dir only: keep the watch on whatever directory is AT the path
+   * now. `fs.watch` binds to an inode, and the parent `commands/` is the
+   * daemon's — so a session can rename the sealed directory away and put
+   * another in its place, and a watcher left on the old inode would see none
+   * of the new one's files. Every sweep re-checks; a directory that is gone
+   * or replaced drops the old watch, a present one is attached, and an absent
+   * one leaves the parent watched for it to appear.
+   */
+  private syncDirWatch(): void {
+    if (this.watcher && inodeAt(this.dir) !== this.watchedIno) this.detachDirWatch();
+    if (!this.attachDirWatch() && !this.parentWatcher) {
+      this.parentWatcher = watch(dirname(this.dir), (_event, filename) => {
+        if (filename?.toString() === basename(this.dir)) void this.enqueueSweep();
+      });
+    }
+  }
+
+  stop(): void {
+    this.detachDirWatch();
     this.parentWatcher?.close();
     this.parentWatcher = null;
     if (this.sweepTimer) clearInterval(this.sweepTimer);
@@ -699,8 +770,8 @@ export class CommandWatcher {
   /** Handle every pending <dir>/*.json once. */
   async sweep(): Promise<void> {
     this.ensureDirs();
+    if (this.opts.operator) this.syncDirWatch();
     if (!existsSync(this.dir)) return;
-    if (this.parentWatcher || this.sweepTimer) this.attachDirWatch();
     const names = readdirSync(this.dir, { withFileTypes: true })
       .filter((e) => e.isFile() && e.name.endsWith(".json"))
       .map((e) => e.name)
@@ -767,8 +838,14 @@ export class CommandWatcher {
     if (this.inFlight.has(path)) return null;
     if (!existsSync(path)) return null;
     // An operator file cannot be archived away (the directory is not ours to
-    // write), so the store remembers what was handled across restarts.
-    if (this.opts.operator && this.opts.store.operatorCommandHandled(basename(path))) return null;
+    // write), so the store remembers what was handled across restarts — by
+    // file VERSION, so a name written again with new content is a new command
+    // and an unchanged file re-seen by the sweep is not.
+    const version = this.opts.operator ? operatorCommandVersion(path) : null;
+    if (this.opts.operator) {
+      if (version === null) return null;
+      if (this.opts.store.operatorCommandHandled(version)) return null;
+    }
     this.inFlight.add(path);
     try {
       this.ensureDirs();
@@ -776,7 +853,7 @@ export class CommandWatcher {
       const read = await this.readCommandFile(path);
       if (!read.ok) {
         if (read.reason === "file disappeared") return null;
-        return this.finish(path, name, null, issuer, { ok: false, reason: read.reason }, true);
+        return this.finish(path, name, version, null, issuer, { ok: false, reason: read.reason }, true);
       }
       const validation = validateCommand(read.value);
       if (!validation.ok) {
@@ -784,6 +861,7 @@ export class CommandWatcher {
         return this.finish(
           path,
           name,
+          version,
           typeof attempted === "string" ? attempted : null,
           issuer,
           { ok: false, reason: validation.reason },
@@ -791,14 +869,14 @@ export class CommandWatcher {
         );
       }
       const denial = this.tierCheck(validation.command);
-      if (denial) return this.finish(path, name, validation.command.command, issuer, { ok: false, reason: denial }, true);
+      if (denial) return this.finish(path, name, version, validation.command.command, issuer, { ok: false, reason: denial }, true);
       let outcome: FileOutcome;
       try {
         outcome = await executeCommand(validation.command, this.opts.deps, { file: name, issuer });
       } catch (err) {
         outcome = { ok: false, reason: `handler threw: ${(err as Error).message}` };
       }
-      return this.finish(path, name, validation.command.command, issuer, outcome, !outcome.ok);
+      return this.finish(path, name, version, validation.command.command, issuer, outcome, !outcome.ok);
     } finally {
       this.inFlight.delete(path);
     }
@@ -840,6 +918,8 @@ export class CommandWatcher {
   private finish(
     path: string,
     name: string,
+    /** The operator file's version key (`operatorCommandVersion`); null for a session dir. */
+    version: string | null,
     command: string | null,
     issuer: CommandIssuer,
     outcome: FileOutcome,
@@ -861,9 +941,9 @@ export class CommandWatcher {
     if (loud) this.log(`[commands] REJECTED ${result.file} (${command ?? "?"}): ${outcome.reason ?? "unknown reason"}`);
     // Make sure a daemon restart cannot re-execute the file: session dirs
     // archive it into processed/; the operator dir is not writable by the
-    // daemon, so the store keeps the ledger instead.
-    if (this.opts.operator) {
-      this.opts.store.markOperatorCommandHandled(result.file);
+    // daemon, so the store keeps the ledger instead, keyed by this version.
+    if (version !== null) {
+      this.opts.store.markOperatorCommandHandled(version, result.file);
     } else {
       try {
         renameSync(path, join(this.processedDir, `${name}.json`));

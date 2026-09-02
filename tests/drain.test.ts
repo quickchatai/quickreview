@@ -49,7 +49,7 @@ describe("drain state row", () => {
   it("survives a simulated restart (new StateStore over the same file)", () => {
     const dbPath = join(dir, "state.db");
     const first = new StateStore(dbPath);
-    expect(first.drainState()).toEqual({ draining: false, drained_deliveries: 0, since: null, issued_by: null, expires_at: null });
+    expect(first.drainState()).toEqual({ draining: false, drained_deliveries: 0 });
     expect(first.engageDrain({ issuer: "operator", expires_at: null }).outcome).toBe("engaged");
     first.countDrainedDelivery();
     expect(first.countDrainedDelivery()).toBe(2);
@@ -59,6 +59,7 @@ describe("drain state row", () => {
     const state = second.drainState();
     expect(state.draining).toBe(true);
     expect(state.drained_deliveries).toBe(2);
+    if (!state.draining) throw new Error("unreachable: asserted draining above");
     expect(state.since).not.toBeNull();
     // Lifting returns the window's drop count; re-draining starts a fresh one.
     expect(second.liftDrain("operator")).toEqual({ changed: true, dropped: 2 });
@@ -541,8 +542,9 @@ describe("qcr drain over the unwedge command channel", () => {
   it("prints the exact manual ssh fallback when the runner path fails", async () => {
     const lines: string[] = [];
     const ssh = async (): Promise<RemoteResult> => ({ ok: false, stdout: "", stderr: "no route", code: 255 });
-    expect(await runDrain(true, { cfg, ssh, log: (l) => lines.push(l), sleep: async () => {} })).toBe(1);
-    const manual = drainManualSshCommand(cfg.tui, true);
+    const now = new Date("2026-08-31T12:00:00Z");
+    expect(await runDrain(true, { cfg, ssh, log: (l) => lines.push(l), sleep: async () => {}, now: () => now })).toBe(1);
+    const manual = drainManualSshCommand(cfg.tui, true, now);
     expect(lines.join("\n")).toContain(manual);
     expect(manual).toContain(`ssh ${cfg.tui.ssh_host}`);
     expect(manual).toContain('{"command":"drain","on":true}');

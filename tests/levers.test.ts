@@ -29,6 +29,7 @@ import {
   validateCommand,
   type CommandDeps,
   type OperatorSeal,
+  type PathIdentity,
 } from "../src/commands.js";
 import { LEVERS_DEFAULTS, loadConfig, parseLevers, type Config } from "../src/config.js";
 import { createDaemon, type DaemonAdapter } from "../src/daemon.js";
@@ -164,7 +165,8 @@ describe("store — drain holds", () => {
     expect(store.drainState().draining).toBe(true);
     tick(1);
     // MUTATION: make drainState skip the holdActive fold — this fails.
-    expect(store.drainState()).toMatchObject({ draining: false, issued_by: null, expires_at: null });
+    // The not-draining arm carries NO holder at all — the union makes "draining with no issuer" unspellable.
+    expect(store.drainState()).toEqual({ draining: false, drained_deliveries: 0 });
     // The row is still there for the sweep to retire, and it retires exactly it.
     expect(store.expireLevers()).toEqual({ drain: true, pauses: [] });
     expect(store.expireLevers()).toEqual({ drain: false, pauses: [] });
@@ -177,7 +179,7 @@ describe("store — drain holds", () => {
     tick(24 * 60);
     expect(store.drainState()).toMatchObject({ draining: true, issued_by: "operator", expires_at: null });
     expect(store.engageDrain({ issuer: "session", expires_at: minutesFromNow(T0, 30) }).outcome).toBe("unchanged");
-    expect(store.drainState().expires_at).toBeNull();
+    expect(store.drainState()).toMatchObject({ draining: true, expires_at: null });
     // MUTATION: make liftDrain ignore `mayLift` — this fails.
     expect(store.liftDrain("session")).toMatchObject({ changed: false, refused: "held-by-operator" });
     expect(store.drainState().draining).toBe(true);
@@ -460,10 +462,20 @@ describe("commands — for_min and the issuer context", () => {
 // ---- the seal --------------------------------------------------------------
 
 describe("operatorSealVerdict", () => {
-  const root = { uid: 0, gid: 0, mode: 0o755 };
-  const rootFile = { uid: 0, gid: 0, mode: 0o644 };
-  const seal = (paths: Record<string, { uid: number; gid: number; mode: number } | null>, euid = 1001, gids = [1001]): OperatorSeal =>
-    ({ euid, gids, stat: (p) => paths[p] ?? null });
+  const root: PathIdentity = { uid: 0, gid: 0, mode: 0o755, kind: "dir" };
+  const rootFile: PathIdentity = { uid: 0, gid: 0, mode: 0o644, kind: "file" };
+  // A fixture that names no kind is a directory when it stands at the dir
+  // path and a regular file otherwise — the kind checks get their own case.
+  type Loose = Partial<PathIdentity> & { uid: number; gid: number; mode: number };
+  const seal = (paths: Record<string, Loose | null>, euid = 1001, gids = [1001]): OperatorSeal => ({
+    euid,
+    gids,
+    stat: (p) => {
+      const s = paths[p];
+      if (!s) return null;
+      return { kind: p.endsWith(".json") ? "file" : "dir", ...s };
+    },
+  });
 
   it("sealed: a root-owned 0755 directory holding a root-owned 0644 file, seen by uid 1001", () => {
     expect(operatorSealVerdict(seal({ "/c/operator": root, "/c/operator/a.json": rootFile }), "/c/operator", "/c/operator/a.json")).toEqual({ sealed: true });
@@ -471,7 +483,7 @@ describe("operatorSealVerdict", () => {
 
   it("not sealed: anything the daemon's own identity could have written", () => {
     // MUTATION: make writableBy return false — every line below fails.
-    const cases: Array<[string, Record<string, { uid: number; gid: number; mode: number }>]> = [
+    const cases: Array<[string, Record<string, Loose>]> = [
       ["directory owned by our uid", { "/c/operator": { uid: 1001, gid: 1001, mode: 0o755 }, "/c/operator/a.json": rootFile }],
       ["world-writable directory", { "/c/operator": { uid: 0, gid: 0, mode: 0o777 }, "/c/operator/a.json": rootFile }],
       ["group-writable directory in our group", { "/c/operator": { uid: 0, gid: 1001, mode: 0o775 }, "/c/operator/a.json": rootFile }],
@@ -485,6 +497,15 @@ describe("operatorSealVerdict", () => {
     // A group-writable directory in a group we are NOT in is still sealed.
     expect(operatorSealVerdict(seal({ "/c/operator": { uid: 0, gid: 5, mode: 0o775 }, "/c/operator/a.json": rootFile }), "/c/operator", "/c/operator/a.json").sealed).toBe(true);
     expect(operatorSealVerdict(seal({}), "/c/operator", "/c/operator/a.json")).toEqual({ sealed: false, reason: "operator directory missing" });
+  });
+
+  it("not sealed: a symlink standing in for the directory or the file, whoever owns it", () => {
+    // MUTATION: drop the `kind` checks — both lines below fail. `commands/`
+    // is the daemon's, so a session can plant a root-owned-looking link there.
+    const asDir = operatorSealVerdict(seal({ "/c/operator": { ...root, kind: "symlink" }, "/c/operator/a.json": rootFile }), "/c/operator", "/c/operator/a.json");
+    expect(asDir).toEqual({ sealed: false, reason: "operator directory is a symlink, not a directory" });
+    const asFile = operatorSealVerdict(seal({ "/c/operator": root, "/c/operator/a.json": { ...rootFile, kind: "symlink" } }), "/c/operator", "/c/operator/a.json");
+    expect(asFile).toEqual({ sealed: false, reason: "command file is a symlink, not a regular file" });
   });
 
   it("the REAL process seal over a directory this process made is NOT sealed — the honest case a test can produce", () => {
@@ -505,7 +526,11 @@ describe("operatorSealVerdict", () => {
 describe("CommandWatcher over commands/operator/", () => {
   let root: string;
   let store: StateStore;
-  const sealed: OperatorSeal = { euid: 1001, gids: [1001], stat: () => ({ uid: 0, gid: 0, mode: 0o755 }) };
+  const sealed: OperatorSeal = {
+    euid: 1001,
+    gids: [1001],
+    stat: (p) => (p.endsWith(".json") ? { uid: 0, gid: 0, mode: 0o644, kind: "file" } : { uid: 0, gid: 0, mode: 0o755, kind: "dir" }),
+  };
 
   function watcherDeps(): { deps: CommandDeps; issuers: string[] } {
     const issuers: string[] = [];
@@ -693,8 +718,9 @@ describe("qcr drain — the operator channel", () => {
     expect(writes[0]!.slice(0, 7)).toEqual(["sudo", "docker", "exec", "-i", "-u", "0", cfg.tui.container]);
     expect(writes[0]![writes[0]!.length - 1]).toContain(`${cfg.tui.remote_sandbox_root}/commands/operator/`);
     expect(lines.join("\n")).not.toContain("NOT an operator drain");
-    const manual = drainManualSshCommand(cfg.tui, true);
+    const manual = drainManualSshCommand(cfg.tui, true, new Date("2026-08-31T12:00:00Z"));
     expect(manual).toContain("docker exec -i -u 0");
+    expect(manual).toContain("2026-08-31T12-00-00-000Z-manual-drain.json");
     expect(manual).toContain("/commands/operator/");
   });
 
@@ -765,9 +791,9 @@ describe("operatorCommandWriteScript under sh", () => {
     const r = runScript(root, "c.json", '{"command":"drain","on":true}');
     expect(r.code).toBe(0);
     const dir = join(root, "commands", "operator");
-    // MUTATION: drop `chown 0:0` from the script — the first line fails;
+    // MUTATION: drop `chown -h 0:0` from the script — the first line fails;
     // drop `chmod 0644` — the mode line fails (the shell's umask decides).
-    expect(r.chown).toEqual([`0:0 ${dir}`]);
+    expect(r.chown).toEqual([`-h 0:0 ${dir}`]);
     expect(statSync(dir).mode & 0o777).toBe(0o755);
     expect(readFileSync(join(dir, "c.json"), "utf8")).toBe('{"command":"drain","on":true}');
     expect(statSync(join(dir, "c.json")).mode & 0o777).toBe(0o644);
@@ -781,7 +807,7 @@ describe("operatorCommandWriteScript under sh", () => {
     chmodSync(dir, 0o777);
     const r = runScript(root, "d.json", "{}");
     expect(r.code).toBe(0);
-    expect(r.chown).toEqual([`0:0 ${dir}`]);
+    expect(r.chown).toEqual([`-h 0:0 ${dir}`]);
     expect(statSync(dir).mode & 0o777).toBe(0o755);
     expect(existsSync(join(dir, "d.json"))).toBe(true);
   });

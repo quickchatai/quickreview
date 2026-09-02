@@ -454,18 +454,26 @@ export interface SlackCooldownRow {
 
 /** Deploy-window drain state (2026-08-25) — one persistent row. Read back
  * through `drainState()` it is already folded against the hold's expiry: a
- * lapsed session drain reads `draining: false`. */
-export interface DrainState {
-  draining: boolean;
-  /** Webhook deliveries dropped while the CURRENT drain window stood. */
-  drained_deliveries: number;
-  /** When the current drain was engaged; null when not draining. */
-  since: string | null;
-  /** Who holds the drain; null when not draining. */
-  issued_by: LeverIssuer | null;
-  /** When the hold lapses; null = until lifted (operator only). */
-  expires_at: string | null;
-}
+ * lapsed session drain reads `draining: false`. The union makes
+ * the holder part of what "draining" means: there is no draining state
+ * without an issuer. */
+export type DrainState =
+  | {
+      draining: false;
+      /** Webhook deliveries dropped while the LAST drain window stood. */
+      drained_deliveries: number;
+    }
+  | {
+      draining: true;
+      /** Webhook deliveries dropped while the CURRENT drain window stood. */
+      drained_deliveries: number;
+      /** When the current drain was engaged. */
+      since: string | null;
+      /** Who holds the drain. */
+      issued_by: LeverIssuer;
+      /** When the hold lapses; null = until lifted (operator only). */
+      expires_at: string | null;
+    };
 
 const SESSION_COMMAND_COLUMNS_SQL = `(
   id             TEXT PRIMARY KEY,
@@ -822,9 +830,12 @@ CREATE INDEX IF NOT EXISTS lever_grants_day ON lever_grants (kind, day, pr);
 -- Operator command files handled. The operator's commands/operator/
 -- directory is root-owned and NOT writable by the daemon, so a handled file
 -- cannot be archived by rename the way commands/processed/ does it; this
--- ledger is what keeps a restart from executing one twice.
+-- ledger is what keeps a restart from executing one twice. Keyed by file
+-- VERSION (name + inode + mtime + size, operatorCommandVersion), not by
+-- name: a name written again with new content is a new command.
 CREATE TABLE IF NOT EXISTS operator_commands (
-  file       TEXT PRIMARY KEY,
+  version    TEXT PRIMARY KEY,
+  file       TEXT NOT NULL,
   handled_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS filed_items (
@@ -1340,13 +1351,16 @@ export class StateStore {
     const merged = mergeHold(this.pauseHold(row), grant);
     if (merged.outcome === "unchanged") return merged;
     const ts = this.ts();
+    // `since` carries over only while a hold is still IN FORCE — decided from
+    // the folded row, like every other reader: a grant landing on a lapsed
+    // pause the sweep has not retired yet is a new hold and gets a new since.
+    const since = (row.paused ? row.pause_since : null) ?? ts;
     this.db
       .prepare(
-        `UPDATE pr_state SET paused = 1, pause_issuer = ?, pause_expires_at = ?, pause_reason = ?,
-                pause_since = COALESCE(CASE WHEN paused = 1 THEN pause_since END, ?), updated_at = ?
+        `UPDATE pr_state SET paused = 1, pause_issuer = ?, pause_expires_at = ?, pause_reason = ?, pause_since = ?, updated_at = ?
           WHERE number = ?`,
       )
-      .run(merged.hold.issuer, merged.hold.expires_at, reason, ts, ts, n);
+      .run(merged.hold.issuer, merged.hold.expires_at, reason, since, ts, n);
     return merged;
   }
 
@@ -3517,11 +3531,9 @@ export class StateStore {
       .get() as
       | { draining: number; drained_deliveries: number; since: string | null; issued_by: LeverIssuer | null; expires_at: string | null }
       | undefined;
-    if (!row) return { draining: false, drained_deliveries: 0, since: null, issued_by: null, expires_at: null };
+    if (!row) return { draining: false, drained_deliveries: 0 };
     const hold = this.drainHold(row);
-    if (!holdActive(hold, this.ts())) {
-      return { draining: false, drained_deliveries: row.drained_deliveries, since: null, issued_by: null, expires_at: null };
-    }
+    if (!holdActive(hold, this.ts())) return { draining: false, drained_deliveries: row.drained_deliveries };
     return { draining: true, drained_deliveries: row.drained_deliveries, since: row.since, issued_by: hold.issuer, expires_at: hold.expires_at };
   }
 
@@ -3539,7 +3551,7 @@ export class StateStore {
    */
   engageDrain(grant: LeverGrant): { outcome: HoldOutcome; state: DrainState } {
     const standing = this.drainState();
-    const merged = mergeHold(standing.draining ? { issuer: standing.issued_by!, expires_at: standing.expires_at } : null, grant);
+    const merged = mergeHold(standing.draining ? { issuer: standing.issued_by, expires_at: standing.expires_at } : null, grant);
     if (merged.outcome === "unchanged") return { outcome: merged.outcome, state: standing };
     const ts = this.ts();
     if (merged.outcome === "engaged") {
@@ -3568,7 +3580,7 @@ export class StateStore {
   liftDrain(by: LeverIssuer): { changed: boolean; dropped: number; refused?: "held-by-operator" } {
     const standing = this.drainState();
     if (!standing.draining) return { changed: false, dropped: standing.drained_deliveries };
-    if (!mayLift({ issuer: standing.issued_by!, expires_at: standing.expires_at }, by)) {
+    if (!mayLift({ issuer: standing.issued_by, expires_at: standing.expires_at }, by)) {
       return { changed: false, dropped: standing.drained_deliveries, refused: "held-by-operator" };
     }
     this.db.prepare("UPDATE drain_state SET draining = 0, issued_by = NULL, expires_at = NULL, updated_at = ? WHERE id = 1").run(this.ts());
@@ -3614,13 +3626,14 @@ export class StateStore {
     return row.used;
   }
 
-  /** Has this operator command file already been executed? */
-  operatorCommandHandled(file: string): boolean {
-    return this.db.prepare("SELECT 1 FROM operator_commands WHERE file = ?").get(file) !== undefined;
+  /** Has this VERSION of an operator command file already been executed
+   *? `version` is `operatorCommandVersion`'s key. */
+  operatorCommandHandled(version: string): boolean {
+    return this.db.prepare("SELECT 1 FROM operator_commands WHERE version = ?").get(version) !== undefined;
   }
 
-  markOperatorCommandHandled(file: string): void {
-    this.db.prepare("INSERT OR IGNORE INTO operator_commands (file, handled_at) VALUES (?, ?)").run(file, this.ts());
+  markOperatorCommandHandled(version: string, file: string): void {
+    this.db.prepare("INSERT OR IGNORE INTO operator_commands (version, file, handled_at) VALUES (?, ?, ?)").run(version, file, this.ts());
   }
 
   /** Count one webhook delivery dropped while draining; returns the new total. */
@@ -4285,7 +4298,7 @@ export function buildStatusSnapshot(
           draining: true,
           drained_deliveries: drain.drained_deliveries,
           ...(drain.since ? { draining_since: drain.since } : {}),
-          draining_by: drain.issued_by!,
+          draining_by: drain.issued_by,
           ...(drain.expires_at ? { draining_until: drain.expires_at } : {}),
           drain_failed_loud: failures.length,
         }

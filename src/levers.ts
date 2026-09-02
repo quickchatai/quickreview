@@ -202,16 +202,23 @@ export async function drainLever(
   const resolved = grantFor(deps, "drain", null, issuer, forMin);
   if (!resolved.ok) return { ok: false, reason: resolved.reason };
   const res = store.engageDrain(resolved.grant);
+  const state = res.state;
+  if (!state.draining) {
+    // Structurally unreachable — a grant that merged has a holder — but the
+    // union does not know that, and a lie here ("draining") would be worse
+    // than a loud refusal.
+    return { ok: false, reason: "drain did not take: the store reads not draining after the grant" };
+  }
   if (res.outcome !== "unchanged") {
     resolved.charge();
-    store.logEvent("drain_on", null, { by: issuer, outcome: res.outcome, expires_at: res.state.expires_at });
+    store.logEvent("drain_on", null, { by: issuer, outcome: res.outcome, expires_at: state.expires_at });
   }
   return {
     ok: true,
     draining: true,
     outcome: res.outcome,
-    issuer: res.state.issued_by,
-    expires_at: res.state.expires_at,
+    issuer: state.issued_by,
+    expires_at: state.expires_at,
     running_rounds: store.runningRounds().length,
   };
 }

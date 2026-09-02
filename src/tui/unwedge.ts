@@ -64,11 +64,16 @@ export function commandFileName(now: Date, seq: number): string {
  * daemon that has never booted cannot answer anyway) and when the operator
  * directory is a SYMLINK: `commands/` itself is the daemon's, so a session
  * could plant `operator` there ahead of the operator, and a root `chown` that
- * followed the link would hand root a directory the daemon needs. A real
- * directory a session pre-made is simply taken over — `chown 0:0` + `0755`
- * is what makes it the operator's, whoever created it — and the file's own
- * mode is set explicitly rather than left to the exec's umask, because the
- * daemon's seal check (`operatorSealVerdict`) reads both.
+ * followed the link would hand root a directory the daemon needs. The check
+ * runs AFTER `mkdir -p` (which passes silently over a link to a directory),
+ * so nothing sits between it and the chown, and the chown itself is `-h` —
+ * it never dereferences, so a link swapped in after the check is still not
+ * followed. A real directory a session pre-made is simply taken over —
+ * `chown 0:0` + `0755` is what makes it the operator's, whoever created it —
+ * and the file's own mode is set explicitly rather than left to the exec's
+ * umask, because the daemon's seal check (`operatorSealVerdict`) reads both;
+ * that check also `lstat`s the directory, so a link the script did not catch
+ * is still no seal on the daemon's side.
  */
 export function operatorCommandWriteScript(cfg: TuiConfig, name: string): string {
   const root = commandDirFor(cfg);
@@ -76,8 +81,9 @@ export function operatorCommandWriteScript(cfg: TuiConfig, name: string): string
   const tmp = `${dir}/.${name}.tmp`;
   return (
     `[ -d '${root}' ] || { echo 'daemon commands dir ${root} missing - is the daemon running?' >&2; exit 1; }; ` +
+    `mkdir -p '${dir}' || exit 1; ` +
     `[ ! -L '${dir}' ] || { echo '${dir} is a symlink - refusing to write the operator command' >&2; exit 1; }; ` +
-    `mkdir -p '${dir}' && chown 0:0 '${dir}' && chmod 0755 '${dir}' || exit 1; ` +
+    `chown -h 0:0 '${dir}' && chmod 0755 '${dir}' || exit 1; ` +
     `find '${dir}' -maxdepth 1 -name '*.json' -mmin +1440 -delete 2>/dev/null; ` +
     `cat > '${tmp}' && chmod 0644 '${tmp}' && mv '${tmp}' '${dir}/${name}'`
   );

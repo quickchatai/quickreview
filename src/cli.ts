@@ -446,11 +446,17 @@ export async function cmdRegression(rest: string[], json: boolean): Promise<numb
 
 /** The documented manual fallback: the exact ssh one-liner that writes the
  * same command file by hand when the runner path fails. */
-export function drainManualSshCommand(tui: TuiConfig, on: boolean): string {
+export function drainManualSshCommand(tui: TuiConfig, on: boolean, now: Date): string {
   // Same root-owned operator directory the runner path writes: a
   // fallback that wrote into the session dir would be a bounded session drain.
   const docker = `${tui.sudo_docker ? "sudo " : ""}docker exec -i -u 0 ${tui.container}`;
-  const script = operatorCommandWriteScript(tui, "drain-manual.json").replace(/'/g, "'\\''");
+  // A fresh name each time the fallback is printed, so the `off` after an
+  // `on` (or the next deploy's `on`) never lands on a result file that already
+  // holds an answer. The daemon's handled-ledger is keyed by file VERSION, so
+  // a re-used name (an operator editing an old line) still executes — the
+  // fresh name is what keeps its result readable.
+  const name = `${now.toISOString().replace(/[:.]/g, "-")}-manual-drain.json`;
+  const script = operatorCommandWriteScript(tui, name).replace(/'/g, "'\\''");
   return (
     `printf '%s' '${JSON.stringify({ command: "drain", on })}' | ` +
     `ssh ${tui.ssh_host} "${docker} sh -c '${script}'"`
@@ -491,7 +497,7 @@ export async function runDrain(on: boolean, deps: DrainRunDeps): Promise<number>
   }
   deps.log(`✖ drain refused: ${result.reason ?? "no reason given"}`);
   deps.log("manual fallback — run:");
-  deps.log(`  ${drainManualSshCommand(tui, on)}`);
+  deps.log(`  ${drainManualSshCommand(tui, on, (deps.now ?? (() => new Date()))())}`);
   return 1;
 }
 
