@@ -70,8 +70,9 @@ import type { Pi, ToolCallEvent } from "@earendil-works/pi-coding-agent";
  * prompt kept advertising `awk` after it came off this list, and a model
  * told a tool exists and then refused reads the refusal as a malfunction. The
  * enforcing half is the only author of the advertised half;
- * `tests/fences.test.ts` holds the two to set equality against the compiled
- * `checkBashCommand` itself.
+ * `tests/fences.test.ts` holds the advertised set equal to this array, runs
+ * every advertised program through `checkBashCommand` (from source), and
+ * separately checks the rendered sentence against `dist/src/include.js`.
  */
 export const ALLOWED_PROGRAMS: readonly string[] = [
   "git", "rg", "grep", "cat", "ls", "find", "head", "tail", "wc", "jq", "sed",
@@ -875,10 +876,11 @@ export function checkBashCommand(cmd: string): BashCheck {
 /**
  * The read-only programs that are not read-only (round 2).
  *
- * `awk`, `sed`, `sort` and `find` are on ALLOWED because a reviewer greps and
- * slices text all day. Each also has a mode that WRITES A FILE or RUNS A
- * COMMAND, and a review session needs none of them. Until this existed, all of
- * these were permitted and all are VERIFIED on this host:
+ * `sed`, `sort` and `find` are on ALLOWED (`awk` was too, until round
+ * 3 took it off — see the note at the end of this table) because a reviewer
+ * greps and slices text all day. Each also has a mode that WRITES A FILE or
+ * RUNS A COMMAND, and a review session needs none of them. Until this existed,
+ * all of these were permitted and all are VERIFIED on this host:
  *
  *   sed -n 'w .git/config' payload            → wrote it; plain `git diff` then ran <cmd>
  *   sort -o .git/config payload               → same

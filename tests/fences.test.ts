@@ -37,7 +37,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ALLOWED_PROGRAMS, checkBashCommand } from "../extensions/bash-guard.js";
-import { EXECUTION_POLICY_ADDENDUM, PASS_ADDENDA, buildAgents, renderAllowedCommands } from "../src/include.js";
+import { ALLOWED_COMMANDS_CLAUSE, EXECUTION_POLICY_ADDENDUM, PASS_ADDENDA, buildAgents } from "../src/include.js";
 import { loadProfileAddenda } from "../src/profiles.js";
 import { INITIAL_STATE, transition, type SmEvent } from "../src/statemachine.js";
 import { CANCEL_CAUSES, type PrLifecycleState } from "../src/state.js";
@@ -491,7 +491,7 @@ describe("what a built pass is told it may run is exactly what the guard lets th
   };
 
   /**
-   * MUTATION: replace `renderAllowedCommands()` in EXECUTION_POLICY_ADDENDUM
+   * MUTATION: replace `${ALLOWED_COMMANDS_CLAUSE}` in EXECUTION_POLICY_ADDENDUM
    * with the legacy literal (which names `awk`) — this fails twice, on
    * the set and on the probe. Add "awk" back to ALLOWED_PROGRAMS — the probe
    * `awk '{print $1}' f` is then allowed and this fails.
@@ -500,7 +500,7 @@ describe("what a built pass is told it may run is exactly what the guard lets th
     const advertised = advertisedIn(EXECUTION_POLICY_ADDENDUM);
     expect(new Set(advertised).size, "a program is advertised twice").toBe(advertised.length);
     expect([...advertised].sort()).toEqual([...ALLOWED_PROGRAMS].sort());
-    expect(EXECUTION_POLICY_ADDENDUM).toContain(`Allowed commands: ${renderAllowedCommands()}.`);
+    expect(EXECUTION_POLICY_ADDENDUM).toContain(`Allowed commands: ${ALLOWED_COMMANDS_CLAUSE}.`);
     for (const p of advertised) {
       const cmd = READ_PROBE[p] ?? `${p} README.md`;
       const r = checkBashCommand(cmd);
@@ -542,7 +542,7 @@ describe("what a built pass is told it may run is exactly what the guard lets th
         for (const b of built) {
           const body = readFileSync(b.output, "utf8");
           const where = `${label}/${b.name}`;
-          expect(body, where).toContain(`Allowed commands: ${renderAllowedCommands()}.`);
+          expect(body, where).toContain(`Allowed commands: ${ALLOWED_COMMANDS_CLAUSE}.`);
           expect([...advertisedIn(body)].sort(), where).toEqual([...ALLOWED_PROGRAMS].sort());
           expect(body, `${where} names NEEDS_HUMAN`).not.toMatch(/NEEDS_HUMAN/);
           expect(body, `${where} names the park`).not.toMatch(/\bpark(s|ed|ing)?\b/i);

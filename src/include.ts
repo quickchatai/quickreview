@@ -329,14 +329,13 @@ export function addendumApplies(scope: PassAddendumScope, pass: string): boolean
  * a turn and read to the model as a malfunction. `gh` is named last and
  * qualified, because the guard admits only its read verbs.
  */
-export function renderAllowedCommands(programs: readonly string[] = ALLOWED_PROGRAMS): string {
-  return `${programs.filter((p) => p !== "gh").join(", ")}, and read-only gh`;
-}
+export const ALLOWED_COMMANDS_CLAUSE =
+  `${ALLOWED_PROGRAMS.filter((p) => p !== "gh").join(", ")}, and read-only gh`;
 
 /** The execution-policy + leaf rules — the original global addendum and the
  * registry's first entry; only its allowlist clause is derived. */
 export const EXECUTION_POLICY_ADDENDUM =
-  `\n\n## Execution policy (sandbox rule, enforced)\nYou are a read-only reviewer. Never execute project code, tests, builds, scripts, or package managers (no python/pytest/uv/npm/node/make or similar). Allowed commands: ${renderAllowedCommands()}. CI results are READ via \`gh pr checks\` / \`gh api\` — never re-run or trigger anything.\n\n## You are a leaf (sandbox rule, enforced)\nYou never launch another agent: no \`subagent\` call, no nested pass, no \`pi\`/\`codex\`/\`claude\` process from bash. The PR's main session is the only scheduler of agents — it dispatched you and it merges your findings. Everything you need is in your task string; if something is missing, say so in your findings block and stop.\n`;
+  `\n\n## Execution policy (sandbox rule, enforced)\nYou are a read-only reviewer. Never execute project code, tests, builds, scripts, or package managers (no python/pytest/uv/npm/node/make or similar). Allowed commands: ${ALLOWED_COMMANDS_CLAUSE}. CI results are READ via \`gh pr checks\` / \`gh api\` — never re-run or trigger anything.\n\n## You are a leaf (sandbox rule, enforced)\nYou never launch another agent: no \`subagent\` call, no nested pass, no \`pi\`/\`codex\`/\`claude\` process from bash. The PR's main session is the only scheduler of agents — it dispatched you and it merges your findings. Everything you need is in your task string; if something is missing, say so in your findings block and stop.\n`;
 
 const DELTA_MUST_EXIST_ADDENDUM =
   "\n## A finding asserts a delta (sandbox rule)\nA posted finding must assert a **delta from the current code**. If the recommendation is already implemented, there is nothing to say — it does not become a finding, an inline comment, a numbered item, or a bullet. Never return a verification inventory (\"checked X, it holds; checked Y, also fine\"): nobody reads it, and every line of it costs the reader attention that belongs to the real findings. This kills the *enumerated inventory*, not the one-sentence framing judgment that opens a good review.\n";
