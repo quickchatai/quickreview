@@ -42,7 +42,7 @@ import { applyEvent, restoreStandingLifecycle, setPrGates } from "./statemachine
 import type { PrStateRow, ReviewedHeadRow, StateStore } from "./state.js";
 import { snapshotMark, standingReview } from "./standing-review.js";
 import { higherTier, PASS_TIER_ORDER, roundPromptMarker } from "./types.js";
-import type { PassPlanEntry, PassTier, RoundOrder, RoundType, SessionHooks } from "./types.js";
+import type { PassPlanEntry, PassTier, RoundOrder, RoundRecoveryContext, RoundType, SessionHooks } from "./types.js";
 
 /** The slice of GitHubAdapter dispatch needs — all mutations are gated inside
  * the adapter, so this module never touches GitHub directly. */
@@ -216,13 +216,24 @@ function alreadyConsumed(err: unknown): boolean {
 async function ecosystemPreCheck(
   deps: DispatchDeps,
   eco: Ecosystem,
-  args: { pr: number; files: PrFileEntry[]; head_sha: string; base_ref: string; base_sha: string },
+  args: { round_id: number; pr: number; files: PrFileEntry[]; head_sha: string; base_ref: string; base_sha: string },
 ): Promise<{ collisions: MigrationCollision[]; degraded: boolean }> {
   const outcome = await eco.preCheck(
     {
       logEvent: (kind, pr, payload) => deps.store.logEvent(kind, pr, payload),
       migrationCollisionCommented: (pr, fingerprint) => deps.store.migrationCollisionCommented(pr, fingerprint),
-      createReview: (pr, payload, options) => deps.adapter.createReview(pr, payload, options),
+      createReview: async (pr, payload, options) => {
+        // A throw after transport begins is ambiguous. Persist that BEFORE the
+        // gated call, then narrow it only from the gate's returned fact. The
+        // pre-fanout auto-retry class excludes ambiguous/executed rounds.
+        deps.store.recordRoundPreflightPosting(args.round_id, "ambiguous");
+        const result = await deps.adapter.createReview(pr, payload, options);
+        deps.store.recordRoundPreflightPosting(
+          args.round_id,
+          result.executed ? "executed" : result.dryRunFile ? "dryrun" : "refused",
+        );
+        return result;
+      },
       ...(deps.listBaseMigrations ? { listBaseMigrations: deps.listBaseMigrations } : {}),
       ...(deps.log ? { log: deps.log } : {}),
     },
@@ -618,6 +629,8 @@ export function buildRoundOrder(args: {
   prBody?: string;
   /**: the round's ecosystem. Absent ⇒ Django (pre-seam behavior). */
   ecosystem?: Ecosystem;
+  /** exact predecessor identity for a pre-fanout recovery successor. */
+  recovery?: RoundRecoveryContext;
   /** Profile lens-heuristics extension; absent ⇒ generic core. */
   heuristics?: HeuristicsExtension;
 }): RoundOrder {
@@ -647,6 +660,7 @@ export function buildRoundOrder(args: {
       const targets = promptTargetsFor(args.cfg.escalation);
       return targets ? { escalation_targets: targets } : {};
     })(),
+    ...(args.recovery?.target_head_sha === headSha ? { recovery: args.recovery } : {}),
     head_sha: headSha,
     base_ref: args.tree?.base_ref ?? "",
     base_sha: args.tree?.base_sha ?? "",
@@ -704,7 +718,10 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
   const commandEligible = queuedInOrder(store).filter((row) => {
     const failure = store.openReviewFailure(row.number);
     if (failure) {
-      log(`dispatch: #${row.number} held FAILED_LOUD (${failure.incident_id}); operator u required`);
+      const action = failure.next_action === "retry_wait" && failure.next_retry_at
+        ? `automatic retry at ${failure.next_retry_at}`
+        : "operator u required";
+      log(`dispatch: #${row.number} held FAILED_LOUD (${failure.incident_id}); ${action}`);
       return false;
     }
     const active = store.blockingSessionCommand(`pr-${row.number}`);
@@ -948,6 +965,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // own COMMENT, so whatever the review concludes, the renumber never
       // rides on the verdict; a `none` ecosystem runs nothing at all.
       const precheck = await ecosystemPreCheck(deps, eco, {
+        round_id: roundId,
         pr: row.number,
         files,
         head_sha: tree?.head_sha || row.head_sha,
@@ -989,9 +1007,36 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         base_sha: tree?.base_sha ?? "",
       });
 
+      const preparedHead = tree?.head_sha || row.head_sha;
+      const rawRecoveryInstruction = store.roundRecoveryInstruction(row.number, roundNo);
+      const recoveryInstruction = store.roundRecoveryInstructionForDispatch(row.number, roundNo, preparedHead);
+      if (rawRecoveryInstruction && !recoveryInstruction) {
+        store.logEvent("round_recovery_instruction_not_applied", row.number, {
+          target_round_no: roundNo,
+          stored_head_sha: rawRecoveryInstruction.target_head_sha,
+          prepared_head_sha: preparedHead,
+          source_round_no: rawRecoveryInstruction.source_round_no,
+          source_command_id: rawRecoveryInstruction.source_command_id,
+          reason: "exact_successor_identity_mismatch",
+        });
+      }
+      const recovery: RoundRecoveryContext | undefined = recoveryInstruction
+        ? {
+            stage: recoveryInstruction.stage,
+            source_round_no: recoveryInstruction.source_round_no,
+            source_command_id: recoveryInstruction.source_command_id,
+            target_head_sha: recoveryInstruction.target_head_sha,
+            immediate_attempt: recoveryInstruction.immediate_attempt,
+            retry_epoch: recoveryInstruction.retry_epoch,
+            ...(recoveryInstruction.source_incident_id
+              ? { source_incident_id: recoveryInstruction.source_incident_id }
+              : {}),
+          }
+        : undefined;
       const order = buildRoundOrder({
         tree,
         ecosystem: eco,
+        ...(recovery ? { recovery } : {}),
         migrationCollisions,
         migrationPrecheckDegraded: precheck.degraded,
         ...(firstPartyDirectives !== undefined ? { firstPartyDirectives } : {}),
@@ -1048,6 +1093,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         // to explain which trigger paid for the round.
         trigger_ts: row.trigger_ts,
         trigger_provenance: row.trigger_provenance,
+        recovery: order.recovery ?? null,
       });
       // Slack (S4): the PR's thread root on the first round we see, a
       // 🔄 line in-thread on later ones. The announcer swallows its own

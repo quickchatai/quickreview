@@ -5,7 +5,7 @@
 > `{{n}} {{title}} {{worktree}} {{head_sha}} {{lenses}} {{pass_plan}}
 > {{addable_lenses}} {{base_ref}} {{base_sha}} {{merge_base}} {{migration_gate_note}}
 > {{settled_digest}} {{round_type}} {{round_no}} {{nit_scope_note}}
-> {{intent_note}}`, plus the two memory sections `pinned_head` and
+> `intent_note` and `recovery_note`, plus the two memory sections `pinned_head` and
 > `context_block` (written without braces here so this doc line
 > does not render a second copy of the memory seed), and the identity
 > variables `owner_name`/`repo`/`bot_login` (same braceless
@@ -24,6 +24,7 @@ review.
 **Lenses this round**: {{lenses}}
 
 {{pinned_head}}
+{{recovery_note}}
 
 This round was triggered because **the head moved after your approval**. Your
 approving review still stands on the record; the question is whether it is still

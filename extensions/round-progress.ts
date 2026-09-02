@@ -74,6 +74,24 @@ function toolArgs(event: PiEventPayload): Record<string, unknown> {
   return record(event.args) ?? record(event.input) ?? record(event.arguments) ?? {};
 }
 
+/** Native subagent supports one `{agent, task}` or parallel `{tasks:[...]}`.
+ * Capture the latter at tool START — waiting for its first streaming update is
+ * precisely the false pre-fanout stall must eliminate. */
+function subagentNames(args: Record<string, unknown>): string[] {
+  const single = text(args.agent);
+  if (single) return [single];
+  if (!Array.isArray(args.tasks)) return [];
+  return args.tasks.map(record).map((task) => text(task?.agent)).filter((name): name is string => name !== undefined);
+}
+
+function reviewIdentity(body: string): { round_no: number; head_sha: string } | undefined {
+  const round = /(?:^|\n)export QCR_ROUND_NO=(\d+)(?:\n|$)/.exec(body);
+  const head = /\*\*Worktree\*\*:[^\n]* @ `([^`]+)`/.exec(body);
+  if (!round || !head) return undefined;
+  const roundNo = Number(round[1]);
+  return Number.isInteger(roundNo) && roundNo > 0 ? { round_no: roundNo, head_sha: head[1]! } : undefined;
+}
+
 function argPreview(args: Record<string, unknown>): string | undefined {
   for (const key of ["command", "path", "query", "pattern", "url"]) {
     const value = text(args[key]);
@@ -179,7 +197,7 @@ export default function activate(pi: Pi): void {
   // the same lens twice, and the second run must not inherit the first run's
   // terminal timestamp.
   const agents = new Map<string, LiveAgentProgress>();
-  const callAgents = new Map<string, string>();
+  const callAgents = new Map<string, string[]>();
   const executionKey = (callId: string, agent: string): string => `${callId}:${agent}`;
   const nowIso = (): string => new Date().toISOString();
   let snapshot: RoundProgressSnapshot | undefined;
@@ -238,8 +256,14 @@ export default function activate(pi: Pi): void {
     if (!marker) return;
     snapshot.command_id = marker.id;
     snapshot.command_sha256 = marker.payloadSha256;
+    const identity = reviewIdentity(body!);
+    if (identity) {
+      snapshot.round_no = identity.round_no;
+      snapshot.head_sha = identity.head_sha;
+    }
     snapshot.command_accepted_at ??= nowIso();
-    activity(`command ${marker.id} accepted`);
+    snapshot.preparing_at ??= snapshot.command_accepted_at;
+    activity(`command ${marker.id} accepted; parent preparing compact fanout context`);
   });
 
   pi.on("turn_start", heartbeat);
@@ -250,23 +274,26 @@ export default function activate(pi: Pi): void {
     const name = toolName(event);
     const args = toolArgs(event);
     if (name === "subagent") {
-      const agent = text(args.agent);
-      if (agent) {
+      const names = subagentNames(args);
+      if (names.length > 0) {
         const at = nowIso();
         const callId = toolId(event);
-        const key = executionKey(callId, agent);
-        callAgents.set(callId, agent);
-        agents.set(key, {
-          execution_id: key,
-          agent,
-          status: "running",
-          duration_ms: 0,
-          tool_count: 0,
-          started_at: at,
-        });
+        callAgents.set(callId, names);
+        for (const agent of names) {
+          const key = executionKey(callId, agent);
+          agents.set(key, {
+            execution_id: key,
+            agent,
+            status: "running",
+            duration_ms: 0,
+            tool_count: 0,
+            started_at: at,
+          });
+        }
         snapshot.first_lens_started_at ??= at;
-        snapshot.active_tool = `subagent: ${agent}`;
-        activity(`${agent} started`);
+        snapshot.fanout_started_at ??= snapshot.first_lens_started_at;
+        snapshot.active_tool = `subagent: ${names.join(", ")}`;
+        activity(`${names.join(", ")} started`);
         return;
       }
     }
@@ -277,16 +304,16 @@ export default function activate(pi: Pi): void {
 
   pi.on("tool_execution_update", (event) => {
     if (!snapshot) return;
-    const fallback = callAgents.get(toolId(event));
+    const fallbacks = callAgents.get(toolId(event)) ?? [];
     const reported = resultsFrom(event, "partialResult");
     // Native parallel mode marks a still-running slot with exitCode -1 and a
     // finished one with its real exit code; single/chain slots keep exitCode 0
     // while streaming, so mid-update they read as running regardless.
     const mode = record(record(event.partialResult)?.details)?.mode;
     let changed = false;
-    for (const result of reported) {
+    for (const [index, result] of reported.entries()) {
       const stillLive = mode === "parallel" ? result.exitCode === -1 : true;
-      const agent = asAgent(result, fallback, stillLive);
+      const agent = asAgent(result, fallbacks[index] ?? (fallbacks.length === 1 ? fallbacks[0] : undefined), stillLive);
       if (!agent) continue;
       const key = executionKey(toolId(event), agent.agent);
       const previous = agents.get(key);
@@ -307,15 +334,15 @@ export default function activate(pi: Pi): void {
   pi.on("tool_execution_end", (event) => {
     if (!snapshot) return;
     const id = toolId(event);
-    const fallback = callAgents.get(id);
+    const fallbacks = callAgents.get(id) ?? [];
     const reported = resultsFrom(event, "result");
-    let finalAgent: LiveAgentProgress | undefined;
-    for (const result of reported) {
-      const agent = asAgent(result, fallback);
+    const finalAgents: LiveAgentProgress[] = [];
+    for (const [index, result] of reported.entries()) {
+      const agent = asAgent(result, fallbacks[index] ?? (fallbacks.length === 1 ? fallbacks[0] : undefined));
       if (!agent) continue;
       const key = executionKey(id, agent.agent);
       const previous = agents.get(key);
-      finalAgent = {
+      const finalAgent: LiveAgentProgress = {
         ...previous,
         ...agent,
         execution_id: key,
@@ -323,21 +350,27 @@ export default function activate(pi: Pi): void {
         finished_at: previous?.finished_at ?? nowIso(),
       };
       agents.set(key, finalAgent);
+      finalAgents.push(finalAgent);
     }
-    if (!finalAgent && fallback) {
-      const key = executionKey(id, fallback);
-      const previous = agents.get(key);
+    if (finalAgents.length === 0 && fallbacks.length > 0) {
       const failed = event.isError === true;
-      finalAgent = {
-        ...(previous ?? { execution_id: key, agent: fallback, duration_ms: 0, tool_count: 0, started_at: nowIso() }),
-        status: failed ? "failed" : "completed",
-        finished_at: previous?.finished_at ?? nowIso(),
-      };
-      agents.set(key, finalAgent);
+      for (const fallback of fallbacks) {
+        const key = executionKey(id, fallback);
+        const previous = agents.get(key);
+        const finalAgent: LiveAgentProgress = {
+          ...(previous ?? { execution_id: key, agent: fallback, duration_ms: 0, tool_count: 0, started_at: nowIso() }),
+          status: failed ? "failed" : "completed",
+          finished_at: previous?.finished_at ?? nowIso(),
+        };
+        agents.set(key, finalAgent);
+        finalAgents.push(finalAgent);
+      }
     }
     callAgents.delete(id);
     snapshot.active_tool = undefined;
-    activity(finalAgent ? `${finalAgent.agent} ${finalAgent.status}` : `${toolName(event)} completed`);
+    activity(finalAgents.length > 0
+      ? `${finalAgents.map((agent) => `${agent.agent} ${agent.status}`).join(", ")}`
+      : `${toolName(event)} completed`);
   });
 
   pi.on("agent_settled", () => {
