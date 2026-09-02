@@ -728,4 +728,95 @@ describe("a guard may rewrite only body and note", () => {
     await expect(gate.execute(review)).rejects.toThrow(/a guard may rewrite only body and note.*"extra".*undefined → 1/);
     nothingHappened(executor);
   });
+
+  /** Round-2 review: admission ran on the caller's RAW object, and the
+   * snapshot the guards and the executor got was a SECOND read of it. With no
+   * guard installed nothing re-admitted that snapshot, so a getter on `kind`
+   * that said `create_review` to `admit()` and `dismiss_review` to the spread
+   * executed a dismissal through the compiled gate; one on `forceLive` saying
+   * `false` then `true` executed for real in dry-run. Same class as
+   * itself, one step earlier. The snapshot is now taken FIRST and admitted;
+   * swapping the two lines back in `execute` turns both cases red. */
+  const readOnce = (over: Record<string, [first: unknown, then: unknown]>): MutationIntent => {
+    const shifty: Record<string, unknown> = { ...review };
+    for (const [field, [first, then]] of Object.entries(over)) {
+      let reads = 0;
+      Object.defineProperty(shifty, field, { enumerable: true, get: () => (reads++ === 0 ? first : then) });
+    }
+    return shifty as unknown as MutationIntent;
+  };
+
+  it("with NO guard installed, the entry check and the executor read the same snapshot: a getter on kind cannot pass admission as create_review and execute as dismiss_review", async () => {
+    const executor = vi.fn(async (_i: MutationIntent) => ({}));
+    const gate = new MutationGate(false, join(dir, "dryrun"), executor);
+    await gate.execute(readOnce({ kind: ["create_review", "dismiss_review"] }));
+    expect(executor).toHaveBeenCalledOnce();
+    const sent = executor.mock.calls[0]![0] as MutationIntent;
+    expect(sent.kind).toBe("create_review");
+    expect(Object.getOwnPropertyDescriptor(sent, "kind")).toMatchObject({ value: "create_review" });
+    expect(Object.isFrozen(sent)).toBe(true);
+  });
+
+  it("…nor can a getter on forceLive pass admission as false and skip the dry-run branch as true", async () => {
+    const executor = vi.fn(async (_i: MutationIntent) => ({}));
+    const gate = new MutationGate(true, join(dir, "dryrun"), executor);
+    const result = await gate.execute(readOnce({ forceLive: [false, true] }));
+    expect(result.executed).toBe(false);
+    expect(executor).not.toHaveBeenCalled();
+    expect(JSON.parse(readFileSync(result.dryRunFile!, "utf8")).forceLive).toBe(false);
+  });
+
+  it("a symbol-keyed field a guard adds is refused like any other: the walk covers every own key the spread copies", async () => {
+    // `Object.keys` saw string keys only, while `snapshot`'s spread carries own
+    // enumerable symbol keys onto the executed object; the walk is
+    // `Reflect.ownKeys` now, and reverting it lets this ride through.
+    const executor = vi.fn(async () => ({}));
+    const gate = new MutationGate(false, join(dir, "dryrun"), executor);
+    const tag = Symbol("x");
+    gate.setGuard({ before: async (i) => ({ intent: { ...i, [tag]: 1 } as MutationIntent }) });
+    await expect(gate.execute(review)).rejects.toThrow(/a guard may rewrite only body and note.*"Symbol\(x\)".*undefined → 1/);
+    nothingHappened(executor);
+  });
+
+  it("a body that is not plain data is refused with the gate's name and the kind on it — from the caller and from a guard alike", async () => {
+    // structuredClone throws a bare DataCloneError ("() => 1 could not be
+    // cloned.") that names neither the gate nor the mutation; the refusal an
+    // operator reads in the log must say which mutation went nowhere.
+    const withFn = { ...review, body: { ...(review.body as object), fn: () => 1 } };
+    const bare = vi.fn(async () => ({}));
+    await expect(new MutationGate(false, join(dir, "dryrun"), bare).execute(withFn))
+      .rejects.toThrow(/^gate: intent body for create_review is not plain data \(.*could not be cloned.*\) — refusing to execute or record it$/);
+    nothingHappened(bare);
+
+    const guarded = vi.fn(async () => ({}));
+    const gate = new MutationGate(true, join(dir, "dryrun"), guarded);
+    gate.setGuard({ before: async (i) => ({ intent: { ...i, body: { ...(i.body as object), fn: () => 1 } } }) });
+    await expect(gate.execute(review)).rejects.toThrow(/^gate: intent body for create_review is not plain data/);
+    nothingHappened(guarded);
+  });
+
+  it("the type is honest about the frozen object: every field is readonly, so a guard that assigns instead of returning does not compile — and would not run", async () => {
+    // Round-2 review: `body` and `note` — the two fields a guard is invited to
+    // touch — were the only ones still assignable in the type, so a first-party
+    // guard writing `intent.note = …` compiled and died inside the guard with
+    // a bare TypeError. The `@ts-expect-error`s below are the fence
+    // (`npm run typecheck:tests` fails if any of the three assignments
+    // compiles); the runtime half shows what such a guard gets.
+    const assigning = {
+      before: async (i: MutationIntent) => {
+        // @ts-expect-error note is readonly — rewrite by returning a new object
+        i.note = "softened";
+        // @ts-expect-error body is readonly — rewrite by returning a new object
+        i.body = {};
+        // @ts-expect-error kind is readonly
+        i.kind = "create_review";
+        return {};
+      },
+    };
+    const executor = vi.fn(async () => ({}));
+    const gate = new MutationGate(false, join(dir, "dryrun"), executor);
+    gate.setGuard(assigning);
+    await expect(gate.execute(review)).rejects.toThrow(/read only property 'note'/);
+    nothingHappened(executor);
+  });
 });

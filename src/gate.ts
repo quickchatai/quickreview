@@ -105,28 +105,32 @@ export type AppSelfConfigKind = (typeof APP_SELF_CONFIG_KINDS)[number];
  * from guard 2 — so a purpose riding an APPROVE would be an approval that
  * skips the no-new-evidence guard AND never marks the head it approved.
  * `execute()` therefore refuses any purposed intent that is not a
- * `create_review` with `event: "COMMENT"` — on the caller's intent at entry,
- * and again on the detached copy that executes (see `snapshot`), so the
- * `event` this check reads is the `event` the executor sends.
+ * `create_review` with `event: "COMMENT"` — on the detached snapshot of the
+ * caller's intent at entry, and again on the detached copy of what the guard
+ * hands back (see `snapshot`), so the `event` this check reads is the
+ * `event` the executor sends.
  */
 export type ReviewPurpose = "migration_precheck" | "escalation";
 
 /**
- * The identity fields are `readonly` for the same reason the gate hands a
- * guard a frozen, detached snapshot (see `snapshot` and `execute`): a guard's
- * authority ends at `body` and `note` (GUARD_REWRITABLE_FIELDS), and a
- * first-party guard that assigns to `intent.kind` should fail to compile
- * before it fails at runtime. Rewrites are spreads into a new object, which is
- * what the shipped guards do.
+ * Every field is `readonly` because every object the gate hands on is frozen
+ * (see `snapshot` and `execute`): the type is honest about the runtime object.
+ * A guard rewrites by RETURNING a new object — a spread with `body` and/or
+ * `note` replaced, which is what the shipped guards do; those two are the
+ * whole of a guard's authority (GUARD_REWRITABLE_FIELDS). A first-party guard
+ * that assigns to `intent.kind` — or to `intent.note`, the field it is most
+ * invited to touch — fails to compile instead of failing inside the guard
+ * with a bare TypeError that names no kind. (The freeze is shallow: an
+ * assignment INSIDE `body` lands on the guard's own copy — see `snapshot`.)
  */
 export interface MutationIntent {
   readonly kind: MutationKind;
   /** REST method+path for API intents; "git" for pushes. */
   readonly method: "POST" | "PATCH" | "PUT" | "DELETE" | "git";
   readonly path: string;
-  body?: unknown;
+  readonly body?: unknown;
   /** Human-readable one-liner for the dry-run record / event log. */
-  note: string;
+  readonly note: string;
   readonly pr?: number;
   /** Internal provenance for a mechanically-authored review. Absent means a
    * substantive review. It never enters the GitHub body; posting guards use
@@ -179,11 +183,12 @@ export type GitPerformer = () => Promise<unknown>;
 /** A guard's answer: refuse (`block`), or let it through — optionally with a
  * rewritten intent (the human-approval downgrade posts a COMMENT instead of a
  * REQUEST_CHANGES). Returning `{}` means "no opinion". The intent a guard
- * receives is a FROZEN snapshot (in-place edits throw); the intent that goes
- * on is a fresh copy (`snapshot`) of whatever the guard returned — or of the
- * snapshot it was handed, body included, when it returned none — and it may
- * differ from that snapshot in `body` and `note` ONLY (GUARD_REWRITABLE_FIELDS);
- * the gate refuses any other difference. */
+ * receives is a FROZEN snapshot: an in-place edit to a top-level field throws,
+ * and an edit inside `body` lands on the guard's copy, never the caller's. The
+ * intent that goes on is a fresh copy (`snapshot`) of whatever the guard
+ * returned — or of the snapshot it was handed, body included, when it returned
+ * none — and it may differ from that snapshot in `body` and `note` ONLY
+ * (GUARD_REWRITABLE_FIELDS); the gate refuses any other difference. */
 export interface GuardDecision {
   block?: string;
   intent?: MutationIntent;
@@ -234,19 +239,21 @@ export const GUARD_REWRITABLE_FIELDS = ["body", "note"] as const satisfies reado
 /** See GUARD_REWRITABLE_FIELDS: every field outside that list must be the
  * same value (`Object.is`, so a `NaN` the guard never touched is not blamed on
  * it) before and after the guard, presence included — a guard that ADDS
- * `forceLive: true` differs from one that left it absent. The keys are walked
- * as strings on purpose: a field the type does not declare is exactly what
- * this check must not assume away. */
+ * `forceLive: true` differs from one that left it absent. The walk is over
+ * every OWN key of both objects — string and symbol, whatever the type
+ * declares — because that is exactly the set `snapshot`'s spread copies onto
+ * the object that executes: a field the type does not declare, or a
+ * symbol-keyed one, is exactly what this check must not assume away. */
 function guardRewriteCheck(before: MutationIntent, after: MutationIntent): void {
   // Viewed as bags of fields, deliberately: `keyof MutationIntent` is the one
   // thing an unknown added key is not.
-  const b = before as unknown as Record<string, unknown>;
-  const a = after as unknown as Record<string, unknown>;
-  for (const field of new Set([...Object.keys(b), ...Object.keys(a)])) {
-    if ((GUARD_REWRITABLE_FIELDS as readonly string[]).includes(field)) continue;
+  const b = before as unknown as Record<string | symbol, unknown>;
+  const a = after as unknown as Record<string | symbol, unknown>;
+  for (const field of new Set([...Reflect.ownKeys(b), ...Reflect.ownKeys(a)])) {
+    if (typeof field === "string" && (GUARD_REWRITABLE_FIELDS as readonly string[]).includes(field)) continue;
     if (!Object.is(b[field], a[field])) {
       throw new Error(
-        `gate: a guard may rewrite only ${GUARD_REWRITABLE_FIELDS.join(" and ")}; it changed "${field}" on ${before.kind} `
+        `gate: a guard may rewrite only ${GUARD_REWRITABLE_FIELDS.join(" and ")}; it changed "${String(field)}" on ${before.kind} `
           + `(${JSON.stringify(b[field])} → ${JSON.stringify(a[field])}) — refusing to execute or record it`,
       );
     }
@@ -254,17 +261,30 @@ function guardRewriteCheck(before: MutationIntent, after: MutationIntent): void 
 }
 
 /**
- * A frozen copy of an intent with its OWN `body` — the object `execute` hands
- * a guard, and the object it compares, re-admits and executes. Shallow
- * everywhere but `body`, because `body` is the one nested field: a body is
- * plain data (the REST executor JSON-encodes it; the push body is three
- * strings), so `structuredClone` detaches it, reads any getter in it once and
- * throws on anything that is not data — a body the executor could not have
- * sent faithfully either.
+ * A frozen copy of an intent with its OWN `body` — the object `execute`
+ * admits, hands a guard, and then compares, re-admits and executes. Every
+ * field is read exactly once, here, by the spread; nothing downstream ever
+ * reads the object it was given. Shallow everywhere but `body`, because
+ * `body` is the one nested field: a body is plain data (the REST executor
+ * JSON-encodes it; the push body is three strings), so `structuredClone`
+ * detaches it and reads any getter in it once. A body that is not plain data
+ * (a function, a URL, …) is one the executor could not have sent faithfully
+ * either; it is refused — with the gate's name and the kind on the refusal,
+ * so the log line says which mutation went nowhere and why, rather than a
+ * bare DataCloneError.
  */
 function snapshot(intent: MutationIntent): MutationIntent {
   const copy = { ...intent };
-  if (copy.body !== undefined) copy.body = structuredClone(copy.body);
+  if (copy.body !== undefined) {
+    try {
+      copy.body = structuredClone(copy.body);
+    } catch (err) {
+      throw new Error(
+        `gate: intent body for ${copy.kind} is not plain data (${err instanceof Error ? err.message : String(err)}) — refusing to execute or record it`,
+        { cause: err },
+      );
+    }
+  }
   return Object.freeze(copy);
 }
 
@@ -279,8 +299,8 @@ export interface MutationGuard {
 }
 
 /** See ReviewPurpose: a purposed intent is a `create_review` COMMENT or it is
- * refused. Free function so `execute` can run it twice — once on the caller's
- * intent, once on whatever the guards handed back. */
+ * refused. Free function called from `admit`, which `execute` runs twice —
+ * on the entry snapshot, and again on the post-guard copy. */
 function reviewPurposeCheck(intent: MutationIntent): void {
   if (!intent.reviewPurpose) return;
   const event = String((intent.body as { event?: unknown } | undefined)?.event ?? "").toUpperCase();
@@ -293,13 +313,16 @@ function reviewPurposeCheck(intent: MutationIntent): void {
 
 /**
  * Admission: what the gate demands of ANY intent before it may execute or be
- * recorded. It runs on the caller's intent on entry, and again on whatever a
- * guard hands back. The second run is the invariant "only an
- * admitted intent executes", checked on the very object that executes rather
- * than inferred from GUARD_REWRITABLE_FIELDS. The two are deliberately
- * independent belts: the field list says what a guard MAY change, admission
- * says what may run at all — so widening the field list (should a guard ever
- * need to) does not loosen what runs.
+ * recorded. It runs on the entry `snapshot` of the caller's intent — never on
+ * the caller's object itself, whose fields could answer this check one way
+ * and the snapshot's spread another (round-2 review: a getter on `kind` did
+ * exactly that through the compiled gate, on a gate with no guard installed)
+ * — and again on the snapshot of whatever a guard hands back. Each
+ * run is the invariant "only an admitted intent executes", checked on the
+ * very object that goes on rather than inferred from GUARD_REWRITABLE_FIELDS.
+ * The field list and admission are deliberately independent belts: the list
+ * says what a guard MAY change, admission says what may run at all — so
+ * widening the list (should a guard ever need to) does not loosen what runs.
  */
 function admit(intent: MutationIntent, perform: GitPerformer | undefined): void {
   // Checked before anything else — an unknown kind is never recorded to
@@ -363,13 +386,14 @@ export class MutationGate {
   }
 
   async execute(intentIn: MutationIntent, perform?: GitPerformer): Promise<GateResult> {
-    admit(intentIn, perform);
-    // What was admitted, as a frozen snapshot with its own body. The guards
-    // see this object and nothing else: an assignment to one of its identity
-    // fields throws (strict-mode ESM), and an edit inside its body lands on the
-    // snapshot's copy. The caller's object — its body included — is neither
-    // handed to a guard nor executed.
+    // The caller's object is read ONCE, by this spread, and never again: what
+    // is admitted, handed to the guards and (with no guard installed) executed
+    // is this frozen snapshot with its own body — so the object that executes
+    // is the object that was checked. An assignment to one of its top-level
+    // fields throws inside a guard (strict-mode ESM); an edit inside its body
+    // lands on the snapshot's copy, never the caller's.
     let intent: MutationIntent = snapshot(intentIn);
+    admit(intent, perform);
     // Posting-time guards run BEFORE the dry-run branch: a mutation a guard
     // refuses is neither executed nor recorded, so the dry-run evidence shows
     // the same behaviour the live path would have had.
