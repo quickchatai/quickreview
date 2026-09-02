@@ -31,7 +31,7 @@
 // health endpoint and webhook ping delivery are the verify_stack step's job —
 // layered, each with its own fix. Bring-up's own success bar is "the compose
 // command succeeded and the daemon container is running".
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 import {
   composePs,
@@ -44,6 +44,7 @@ import {
   writeAtomic,
   type StreamRunner,
 } from "./compose.js";
+import { declaredEmbedderOf, describeEmbedder, embedderEnvEntries } from "./embeddings.js";
 import { readEnvKey, setEnvKey } from "./ingress.js";
 import { UID_CHOICE_KEY } from "./preflight.js";
 import { CHOICE_KEYS } from "./configfill.js";
@@ -141,14 +142,21 @@ export function bringUpStep(opts: BringUpStepOptions = {}): OnboardingStep {
       const profile = option ? option.profile : (readEnvKey(envText, "COMPOSE_PROFILES") ?? "");
       let next = setEnvKey(envText, "QCR_UID", String(uid));
       next = setEnvKey(next, "COMPOSE_PROFILES", profile);
+      // the embedder config.toml declares, carried into the .env the
+      // compose file passes to the container — the ONE place the boot reads
+      // it from on this route. config.toml is the truth; this is its mirror,
+      // re-asserted on every bring-up so the two cannot drift apart.
+      const embedder = declaredEmbedderOf(readFileSync(`${root}/config.toml`, "utf8"));
+      for (const [key, value] of embedderEnvEntries(embedder)) next = setEnvKey(next, key, value);
       if (next !== envText) writeAtomic(`${root}/.env`, next);
       checks.push({
         name: "build-inputs",
         ok: true,
         detail:
-          `.env: QCR_UID=${uid} (the container user, so it owns the files it writes in your checkout) and ` +
+          `.env: QCR_UID=${uid} (the container user, so it owns the files it writes in your checkout), ` +
           `COMPOSE_PROFILES=${profile === "" ? "(empty — daemon only, the polling shape)" : profile}` +
-          `${option ? ` for the ${option.id} ingress you chose` : " (no ingress shape recorded — bringing up the daemon alone)"}`,
+          `${option ? ` for the ${option.id} ingress you chose` : " (no ingress shape recorded — bringing up the daemon alone)"}` +
+          `, and the memory embedder ${describeEmbedder(embedder)} from config.toml${embedder.provider === "local" ? " (local: no memory text leaves this machine)" : ""}`,
       });
 
       // The warning goes out BEFORE the long wait, never after it.

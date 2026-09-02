@@ -44,6 +44,13 @@ const WAKE_KINDS: ReadonlySet<string> = new Set([
   "overdue",
   "pass_plan_mismatch",
   "migration_precheck_degraded",
+  // the same check, quieter the other way — collisions found, but
+  // the GitHub COMMENT withheld because the event log holds a collision-
+  // comment row it cannot read. Nothing self-heals: every later collision
+  // comment on that PR stays withheld until a human repairs the row, so it is
+  // human-attention grade — and it fires at most once per PR by construction
+  // (`StateStore.anomalyRaised` gates it in dispatch), so it cannot spam.
+  "migration_collision_comment_withheld",
   // x: a ledger still stale AFTER its one re-nudge — the
   // session ignored the nudge, a human-attention grade. First-detection
   // "ledger_stale" stays quiet: the nudge is the response.
@@ -80,6 +87,12 @@ const WAKE_KINDS: ReadonlySet<string> = new Set([
   // and it cannot fire routinely: the baseline is taken from the same paths by
   // the same helper that re-checks them.
   "git_config_modified",
+  // the same check over this system's OWN policy surface —
+  // config.toml, the sanctioned scripts, the compiled guard, the seeds. A
+  // change here is worse than the git one: it does not merely taint this
+  // round, it rewrites the boundary every LATER round in the container runs
+  // under. Human-attention grade; cannot fire routinely for the same reason.
+  "policy_surface_modified",
   // a round that blew its deadline and is being buried rather than
   // rescued — nothing will ever come back for it, and the PR it belonged to
   // may never have been reviewed at all. Fires at most once per round, by

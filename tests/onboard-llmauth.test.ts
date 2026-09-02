@@ -333,13 +333,16 @@ describe("OAuth route", () => {
     expect(readChecklist(stateDir)?.steps[LLM_AUTH_STEP_ID]?.status).toBe("pending");
   });
 
-  it("surfaces the embeddings recommendation even though the route needs no key", async () => {
+  it("says memory embeddings need nothing from this route — local by default, pi's key never read for them", async () => {
     hostLogin();
     const result = await engine({}, [], ["oauth"]).runStep(LLM_AUTH_STEP_ID);
     const embeddings = result.checks.find((c) => c.name === "embeddings");
-    expect(embeddings?.ok).toBe(true); // a recommendation, never a blocker
-    expect(embeddings?.detail).toMatch(/OAuth covers the review models only, never embeddings/);
-    expect(embeddings?.detail).toMatch(/collect-secrets\.sh/);
+    expect(embeddings?.ok).toBe(true); // a note, never a blocker
+    expect(embeddings?.detail).toMatch(/embeds LOCALLY by default/);
+    expect(embeddings?.detail).toMatch(/never read for embeddings/);
+    expect(embeddings?.detail).toMatch(/embeddings step, order 38/);
+    // The retired advice is gone: no route recommends an embeddings key.
+    expect(embeddings?.detail).not.toMatch(/recommend|worth providing/i);
   });
 
   it("verify: a container login on its pi-home volume is green; one in the writable layer is not", async () => {

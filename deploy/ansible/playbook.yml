@@ -145,7 +145,8 @@
         - { path: "{{ sandbox_root }}/state", mode: "0755" }
         # OpenViking's home: ~/.openviking is symlinked here at boot,
         # so memories + vector db + ov.conf survive an image rebuild. 0700 —
-        # ov.conf carries the OpenAI embedding credential.
+        # ov.conf carries the server's root key (and, under the hosted
+        # embeddings opt-in, that credential too).
         - { path: "{{ openviking_home }}", mode: "0700" }
         - { path: "{{ sandbox_root }}/pihome", mode: "0700" }
         - { path: "{{ sandbox_root }}/secrets", mode: "0700" }
@@ -171,6 +172,20 @@
         group: "{{ container_uid }}"
       no_log: true
       when: lookup('ansible.builtin.fileglob', secrets_src + '/openai_api_key') | length > 0
+
+    # the HOSTED embeddings credential — a separate file from pi's
+    # key, present only when the operator opted into a hosted embedder
+    # (openviking_embedding_provider != local). Copied-if-present; absent by
+    # default, because the shipped embedder is local and needs no key.
+    - name: Hosted embeddings key (optional — only under the hosted-embedder opt-in)
+      ansible.builtin.copy:
+        src: "{{ secrets_src }}/{{ openviking_embedding_key_file }}"
+        dest: "{{ sandbox_root }}/secrets/{{ openviking_embedding_key_file }}"
+        mode: "0400"
+        owner: "{{ container_uid }}"
+        group: "{{ container_uid }}"
+      no_log: true
+      when: lookup('ansible.builtin.fileglob', secrets_src + '/' + openviking_embedding_key_file) | length > 0
 
     # the OpenViking auth keys. Copied-if-present, matching the
     # openai_api_key idiom — a missing root key degrades the boot LOUDLY to

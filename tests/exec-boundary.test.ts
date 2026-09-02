@@ -17,14 +17,23 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { checkBashCommand, checkWritePath } from "../extensions/bash-guard.js";
+import {
+  POLICY_SURFACE_DIRS,
+  POLICY_SURFACE_FILES,
+  checkBashCommand,
+  checkWritePath,
+  isPolicySurface,
+} from "../extensions/bash-guard.js";
 import {
   auditUngatedReviews,
-  fingerprintRoundGitConfig,
+  fingerprintRoundIntegrity,
   gitConfigChangeMessage,
-  gitConfigChanges,
   gitConfigWatchPaths,
   hasUngatedApproval,
+  integrityChanges,
+  policySurfaceChangeMessage,
+  policySurfaceWatchPaths,
+  splitIntegrityChanges,
   type AuditedReview,
 } from "../src/execboundary.js";
 import { auditExecViolationDetails } from "../src/usage.js";
@@ -117,6 +126,35 @@ const CORPUS = [
   { round: 6, via: "bash", chain: `awk 'BEGIN{system("/tmp/pwn.sh")}'`, outcome: null, note: "awk system() — ran the command, no config involved" },
   { round: 6, via: "bash", chain: `awk 'BEGIN{"/tmp/pwn.sh" | getline x}'`, outcome: null, note: "awk command-pipe into getline — ran the command" },
   { round: 6, via: "bash", chain: "find . -maxdepth 0 -exec /tmp/pwn.sh ;", outcome: null, note: "find -exec — ran the command" },
+  // Round 8 —. The exec boundary protected git's configuration and not
+  // its OWN. Four doors onto this system's policy surface (config.toml, the
+  // sanctioned scripts, the compiled guard), each `allowed: true` on source AND
+  // compiled `dist/` before this ticket, each found by EXECUTION.
+  { round: 8, via: "bash", chain: "cat /tmp/evil > config.toml", outcome: null, note: "door 1: redirection over the guards' own config — one write turns guards 1-5 off and flips dry_run to live" },
+  { round: 8, via: "bash", chain: "cat /tmp/evil > dist/extensions/bash-guard.js", outcome: null, note: "door 2: redirection over the COMPILED guard the container runs" },
+  { round: 8, via: "bash", chain: "printf 'x' > scripts/post-review.sh", outcome: null, note: "door 3: redirection over a sanctioned posting script — the gate's shell mirror" },
+  { round: 8, via: "bash", chain: "printf 'x' > scripts/guards.sh", outcome: null, note: "door 3': guards.sh itself, the shell mirror of every posting-time guard" },
+  { round: 8, via: "bash", chain: "printf 'x' > scripts/approve-pr.sh", outcome: null, note: "door 3'': the approval route itself" },
+  { round: 8, via: "bash", chain: "bash -c 'scripts/pr-self.sh ; QCR_CONFIG=/tmp/x.toml scripts/approve-pr.sh 5 b.md'", outcome: null, note: "door 4: a `;` inside single quotes launders a policy-relocation behind a sanctioned script" },
+  { round: 8, via: "bash", chain: "QCR_POSTING_RECEIPT_DIR=/tmp/r scripts/approve-pr.sh 5 b.md", outcome: null, note: "ruling: the receipt dir is a relocator, not an argument — it moves the record that settles a round" },
+  { round: 8, via: "write", chain: "config.toml", outcome: null, note: "the write-tool half of door 1" },
+  { round: 8, via: "write", chain: "dist/extensions/bash-guard.js", outcome: null, note: "the write-tool half of door 2" },
+  { round: 8, via: "write", chain: "scripts/post-review.sh", outcome: null, note: "the write-tool half of door 3" },
+  { round: 8, via: "write", chain: "state/agents/pass-validate.md", outcome: null, note: "the BUILT validator body pi loads next round" },
+  // Round 8, second pass — found while closing the doors above, by running
+  // each redirection spelling bash has against a real file. The scan knew `>`
+  // and `>>`; every one of these wrote its target, and every one was a bypass
+  // of the git-config veto on master as well.
+  { round: 8, via: "bash", chain: "cat /tmp/evil &>config.toml", outcome: null, note: "&> writes stdout+stderr to the file" },
+  { round: 8, via: "bash", chain: "cat /tmp/evil >&config.toml", outcome: null, note: ">&file — the fd-dup normaliser ate the operator and left the path as an argument to cat" },
+  { round: 8, via: "bash", chain: "cat /tmp/evil {v}>config.toml", outcome: null, note: "{varname}> — bash picks the descriptor" },
+  { round: 8, via: "bash", chain: "printf x 1<>config.toml", outcome: null, note: "<> opens read-write; the write OVERWRITES from offset 0" },
+  { round: 8, via: "bash", chain: "cat /tmp/evil >| config.toml", outcome: null, note: ">| overrides noclobber" },
+  { round: 8, via: "bash", chain: `cat /tmp/evil > con"fig".toml`, outcome: null, note: "quotes inside the word — bash concatenates, the scan compared the spelling" },
+  { round: 8, via: "bash", chain: "cat /tmp/evil > config\\.toml", outcome: null, note: "a backslash escape — same" },
+  { round: 8, via: "bash", chain: "echo x | xargs bash -c 'git push origin HEAD'", outcome: null, note: "bash -c through xargs — no raw segment to lift the payload from" },
+  { round: 8, via: "bash", chain: "bash -o pipefail -c 'git push origin HEAD'", outcome: null, note: "a value-taking option before -c — the prior lift returned null and the -c form was waved through" },
+  { round: 8, via: "bash", chain: `env -S 'bash -c "git push origin HEAD"'`, outcome: null, note: "env -S splits a second command line out of one word" },
 ] as const;
 
 /**
@@ -131,6 +169,8 @@ const CORPUS = [
  * check exists and why it is not another list.
  */
 const INDIRECTION_CHAIN = "T=.git/config; cat payload >> $T";
+/** Its twin onto the policy surface — same shape, same answer: layer 4. */
+const POLICY_INDIRECTION_CHAIN = "T=config.toml; cat payload > $T";
 
 describe("— the four proven bypasses, replayed against the COMPILED guard", () => {
   // The container runs `dist/`, not `extensions/*.ts`. Rounds two and three
@@ -300,6 +340,21 @@ describe("— the post-hoc audit is no longer blind to the corpus", () => {
     expect(kindOf(bashLine("HOME=/tmp/evil git diff --no-index a b"))).toBe("git_config_injection");
     expect(kindOf(bashLine("git push origin HEAD"))).toBe("git_write");
     expect(kindOf(writeLine("/opt/quickreview/reviewed-repo/.git/config"))).toBe("git_config_surface_write");
+    // this system's own policy surface, and the laundered relocation.
+    expect(kindOf(bashLine("cat /tmp/evil > config.toml"))).toBe("policy_surface_write");
+    expect(kindOf(bashLine("printf 'x' > scripts/post-review.sh"))).toBe("policy_surface_write");
+    expect(kindOf(writeLine("dist/extensions/bash-guard.js"))).toBe("policy_surface_write");
+    expect(kindOf(bashLine("bash -c 'scripts/pr-self.sh ; QCR_CONFIG=/tmp/x.toml scripts/approve-pr.sh 5 b.md'"))).toBe("policy_relocation");
+    expect(kindOf(bashLine("QCR_CONFIG=/tmp/x.toml scripts/approve-pr.sh 5 b.md"))).toBe("policy_relocation");
+    expect(kindOf(bashLine("QCR_POSTING_RECEIPT_DIR=/tmp/r scripts/approve-pr.sh 5 b.md"))).toBe("policy_relocation");
+    // Every redirection spelling reads back as the write it is, dequoted.
+    expect(kindOf(bashLine("cat /tmp/evil >&config.toml"))).toBe("policy_surface_write");
+    expect(kindOf(bashLine("cat /tmp/evil {v}>scripts/guards.sh"))).toBe("policy_surface_write");
+    expect(kindOf(bashLine("printf x 1<>config.toml"))).toBe("policy_surface_write");
+    expect(kindOf(bashLine("cat /tmp/evil >| config.toml"))).toBe("policy_surface_write");
+    expect(kindOf(bashLine(`cat /tmp/evil > con"fig".toml`))).toBe("policy_surface_write");
+    expect(kindOf(bashLine("cat p >&.git/config"))).toBe("git_config_surface_write");
+    expect(kindOf(writeLine("state/agents/pass-validate.md"))).toBe("policy_surface_write");
     expect(kindOf(bashLine("python3 manage.py test"))).toBe("interpreter");
   });
 
@@ -324,6 +379,14 @@ describe("— the post-hoc audit is no longer blind to the corpus", () => {
       "cat .git/HEAD",
       `GH_TOKEN="$(scripts/mint-token.sh)" scripts/pr-context.sh 5197`,
       "scripts/post-review.sh 5249 REQUEST_CHANGES body.md comments.json",
+      // reading the policy surface is the job; only writing it is not.
+      "cat config.toml",
+      "rg -n dry_run config.toml scripts/",
+      "sed -n '1,40p' scripts/guards.sh",
+      "git show HEAD:scripts/post-review.sh",
+      "head -20 dist/extensions/bash-guard.js",
+      "bash -c 'git status'",
+      "printf '%s' x > /tmp/body.md",
     ]) {
       expect(auditExecViolationDetails([bashLine(cmd)]), `false line on: ${cmd}`).toEqual([]);
     }
@@ -338,6 +401,7 @@ describe("— the write class that no command string can show (round 2)", () => 
     // this block by adding a spelling, this test fails and they have to read
     // the comment on INDIRECTION_CHAIN before deciding that was the fix.
     expect(checkBashCommand(INDIRECTION_CHAIN).allowed).toBe(true);
+    expect(checkBashCommand(POLICY_INDIRECTION_CHAIN).allowed).toBe(true);
   });
 
   it("…and the integrity check catches it, without being told anything about it", () => {
@@ -360,15 +424,107 @@ describe("— the write class that no command string can show (round 2)", () => 
       sha256: sha,
     };
     const opts = { clonePath: "/clone", worktreePath: "/wt/pr-42", piHome: "/home/review" };
-    const before = fingerprintRoundGitConfig(opts, fs);
+    const before = fingerprintRoundIntegrity(opts, fs);
 
     // `T=.git/config; cat payload >> $T`, in effect.
     disk.set("/clone/.git/config", "[core]\n\tbare = false\n[diff]\n\texternal = /tmp/pwn.sh\n");
 
-    const after = fingerprintRoundGitConfig(opts, fs);
-    const changes = gitConfigChanges(before, after);
+    const after = fingerprintRoundIntegrity(opts, fs);
+    const changes = integrityChanges(before, after);
     expect(changes.map((c) => c.path)).toEqual(["/clone/.git/config"]);
     expect(gitConfigChangeMessage(42, changes)).toContain("/clone/.git/config");
+  });
+
+  // the same check, one level out — the policy surface. A fake
+  // sandbox whose directories hold files; `readDir` lists them, `readFile`
+  // reads them, and nothing here is a command string.
+  const policyFs = (disk: Map<string, string>) => ({
+    readFile: (p: string) => {
+      const v = disk.get(p);
+      if (v === undefined) throw new Error("ENOENT");
+      return v;
+    },
+    readDir: (p: string) => {
+      const prefix = `${p}/`;
+      const names = new Set<string>();
+      for (const k of disk.keys()) if (k.startsWith(prefix)) names.add(k.slice(prefix.length).split("/")[0]!);
+      if (names.size === 0) throw new Error("ENOTDIR");
+      return [...names];
+    },
+    sha256: sha,
+  });
+  const sandbox = (): Map<string, string> =>
+    new Map<string, string>([
+      ["/sb/config.toml", "dry_run = true\n"],
+      ["/sb/scripts/guards.sh", "guard_2 () { :; }\n"],
+      ["/sb/scripts/approve-pr.sh", "source guards.sh\n"],
+      ["/sb/dist/extensions/bash-guard.js", "export function checkBashCommand(){}\n"],
+      ["/sb/extensions/bash-guard.ts", "export function checkBashCommand(){}\n"],
+      ["/sb/prompts/round-first.md", "# round\n"],
+      ["/sb/agents/pass-intent.md", "# lens\n"],
+      ["/sb/seeds/prompts/x.md", "# seed\n"],
+    ]);
+  const opts = { clonePath: "/clone", sandboxRoot: "/sb" };
+
+  // MUTATION: in src/execboundary.ts make `hashPath` hash a directory's
+  // LISTING (`names.join`) instead of recursing — the first two cases go
+  // green: a rewritten guards.sh keeps the listing identical.
+  it("…and it catches `T=config.toml; cat p > $T` and a REWRITTEN script the same way", () => {
+    for (const [path, tamper] of [
+      ["/sb/config.toml", "dry_run = false\n"], // the twin of the chain above
+      ["/sb/scripts/guards.sh", "guard_2 () { return 0; }\n"], // same listing, new content
+      ["/sb/dist/extensions/bash-guard.js", "export function checkBashCommand(){return {allowed:true}}\n"],
+      ["/sb/seeds/prompts/x.md", "# rewritten\n"], // two levels down
+    ] as const) {
+      const disk = sandbox();
+      const before = fingerprintRoundIntegrity(opts, policyFs(disk));
+      disk.set(path, tamper);
+      const after = fingerprintRoundIntegrity(opts, policyFs(disk));
+      const changes = integrityChanges(before, after);
+      const root = path.split("/").slice(0, 3).join("/"); // /sb/<top-level entry>
+      expect(changes.map((c) => c.path), path).toEqual([root]);
+      const { git, policy } = splitIntegrityChanges(changes, "/sb");
+      expect(git, `${path} is not git's`).toEqual([]);
+      expect(policy.map((c) => c.path)).toEqual([root]);
+      expect(policySurfaceChangeMessage(42, policy)).toContain(root);
+      expect(policySurfaceChangeMessage(42, policy)).toContain("OWN policy surface");
+    }
+  });
+
+  it("a planted file is a change too, an untouched tree is silent, and the split keeps the two families apart", () => {
+    const disk = sandbox();
+    disk.set("/clone/.git/config", "[core]\n");
+    const fs = policyFs(disk);
+    const before = fingerprintRoundIntegrity(opts, fs);
+    expect(integrityChanges(before, fingerprintRoundIntegrity(opts, fs))).toEqual([]);
+    disk.set("/sb/scripts/evil.sh", "#!/bin/sh\n");
+    disk.set("/clone/.git/config", "[core]\n[diff]\n\texternal = /tmp/pwn.sh\n");
+    const changes = integrityChanges(before, fingerprintRoundIntegrity(opts, fs));
+    const { git, policy } = splitIntegrityChanges(changes, "/sb");
+    expect(git.map((c) => c.path)).toEqual(["/clone/.git/config"]);
+    expect(policy.map((c) => c.path)).toEqual(["/sb/scripts"]);
+    // A caller with no sandbox root watches git's paths only, and splits
+    // everything into the git half.
+    expect(Object.keys(fingerprintRoundIntegrity({ clonePath: "/clone" }, fs).files).some((p) => p.startsWith("/sb/"))).toBe(false);
+    expect(splitIntegrityChanges(changes, undefined).policy).toEqual([]);
+  });
+
+  // MUTATION: add a name to POLICY_SURFACE_DIRS in extensions/bash-guard.ts
+  // without touching src/execboundary.ts — this stays GREEN, which is the
+  // point: the watch list is derived, not copied. Then instead hand-edit
+  // `policySurfaceWatchPaths` to drop one name — this goes red.
+  it("layer 4 watches EXACTLY the set the write veto refuses — one definition, three consumers", () => {
+    const watched = policySurfaceWatchPaths("/sb/");
+    expect(watched).toEqual([...POLICY_SURFACE_FILES, ...POLICY_SURFACE_DIRS].map((n) => `/sb/${n}`));
+    for (const file of POLICY_SURFACE_FILES) expect(isPolicySurface(`/sb/${file}`), file).toBe(true);
+    for (const dir of POLICY_SURFACE_DIRS) {
+      expect(isPolicySurface(`/sb/${dir}/anything`), dir).toBe(true);
+      expect(checkWritePath(`${dir}/anything`).allowed, dir).toBe(false);
+    }
+    // …and the set is the one the ticket named, so a silent widening or
+    // narrowing of the policy surface is a diff in this file.
+    expect([...POLICY_SURFACE_FILES]).toEqual(["config.toml"]);
+    expect([...POLICY_SURFACE_DIRS].sort()).toEqual(["agents", "dist", "extensions", "prompts", "scripts", "seeds"]);
   });
 
   it("watches the PINNED global file too — the pin concentrates the target", () => {
@@ -398,8 +554,8 @@ describe("— the write class that no command string can show (round 2)", () => 
       sha256: sha,
     };
     const opts = { clonePath: "/clone" };
-    expect(gitConfigChanges(fingerprintRoundGitConfig(opts, fs), fingerprintRoundGitConfig(opts, fs))).toEqual([]);
-    const fp = fingerprintRoundGitConfig(opts, fs);
+    expect(integrityChanges(fingerprintRoundIntegrity(opts, fs), fingerprintRoundIntegrity(opts, fs))).toEqual([]);
+    const fp = fingerprintRoundIntegrity(opts, fs);
     expect(fp.files["/clone/.git/config"]).toMatch(/^sha256:/);
     expect(fp.files["/clone/.git/config.worktree"]).toBe("absent");
   });

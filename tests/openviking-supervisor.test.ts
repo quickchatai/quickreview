@@ -93,7 +93,7 @@ interface Harness {
   spawns: Array<{ cmd: string; args: string[]; opts: { cwd?: string; env: NodeJS.ProcessEnv } }>;
 }
 
-function harness(over: Partial<OpenVikingConfig> = {}, opts: { fetchFn?: FetchLike; exists?: (p: string) => boolean } = {}): Harness {
+function harness(over: Partial<OpenVikingConfig> = {}, opts: { fetchFn?: FetchLike; exists?: (p: string) => boolean; onReady?: () => void } = {}): Harness {
   const clock = new FakeClock();
   const children: FakeChild[] = [];
   const lines: string[] = [];
@@ -110,6 +110,7 @@ function harness(over: Partial<OpenVikingConfig> = {}, opts: { fetchFn?: FetchLi
     exists: opts.exists ?? (() => true),
     schedule: clock.schedule,
     ...(opts.fetchFn ? { fetchFn: opts.fetchFn } : {}),
+    ...(opts.onReady ? { onReady: opts.onReady } : {}),
   });
   return { sup, clock, children, lines, spawns };
 }
@@ -345,6 +346,36 @@ describe("OpenVikingSupervisor", () => {
     const s = h.sup.status();
     expect(s).toMatchObject({ reachable: true, ready: true, version: "0.4.15", version_drift: false });
     expect(s.checked_at).toBeTruthy();
+  });
+
+  // review: the daemon materializes the memory root when the server
+  // comes up. The hook fires on each not-ready → ready flip and never while
+  // the server merely stays ready.
+  it("onReady fires once per not-ready → ready flip, and a throwing callback cannot take the loop down", async () => {
+    let ready = false;
+    let fired = 0;
+    const h = harness({}, {
+      fetchFn: async (url) => (url.endsWith("/health") ? jsonRes(200, { version: "0.4.15" }) : jsonRes(ready ? 200 : 503, {})),
+      onReady: () => {
+        fired += 1;
+        throw new Error("hook blew up");
+      },
+    });
+    h.sup.start();
+    await h.sup.poll();
+    expect(fired).toBe(0);
+    ready = true;
+    await h.sup.poll();
+    await h.sup.poll();
+    expect(fired).toBe(1);
+    expect(h.lines.some((l) => l.includes("onReady callback threw"))).toBe(true);
+    expect(h.sup.status().ready).toBe(true);
+    // Down and back up (a restart): the root is checked again.
+    ready = false;
+    await h.sup.poll();
+    ready = true;
+    await h.sup.poll();
+    expect(fired).toBe(2);
   });
 
   it("flags version drift against the triple-mirrored pin", async () => {

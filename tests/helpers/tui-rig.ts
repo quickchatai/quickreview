@@ -8,7 +8,7 @@ import { TUI_DEFAULTS } from "../../src/config.js";
 import { parseLegacyMemory } from "../../src/memory/legacy-file.js";
 import type { MemoryEntry, MemoryOp, MemoryStore } from "../../src/memory/store.js";
 import { App } from "../../src/tui/app.js";
-import type { ChangeEntry, ChangeRegister, RevertResult } from "../../src/tui/changelog-store.js";
+import type { ChangeEntry, ChangeLogProblem, ChangeRegister, RevertResult } from "../../src/tui/changelog-store.js";
 import type { DigestFetcher } from "../../src/tui/digesttab.js";
 import type { ChangeRegisterSource } from "../../src/tui/feedbacktab.js";
 import { installLearningTabs, type LearningDeps, type LearningTabs } from "../../src/tui/learning.js";
@@ -87,14 +87,16 @@ export function changeEntry(sha: string, subject: string, reverted?: { by: strin
 /** A change register that answers from memory and records reverts. */
 export class FakeChanges implements ChangeRegisterSource {
   register: ChangeRegister | undefined;
+  problem: ChangeLogProblem | undefined;
   reverted: string[] = [];
   refreshes = 0;
-  constructor(entries?: ChangeEntry[]) {
+  constructor(entries?: ChangeEntry[], problem?: ChangeLogProblem) {
     this.register = entries ? { version: 1, updated_at: "2026-08-25T10:00:00Z", entries, scanned: 40 } : undefined;
+    this.problem = problem;
   }
-  refresh(): Promise<ChangeRegister | undefined> {
+  refresh(): Promise<ChangeLogProblem | undefined> {
     this.refreshes += 1;
-    return Promise.resolve(this.register);
+    return Promise.resolve(this.problem);
   }
   revert(sha: string): Promise<RevertResult> {
     this.reverted.push(sha);

@@ -175,6 +175,32 @@ EOF
   fi
 }
 
+# A `key=value` HOST VAR on the inventory's first host line, or nothing. The
+# onboarding wizard writes an operator's answers there precisely so the tracked
+# group_vars stay clean; in Ansible's precedence a host var outranks
+# group_vars/all, so the EFFECTIVE value of a knob is the host var when one is
+# set and the group_vars line otherwise (`effective_var`).
+inventory_host_var() {
+  [[ -f "$INVENTORY" ]] || return 0
+  awk -v key="$1" '
+    /^[[:space:]]*[#;]/ { next }
+    /^[[:space:]]*\[/   { if (seen_group) exit; seen_group = 1; next }
+    NF && seen_group {
+      for (i = 2; i <= NF; i++) {
+        split($i, kv, "=")
+        if (kv[1] == key) { print substr($i, length(key) + 2); exit }
+      }
+      exit
+    }' "$INVENTORY"
+}
+
+effective_var() {
+  local v
+  v="$(inventory_host_var "$1" || true)"
+  [[ -n "$v" ]] && { echo "$v"; return 0; }
+  group_vars_key "$1"
+}
+
 first_inventory_host() {
   [[ -f "$INVENTORY" ]] || return 0
   awk '/^[[:space:]]*[#;]/ { next }
@@ -272,6 +298,28 @@ if [[ -n "$CFG_OV" ]]; then
       'config.toml   [openviking] provision_users' "$(config_list_key openviking provision_users || true)" \
       'group_vars    openviking_provision_users' "$(group_vars_key openviking_provision_users || true)"
   fi
+  # the EMBEDDER is mirrored the same way, against the value the boot
+  # will actually render — a host var on the inventory line (how an opt-in is
+  # written) outranks group_vars. This one is not a pin but a vector space: a
+  # config.toml that says "openai" over a boot that renders "local" would make
+  # the entrypoint's migration check reset the vector store for the wrong
+  # embedder on the next start, so the two are refused apart before anything
+  # ships.
+  CFG_OV_EMBED="$(config_table_key openviking embedding_provider || true)"
+  if [[ -n "$CFG_OV_EMBED" ]]; then
+    check_pin "openviking embedding provider" \
+      'config.toml   [openviking] embedding_provider' "$CFG_OV_EMBED" \
+      'ansible (host var, else group_vars)  openviking_embedding_provider' "$(effective_var openviking_embedding_provider || true)"
+    check_pin "openviking embedding model" \
+      'config.toml   [openviking] embedding_model' "$(config_table_key openviking embedding_model || true)" \
+      'ansible (host var, else group_vars)  openviking_embedding_model' "$(effective_var openviking_embedding_model || true)"
+    check_pin "openviking embedding dimension" \
+      'config.toml   [openviking] embedding_dimension' "$(config_table_key openviking embedding_dimension || true)" \
+      'ansible (host var, else group_vars)  openviking_embedding_dimension' "$(effective_var openviking_embedding_dimension || true)"
+    check_pin "openviking embeddings key file" \
+      'config.toml   [openviking] embedding_key_file' "$(config_table_key openviking embedding_key_file || true)" \
+      'ansible (host var, else group_vars)  openviking_embedding_key_file' "$(effective_var openviking_embedding_key_file || true)"
+  fi
   CFG_OV_EXT="$(config_table_key openviking extension_commit || true)"
   if [[ -n "$CFG_OV_EXT" ]]; then
     check_pin "openviking pi-extension base commit" \
@@ -357,6 +405,7 @@ print_plan() {
   if [[ -n "$CFG_OV" ]]; then
     echo "  memory pins  openviking $CFG_OV (config.toml == group_vars == image layer), extension ${CFG_OV_EXT:-<unset>} (config.toml == upstream.json)"
     echo "  memory auth  auth_mode ${CFG_OV_AUTH:-<unset>} (config.toml == group_vars; 'dev' means NO per-user confinement)"
+    echo "  memory embed ${CFG_OV_EMBED:-<unset>} (config.toml == ansible effective value; 'local' means no memory text leaves the VM)"
   else
     echo "  memory pins  <no [openviking] block in config.toml — unverified>"
   fi

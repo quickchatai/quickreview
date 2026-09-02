@@ -17,7 +17,8 @@ import {
   type Config,
   type SecretReader,
 } from "./config.js";
-import { CommandWatcher, type CommandDeps } from "./commands.js";
+import { CommandWatcher, processOperatorSeal, type CommandDeps } from "./commands.js";
+import { drainLever, pauseLever, resumeLever, type LeverDeps } from "./levers.js";
 import { createDaemon, type Daemon } from "./daemon.js";
 import { eodDigestContext, latestDigestHeadline } from "./digest.js";
 import { startHeartbeat, type HeartbeatTimer } from "./anomalies.js";
@@ -30,8 +31,8 @@ import { FeedbackEngine, feedbackDayAddendum, type FeedbackEvent } from "./feedb
 import { PASS_ADDENDA, buildAgents, identityVars } from "./include.js";
 import { ecosystemFor } from "./ecosystem.js";
 import { loadProfileAddenda, loadProfileEcosystem, loadProfileHeuristics } from "./profiles.js";
-import { fileImprovementPr, fileIssue, type Run } from "./improvements.js";
-import { OpenVikingClient, OpenVikingSupervisor, keyFromFile, openVikingContextAssembler, openVikingStore } from "./openviking/index.js";
+import { fileImprovementPr, fileIssue, gitRunner } from "./improvements.js";
+import { OpenVikingClient, OpenVikingSupervisor, ReembedDriver, keyFromFile, openVikingContextAssembler, openVikingStore } from "./openviking/index.js";
 import { OV_REVIEWER_KEY_SECRET, openVikingSessionLifecycle } from "./memory/ovsession.js";
 import type { ContextAssembler, RoundMemory } from "./memory/context.js";
 import { recoverPrForOperator } from "./operator-recovery.js";
@@ -86,7 +87,10 @@ export function buildParts(root = sandboxRoot(), cfg = loadConfig()): Production
   return { cfg, root, minter, gate, adapter, sessions };
 }
 
-const gitRun: Run = async (args, cwd) => (await nodeExec("git", args, cwd ? { cwd } : {})).stdout;
+// exit-code checked, cwd mandatory — the first runner returned stdout
+// whatever git's exit and defaulted to the daemon's own cwd (a repo with no
+// remote), so the improvement channel could never push and never said so.
+const gitRun = gitRunner(nodeExec);
 
 /** package.json version for the `daemon.up` line; never worth failing a boot. */
 function packageVersion(root: string): string | undefined {
@@ -335,6 +339,24 @@ export function buildLocalCommandWatcher(opts: {
 }
 
 /**
+ * The OPERATOR's command watcher: `commands/operator/`, the
+ * directory `qcr drain`, the board's `u` and the deploy tab write AS ROOT.
+ * Same vocabulary, same handlers; the difference is the issuer the watcher
+ * stamps, and only the real process seal decides it. No Slack tier gate: the
+ * belt exists to stop the overseer mis-filing, and the overseer cannot write
+ * here. The daemon never creates the directory — see `CommandWatcherOptions`.
+ */
+export function buildOperatorCommandWatcher(opts: { root: string; deps: CommandDeps; store: StateStore; log: (line: string) => void }): CommandWatcher {
+  return new CommandWatcher({
+    dir: join(opts.root, "commands", "operator"),
+    operator: processOperatorSeal(),
+    deps: opts.deps,
+    store: opts.store,
+    log: opts.log,
+  });
+}
+
+/**
  * The OTHER half of "who caused this turn": every daemon-originated overseer
  * wake stamps a `local` origin before it injects.
  *
@@ -409,9 +431,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // exists, and both degrade to "no memory" rather than to an error.
   let memoryStore: MemoryStore | null = null;
   let memoryAssembler: ContextAssembler | null = null;
+  const notBuiltYet = { status: "unreadable", reason: "memory store not built yet (daemon still starting)" } as const;
   const lateAssembler: ContextAssembler = {
-    pinnedHead: () => (memoryAssembler ? memoryAssembler.pinnedHead() : Promise.resolve("")),
-    contextBlock: (q, o) => (memoryAssembler ? memoryAssembler.contextBlock(q, o) : Promise.resolve("")),
+    pinnedHead: () => (memoryAssembler ? memoryAssembler.pinnedHead() : Promise.resolve(notBuiltYet)),
+    contextBlock: (q, o) => (memoryAssembler ? memoryAssembler.contextBlock(q, o) : Promise.resolve(notBuiltYet)),
   };
 
   // the profile-selected ecosystem seam, loaded ONCE at assembly (a
@@ -441,6 +464,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   let pinWatch: ReturnType<typeof startEodPinWatch> | null = null;
   let heartbeat: HeartbeatTimer | null = null;
   let commands: CommandWatcher | null = null;
+  let operatorCommands: CommandWatcher | null = null;
   let slack: SlackRuntime | null = null;
   // built in onStart (it needs the store). Signals arriving in the
   // boot gap between the webhook binding and onStart are dropped with a log —
@@ -451,6 +475,11 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // awaited: there is deliberately NO boot ordering, and rounds run
   // memory-less until `/ready` passes.
   let openviking: OpenVikingSupervisor | null = null;
+  // the embedder migration's daemon half — resumes the re-embed of
+  // reviewer memory the entrypoint's `prepare` journalled, once /ready passes.
+  // Timer-armed, never awaited; its block rides inside the heartbeat's
+  // `openviking` entry.
+  let reembed: ReembedDriver | null = null;
   // the webhook-URL self-heal. Only ever constructed when [ingress]
   // shape = "tunnel-file" — a daemon without the tunnel shape configured
   // never starts the watcher.
@@ -524,7 +553,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     piSessionsDir: join(homedir(), ".pi", "agent", "sessions"),
     // The memory engine's heartbeat block — a cached, synchronous
     // read of the supervisor's last health + /proc sample.
-    openvikingStatus: () => openviking?.status(),
+    openvikingStatus: () => {
+      const status = openviking?.status();
+      return status && reembed ? { ...status, reembed: reembed.status() } : status;
+    },
 
     // The [feedback] tuning loop.
     onFeedback: async (e: FeedbackEvent) => {
@@ -540,8 +572,33 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       // become ready, so it starts warming while everything below builds. A
       // missing binary (any dev PC) is reported once and never retried; a
       // crash is respawned on a capped backoff ladder, forever.
-      openviking = new OpenVikingSupervisor({ cfg: cfg.openviking, log });
+      openviking = new OpenVikingSupervisor({
+        cfg: cfg.openviking,
+        log,
+        // The reviewer's memory root does not exist on a fresh server until
+        // something creates it. The TUI does this for the companion's sake;
+        // the daemon does it here for its own, each time the server comes up,
+        // so the round path's first sweep lists a real (empty) tree instead
+        // of leaning on how the server spells a missing one.
+        onReady: () => {
+          const store = memoryStore;
+          if (!store?.ensureWritable) return;
+          void store.ensureWritable().then(
+            (res) => log(`openviking ready: memory root ${res.ok ? "ready" : "NOT ready"} — ${res.message}`),
+            (err) => log("openviking ready: memory root check failed", err),
+          );
+        },
+      });
       openviking.start();
+      const supervisor = openviking;
+      reembed = new ReembedDriver({
+        cfg: cfg.openviking,
+        repoRoot: root,
+        keyPath: join(cfg.github.secrets_dir, OV_REVIEWER_KEY_SECRET),
+        ready: () => supervisor.status().ready,
+        log,
+      });
+      reembed.start();
 
       // Bind the daemon's durable command slot before any PR session is
       // adopted or born. Pending rows reconstruct their exact inject bytes;
@@ -640,6 +697,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       }
 
       // Overseer command files → validated execution (whitelist + caps).
+      const leverDeps: LeverDeps = { store: d.store, levers: cfg.levers, timezone: cfg.ops.timezone };
       const commandDeps: CommandDeps = {
         async rerunRound(pr) {
           return recoverPrForOperator({ store: d.store, pump: () => d.pump() }, pr, "rerun-round");
@@ -667,21 +725,14 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
             getPrDisposition: (pr) => adapter.getPrDisposition(pr),
           }, payload);
         },
-        pausePr(pr, reason) {
-          const row = d.store.getPr(pr);
-          if (!row) return { ok: false, reason: `unknown PR #${pr}` };
-          d.store.setPaused(pr, true);
-          d.store.logEvent("pr_paused", pr, { reason });
-          return { ok: true, paused: pr };
+        // The two bounded levers: who is asking comes from the
+        // watcher's channel, and a session's hold is capped, budgeted and
+        // expiring in src/levers.ts — an operator's is not.
+        pausePr(pr, reason, issuer, forMin) {
+          return pauseLever(leverDeps, pr, reason, issuer, forMin);
         },
-        async resumePr(pr) {
-          const row = d.store.getPr(pr);
-          if (!row) return { ok: false, reason: `unknown PR #${pr}` };
-          d.store.setPaused(pr, false);
-          d.store.promoteSuccessor(pr);
-          d.store.logEvent("pr_resumed", pr, {});
-          await d.pump();
-          return { ok: true, resumed: pr };
+        resumePr(pr, issuer) {
+          return resumeLever(leverDeps, pr, issuer, () => d.pump());
         },
         flagOwner(message) {
           const flags = join(root, "state", "flags");
@@ -699,7 +750,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
             gate,
             store: d.store,
             run: gitRun,
-            scratchDir: join(root, "state", "scratch-improve"),
+            // The reviewed repo's base clone — the ONE tree with `origin`
+            // pointing at the reviewed repo and the session's branch in it.
+            ensureRepoDir: () => sessions.worktrees.ensureBaseClone(),
           });
         },
         fileIssue(payload) {
@@ -713,16 +766,11 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         retryThreadDecision(commentId) {
           return d.retryThreadDecision(commentId);
         },
-        async drain(on) {
-          const res = d.store.setDraining(on);
-          if (on) {
-            if (res.changed) d.store.logEvent("drain_on", null, {});
-            return { ok: true, draining: true, running_rounds: d.store.runningRounds().length };
-          }
-          if (res.changed) d.store.logEvent("drain_off", null, { dropped_deliveries: res.dropped });
-          d.wakeThreadDecisions();
-          await d.pump();
-          return { ok: true, draining: false, dropped_deliveries: res.dropped };
+        drain(on, issuer, forMin) {
+          return drainLever(leverDeps, on, issuer, forMin, async () => {
+            d.wakeThreadDecisions();
+            await d.pump();
+          });
         },
       };
       // The Slack concierge. Off by default; when on it owns its own
@@ -744,6 +792,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
 
       commands = buildLocalCommandWatcher({ root, deps: commandDeps, store: d.store, slack, log: (l) => log(l) });
       await commands.start();
+      operatorCommands = buildOperatorCommandWatcher({ root, deps: commandDeps, store: d.store, log: (l) => log(l) });
+      await operatorCommands.start();
 
       // Webhook-URL self-heal: only under the tunnel-file ingress
       // shape. The gated PATCH rides the app-self-config class, so it executes
@@ -843,8 +893,11 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       eod?.stop();
       heartbeat?.stop();
       commands?.stop();
+      operatorCommands?.stop();
       webhookHeal?.stop();
       webhookHeal = null;
+      reembed?.stop();
+      reembed = null;
       // SIGTERM then SIGKILL after a bounded grace — a memory engine must not
       // be able to hold the daemon's exit open.
       if (openviking) {

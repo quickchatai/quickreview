@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
+import type { CheckSummary } from "../src/cigate.js";
 import { parseConfig, type Config } from "../src/config.js";
 import type { PrRef, StalePr } from "../src/github.js";
 import { roundTypeFor } from "../src/dispatch.js";
@@ -72,7 +73,7 @@ class FakeGitHub implements ReconcileAdapter {
     return this.stale;
   }
   /** Checks per head sha; a head with no entry has no checks (`none`). */
-  checksAt = new Map<string, Array<{ name: string; status: string; conclusion: string | null }>>();
+  checksAt = new Map<string, CheckSummary[]>();
 
   async listChecks(ref: string) {
     this.calls.push(`listChecks:${ref}`);
@@ -451,8 +452,8 @@ describe("reconcileOnce", () => {
 describe("withheld-approval backstop", () => {
   // The webhook `ci_completed` is the fast path; this is the reconcile sweep
   // cigate.ts promises for a lost delivery.
-  const green = [{ name: "ci", status: "completed", conclusion: "success" }];
-  const red = [{ name: "ci", status: "completed", conclusion: "failure" }];
+  const green: CheckSummary[] = [{ name: "ci", source: "check_run", status: "completed", conclusion: "success" }];
+  const red: CheckSummary[] = [{ name: "ci", source: "check_run", status: "completed", conclusion: "failure" }];
 
   it("requeues a withheld PR when CI is green at the recorded head (webhook lost)", async () => {
     seed(70, "tracked");
@@ -565,14 +566,14 @@ describe("dry-run re-trigger suppression", () => {
     gh.labelTriggered = [item(13)];
     gh.stale = [{ number: 13, head_sha: "sha13", approved_sha: "old", approved_at: "2026-08-10T00:00:00Z" }];
     store.upsertPr({ number: 13, state: "tracked", head_sha: "sha13", title: "PR 13", author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
-    store.setPaused(13, true);
+    store.pausePr(13, { issuer: "operator", expires_at: null }, "test");
 
     await reconcileOnce({ cfg: { ...cfg, dry_run: false }, store, adapter: gh, hooks });
     const row = store.getPr(13)!;
     expect(row.state).toBe("tracked");
     expect(row.stale_recheck).toBe(0);
 
-    store.setPaused(13, false);
+    store.resumePr(13, "operator");
     await reconcileOnce({ cfg: { ...cfg, dry_run: false }, store, adapter: gh, hooks });
     expect(store.getPr(13)!.state).toBe("queued");
   });

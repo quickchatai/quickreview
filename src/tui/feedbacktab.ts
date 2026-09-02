@@ -25,7 +25,7 @@
 // lives in `changelog-store.ts`.
 import { parseEventTags } from "../memory/eventtags.js";
 import type { App } from "./app.js";
-import type { ChangeEntry, ChangeRegister, RevertResult } from "./changelog-store.js";
+import type { ChangeEntry, ChangeLogProblem, ChangeRegister, RevertResult } from "./changelog-store.js";
 import { barHeight, paintCmdBar, type BarButton, type LiveKeys } from "./cmdbar.js";
 import { ACCENT, BAD, HEADING, MUTED, OK, RESET, SEP, STRONG, WARN, button, modeBadge, sectionTitle, selected as selectedLine } from "./design.js";
 import { emptyLine } from "./emptystate.js";
@@ -207,7 +207,12 @@ const STATUS_LINE: Record<FeedbackStatus, string> = {
  * hand in a fake without a git checkout. */
 export interface ChangeRegisterSource {
   readonly register: ChangeRegister | undefined;
-  refresh(): Promise<ChangeRegister | undefined>;
+  /** Why `register` may not be the whole story: an unreadable file
+   * or a failed scan is SAID in the section header, never painted as "no
+   * changes yet" — and rows already in memory stay on screen under it. */
+  readonly problem?: ChangeLogProblem | undefined;
+  /** Re-scan; the outcome is read back off `register`/`problem`. */
+  refresh(): Promise<unknown>;
   revert(sha: string): Promise<RevertResult>;
 }
 
@@ -380,6 +385,7 @@ export function renderFeedbackTab(
   row([{ text: "" }]);
 
   const register = changes.register;
+  const problem = changes.problem;
   const entries = register?.entries ?? [];
   const reverted = entries.filter((e) => e.reverted).length;
   row([
@@ -393,8 +399,19 @@ export function renderFeedbackTab(
       dim: true,
     },
   ]);
-  if (!register) row([{ text: emptyLine({ kind: "unread", how: "the register is scanned from git log · r retries" }) }]);
-  else if (entries.length === 0) row([{ text: emptyLine({ kind: "none", what: "a change joins this list when it carries a Ratified-in-session: trailer" }) }]);
+  // "none yet" is a CLAIM, made only when a scan succeeded and found none
+  //. The two ways of not knowing each get their own sentence, and
+  // neither hides the rows already in memory.
+  if (problem?.kind === "register_unreadable") {
+    row([{ text: emptyLine({ kind: "unreadable", why: `change register unreadable (${sanitizeText(problem.reason)}) — nothing is scanned or saved over it; fix the file, then r` }) }]);
+  } else if (problem) {
+    row([{ text: emptyLine({ kind: "unreadable", why: register ? `last git log scan failed (${sanitizeText(problem.reason)}) — list may be behind; r retries` : `git log failed (${sanitizeText(problem.reason)}) — whether there are feedback-derived commits is unknown; r retries` }) }]);
+  }
+  if (!register) {
+    if (!problem) row([{ text: emptyLine({ kind: "unread", how: "the register is scanned from git log · r retries" }) }]);
+  } else if (entries.length === 0 && !problem) {
+    row([{ text: emptyLine({ kind: "none", what: "a change joins this list when it carries a Ratified-in-session: trailer" }) }]);
+  }
   const armedEntry = st.armed ? entries.find((e) => e.sha === st.armed) : undefined;
   if (armedEntry) for (const l of armedLines(armedEntry, rightW - 3)) row([{ text: l }]);
   const changeSel = Math.min(st.changeSel, Math.max(0, entries.length - 1));
@@ -465,7 +482,8 @@ export function installFeedbackTab(app: App, store: LearningStore, changes: Chan
     void changes
       .refresh()
       .catch(() => {
-        /* a failed scan keeps the persisted register — never an empty list */
+        /* a failed scan keeps the persisted register — never an empty list; the
+           source's `problem` carries the reason onto the screen */
       })
       .finally(() => {
         st.changesLoading = false;

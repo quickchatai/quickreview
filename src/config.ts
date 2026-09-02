@@ -727,10 +727,33 @@ export interface OpenVikingConfig {
   restart_backoff_ms: number[];
   /** A child that stayed up this long resets the backoff ladder. */
   restart_reset_after_s: number;
-  /** ov.conf `embedding.dense` (OpenAI embeddings ENABLED, no `vlm`). */
+  /** ov.conf `embedding.dense.provider`. `local` is the shipped
+   * default — the server's own llama-cpp embedder, in the container, so no
+   * memory text leaves the machine. `openai` is the explicit opt-in and needs
+   * `embedding_key_file` in the secrets dir. Mirrored as
+   * `openviking_embedding_provider`. */
+  embedding_provider: EmbeddingProvider;
+  /** ov.conf `embedding.dense.model` / `.dimension`. Under `local` they are
+   * pinned to the ONE model 0.4.15 ships a spec for (the server refuses any
+   * other dimension for it); under `openai` the operator names the hosted
+   * model and its dimension. */
   embedding_model: string;
   embedding_dimension: number;
+  /** Secrets-dir file name of the HOSTED embeddings credential — deliberately
+   * NOT `openai_api_key` (pi's model credential), so the two can be set
+   * independently. Read only by the ov.conf render, only under `openai`. */
+  embedding_key_file: string;
 }
+
+export const EMBEDDING_PROVIDERS = ["local", "openai"] as const;
+export type EmbeddingProvider = (typeof EMBEDDING_PROVIDERS)[number];
+
+/** The server's built-in local dense embedder — the only local model
+ * OpenViking 0.4.15 ships a spec for (`LOCAL_DENSE_MODEL_SPECS`), fixed at
+ * 512 dims. Mirrored by `LOCAL_EMBEDDER` in scripts/openviking-reembed.mjs. */
+export const LOCAL_EMBEDDING = Object.freeze({ model: "bge-small-zh-v1.5-f16", dimension: 512 });
+/** What an `openai` opt-in runs unless the operator names another model. */
+export const HOSTED_EMBEDDING = Object.freeze({ model: "text-embedding-3-small", dimension: 1536 });
 
 /** [openviking] is optional in config.toml — the defaults ARE the shipped
  * configuration, exactly like [tui]/[companion]. */
@@ -789,9 +812,39 @@ export const OPENVIKING_DEFAULTS: OpenVikingConfig = {
   health_timeout_ms: 2000,
   restart_backoff_ms: [1000, 2000, 5000, 15000, 30000, 60000],
   restart_reset_after_s: 120,
-  embedding_model: "text-embedding-3-small",
-  embedding_dimension: 1536,
+  embedding_provider: "local",
+  embedding_model: LOCAL_EMBEDDING.model,
+  embedding_dimension: LOCAL_EMBEDDING.dimension,
+  embedding_key_file: "openai_embeddings_api_key",
 };
+
+/**
+ * The [openviking] block, defaults filled and the embedder checked.
+ *
+ * The embedder is validated at LOAD time because the server validates it at
+ * BOOT time, and a server that refuses to start is a silent memory outage: an
+ * unknown provider, a non-positive dimension, or a `local` model/dimension the
+ * server's one local spec does not match are all config errors here.
+ */
+export function parseOpenViking(raw: Record<string, unknown>): OpenVikingConfig {
+  const merged = { ...OPENVIKING_DEFAULTS, ...(raw as Partial<OpenVikingConfig>) };
+  if (!(EMBEDDING_PROVIDERS as readonly string[]).includes(merged.embedding_provider)) {
+    throw new Error(`config.toml: [openviking] embedding_provider must be one of ${EMBEDDING_PROVIDERS.join(", ")} (got '${String(merged.embedding_provider)}')`);
+  }
+  if (!Number.isInteger(merged.embedding_dimension) || merged.embedding_dimension <= 0) {
+    throw new Error(`config.toml: [openviking] embedding_dimension must be a positive integer (got '${String(merged.embedding_dimension)}')`);
+  }
+  if (merged.embedding_provider === "local" && (merged.embedding_model !== LOCAL_EMBEDDING.model || merged.embedding_dimension !== LOCAL_EMBEDDING.dimension)) {
+    throw new Error(
+      `config.toml: [openviking] embedding_provider = "local" runs the server's built-in ${LOCAL_EMBEDDING.model} at ${LOCAL_EMBEDDING.dimension} dims — ` +
+        `it is the only local model OpenViking 0.4.15 ships; set embedding_model/embedding_dimension to it, or opt into a hosted provider`,
+    );
+  }
+  if (typeof merged.embedding_key_file !== "string" || merged.embedding_key_file.trim() === "" || merged.embedding_key_file.includes("/")) {
+    throw new Error("config.toml: [openviking] embedding_key_file must be a bare file name inside the secrets dir");
+  }
+  return resolveOpenVikingPaths(merged);
+}
 
 /** Derived paths: `config_file`/`workspace` default off `home`, so the three
  * never drift apart in a hand-edited config. */
@@ -975,8 +1028,54 @@ export interface Config {
   recheck: RecheckConfig;
   review: ReviewConfig;
   escalation: EscalationConfig;
+  levers: LeversConfig;
   slack: SlackConfig;
   owner: OwnerConfig;
+}
+
+/**
+ * `[levers]`: the bounds on a SESSION-issued `drain` / `pause-pr`.
+ * The operator's own levers (`qcr drain on`, the deploy tab) are not bounded
+ * by anything here — the deploy flow's drain stands until the new boot's
+ * first healthy reconcile lifts it. Every number is minutes; the budgets are
+ * counted per `[ops] timezone` day.
+ */
+export interface LeversConfig {
+  /** Longest single session drain. */
+  session_drain_max_min: number;
+  /** Total session-drain minutes grantable per day; must be ≥ the cap. */
+  session_drain_budget_min_per_day: number;
+  /** Longest single session pause of one PR. */
+  session_pause_max_min: number;
+  /** Total session-pause minutes grantable per PR per day; must be ≥ the cap. */
+  session_pause_budget_min_per_day: number;
+}
+
+export const LEVERS_DEFAULTS: LeversConfig = {
+  session_drain_max_min: 30,
+  session_drain_budget_min_per_day: 90,
+  session_pause_max_min: 240,
+  session_pause_budget_min_per_day: 480,
+};
+
+/** Parse `[levers]`; a bound that is not a positive integer, or a budget
+ * smaller than its cap, refuses to load — a lever bound of zero or a budget
+ * that can never fund one full grant is a misconfiguration, not a setting. */
+export function parseLevers(raw: Record<string, any>): LeversConfig {
+  const cfg: LeversConfig = { ...LEVERS_DEFAULTS, ...(raw as Partial<LeversConfig>) };
+  for (const key of Object.keys(LEVERS_DEFAULTS) as Array<keyof LeversConfig>) {
+    const v = cfg[key];
+    if (!Number.isInteger(v) || v < 1) {
+      throw new Error(`config.toml [levers]: ${key} must be a positive integer number of minutes (got ${JSON.stringify(v)})`);
+    }
+  }
+  if (cfg.session_drain_budget_min_per_day < cfg.session_drain_max_min) {
+    throw new Error("config.toml [levers]: session_drain_budget_min_per_day must be at least session_drain_max_min");
+  }
+  if (cfg.session_pause_budget_min_per_day < cfg.session_pause_max_min) {
+    throw new Error("config.toml [levers]: session_pause_budget_min_per_day must be at least session_pause_max_min");
+  }
+  return cfg;
 }
 
 /** Defaults for [backfill], derived from the already-parsed [github] block. */
@@ -1162,6 +1261,39 @@ function req(obj: Record<string, unknown>, key: string): unknown {
   return v;
 }
 
+/**
+ * `[caps]` parsed with each numeric cap CHECKED, not cast. This
+ * section used to be spread into `Config["caps"]` through an `as`, so a key
+ * missing from an operator's file reached `checkDiffstat` as `undefined` —
+ * and `files > undefined` is `false`, i.e. the cap passed. A cap the daemon
+ * cannot compare against is a startup refusal: the improvement channel is the
+ * one place this system pushes code, and it must never run uncapped.
+ */
+export function parseCaps(raw: Record<string, unknown>): Config["caps"] {
+  const cap = (key: string): number => {
+    const v = raw[key];
+    if (typeof v !== "number" || !Number.isFinite(v) || v < 0) {
+      throw new Error(`config.toml [caps]: ${key} must be a non-negative number (got ${JSON.stringify(v)})`);
+    }
+    return v;
+  };
+  const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
+  const denyPrefixes = (): string[] => {
+    const prefixes = raw.improvement_pr_deny_prefixes;
+    if (prefixes === undefined) return [...IMPROVEMENT_DENY_PREFIXES_DEFAULT];
+    if (isStrings(prefixes)) return [...prefixes];
+    throw new Error(`config.toml [caps]: improvement_pr_deny_prefixes must be an array of strings (got ${JSON.stringify(prefixes)})`);
+  };
+  return {
+    improvement_pr_max_lines: cap("improvement_pr_max_lines"),
+    improvement_pr_max_files: cap("improvement_pr_max_files"),
+    improvement_pr_per_day: cap("improvement_pr_per_day"),
+    improvement_pr_per_week: cap("improvement_pr_per_week"),
+    issues_per_day: cap("issues_per_day"),
+    improvement_pr_deny_prefixes: denyPrefixes(),
+  };
+}
+
 /** The shipped improvement-PR path denylist: the exact pre-lift
  * hardcode. Lives here (not in improvements.ts) so config carries the default
  * without a runtime import cycle. */
@@ -1227,17 +1359,14 @@ export function parseConfig(toml: string): Config {
       timezone: ops.timezone,
       ...(req(raw, "eod") as Partial<Config["eod"]>),
     } as Config["eod"],
-    caps: {
-      improvement_pr_deny_prefixes: [...IMPROVEMENT_DENY_PREFIXES_DEFAULT],
-      ...(req(raw, "caps") as Partial<Config["caps"]>),
-    } as Config["caps"],
+    caps: parseCaps(req(raw, "caps") as Record<string, unknown>),
     models: parseModels(req(raw, "models") as Record<string, any>),
     pi: {
       subagent_max_concurrency: 4,
       ...(req(raw, "pi") as Omit<Config["pi"], "subagent_max_concurrency"> &
         Partial<Pick<Config["pi"], "subagent_max_concurrency">>),
     },
-    openviking: resolveOpenVikingPaths({ ...OPENVIKING_DEFAULTS, ...((raw.openviking ?? {}) as Partial<OpenVikingConfig>) }),
+    openviking: parseOpenViking((raw.openviking ?? {}) as Record<string, unknown>),
     memory: { ...MEMORY_DEFAULTS, ...((raw.memory ?? {}) as Partial<MemoryConfig>) },
     tui: { ...TUI_DEFAULTS, ...((raw.tui ?? {}) as Partial<TuiConfig>) },
     companion,
@@ -1256,6 +1385,7 @@ export function parseConfig(toml: string): Config {
       },
     },
     escalation: parseEscalation((raw.escalation ?? {}) as Record<string, any>),
+    levers: parseLevers((raw.levers ?? {}) as Record<string, any>),
     slack: parseSlack((raw.slack ?? {}) as Record<string, any>, ops.timezone),
     owner: { ...OWNER_DEFAULTS, ...((raw.owner ?? {}) as Partial<OwnerConfig>) },
   };

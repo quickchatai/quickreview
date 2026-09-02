@@ -5,11 +5,13 @@
 // the moment any two disagree. It is the same discipline the [pi] pin has, and
 // the reason it exists is that a silently floating memory engine is a
 // data-shape change nobody would notice until the vectors stopped matching.
-import { describe, expect, it } from "vitest";
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { OPENVIKING_DEFAULTS, openVikingBaseUrl, parseConfig, resolveOpenVikingPaths } from "../src/config.js";
+import { EMBEDDING_PROVIDERS, LOCAL_EMBEDDING, OPENVIKING_DEFAULTS, openVikingBaseUrl, parseConfig, resolveOpenVikingPaths } from "../src/config.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // Deliberately the LIVE config.toml, not the test fixture: this file
@@ -116,9 +118,43 @@ describe("triple-mirror version pin (config.toml ↔ group_vars ↔ Dockerfile)"
     expect(gv("openviking_port")).toBe(String(cfg.openviking.port));
     expect(gv("openviking_workers")).toBe(String(cfg.openviking.workers));
     expect(gv("openviking_queue_concurrency")).toBe(String(cfg.openviking.queue_concurrency));
-    expect(gv("openviking_embedding_model")).toBe(cfg.openviking.embedding_model);
-    expect(gv("openviking_embedding_dimension")).toBe(String(cfg.openviking.embedding_dimension));
     expect(playbook).toContain("{{ openviking_home }}");
+  });
+
+  // the embedder is an OPERATOR knob, so the live config may differ
+  // from the tracked group_vars (an opt-in rides inventory host vars, never an
+  // edit to the tracked file). What is pinned is the SHIPPED default — local,
+  // in every mirror — and that the live value is one the server can run.
+  it("the SHIPPED embedder is local in every mirror: nothing but the model call leaves", () => {
+    expect(OPENVIKING_DEFAULTS.embedding_provider).toBe("local");
+    expect(OPENVIKING_DEFAULTS.embedding_model).toBe(LOCAL_EMBEDDING.model);
+    expect(OPENVIKING_DEFAULTS.embedding_dimension).toBe(LOCAL_EMBEDDING.dimension);
+    expect(gv("openviking_embedding_provider")).toBe("local");
+    expect(gv("openviking_embedding_model")).toBe(OPENVIKING_DEFAULTS.embedding_model);
+    expect(gv("openviking_embedding_dimension")).toBe(String(OPENVIKING_DEFAULTS.embedding_dimension));
+    expect(gv("openviking_embedding_key_file")).toBe(OPENVIKING_DEFAULTS.embedding_key_file);
+    expect(parseConfig(readFileSync(resolve(root, "config.example.toml"), "utf8")).openviking.embedding_provider).toBe("local");
+    expect(EMBEDDING_PROVIDERS).toContain(cfg.openviking.embedding_provider);
+  });
+
+  it("the hosted credential is its OWN file — never pi's openai_api_key", () => {
+    expect(OPENVIKING_DEFAULTS.embedding_key_file).not.toBe("openai_api_key");
+    // The playbook ships it copied-if-present, like the other optional secrets.
+    expect(playbook).toContain("{{ openviking_embedding_key_file }}");
+  });
+
+  it("refuses a config the server would refuse to boot", () => {
+    const set = (key: string, value: string) => configToml.replace(new RegExp(`^${key} = .*$`, "m"), `${key} = ${value}`);
+    expect(() => parseConfig(set("embedding_provider", '"cohere"'))).toThrow(/embedding_provider/);
+    expect(() => parseConfig(set("embedding_dimension", "0"))).toThrow(/positive integer/);
+    // local runs the ONE model the server ships a spec for, at its fixed size.
+    expect(() => parseConfig(set("embedding_provider", '"local"').replace(/^embedding_dimension = .*$/m, "embedding_dimension = 1536"))).toThrow(/only local model/);
+    expect(() => parseConfig(set("embedding_key_file", '"../etc/passwd"'))).toThrow(/bare file name/);
+    // The opt-in shape loads.
+    const hosted = set("embedding_provider", '"openai"')
+      .replace(/^embedding_model = .*$/m, 'embedding_model = "text-embedding-3-small"')
+      .replace(/^embedding_dimension = .*$/m, "embedding_dimension = 1536");
+    expect(parseConfig(hosted).openviking.embedding_provider).toBe("openai");
   });
 });
 
@@ -154,19 +190,98 @@ describe("boot-time ov.conf (never the interactive wizard)", () => {
     expect(render).toContain("extraction_enabled: false");
   });
 
-  it("injects the OpenAI EMBEDDING credential from the secrets mount, and degrades without it", () => {
+  it("the embedding PROVIDER is a group_var, never a literal, and pi's key is never its credential", () => {
     const render = entrypoint.slice(entrypoint.indexOf("OV_CONF_RENDER"), entrypoint.lastIndexOf("OV_CONF_RENDER"));
     expect(entrypoint).toContain('QCR_SECRETS="$SECRETS"');
-    expect(render).toContain('"openai_api_key"');
-    expect(render).toContain('provider: "openai"');
-    expect(render).toContain("conf.embedding");
-    expect(render).toContain("console.warn");
+    expect(render).toContain('provider: "{{ openviking_embedding_provider }}"');
+    expect(render).not.toContain('provider: "openai"');
+    // The render never reads pi's model credential: the two are independent.
+    expect(render).not.toContain("openai_api_key");
+    expect(render).toContain("{{ openviking_embedding_key_file }}");
     // ov.conf holds a credential: it is written 0600, never world-readable.
     expect(render).toContain("0o600");
   });
 
+  it("runs the embedder migration check BEFORE provisioning starts a server", () => {
+    const reembed = entrypoint.indexOf("scripts/openviking-reembed.mjs\" prepare");
+    const provision = entrypoint.indexOf("scripts/openviking-provision.mjs\"");
+    expect(reembed).toBeGreaterThan(0);
+    expect(reembed).toBeLessThan(provision);
+    expect(entrypoint).toContain('--home "$OV_HOME" --config "$OV_HOME/ov.conf"');
+    expect(entrypoint).toMatch(/\|\| echo "openviking: embedder migration check did not complete/);
+  });
+
   it("a failed render never fails the boot — the daemon comes up memory-less", () => {
     expect(entrypoint).toMatch(/OV_CONF_RENDER' \|\| echo "openviking: ov\.conf render FAILED/);
+  });
+});
+
+// the sovereignty claim, checked by EXECUTION: the render heredoc is
+// lifted out of the template, its Jinja variables filled from the SAME
+// group_vars the playbook uses, and run with node against a temp secrets dir.
+// Reading the guard would only prove what the text says; this proves what the
+// boot does.
+describe("the rendered ov.conf (executed)", () => {
+  let dir: string;
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function render(overrides: Record<string, string>, secrets: Record<string, string>): { conf: Record<string, any> } {
+    dir = mkdtempSync(join(tmpdir(), "qcr-ovconf-"));
+    const home = join(dir, "openviking");
+    const secretsDir = join(dir, "secrets");
+    mkdirSync(home, { recursive: true });
+    mkdirSync(secretsDir, { recursive: true });
+    for (const [name, value] of Object.entries(secrets)) writeFileSync(join(secretsDir, name), value);
+    const start = entrypoint.indexOf("<<'OV_CONF_RENDER'");
+    const body = entrypoint.slice(entrypoint.indexOf("\n", start) + 1, entrypoint.lastIndexOf("\nOV_CONF_RENDER"));
+    const js = body.replace(/\{\{\s*(\w+)\s*\}\}/g, (_m, name: string) => {
+      const value = overrides[name] ?? gv(name);
+      if (value === undefined) throw new Error(`no group_var ${name}`);
+      return value;
+    });
+    const script = join(dir, "render.cjs");
+    writeFileSync(script, js);
+    try {
+      execFileSync(process.execPath, [script], {
+        env: { ...process.env, OPENVIKING_CONF: join(home, "ov.conf"), QCR_SECRETS: secretsDir },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (err) {
+      throw new Error(`render failed: ${String((err as { stderr?: Buffer }).stderr ?? "")}`);
+    }
+    return { conf: JSON.parse(readFileSync(join(home, "ov.conf"), "utf8")) };
+  }
+
+  it("SHIPPED DEFAULT: embeds locally, with no key present and no key required — even with pi's key in the mount", () => {
+    const { conf } = render({}, { openai_api_key: "sk-pi-model-credential", openviking_root_key: "root-key-value" });
+    expect(conf.embedding.dense).toEqual({ provider: "local", model: LOCAL_EMBEDDING.model, dimension: LOCAL_EMBEDDING.dimension, input: "text" });
+    expect(conf.embedding.dense.api_key).toBeUndefined();
+    // Nothing hosted anywhere in the memory engine's config.
+    const text = JSON.stringify(conf);
+    expect(text).not.toContain("sk-pi-model-credential");
+    expect(text).not.toContain("openai");
+    expect(conf.server.root_api_key).toBe("root-key-value");
+    expect(conf.vlm).toBeUndefined();
+  });
+
+  it("OPT-IN: a hosted provider reads ITS OWN credential file, never pi's", () => {
+    const { conf } = render(
+      { openviking_embedding_provider: "openai", openviking_embedding_model: "text-embedding-3-small", openviking_embedding_dimension: "1536" },
+      { openai_api_key: "sk-pi-model-credential", openai_embeddings_api_key: "sk-embeddings-credential", openviking_root_key: "r" },
+    );
+    expect(conf.embedding.dense).toMatchObject({ provider: "openai", model: "text-embedding-3-small", dimension: 1536, api_key: "sk-embeddings-credential" });
+  });
+
+  it("OPT-IN with no embeddings key renders NO key — never a silent fallback to another embedder", () => {
+    const { conf } = render(
+      { openviking_embedding_provider: "openai", openviking_embedding_model: "text-embedding-3-small", openviking_embedding_dimension: "1536" },
+      { openai_api_key: "sk-pi-model-credential", openviking_root_key: "r" },
+    );
+    expect(conf.embedding.dense.provider).toBe("openai");
+    expect(conf.embedding.dense.api_key).toBeUndefined();
+    expect(JSON.stringify(conf)).not.toContain("sk-pi-model-credential");
   });
 });
 

@@ -300,6 +300,51 @@ describe("the revert, armed and confirmed", () => {
     key(rig, { kind: "refresh" });
     expect(changes.refreshes).toBe(2);
   });
+
+  // "none yet" is a CLAIM, made only when a scan succeeded and found
+  // none. The two ways of not knowing each get their own sentence, and neither
+  // hides the rows already in memory. The loader arming once per run (above)
+  // is the other half: measured at 502 `git log` spawns in 200 ms when it
+  // re-armed on "still no register" against an unreadable file.
+  it("an unreadable register or a failed scan is SAID, never painted as 'none yet' or 'not read yet'", async () => {
+    const unreadable = screenOf(await loaded({ changes: new FakeChanges(undefined, { kind: "register_unreadable", reason: "EACCES" }) }));
+    expect(unreadable).toContain("change register unreadable");
+    expect(unreadable).toContain("EACCES");
+    expect(unreadable).not.toContain("not read yet — the register");
+    expect(unreadable).not.toContain("a change joins this list");
+
+    const failed = screenOf(await loaded({ changes: new FakeChanges(undefined, { kind: "scan_failed", reason: "fatal: not a git repository" }) }));
+    expect(failed).toContain("git log failed");
+    expect(failed).toContain("not a git repository");
+    expect(failed).toContain("CHANGED (—)");
+    expect(failed).not.toContain("not read yet — the register");
+    expect(failed).not.toContain("a change joins this list");
+
+    // Rows already known stay on screen under the caveat.
+    const withRows = screenOf(await loaded({ changes: new FakeChanges([changeEntry("a".repeat(40), "newest change")], { kind: "register_unreadable", reason: "EIO" }) }));
+    expect(withRows).toContain("change register unreadable");
+    expect(withRows).toContain("newest change");
+    const behind = screenOf(await loaded({ changes: new FakeChanges([changeEntry("a".repeat(40), "newest change")], { kind: "scan_failed", reason: "x" }) }));
+    expect(behind).toContain("last git log scan failed");
+    expect(behind).toContain("CHANGED (1)");
+    expect(behind).toContain("newest change");
+  });
+
+  it("the loader does not re-arm on an unreadable register — six paints, one scan; r is the way back in", async () => {
+    const changes = new FakeChanges(undefined, { kind: "register_unreadable", reason: "EACCES" });
+    const rig = await loaded({ changes });
+    for (let i = 0; i < 5; i++) {
+      rig.app.hooks.tabs.feedback!.screen(rig.app, 140, 44);
+      await settle();
+    }
+    expect(changes.refreshes).toBe(1);
+    changes.problem = undefined;
+    changes.register = { version: 1, updated_at: "2026-08-25T10:00:00Z", entries: [], scanned: 0 };
+    key(rig, { kind: "refresh" });
+    await settle();
+    expect(changes.refreshes).toBe(2);
+    expect(screenOf(rig)).toContain("a change joins this list");
+  });
 });
 
 describe("the loop points at the tickets surface", () => {

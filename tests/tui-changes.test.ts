@@ -157,9 +157,13 @@ describe("durability across a restart", () => {
     expect(second.register?.entries).toHaveLength(1);
   });
 
-  it("a corrupt register is not a crash and not an empty list", () => {
+  it("a corrupt register is not a crash and not an empty list — and not the same answer as no register", () => {
     writeFileSync(join(dir, "change-register.json"), "{not json");
-    expect(new ChangeRegisterStore(dir).load()).toBeUndefined();
+    expect(new ChangeRegisterStore(dir).read()).toMatchObject({ state: "unreadable" });
+    writeFileSync(join(dir, "change-register.json"), JSON.stringify({ version: 1, entries: "nope" }));
+    expect(new ChangeRegisterStore(dir).read()).toEqual({ state: "unreadable", reason: "no entries array" });
+    rmSync(join(dir, "change-register.json"));
+    expect(new ChangeRegisterStore(dir).read()).toEqual({ state: "absent" });
   });
 });
 
@@ -256,5 +260,57 @@ describe("the companion is told to stamp it", () => {
     const skill = readFileSync(join(process.cwd(), "skills/companion/land/SKILL.md"), "utf8");
     expect(skill).toContain(`${TRAILER_RATIFIED}:`);
     expect(skill).toMatch(/`Ratified-in-session:` is never omitted/);
+  });
+});
+
+// FT-0397 — the register's docstrings promise two things `refresh` cannot keep
+// from a baseline it could not read: rows the scan no longer reaches are kept,
+// and `first_seen` is never rewritten. A torn file merged as "no previous
+// entries" and saved falsifies both at once. And the fix has to land BOTH
+// halves: the first attempt at it stood the save down but left the tab's
+// loader re-arming on "still no register", which the review measured at 502
+// `git log` spawns and 502 paints in 200 ms. The SURFACE half (what is said
+// on screen, and that the loader arms once) is tests/feedbacktab.test.ts.
+describe("an unreadable register is neither saved over nor merged onto", () => {
+  let dir = "";
+  beforeEach(() => (dir = mkdtempSync(join(tmpdir(), "qcr-changes-"))));
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  const TORN = '{"version":1,"updated_at":"2026-08-25T09:00:00Z","entries":[{"sha":"a';
+
+  it("refresh stands down on a torn file: no git, no merge, no save — and says why", async () => {
+    writeFileSync(join(dir, "change-register.json"), TORN);
+    const calls: string[][] = [];
+    const cl = new ChangeLog(new ChangeRegisterStore(dir), async (argv) => {
+      calls.push(argv);
+      return { ok: true, stdout: landed("b".repeat(40), "2026-08-25T10:00:00Z", "a later change"), stderr: "", code: 0 };
+    });
+    expect(cl.register).toBeUndefined();
+    expect(cl.problem?.kind).toBe("register_unreadable");
+
+    expect((await cl.refresh())?.kind).toBe("register_unreadable");
+    expect(calls).toEqual([]); // git was never asked
+    // Byte-for-byte what it was: nothing was merged onto an "empty" baseline
+    // and written back over the history.
+    expect(readFileSync(join(dir, "change-register.json"), "utf8")).toBe(TORN);
+    expect(cl.register).toBeUndefined();
+  });
+
+  it("a register that tears mid-run keeps the last true list in memory, flags it, and does not overwrite", async () => {
+    const good = landed("a".repeat(40), "2026-08-25T09:00:00Z", "severity change");
+    const cl = new ChangeLog(new ChangeRegisterStore(dir), async () => ({ ok: true, stdout: good, stderr: "", code: 0 }));
+    expect(await cl.refresh()).toBeUndefined();
+    expect(cl.register?.entries).toHaveLength(1);
+
+    writeFileSync(join(dir, "change-register.json"), TORN);
+    expect((await cl.refresh())?.kind).toBe("register_unreadable");
+    expect(cl.register?.entries).toHaveLength(1);
+    expect(readFileSync(join(dir, "change-register.json"), "utf8")).toBe(TORN);
+
+    // Readable again: the scan resumes and the caveat clears.
+    rmSync(join(dir, "change-register.json"));
+    expect(await cl.refresh()).toBeUndefined();
+    expect(cl.problem).toBeUndefined();
+    expect(cl.register?.entries).toHaveLength(1);
   });
 });

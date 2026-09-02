@@ -1,0 +1,232 @@
+// The embedder step — where memory's vectors are computed, and the
+// ONLY place a new operator is asked about it.
+//
+// WHY IT IS A STEP. The shipped default is the memory engine's own LOCAL
+// embedder: it runs inside the daemon container, so nothing but the model call
+// leaves the machine — memory text included. That default needs no answer and
+// no key, which is exactly why the step exists: an operator who WANTS hosted
+// embeddings must say so, in one place, and the whole installation then moves
+// together — config.toml, the credential file, and (through the bring-up or
+// inventory step) the environment the boot actually renders. Half of that is
+// the failure this step makes impossible: a config that says "openai" over a
+// boot that renders "local" is a vector-store reset on the next start.
+//
+// THE CREDENTIAL IS ITS OWN FILE. `openai_api_key` is pi's model credential
+// and is never read for embeddings; the hosted opt-in reads
+// `<secrets>/<embedding_key_file>` (default `openai_embeddings_api_key`).
+// Either can be set without the other. The wizard never accepts the value
+// through the pi session (it would land in a transcript) — it points at
+// `deploy/collect-secrets.sh`, which reads it hidden and writes it 0600.
+//
+// Deterministic by construction: config and secrets are plain files under
+// paths derived from the injected state dir; verify() neither prompts nor
+// writes.
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { EMBEDDING_PROVIDERS, HOSTED_EMBEDDING, LOCAL_EMBEDDING, OPENVIKING_DEFAULTS, parseConfig, type EmbeddingProvider } from "../../config.js";
+import { CHOICE_KEYS } from "../choices.js";
+import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
+import { readTextOrNull, secretsDirFor, writeAtomic } from "./compose.js";
+import { assertNoDryRunEdit, patchToml, tomlString, type TomlEdit } from "./configfill.js";
+import { readTomlKey, sandboxRootOf } from "./ingress.js";
+import { topologyOf } from "./topology.js";
+
+export const EMBEDDINGS_STEP_ID = "embeddings";
+
+/** The embedder config.toml declares — what the bring-up step writes into the
+ * project `.env` and the inventory step writes as host vars. */
+export interface DeclaredEmbedder {
+  provider: string;
+  model: string;
+  dimension: number;
+  keyFile: string;
+}
+
+/**
+ * Read `[openviking] embedding_*` out of a config.toml text, defaults filled
+ * exactly as the loader fills them — so a config that omits the block (an
+ * older one, or a hand-trimmed one) is read as the shipped local default and
+ * not as "unknown".
+ */
+export function declaredEmbedderOf(configText: string): DeclaredEmbedder {
+  const get = (key: string): string | null => readTomlKey(configText, "openviking", key)?.trim() ?? null;
+  const dimensionRaw = get("embedding_dimension");
+  return {
+    provider: get("embedding_provider") ?? OPENVIKING_DEFAULTS.embedding_provider,
+    model: get("embedding_model") ?? OPENVIKING_DEFAULTS.embedding_model,
+    dimension: dimensionRaw !== null && /^[0-9]+$/.test(dimensionRaw) ? Number(dimensionRaw) : OPENVIKING_DEFAULTS.embedding_dimension,
+    keyFile: get("embedding_key_file") ?? OPENVIKING_DEFAULTS.embedding_key_file,
+  };
+}
+
+/** The four `.env` keys docker-compose.yml passes into the daemon container. */
+export function embedderEnvEntries(e: DeclaredEmbedder): Array<[string, string]> {
+  return [
+    ["QCR_OPENVIKING_EMBEDDING_PROVIDER", e.provider],
+    ["QCR_OPENVIKING_EMBEDDING_MODEL", e.model],
+    ["QCR_OPENVIKING_EMBEDDING_DIMENSION", String(e.dimension)],
+    ["QCR_OPENVIKING_EMBEDDING_KEY_FILE", e.keyFile],
+  ];
+}
+
+/** The inventory HOST VARS for a hosted opt-in — nothing for the local
+ * default, which the tracked group_vars already carry. */
+export function embedderHostVars(e: DeclaredEmbedder): Array<[string, string]> {
+  if (e.provider === "local") return [];
+  return [
+    ["openviking_embedding_provider", e.provider],
+    ["openviking_embedding_model", e.model],
+    ["openviking_embedding_dimension", String(e.dimension)],
+    ["openviking_embedding_key_file", e.keyFile],
+  ];
+}
+
+export function describeEmbedder(e: { provider: string; model: string; dimension: number }): string {
+  return `${e.provider}/${e.model} (${e.dimension} dims)`;
+}
+
+const LOCAL_SENTENCE =
+  "memory embeds LOCALLY, inside the daemon container — no memory text leaves the machine, and nothing but the model call does. " +
+  "No key is needed and none is read";
+const HOSTED_SENTENCE =
+  "memory embeds through OpenAI's hosted embeddings endpoint: EVERY memory entry's text, and every search query, is sent there. " +
+  "You chose this; the shipped default is local";
+
+/** The credential check for the hosted opt-in — pi's key never counts. */
+export function keyFileCheck(secretsDir: string, keyFile: string): CheckResult {
+  const path = join(secretsDir, keyFile);
+  const value = readTextOrNull(path)?.trim() ?? "";
+  if (value.startsWith("sk-")) {
+    return { name: "embeddings-key", ok: true, detail: `${path} is present (0600 by the wizard) — the memory engine reads it, and only it, for embeddings` };
+  }
+  const pi = existsSync(join(secretsDir, "openai_api_key")) ? " pi's openai_api_key is there, but it is pi's model credential and is deliberately NOT used for embeddings." : "";
+  return {
+    name: "embeddings-key",
+    ok: false,
+    detail:
+      (value === "" ? `no ${keyFile} in ${secretsDir}.` : `${path} exists but does not look like an OpenAI key.`) +
+      pi +
+      ` Without it the memory engine refuses to start (memory degrades; the embedder is never switched silently). Fix: in another terminal, ` +
+      `\`bash deploy/collect-secrets.sh\` and paste the key at the ${keyFile} prompt (never through this session — it would land in a transcript), then run this step again`,
+  };
+}
+
+function configPathOf(ctx: StepContext): string {
+  const recorded = ctx.choices[CHOICE_KEYS.configPath];
+  return typeof recorded === "string" && recorded ? recorded : join(sandboxRootOf(ctx.adapters), "config.toml");
+}
+
+function propagationNote(ctx: StepContext, e: DeclaredEmbedder): CheckResult {
+  const vm = topologyOf(ctx.choices) === "vm";
+  return {
+    name: "propagation",
+    ok: true,
+    detail: vm
+      ? e.provider === "local"
+        ? "the deploy renders the tracked group_vars, which already say local — nothing else to write"
+        : "the inventory step (68) writes these as HOST VARS on your inventory line, which is what the deploy renders; scripts/deploy.sh refuses to deploy if config.toml and that value ever disagree"
+      : "the bring-up step (70) writes these into the project .env, which docker-compose.yml passes into the container",
+  };
+}
+
+const MIGRATION_NOTE: CheckResult = {
+  name: "existing-store",
+  ok: true,
+  detail:
+    "if this installation already holds memory embedded under a DIFFERENT embedder, the next boot moves the old vectors aside " +
+    "(kept, never deleted) and the daemon re-embeds reviewer memory through the server once it is ready; the companion's namespace " +
+    "is yours to rebuild from this machine with `qcr memory reembed`. The memory TEXT is never touched. docs/memory-embeddings.md has the whole shape",
+};
+
+export function embeddingsStep(): OnboardingStep {
+  return {
+    id: EMBEDDINGS_STEP_ID,
+    title: "Memory embeddings: local by default",
+    explain:
+      "Decides where the memory engine computes its vectors. The shipped default is LOCAL: the embedder runs inside the daemon " +
+      "container, so nothing but the model call ever leaves the machine — memory text included — and no key is needed. Calling this " +
+      "step with no arguments confirms that default. The alternative is OpenAI's hosted embeddings (`provider: \"openai\"`): every memory " +
+      "entry's text is then sent to OpenAI, and the credential is its OWN secrets file (openai_embeddings_api_key, via " +
+      "deploy/collect-secrets.sh) — pi's openai_api_key is never used for it. Do not offer the hosted option as an upgrade; offer it " +
+      "only if the operator asks, and say plainly what leaves the machine.",
+    order: 38,
+    parameters: {
+      type: "object",
+      properties: {
+        provider: { type: "string", enum: [...EMBEDDING_PROVIDERS], description: "\"local\" (the default; omit to confirm it) or \"openai\" (hosted; sends memory text to OpenAI)." },
+        model: { type: "string", description: "Hosted only: the embedding model (default text-embedding-3-small). Ignored for local, which has one model." },
+        dimension: { type: "string", description: "Hosted only: the vector dimension of that model (default 1536). Ignored for local." },
+      },
+    },
+
+    async run(ctx): Promise<StepReport> {
+      const path = configPathOf(ctx);
+      const text = readTextOrNull(path);
+      if (text === null) {
+        return { ok: false, checks: [{ name: "config.toml", ok: false, detail: `${path} does not exist yet — run the config_fill step first; this step then writes the embedder into it` }] };
+      }
+      const current = declaredEmbedderOf(text);
+      const rawProvider = String(ctx.input.provider ?? current.provider).trim().toLowerCase();
+      if (!(EMBEDDING_PROVIDERS as readonly string[]).includes(rawProvider)) {
+        return { ok: false, checks: [{ name: "provider", ok: false, detail: `"${rawProvider}" is not an embedder — the choices are ${EMBEDDING_PROVIDERS.map((p) => `"${p}"`).join(" and ")}` }] };
+      }
+      const provider = rawProvider as EmbeddingProvider;
+      const model =
+        provider === "local"
+          ? LOCAL_EMBEDDING.model
+          : String(ctx.input.model ?? (current.provider === "openai" ? current.model : HOSTED_EMBEDDING.model)).trim() || HOSTED_EMBEDDING.model;
+      const dimensionRaw = provider === "local" ? String(LOCAL_EMBEDDING.dimension) : String(ctx.input.dimension ?? (current.provider === "openai" ? current.dimension : HOSTED_EMBEDDING.dimension)).trim();
+      if (!/^[1-9][0-9]*$/.test(dimensionRaw)) {
+        return { ok: false, checks: [{ name: "dimension", ok: false, detail: `"${dimensionRaw}" is not a vector dimension — a positive integer, e.g. 1536 for text-embedding-3-small` }] };
+      }
+      const edits: TomlEdit[] = [
+        { section: "openviking", key: "embedding_provider", value: tomlString(provider) },
+        { section: "openviking", key: "embedding_model", value: tomlString(model) },
+        { section: "openviking", key: "embedding_dimension", value: dimensionRaw },
+      ];
+      // Rule 1, structurally: the only wizard file that may write `dry_run`
+      // is golive.ts; every other edit list is asserted clean first.
+      assertNoDryRunEdit(edits);
+      const patched = patchToml(text, edits);
+      // Parse BEFORE writing — the loader's own validation is the lock, so a
+      // config this step writes can always be booted.
+      try {
+        parseConfig(patched);
+      } catch (err) {
+        return { ok: false, checks: [{ name: "config validation", ok: false, detail: `the embedder this step would write does not load: ${String(err)} — nothing was written` }] };
+      }
+      if (patched !== text) writeAtomic(path, patched);
+      const declared = declaredEmbedderOf(patched);
+
+      const checks: CheckResult[] = [
+        {
+          name: "embedder",
+          ok: true,
+          detail: `${describeEmbedder(declared)} — ${provider === "local" ? LOCAL_SENTENCE : HOSTED_SENTENCE}`,
+        },
+        { name: "config.toml", ok: true, detail: `[openviking] embedding_provider/model/dimension ${patched === text ? "already said this" : `written to ${path}`}, and it parses` },
+      ];
+      if (provider !== "local") checks.push(keyFileCheck(secretsDirFor(sandboxRootOf(ctx.adapters), ctx.choices), declared.keyFile));
+      checks.push(propagationNote(ctx, declared), MIGRATION_NOTE);
+      return { ok: checks.every((c) => c.ok), checks, data: { provider, model: declared.model, dimension: declared.dimension, config_path: path } };
+    },
+
+    async verify(ctx): Promise<StepReport> {
+      const path = configPathOf(ctx);
+      const text = readTextOrNull(path);
+      if (text === null) return { ok: false, checks: [{ name: "config.toml", ok: false, detail: `${path} does not exist` }] };
+      let declared: DeclaredEmbedder;
+      try {
+        const ov = parseConfig(text).openviking;
+        declared = { provider: ov.embedding_provider, model: ov.embedding_model, dimension: ov.embedding_dimension, keyFile: ov.embedding_key_file };
+      } catch (err) {
+        return { ok: false, checks: [{ name: "config.toml", ok: false, detail: `${path} does not load: ${String(err)}` }] };
+      }
+      const checks: CheckResult[] = [
+        { name: "embedder", ok: true, detail: `${describeEmbedder(declared)} — ${declared.provider === "local" ? LOCAL_SENTENCE : HOSTED_SENTENCE}` },
+      ];
+      if (declared.provider !== "local") checks.push(keyFileCheck(secretsDirFor(sandboxRootOf(ctx.adapters), ctx.choices), declared.keyFile));
+      return { ok: checks.every((c) => c.ok), checks };
+    },
+  };
+}

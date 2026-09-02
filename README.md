@@ -387,7 +387,9 @@ Each piece has its own page:
    the manifest, the permission and event tables, where each value lands, the
    install, the repo-side labels, and the four verification checks.
 2. **LLM credentials** — [docs/llm-setup.md](docs/llm-setup.md): the two routes,
-   the provider-prefix rewrite, the container `/login`, and the embeddings key.
+   the provider-prefix rewrite, the container `/login`, and why memory
+   embeddings need no key (local by default; the hosted opt-in is
+   [docs/memory-embeddings.md](docs/memory-embeddings.md)).
 3. **Ingress** — [docker/daemon/README.md](docker/daemon/README.md): the four
    shapes, the compose profiles, and the sidecar credentials.
 4. **Memory keys** — the server's root key is any 32 random bytes, written to

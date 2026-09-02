@@ -70,12 +70,16 @@ export const VIEW_MIN_INTERVAL_MS = 500;
 export interface ViewDeploy {
   loaded: boolean;
   loading?: boolean;
-  /** The commit the VM is actually running (its BUILD_SHA marker). */
-  deployed_sha?: string;
-  deployed_at?: string;
-  deployed_mode?: string;
-  /** Local HEAD in the sandbox checkout. */
-  head?: string;
+  /** The VM's BUILD_SHA marker — the commit it is actually running. `"absent"`
+   * is a VM this system has never deployed to (the first deploy writes the
+   * marker); `"unparseable"` is a marker the TUI read but could not parse (a
+   * corrupt file, not a failed read); `null` is a read that failed and says
+   * NOTHING about what the VM runs. Never a dropped key: the
+   * companion's renderer shows an absent key as nothing at all, and "nothing"
+   * read as "nothing to report". */
+  deployed: { sha: string; at?: string; mode?: string } | "absent" | "unparseable" | null;
+  /** Local HEAD in the sandbox checkout; `null` when git could not be read. */
+  head: string | null;
   /** `null` when the working tree could not be read — never 0. */
   dirty_files: number | null;
   /** `git log --oneline deployed..HEAD`, bounded. Empty when the diff could
@@ -86,8 +90,9 @@ export interface ViewDeploy {
   pending_commit_count: number | null;
   /** Last line of `git diff --stat` — the "N files changed" summary. */
   diffstat_summary?: string;
-  /** `docker ps` Status line ("Up 2 hours" / "Exited (0) …"). */
-  container_status?: string;
+  /** `docker ps` Status line ("Up 2 hours" / "Exited (0) …"); `""` when docker
+   * lists no such container; `null` when the read failed. */
+  container_status: string | null;
   run?: { kind: string; running: boolean; code?: number | null };
 }
 
@@ -160,7 +165,10 @@ export interface ViewSource {
   deploy?: {
     loaded: boolean;
     loading?: boolean;
-    deployed?: { sha: string; at?: string; mode?: string };
+    /** Structural echo of `DeployState.deployed`: the marker, `"absent"` for a
+     * VM with none, `"unparseable"` for a marker that is not a marker line,
+     * `undefined` for a read that failed. */
+    deployed?: { sha: string; at?: string; mode?: string } | "absent" | "unparseable";
     head?: string;
     /** undefined = git status could not be read, not "clean". */
     dirty: string[] | undefined;
@@ -204,13 +212,13 @@ export function buildTuiView(src: ViewSource): TuiView {
     deploy: {
       loaded: d?.loaded ?? false,
       ...(d?.loading === true ? { loading: true } : {}),
-      ...(d?.deployed ? { deployed_sha: d.deployed.sha, deployed_at: d.deployed.at, deployed_mode: d.deployed.mode } : {}),
-      ...(d?.head ? { head: d.head } : {}),
+      deployed: d?.deployed ?? null,
+      head: d?.head ?? null,
       dirty_files: d?.dirty?.length ?? null,
       pending_commits: (commits ?? []).slice(0, PENDING_COMMITS_MAX),
       pending_commit_count: commits?.length ?? null,
       ...(diffstat.length > 0 ? { diffstat_summary: diffstat[diffstat.length - 1] } : {}),
-      ...(d?.containerStatus !== undefined ? { container_status: d.containerStatus } : {}),
+      container_status: d?.containerStatus ?? null,
       ...(d?.run ? { run: { kind: d.run.kind, running: d.run.running, code: d.run.code ?? null } } : {}),
     },
     screen: {

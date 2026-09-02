@@ -156,7 +156,16 @@ describe("verdict (in-thread)", () => {
     expect(text).toContain("uses &lt;Foo /&gt; &amp; &lt;Bar /&gt;");
   });
 
-  it("appends the parked line on NEEDS A HUMAN, as a fourth line", () => {
+  /**
+   * A NEEDS_HUMAN verdict is LEGACY input: the daemon lands it as
+   * `tracked` — review posted, no approval, the AI keeps driving. The message
+   * says exactly that and never that the PR is parked or the decision is the
+   * owner's; there is no park, so no one is pinged to come and decide.
+   *
+   * MUTATION: restore `parked for a person — <owner>, the merge decision is
+   * yours` — the exact-string pin and the /park/ assertion both fail.
+   */
+  it("renders a legacy NEEDS_HUMAN as an undecided verdict landed as tracked — no park, no owner decision", () => {
     const text = verdictMessage(cfg, {
       pr: 5263,
       author: "alice",
@@ -166,11 +175,13 @@ describe("verdict (in-thread)", () => {
       duration_min: 21,
     });
     expect(text).toBe(
-      "<@U_ALICE> 🚨 *NEEDS A HUMAN* — round 4, 21 min\n" +
+      "<@U_ALICE> 🚨 *UNDECIDED (legacy verdict)* — round 4, 21 min\n" +
         "Auth path changed.\n" +
         "<https://github.com/exampleorg/example-app/pull/5263|review on GitHub>\n" +
-        "parked for a person — <@U_MAT>, the merge decision is yours",
+        "legacy undecided verdict — landed as tracked: review posted, no approval, the automated review continues",
     );
+    expect(text).not.toMatch(/\bpark(s|ed|ing)?\b/i);
+    expect(text).not.toContain("<@U_MAT>");
     // The line must not claim a GitHub review request; none is made.
     expect(text.toLowerCase()).not.toContain("requested");
   });

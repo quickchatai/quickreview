@@ -39,6 +39,12 @@ function runWizard(
     child.stdout.on("data", (d) => (out += d));
     child.stderr.on("data", (d) => (out += d));
     child.on("error", reject);
+    // A wizard that refuses before reading stdin (bad shape, missing dir)
+    // exits first; the late write then EPIPEs. That is the child's answer,
+    // not a test failure — the exit code and output below carry it.
+    child.stdin.on("error", (err: NodeJS.ErrnoException) => {
+      if (err.code !== "EPIPE") reject(err);
+    });
     child.stdin.write(stdin);
     child.stdin.end();
     child.on("close", (code) => done({ code: code ?? -1, out }));
@@ -52,11 +58,37 @@ function seedRequired(): void {
   writeFileSync(join(dir, "webhook_secret"), "a".repeat(32));
 }
 
+describe("the hosted-embeddings key is its OWN file", () => {
+  it("is prompted separately from pi's key, lands 0600, and skipping it leaves memory local with nothing else changed", async () => {
+    seedRequired();
+    // stdin: skip openai_api_key, paste the embeddings key, skip both openviking keys.
+    const { code, out } = await runWizard("\nsk-embeddings-only-0123456789\n\n\n", { env: { QC_DEPLOY_SHAPE: "docker" } });
+    expect(code).toBe(0);
+    expect(out).toContain("openai_embeddings_api_key saved");
+    expect(out).toContain("skipped openai_api_key");
+    expect(readFileSync(join(dir, "openai_embeddings_api_key"), "utf8")).toBe("sk-embeddings-only-0123456789");
+    expect(statSync(join(dir, "openai_embeddings_api_key")).mode & 0o777).toBe(0o600);
+    expect(() => readFileSync(join(dir, "openai_api_key"))).toThrow();
+    // The overview says what the file is for, and that the default needs none.
+    expect(out).toMatch(/embeds LOCALLY by default/);
+    expect(out).toMatch(/pi's key is never used for embeddings/);
+  });
+
+  it("rejects a value that is not an OpenAI key and re-prompts", async () => {
+    seedRequired();
+    const { code, out } = await runWizard("\nnot-a-key\nsk-embeddings-second-try-0123\n\n\n", { env: { QC_DEPLOY_SHAPE: "docker" } });
+    expect(code).toBe(0);
+    expect(out).toContain("OpenAI keys start with sk-");
+    expect(readFileSync(join(dir, "openai_embeddings_api_key"), "utf8")).toBe("sk-embeddings-second-try-0123");
+  });
+});
+
 describe("deployment-shape choice", () => {
   it("docker shape passes with no tunnel token, and never prompts for one", async () => {
     seedRequired();
-    // stdin: shape "2", then Enter-skips for openai + both openviking keys.
-    const { code, out } = await runWizard("2\n\n\n\n");
+    // stdin: shape "2", then Enter-skips for openai, the embeddings key and
+    // both openviking keys.
+    const { code, out } = await runWizard("2\n\n\n\n\n");
     expect(code).toBe(0);
     expect(out).toContain("deployment shape: docker");
     expect(out).toContain("all required secrets in place for the 'docker' shape");

@@ -62,7 +62,7 @@ naming what broke.
 
 ## The checklist
 
-Sixteen steps, in this order. Three are specific to the server route and three
+Eighteen steps, in this order. Three are specific to the server route and three
 to the laptop route; the rest run on both, over whichever transport your
 topology chose.
 
@@ -74,6 +74,7 @@ topology chose.
 | 30 | LLM auth | both |
 | 35 | interview and `config.toml` | both |
 | 36 | escalation (optional, off by default) | both |
+| 38 | memory embeddings: local by default | both |
 | 40 | GitHub App: create, install, label | both |
 | 50 | webhook ingress | both |
 | 60 | memory keys, phase A | both |
@@ -181,11 +182,11 @@ The wizard does not accept a pasted key through the pi session (the value would
 land in a transcript). It points you at `bash deploy/collect-secrets.sh` in
 another terminal, which reads it with hidden input and writes it `0600`.
 
-**Either route: the embeddings key.** The memory engine embeds every entry with
-an OpenAI embedding model and reads the same `openai_api_key` file. OAuth covers
-the review models only, never embeddings — without the key, memory falls back to
-a local dense embedder, which works but is slower and lower quality. Usage is
-fractions of a cent a day. This is a note, never a blocker.
+**Either route: memory embeddings need nothing here.** The memory engine embeds
+locally by default, inside the daemon container, so no memory text leaves the
+machine on either route — and `openai_api_key` is pi's credential alone, never
+read for embeddings. A hosted embedder is a separate, explicit opt-in with its
+own key file: step 38. This step says so as a note, never a blocker.
 
 ### 35 — The interview, and `config.toml`
 
@@ -270,6 +271,42 @@ only when it actually reaches GitHub, so running in dry-run first costs you
 nothing — the same escalation still goes out for real when you go live. And
 the same person is never pointed at the same file twice on one pull request,
 however many rounds it takes.
+
+### 38 — Memory embeddings: local by default
+
+Decides where the memory engine computes the vectors it stores and searches by.
+The shipped default is **local**: the embedder (llama-cpp, pinned in the image)
+runs inside the daemon container, so nothing but the model call ever leaves the
+machine — memory text included — and no key is needed. Calling the step with no
+arguments confirms that default and writes nothing.
+
+The alternative is OpenAI's hosted embeddings (`provider: "openai"`, optionally
+`model` and `dimension`; the defaults are `text-embedding-3-small` / `1536`).
+The step says plainly what that means — every memory entry's text, and every
+search query, is sent to OpenAI — writes `config.toml [openviking]
+embedding_provider/model/dimension`, parses the result before writing it, and
+then **stays red until the credential exists as its own file**,
+`<secrets dir>/openai_embeddings_api_key`. Pi's `openai_api_key` is explicitly
+not it: the two credentials are independent, so either can be set without the
+other. As with every secret, the value never goes through the session — the
+step points you at `bash deploy/collect-secrets.sh`, which has the prompt.
+
+The answer reaches the boot through the route's own writer, from `config.toml`
+as the single truth: on the laptop route the bring-up step (70) mirrors it into
+the project `.env` (`QCR_OPENVIKING_EMBEDDING_*`, which `docker-compose.yml`
+passes into the container); on the server route the inventory step (68) writes
+a hosted opt-in as host vars on your inventory line (the tracked `group_vars`
+say local), and `scripts/deploy.sh` refuses to deploy if `config.toml` and that
+effective value ever disagree — that drift would reset the vector store for the
+wrong embedder on the next boot.
+
+Changing the embedder changes the vector space. An installation that already
+holds memory is migrated at the next boot, never wiped and never left
+unsearchable: the old vectors are moved aside (kept), the daemon re-embeds
+reviewer memory through the server once it is ready, and the companion's
+namespace is yours to rebuild from your PC with `qcr memory reembed`. The
+memory text is never touched. [docs/memory-embeddings.md](memory-embeddings.md)
+has the whole shape, the journal, and the rehearsal recipe.
 
 ### 40 — GitHub App: create, install, label
 
@@ -415,10 +452,16 @@ Nothing is ever re-issued. A key that already exists is read back and
 redistributed; a rotation would orphan every copy already handed out, so a file
 holding a *different* value is reported as a conflict and left alone.
 
-**Declining memory is a supported answer.** The reviewer then runs memory-less:
-rounds still run (context assembly resolves empty and never blocks or delays a
-round), the TUI's memory tab shows the store as unavailable, and the end-of-day
-curator and the `[feedback]` sink have nowhere to write.
+**Declining memory is a supported answer, with one rough edge.** The reviewer
+then runs memory-less: rounds still run and are never blocked or delayed by
+memory, the TUI's memory tab shows the store as unavailable, and the end-of-day
+curator and the `[feedback]` sink have nowhere to write. The rough edge: the
+daemon has no word for "off" yet, so a missing reviewer key is reported the
+same way as an unreadable store — every round prompt carries a short
+`MEMORY UNAVAILABLE THIS ROUND` note (the session is told to review normally
+and never to mention it in the posted review) and the overseer hears a
+`round_memory_degraded` anomaly once an hour. Loud, harmless, and yours to
+ignore until that state is given its own name.
 
 One placement detail you may see: the documented key-file location
 (`~/.config/quickreview-bot/openviking-keys.env`) sits inside the secrets dir by

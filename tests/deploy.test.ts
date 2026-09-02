@@ -23,6 +23,11 @@ interface OvPins {
   rootKeyFile?: string;
   reviewerKeyFile?: string;
   users?: string;
+  /** — the embedder, mirrored against the EFFECTIVE ansible value. */
+  embedProvider?: string;
+  embedModel?: string;
+  embedDimension?: string;
+  embedKeyFile?: string;
 }
 
 const GROUP_VARS = (piVersion: string, withSandboxSrc = true, ov?: OvPins) =>
@@ -40,6 +45,10 @@ const GROUP_VARS = (piVersion: string, withSandboxSrc = true, ov?: OvPins) =>
     ...(ov?.rootKeyFile === undefined ? [] : [`openviking_root_key_file: "${ov.rootKeyFile}"`]),
     ...(ov?.reviewerKeyFile === undefined ? [] : [`openviking_reviewer_key_file: "${ov.reviewerKeyFile}"`]),
     ...(ov?.users === undefined ? [] : [`openviking_provision_users: "${ov.users}"`]),
+    ...(ov?.embedProvider === undefined ? [] : [`openviking_embedding_provider: "${ov.embedProvider}"`]),
+    ...(ov?.embedModel === undefined ? [] : [`openviking_embedding_model: "${ov.embedModel}"`]),
+    ...(ov?.embedDimension === undefined ? [] : [`openviking_embedding_dimension: ${ov.embedDimension}`]),
+    ...(ov?.embedKeyFile === undefined ? [] : [`openviking_embedding_key_file: "${ov.embedKeyFile}"`]),
     ...(withSandboxSrc ? ['sandbox_src: "/tmp/whatever"'] : ['# sandbox_src: "/tmp/whatever"']),
     "",
   ].join("\n");
@@ -66,6 +75,10 @@ const CONFIG = (piVersion: string, ov?: OvPins) =>
           ...(ov.users === undefined
             ? []
             : [`provision_users = [${ov.users.split(",").map((u) => `"${u}"`).join(", ")}]`]),
+          ...(ov.embedProvider === undefined ? [] : [`embedding_provider = "${ov.embedProvider}"`]),
+          ...(ov.embedModel === undefined ? [] : [`embedding_model = "${ov.embedModel}"`]),
+          ...(ov.embedDimension === undefined ? [] : [`embedding_dimension = ${ov.embedDimension}`]),
+          ...(ov.embedKeyFile === undefined ? [] : [`embedding_key_file = "${ov.embedKeyFile}"`]),
         ]),
     "",
   ].join("\n");
@@ -87,6 +100,8 @@ function makeScratch(opts: {
   groupVarsOv?: OvPins;
   /** extensions/vendor/openviking-pi/upstream.json "commit". */
   upstreamCommit?: string;
+  /** The inventory text — host vars on the host line outrank group_vars. */
+  inventory?: string;
 }): Env {
   const dir = mkdtempSync(join(tmpdir(), "qcr-deploy-"));
   const sandbox = join(dir, "sandbox");
@@ -107,7 +122,7 @@ function makeScratch(opts: {
     );
   }
   writeFileSync(join(ansible, "playbook.yml"), "---\n# stub playbook (the real asset is never touched by tests)\n");
-  writeFileSync(join(ansible, "inventory.ini"), "[quickreview]\nquickreview-vm ansible_user=mat\n");
+  writeFileSync(join(ansible, "inventory.ini"), opts.inventory ?? "[quickreview]\nquickreview-vm ansible_user=mat\n");
 
   const git = (...args: string[]) =>
     execFileSync("git", ["-C", sandbox, ...args], {
@@ -356,6 +371,57 @@ describe("deploy.sh — OpenViking pin drift", () => {
       const r = run(env, ["--dry-run"]);
       expect(r.code).toBe(1);
       expect(r.stderr).toContain("has no openviking auth_mode pin");
+    });
+  });
+
+  describe("embedder drift", () => {
+    const LOCAL = { embedProvider: "local", embedModel: "bge-small-zh-v1.5-f16", embedDimension: "512", embedKeyFile: "openai_embeddings_api_key" };
+    const HOSTED = { embedProvider: "openai", embedModel: "text-embedding-3-small", embedDimension: "1536", embedKeyFile: "openai_embeddings_api_key" };
+    const base = { version: "0.4.15", llama: "0.3.35" };
+
+    it("names the embedder in the plan when config.toml and group_vars agree on local", () => {
+      env = makeScratch({ configPi: "0.84.4", groupVarsPi: "0.84.4", configOv: { ...base, ...LOCAL } });
+      const r = run(env, ["--dry-run"]);
+      expect(r.code).toBe(0);
+      expect(r.stdout).toContain("memory embed local (config.toml == ansible effective value; 'local' means no memory text leaves the VM)");
+    });
+
+    it("REFUSES a config.toml opted into a hosted embedder over a boot that would render local — that boot would reset the store", () => {
+      env = makeScratch({ configPi: "0.84.4", groupVarsPi: "0.84.4", configOv: { ...base, ...HOSTED }, groupVarsOv: { ...base, ...LOCAL } });
+      const r = run(env, ["--dry-run"]);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("openviking embedding provider pin mismatch");
+      expect(r.stderr).toContain('embedding_provider = "openai"');
+      expect(r.stderr).toContain('openviking_embedding_provider = "local"');
+    });
+
+    it("an opt-in written as INVENTORY HOST VARS (the wizard's way) is the effective value and passes", () => {
+      env = makeScratch({
+        configPi: "0.84.4",
+        groupVarsPi: "0.84.4",
+        configOv: { ...base, ...HOSTED },
+        groupVarsOv: { ...base, ...LOCAL },
+        inventory:
+          "# written by the wizard\n[quickreview]\nquickreview-vm cloudflared_enabled=false openviking_embedding_provider=openai " +
+          "openviking_embedding_model=text-embedding-3-small openviking_embedding_dimension=1536\n\n[quickreview:vars]\nansible_user=mat\n",
+      });
+      const r = run(env, ["--dry-run"]);
+      expect(r.code).toBe(0);
+      expect(r.stdout).toContain("memory embed openai");
+    });
+
+    it("a dimension that drifts alone is refused too — same provider, different vector space", () => {
+      env = makeScratch({ configPi: "0.84.4", groupVarsPi: "0.84.4", configOv: { ...base, ...HOSTED }, groupVarsOv: { ...base, ...HOSTED, embedDimension: "3072" } });
+      const r = run(env, ["--dry-run"]);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("openviking embedding dimension pin mismatch");
+    });
+
+    it("a config.toml naming the embedder over a group_vars without it is fatal, never skipped", () => {
+      env = makeScratch({ configPi: "0.84.4", groupVarsPi: "0.84.4", configOv: { ...base, ...LOCAL }, groupVarsOv: base });
+      const r = run(env, ["--dry-run"]);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("has no openviking embedding provider pin");
     });
   });
 

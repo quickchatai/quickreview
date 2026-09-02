@@ -19,8 +19,15 @@ OV_PORT="${QCR_OPENVIKING_PORT:-1933}"
 OV_WORKERS="${QCR_OPENVIKING_WORKERS:-1}"
 OV_QUEUE_CONCURRENCY="${QCR_OPENVIKING_QUEUE_CONCURRENCY:-2}"
 OV_AUTH_MODE="${QCR_OPENVIKING_AUTH_MODE:-api_key}"
-OV_EMBEDDING_MODEL="${QCR_OPENVIKING_EMBEDDING_MODEL:-text-embedding-3-small}"
-OV_EMBEDDING_DIMENSION="${QCR_OPENVIKING_EMBEDDING_DIMENSION:-1536}"
+# The embedder: LOCAL by default — the server's own llama-cpp
+# embedder, in the container, so no memory text leaves the machine. A hosted
+# opt-in is provider/model/dimension in the project .env (docker-compose.yml
+# passes them through) plus <secrets>/$OV_EMBEDDING_KEY_FILE — its OWN file,
+# never pi's openai_api_key.
+OV_EMBEDDING_PROVIDER="${QCR_OPENVIKING_EMBEDDING_PROVIDER:-local}"
+OV_EMBEDDING_MODEL="${QCR_OPENVIKING_EMBEDDING_MODEL:-bge-small-zh-v1.5-f16}"
+OV_EMBEDDING_DIMENSION="${QCR_OPENVIKING_EMBEDDING_DIMENSION:-512}"
+OV_EMBEDDING_KEY_FILE="${QCR_OPENVIKING_EMBEDDING_KEY_FILE:-openai_embeddings_api_key}"
 OV_ROOT_KEY_FILE="${QCR_OPENVIKING_ROOT_KEY_FILE:-openviking_root_key}"
 OV_REVIEWER_KEY_FILE="${QCR_OPENVIKING_REVIEWER_KEY_FILE:-openviking_reviewer_key}"
 OV_PROVISION_USERS="${QCR_OPENVIKING_PROVISION_USERS:-reviewer,companion}"
@@ -94,7 +101,8 @@ fi
 
 # ov.conf is RENDERED on every boot, so a knob change ships with a restart
 # rather than a hand-edit in the container. Rendered by node because ov.conf is
-# JSON and the OpenAI credential must be injected from the read-only secrets
+# JSON and its credentials (the server's root key; under the hosted-embedder
+# opt-in, the embeddings key) must be injected from the read-only secrets
 # mount at runtime (never baked into the image, never committed).
 #
 # Shape notes, verified against a running 0.4.15 — unknown fields are REJECTED
@@ -113,6 +121,11 @@ fi
 #     written as a literal.
 #   * workers/queue_workers are cut for a 2-CPU cap: CPU is the measured cost
 #     (~1.63 core-seconds per ~500 B write), not RAM.
+#   * The EMBEDDER is a knob, never a literal — $QCR_OPENVIKING_
+#     EMBEDDING_*. The shipped default is the server's own LOCAL llama-cpp
+#     embedder, so no memory text leaves this machine; a hosted provider is an
+#     explicit opt-in and reads ITS OWN credential file — never pi's
+#     `openai_api_key`, so the two are set independently.
 #
 # The `||` is deliberate (the boot runs under `set -e`): a memory engine that
 # cannot be configured must never stop the reviewer from coming up. The daemon
@@ -122,8 +135,10 @@ OPENVIKING_CONF="$OV_HOME/ov.conf" QCR_SECRETS="$SECRETS" \
 QCR_OV_PORT="$OV_PORT" QCR_OV_WORKERS="$OV_WORKERS" \
 QCR_OV_QUEUE_CONCURRENCY="$OV_QUEUE_CONCURRENCY" \
 QCR_OV_AUTH_MODE="$OV_AUTH_MODE" \
+QCR_OV_EMBEDDING_PROVIDER="$OV_EMBEDDING_PROVIDER" \
 QCR_OV_EMBEDDING_MODEL="$OV_EMBEDDING_MODEL" \
 QCR_OV_EMBEDDING_DIMENSION="$OV_EMBEDDING_DIMENSION" \
+QCR_OV_EMBEDDING_KEY_FILE="$OV_EMBEDDING_KEY_FILE" \
 QCR_OV_ROOT_KEY_FILE="$OV_ROOT_KEY_FILE" \
 node <<'OV_CONF_RENDER' || echo "openviking: ov.conf render FAILED — the daemon starts memory-less" >&2
 const fs = require("fs");
@@ -171,28 +186,57 @@ if (conf.server.auth_mode === "api_key") {
     console.warn("openviking: NO " + process.env.QCR_OV_ROOT_KEY_FILE + " in the secrets mount — falling back to auth_mode=dev. Per-user confinement is NOT enforced in that mode: provision the root key and restart.");
   }
 }
-const keyFile = path.join(secrets, "openai_api_key");
-if (fs.existsSync(keyFile)) {
-  conf.embedding = {
-    dense: {
-      provider: "openai",
-      model: process.env.QCR_OV_EMBEDDING_MODEL,
-      dimension: Number(process.env.QCR_OV_EMBEDDING_DIMENSION),
-      input: "text",
-      api_key: fs.readFileSync(keyFile, "utf8").trim(),
-    },
-  };
-} else {
-  // Degrade, never fail: the built-in local dense embedder (llama-cpp-python,
-  // pinned in the image) keeps the server bootable without an OpenAI key.
-  console.warn("openviking: no openai_api_key in the secrets mount — falling back to the local dense embedder");
+// The embedder is ALWAYS written explicitly, so ov.conf states which vector
+// space the store is in and the migration check below can compare it against
+// the collection on disk. "local" is the server's own llama-cpp embedder
+// (pinned in the image) and needs no key. Any other provider is a hosted
+// opt-in and reads ITS OWN credential file. A hosted provider whose key file
+// is missing is rendered WITHOUT a key on purpose: the server then refuses to
+// start (loud, memory degrades) rather than this render silently switching
+// to another embedder — which would reset a hosted store's vectors on boot.
+conf.embedding = {
+  dense: {
+    provider: process.env.QCR_OV_EMBEDDING_PROVIDER,
+    model: process.env.QCR_OV_EMBEDDING_MODEL,
+    dimension: Number(process.env.QCR_OV_EMBEDDING_DIMENSION),
+    input: "text",
+  },
+};
+if (conf.embedding.dense.provider !== "local") {
+  const embedKeyFile = path.join(secrets, process.env.QCR_OV_EMBEDDING_KEY_FILE);
+  if (fs.existsSync(embedKeyFile)) {
+    conf.embedding.dense.api_key = fs.readFileSync(embedKeyFile, "utf8").trim();
+  } else {
+    console.warn("openviking: embedding provider '" + conf.embedding.dense.provider + "' is configured but " + process.env.QCR_OV_EMBEDDING_KEY_FILE + " is NOT in the secrets mount — the server will refuse to start until it is (memory degrades; the embedder is never switched silently)");
+  }
 }
 fs.mkdirSync(path.join(home, "workspace"), { recursive: true });
 const target = process.env.OPENVIKING_CONF;
 fs.writeFileSync(target, JSON.stringify(conf, null, 2) + "\n", { mode: 0o600 });
 fs.chmodSync(target, 0o600);
-console.log("openviking: ov.conf rendered at " + target + " (no vlm section; auth_mode=" + conf.server.auth_mode + " on loopback)");
+console.log("openviking: ov.conf rendered at " + target + " (no vlm section; auth_mode=" + conf.server.auth_mode + " on loopback; embedder " + conf.embedding.dense.provider + "/" + conf.embedding.dense.model + " " + conf.embedding.dense.dimension + " dims)");
 OV_CONF_RENDER
+
+# Embedder migration check — BEFORE any server starts. A store whose
+# vector collection was built under a different embedder than ov.conf now
+# names (the hosted→local switch, or an opt-in later) holds vectors the new
+# embedder cannot read, and 0.4.15 refuses to start on it. `prepare` compares
+# the collection's own embedding record with ov.conf; on a mismatch it moves
+# the collection ASIDE (never deletes — the old vectors are the rollback) and
+# journals every provisioned namespace as pending in reembed.json. The daemon
+# then re-embeds reviewer memory through the server's reindex API once /ready
+# passes (src/openviking/reembed.ts); any other namespace is its key holder's
+# — docs/memory-embeddings.md. On a matching store this is a no-op in
+# milliseconds, every boot. Never blocks the boot: exit 0 by contract, `||`
+# as belt.
+if [[ -f "$SANDBOX/scripts/openviking-reembed.mjs" ]]; then
+  node "$SANDBOX/scripts/openviking-reembed.mjs" prepare \
+    --home "$OV_HOME" --config "$OV_HOME/ov.conf" \
+    --users "$OV_PROVISION_USERS" --user reviewer \
+    || echo "openviking: embedder migration check did not complete — the server may refuse to start on a mismatched store until an operator looks (docs/memory-embeddings.md)" >&2
+else
+  echo "openviking: scripts/openviking-reembed.mjs not mounted — embedder migration not checked" >&2
+fi
 
 # Boot provisioning — the users that make api_key mode mean
 # something. Idempotent by construction: it CREATES a missing user, LEAVES an

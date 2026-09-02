@@ -327,7 +327,7 @@ describe("scanNotPickedUp", () => {
     queuedPr(1, "2026-08-17T08:00:00.000Z"); // 60 min old → over the 20 min grace
     queuedPr(2, "2026-08-17T08:55:00.000Z"); // 5 min old → inside the grace
     queuedPr(3, "2026-08-17T08:00:00.000Z");
-    store.setPaused(3, true);
+    store.pausePr(3, { issuer: "operator", expires_at: null }, "test");
     queuedPr(4, "2026-08-17T08:00:00.000Z");
     store.startRound(4, "first", ["pass-baseline"], 45);
     const hits = scanNotPickedUp(store, cfg, clock);

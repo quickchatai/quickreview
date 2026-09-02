@@ -10,7 +10,21 @@ export {
   type SupervisedChild,
   type SupervisorDeps,
 } from "./supervisor.js";
-export type { OpenVikingHealth, OpenVikingStatus, ProcSample } from "./types.js";
+export type { Embedder, OpenVikingHealth, OpenVikingStatus, ProcSample, ReembedJournalStatus, ReembedNamespace, ReembedStatus } from "./types.js";
+// The embedder migration's daemon half: drives the script's
+// `resume` once /ready passes and folds the journal into the heartbeat.
+export {
+  REEMBED_POLL_MS,
+  REEMBED_RETRY_MS,
+  ReembedDriver,
+  loadReembedModule,
+  reembedNamespaces,
+  type OperatorReembedResult,
+  type ReembedDriverDeps,
+  type ReembedFetch,
+  type ReembedModule,
+  type ReindexOutcome,
+} from "./reembed.js";
 
 // The memory engine proper: the HTTP client, the `MemoryStore`
 // implementation over it, and the round path's `ContextAssembler`. Writes go
@@ -59,6 +73,7 @@ export {
   validEntryId,
   withTag,
   withoutTag,
+  type MemorySweep,
   type OpenVikingStoreOptions,
 } from "./store.js";
 export {

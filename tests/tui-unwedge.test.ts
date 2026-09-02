@@ -67,9 +67,11 @@ describe("the unwedge command channel", () => {
     // The request rides stdin; the argv carries only the path shape.
     expect(write.stdin).toBe(commandPayload("rerun-round", 5362));
     expect(write.argv.join(" ")).not.toContain("5362");
-    // tmp+mv, so the watcher never sees a half-written file.
+    // tmp+mv, so the watcher never sees a half-written file — into the
+    // OPERATOR directory, never the session dir beside it.
     const script = write.argv[write.argv.length - 1]!;
-    expect(script).toContain("/opt/quickreview/sandbox/commands/.");
+    expect(script).toContain("/opt/quickreview/sandbox/commands/operator/.");
+    expect(script).not.toContain("/opt/quickreview/sandbox/commands/.");
     expect(script).toContain(".tmp' && mv ");
   });
 
@@ -119,7 +121,10 @@ describe("the unwedge command channel", () => {
 
   it("builds argv against the configured container and sudo setting", () => {
     const name = "2026-08-21T15-00-00-000Z-tui-0000.json";
-    expect(commandWriteArgv(cfg, name).slice(0, 5)).toEqual(["sudo", "docker", "exec", "-i", "quickreview-sandbox"]);
+    // `-u 0` is the operator seal: the file arrives root-owned in a
+    // root-owned directory the daemon's uid cannot write. MUTATION: drop the
+    // `-u 0` pair from commandWriteArgv — this fails.
+    expect(commandWriteArgv(cfg, name).slice(0, 7)).toEqual(["sudo", "docker", "exec", "-i", "-u", "0", "quickreview-sandbox"]);
     // The result probe is a read: no `-i`, and it never mutates.
     const probe = commandResultArgv(cfg, name);
     expect(probe).not.toContain("-i");

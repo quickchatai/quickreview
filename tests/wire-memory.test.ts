@@ -54,6 +54,12 @@ describe("wire.ts: the memory phase is actually connected", () => {
     expect(wire).toMatch(/injectOverseer:\s*pinWatch \? pinWatch\.wrapInject/);
   });
 
+  it("the daemon materializes the memory root when the server comes up", () => {
+    // Without this the daemon's first sweep on a fresh server lists a root
+    // that does not exist and leans on how the server spells a missing one.
+    expect(wire).toMatch(/new OpenVikingSupervisor\(\{[\s\S]*?onReady:[\s\S]*?ensureWritable\(\)/);
+  });
+
   it("only the reviewer USER key is ever read — never ADMIN or ROOT", () => {
     expect(wire).toContain("OV_REVIEWER_KEY_SECRET");
     expect(wire).not.toMatch(/root_api_key|admin_key|ROOT_KEY/i);

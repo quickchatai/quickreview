@@ -140,7 +140,7 @@ describe("the seam's two implementations", () => {
       logEvent: (kind) => {
         events.push(kind);
       },
-      migrationCollisionCommented: () => false,
+      migrationCollisionCommented: () => "not_commented",
       createReview: async () => ({ ok: true }) as unknown as GateResult,
       // no listBaseMigrations — the base is unreadable
     };
@@ -152,12 +152,39 @@ describe("the seam's two implementations", () => {
   it("django: a PR with no migrations and no base reader is checked-empty, not degraded", async () => {
     const io: EcosystemPreCheckIo = {
       logEvent: () => {},
-      migrationCollisionCommented: () => false,
+      migrationCollisionCommented: () => "not_commented",
       createReview: async () => ({ ok: true }) as unknown as GateResult,
     };
     await expect(
       DJANGO_ECOSYSTEM.preCheck(io, { ...round, files: [{ filename: "src/views.py" }] }),
     ).resolves.toEqual({ status: "checked", collisions: [] });
+  });
+
+  // the dedupe's third answer. A comment row the ledger cannot read
+  // means a comment WAS posted at a fingerprint nobody can recover, so posting
+  // again risks the exact duplicate the read exists to prevent. The COMMENT is
+  // withheld, loudly, and the check still counts as RUN: the collisions ride
+  // the round order into the gate note, so the session still hears them.
+  it("django: an unreadable comment row WITHHOLDS the comment — no gated write, and the check still ran", async () => {
+    const events: Array<{ kind: string; payload: unknown }> = [];
+    let posted = 0;
+    const io: EcosystemPreCheckIo = {
+      logEvent: (kind, _pr, payload) => {
+        events.push({ kind, payload });
+      },
+      migrationCollisionCommented: () => "unknown",
+      createReview: async () => {
+        posted += 1;
+        return { ok: true } as unknown as GateResult;
+      },
+      listBaseMigrations: async () => ["backend/chat/migrations/0042_add_widget_flag.py"],
+    };
+    const outcome = await DJANGO_ECOSYSTEM.preCheck(io, round);
+    expect(posted).toBe(0);
+    expect(outcome.status).toBe("checked");
+    expect(outcome.status === "checked" ? outcome.collisions : []).toHaveLength(1);
+    expect(events.map((e) => e.kind)).toEqual(["migration_collision_detected", "migration_collision_comment_withheld"]);
+    expect(events[1]!.payload).toMatchObject({ fingerprint: expect.any(String), reason: "unreadable_comment_row" });
   });
 
   it("ecosystemFor maps names to the two implementations", () => {

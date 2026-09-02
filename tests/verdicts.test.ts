@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
 import type { GateResult } from "../src/gate.js";
 import { StateStore, type ReviewedHeadRow } from "../src/state.js";
-import { fingerprintRoundGitConfig } from "../src/execboundary.js";
+import { fingerprintRoundIntegrity } from "../src/execboundary.js";
 import { githubCloneDir } from "../src/config.js";
 import { postingMarker, roundPostingKey } from "../src/posting-receipt.js";
 import type { SessionHooks, VerdictFile } from "../src/types.js";
@@ -410,13 +410,40 @@ describe("measured round usage", () => {
     // The baseline the daemon itself would compute over this very tree.
     store.recordRoundGitConfig(
       roundId,
-      fingerprintRoundGitConfig({
+      fingerprintRoundIntegrity({
         clonePath: githubCloneDir(cfg.github),
         worktreePath: resolve(dir, "wt/pr-110"),
         piHome: join(dir, "pihome"),
+        sandboxRoot: dir,
       }),
     );
     await watcher({}).handleFile(write(110, 1, verdictFile({ pr: 110 })));
+    expect(store.db.prepare("SELECT COUNT(*) c FROM events WHERE kind = 'git_config_modified'").get()).toMatchObject({ c: 0 });
+    expect(store.db.prepare("SELECT COUNT(*) c FROM events WHERE kind = 'policy_surface_modified'").get()).toMatchObject({ c: 0 });
+  });
+
+  // the same fingerprint carries this system's OWN policy surface, and
+  // a change there raises its OWN wake — not git's — because it means something
+  // worse: the boundary every later round runs under has been rewritten.
+  // MUTATION: in verdicts.ts route the `policy` half into the git event — the
+  // first two expectations fail.
+  it("raises a policy_surface_modified WAKE — and not git's — when config.toml changed during the round", async () => {
+    const roundId = reviewingRound(112);
+    writeSessionJsonl(112, [modelLine(), jsonlLine(10, 1)]);
+    writeFileSync(join(dir, "config.toml"), "dry_run = false\n"); // what the session left behind
+    store.recordRoundGitConfig(roundId, {
+      digest: "baseline-taken-before-the-write",
+      files: { [join(dir, "config.toml")]: "sha256:what-dispatch-saw" },
+    });
+    const rec = recordingHooks();
+    await watcher({}, rec.hooks).handleFile(write(112, 1, verdictFile({ pr: 112 })));
+
+    const ev = store.db.prepare("SELECT payload FROM events WHERE kind = 'policy_surface_modified'").get() as
+      | { payload: string }
+      | undefined;
+    expect(ev, "the durable record").toBeTruthy();
+    expect(JSON.parse(ev!.payload).changes.map((c: { path: string }) => c.path)).toEqual([join(dir, "config.toml")]);
+    expect(rec.overseer.join("\n")).toContain("OWN policy surface changed DURING a round");
     expect(store.db.prepare("SELECT COUNT(*) c FROM events WHERE kind = 'git_config_modified'").get()).toMatchObject({ c: 0 });
   });
 
@@ -771,7 +798,7 @@ describe("approval withheld for red CI, session route", () => {
     reviewingRound(100);
     adapter.listChecks = async (ref: string) => {
       expect(ref).toBe("abc123");
-      return [{ name: "ci", status: "completed", conclusion: "failure" }];
+      return [{ name: "ci", source: "check_run", status: "completed", conclusion: "failure" }];
     };
     const name = write(100, 1, verdictFile({ verdict: "APPROVE", approval_withheld: true }));
 

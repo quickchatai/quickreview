@@ -17,7 +17,7 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 // The guard's TOKENISER — not its policy. The rules below stay an
 // independent implementation on purpose (see execViolationKind).
-import { splitShellSegments } from "../extensions/bash-guard.js";
+import { normalizeRedirections, splitShellSegments } from "../extensions/bash-guard.js";
 import { join } from "node:path";
 
 export interface UsageFs {
@@ -320,7 +320,15 @@ export type ExecViolationKind =
   /** A read-only-allowlisted program (awk/sed/sort/find) used in a write or
    * exec mode — the four primitives the first review found this audit
    * blind to. */
-  | "reader_write_or_exec";
+  | "reader_write_or_exec"
+  /** A write landing on THIS system's own policy surface — config.toml,
+   * scripts/, dist/, extensions/, prompts/agents/seeds. The
+   * one-level-out analogue of `git_config_surface_write`. */
+  | "policy_surface_write"
+  /** A session env-prefix that relocates this system's policy inputs
+   * (`QCR_CONFIG=` and kin), at the top level or laundered inside a
+   * `bash -c '…'` payload. */
+  | "policy_relocation";
 
 /** Interpreters — the original rule, unchanged. */
 const EXEC_VIOLATION_RE = /\b(?:python3?|pytest|uv|npm|npx|node|make|pip3?|poetry|cargo|go (?:run|test)|[gmn]?awk|perl|ruby|php)\b/;
@@ -376,6 +384,32 @@ const GIT_CONFIG_SURFACE_PATH_RE = /(?:^|\/)(?:\.git\/|\.gitconfig$|git\/config$
  * the kind of routine false line that teaches an operator to skip the event. */
 const GIT_CONFIG_SURFACE_WRITE_RE =
   /(?:>>?\s*\S*(?:\.git\/\S*|\.gitconfig|git\/config|\.gitattributes)|\bsed\s+(?:-\S+\s+)*-[a-zA-Z]*i\S*(?:\s+\S+)*?\s+\S*(?:\.git\/\S*|\.gitconfig|git\/config|\.gitattributes))/;
+
+/**
+ * A write landing on THIS system's own policy surface — the same
+ * SHAPE as `GIT_CONFIG_SURFACE_WRITE_RE`, one level out: a redirection or a
+ * `sed -i` whose target is `config.toml`, `scripts/`, `dist/`, `extensions/`
+ * or a frozen-seed dir. A bare mention is not enough — a review session greps
+ * and reads these paths all day, and auditing a read would be the routine false
+ * line that teaches an operator to skip the event. Mirrors `isPolicySurface` in
+ * the guard, kept an independent implementation on purpose. */
+const POLICY_SURFACE_TARGET = String.raw`(?:\S*\/)?(?:config\.toml|(?:scripts|dist|extensions|prompts|agents|seeds)\/\S+)`;
+const POLICY_SURFACE_WRITE_RE = new RegExp(
+  String.raw`(?:>>?\s*` + POLICY_SURFACE_TARGET + String.raw`|\bsed\s+(?:-\S+\s+)*-[a-zA-Z]*i\S*(?:\s+\S+)*?\s+` + POLICY_SURFACE_TARGET + String.raw`)`,
+);
+
+/** The same policy surface as a WRITE-TOOL target path: `config.toml`
+ * at any depth, or anything under scripts/dist/extensions/prompts/agents/seeds
+ * (the built `state/agents/…` included — `agents/` follows a slash). */
+const POLICY_SURFACE_PATH_RE = /(?:^|\/)config\.toml$|(?:^|\/)(?:scripts|dist|extensions|prompts|agents|seeds)\//;
+
+/** A session env-prefix that relocates this system's own policy inputs — the
+ * `QCR_` directories the guard refuses in `POLICY_RELOCATING_ENV`. Matched as
+ * an assignment prefix at a command position (or after a separator), so a
+ * laundered `bash -c 'sanctioned ; QCR_CONFIG=… script'` is seen: the string is
+ * right there in the segment whether it is quoted or not. Independent of the
+ * guard's own list by design. */
+const POLICY_RELOCATION_RE = /(?:^|[\s;&|(])QCR_(?:CONFIG|STATE_DB|DRYRUN_DIR|POSTING_RECEIPT_DIR)=/;
 
 /**
  * Programs whose ARGUMENTS are search patterns and paths, never commands.
@@ -461,9 +495,13 @@ function segmentProgram(segment: string): string | null {
 
 /** Which rule, if any, this ONE segment trips. */
 function segmentViolationKind(segment: string): ExecViolationKind | null {
-  // The redirection/`sed -i` surface rule runs on every segment, reader or not:
-  // its subject is the segment's own write target, not a quoted pattern.
-  if (GIT_CONFIG_SURFACE_WRITE_RE.test(segment)) return "git_config_surface_write";
+  // The redirection/`sed -i` surface rules run on every segment, reader or not:
+  // their subject is the segment's own write target, not a quoted pattern. They
+  // read the target with its quoting removed, as bash would open it — `>
+  // con"fig".toml` and `> config\.toml` are `config.toml`.
+  const bare = segment.replace(/["'\\]/g, "");
+  if (GIT_CONFIG_SURFACE_WRITE_RE.test(bare)) return "git_config_surface_write";
+  if (POLICY_SURFACE_WRITE_RE.test(bare)) return "policy_surface_write";
   const prog = segmentProgram(segment);
   if (prog !== null) {
     // Checked BEFORE the reader skip below: these programs are readers by
@@ -471,6 +509,11 @@ function segmentViolationKind(segment: string): ExecViolationKind | null {
     if (READER_MODE_AUDIT[prog]?.test(segment)) return "reader_write_or_exec";
     if (AUDIT_READERS.has(prog)) return null;
   }
+  // A policy-relocation env prefix (`QCR_CONFIG=` and kin) — checked AFTER the
+  // reader skip so `grep QCR_CONFIG=x file` (a read of a config) does not trip
+  // it, but a `bash -c '… ; QCR_CONFIG=… script'` (prog is `bash`, not a
+  // reader) still does. This is what makes door 4 visible to the audit.
+  if (POLICY_RELOCATION_RE.test(segment)) return "policy_relocation";
   if (GH_API_WRITE_RE.test(segment) || GITHUB_DIRECT_WRITE_RE.test(segment)) return "github_write";
   const gh = GH_SUBCOMMAND_RE.exec(segment);
   if (gh) {
@@ -494,7 +537,10 @@ function segmentViolationKind(segment: string): ExecViolationKind | null {
  * this reader and the guard do not fail in the same places.
  */
 export function execViolationKind(cmd: string): ExecViolationKind | null {
-  const normalized = cmd.replace(/\d*>&\d*/g, " ");
+  // The guard's redirection normaliser, borrowed like its splitter: `&>f`,
+  // `>&f`, `{v}>f`, `1<>f` and `>|f` all become `>f`, so a write the guard
+  // refuses is spelled the same way when this audit reads it back.
+  const normalized = normalizeRedirections(cmd);
   for (const segment of splitShellSegments(normalized)) {
     if (segment.trim().length === 0) continue;
     const kind = segmentViolationKind(segment);
@@ -587,9 +633,12 @@ export function auditExecViolationDetails(lines: string[]): ExecViolation[] {
     const targets: string[] = [];
     writeTargetsIn(rec, targets);
     for (const target of targets) {
-      if (!GIT_CONFIG_SURFACE_PATH_RE.test(target)) continue;
+      let kind: ExecViolationKind | null = null;
+      if (GIT_CONFIG_SURFACE_PATH_RE.test(target)) kind = "git_config_surface_write";
+      else if (POLICY_SURFACE_PATH_RE.test(target)) kind = "policy_surface_write";
+      if (kind === null) continue;
       const key = `write ${target}`;
-      if (!seen.has(key)) seen.set(key, "git_config_surface_write");
+      if (!seen.has(key)) seen.set(key, kind);
     }
   }
   return [...seen].map(([command, kind]) => ({ command, kind }));
