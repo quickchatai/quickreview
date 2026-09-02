@@ -91,6 +91,39 @@ describe("roundVars", () => {
     expect(v.migration_gate_note).not.toContain("cannot prove safe is a blocker");
     expect(v.settled_digest).toBe("T1: author fixed at abc123");
     expect(v.round_type).toBe("re-review");
+    expect(v.recovery_note).toBe("");
+  });
+
+  it("renders an identity-bound fanout-first note only on a recovery round", () => {
+    const recovering = {
+      ...order,
+      recovery: {
+        stage: "first_pass_start" as const,
+        source_round_no: 9,
+        source_command_id: "764fefa0-d01e-43c5-b787-d4ed5b51d08e",
+        target_head_sha: "deadbeef",
+        immediate_attempt: 2,
+        retry_epoch: 1,
+      },
+    };
+    const note = roundVars(recovering).recovery_note;
+    expect(note).toContain("RECOVERY — PRE-FANOUT STALL");
+    expect(note).toContain("round 9");
+    expect(note).toContain("764fefa0-d01e-43c5-b787-d4ed5b51d08e");
+    expect(note).toContain("deadbeef");
+    expect(note).toContain("launch every planned discovery pass");
+
+    for (const name of ["round-first.md", "round-re-review.md", "round-staleness.md"]) {
+      const tpl = readFileSync(resolve(process.cwd(), "prompts", name), "utf8");
+      const rendered = renderRoundPrompt(tpl, recovering);
+      expect(rendered.match(/RECOVERY — PRE-FANOUT STALL/g), name).toHaveLength(1);
+      expect(rendered.indexOf("RECOVERY — PRE-FANOUT STALL"), name).toBeLessThan(rendered.indexOf("## GitHub routine"));
+    }
+    const reReview = renderRoundPrompt(
+      readFileSync(resolve(process.cwd(), "prompts/round-re-review.md"), "utf8"),
+      recovering,
+    );
+    expect(reReview).toContain("Broad parent source/diff inspection happens only after that fanout is running");
   });
 
   it("uses placeholders for an empty settled digest and no gate", () => {

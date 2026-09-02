@@ -556,7 +556,8 @@ describe("checkWritePath / git's configuration surface", () => {
     writeOk("/opt/quickreview/state/ledger/pr-5249.md");
     writeOk("/tmp/review-body.md");
     writeOk("/tmp/comments.json");
-    writeOk("state/agents/pass-intent.md");
+    // NOTE — state/agents/pass-intent.md moved to the policy surface
+    // below; it is the BUILT pass body pi loads, not a name a session authors.
     writeOk("src/gitconfig-parser.ts");        // a NAME is not a location
     writeOk("docs/git/configuration.md");
     writeOk("notes/gitattributes.md");
@@ -580,6 +581,218 @@ describe("checkWritePath / git's configuration surface", () => {
     allow("git show HEAD:.gitattributes");
     allow("rg -n gitconfig docs/");
     allow("git config --get remote.origin.url");
+  });
+});
+
+// ----: the boundary protects its OWN configuration too --------------
+//
+// The exec boundary protected git's configuration and NOT its own. Three write
+// targets were `allowed: true` on source AND compiled dist, each found by
+// EXECUTION on master:
+//
+//     cat /tmp/evil > config.toml                     → the guards' own config
+//     cat /tmp/evil > dist/extensions/bash-guard.js   → the compiled guard
+//     printf 'x'   > scripts/post-review.sh           → the gate's shell mirror
+//
+// One predicate (`isProtectedWriteTarget`) now binds BOTH boundaries — the
+// write/edit tool veto and the shell-redirection / sed scan — so a session
+// cannot write through one what it is refused through the other. Every
+// redirection spelling below was VERIFIED writing its target in a real bash
+// before it was added here; none is asserted from the manual alone.
+describe("checkWritePath / this system's own policy surface", () => {
+  const writeBlocked = (p: string, reasonPart = "policy surface"): void => {
+    const res = checkWritePath(p);
+    expect(res.allowed, `${p} should be refused`).toBe(false);
+    expect(res.reason).toContain(reasonPart);
+  };
+  const writeOk = (p: string): void => {
+    const res = checkWritePath(p);
+    expect(res.allowed, `${p} → ${res.reason ?? ""}`).toBe(true);
+  };
+
+  // MUTATION: drop "scripts" (or "dist") from POLICY_SURFACE_DIRS, or
+  // "config.toml" from POLICY_SURFACE_FILES, in extensions/bash-guard.ts — the
+  // matching lines fail, in this test AND in the redirection test below,
+  // because both read the one definition.
+  it("refuses a write to every policy-carrying file, through the write tool", () => {
+    writeBlocked("config.toml");
+    writeBlocked("./config.toml");
+    writeBlocked("/opt/quickreview/sandbox/config.toml");
+    writeBlocked("scripts/post-review.sh");
+    writeBlocked("scripts/guards.sh"); // the shell mirror of the gate
+    writeBlocked("scripts/approve-pr.sh");
+    writeBlocked("dist/extensions/bash-guard.js"); // the COMPILED guard itself
+    writeBlocked("dist/src/gate.js");
+    writeBlocked("extensions/bash-guard.ts"); // the guard's source
+    writeBlocked("prompts/round-first.md"); // frozen seed
+    writeBlocked("agents/pass-intent.md"); // frozen seed
+    writeBlocked("seeds/prompts/conversation-system.md");
+    writeBlocked("state/agents/pass-intent.md"); // the BUILT pass body pi loads
+    // …and the surface keeps its own, more specific refusal.
+    writeBlocked(".git/config", "git's configuration");
+  });
+
+  it("closes the SAME surface when the write rides a shell redirection or sed -i", () => {
+    // The three probes from the ticket, verbatim.
+    block("cat /tmp/evil > config.toml", "policy surface");
+    block("cat /tmp/evil > dist/extensions/bash-guard.js", "policy surface");
+    block("printf 'x' > scripts/post-review.sh", "policy surface");
+    // The other sanctioned scripts, append as well as truncate, an absolute
+    // path, and the one allowlisted writer that names its target as an arg.
+    block("printf 'x' > scripts/guards.sh", "policy surface");
+    block("printf 'x' > scripts/approve-pr.sh", "policy surface");
+    block("printf 'x' >> config.toml", "policy surface");
+    block("cat evil > /opt/quickreview/sandbox/scripts/guards.sh", "policy surface");
+    block("sed -i 's/dry_run = true/dry_run = false/' config.toml", "policy surface");
+    block("sed -i.bak '1d' scripts/guards.sh", "policy surface");
+    block("cat evil > state/agents/pass-validate.md", "policy surface");
+  });
+
+  // MUTATION: delete any one `.replace` line from `normalizeRedirections` in
+  // extensions/bash-guard.ts — the matching spelling below goes green (and so
+  // does its `.git/config` twin: every one of these was a bypass of the
+  // veto too, on master).
+  it("knows every spelling of an output redirection, not only `>` and `>>`", () => {
+    // `&>` / `>&` write stdout+stderr to a FILE; `{v}>` picks a descriptor;
+    // `<>` opens read-write and a write OVERWRITES; `>|` overrides noclobber.
+    block("cat /tmp/evil &>config.toml", "policy surface");
+    block("cat /tmp/evil &> config.toml", "policy surface");
+    block("cat /tmp/evil &>>config.toml", "policy surface");
+    block("cat /tmp/evil >&config.toml", "policy surface");
+    block("cat /tmp/evil >& scripts/guards.sh", "policy surface");
+    block("cat /tmp/evil {v}>config.toml", "policy surface");
+    block("cat /tmp/evil {v}>>config.toml", "policy surface");
+    block("printf x 1<>config.toml", "policy surface");
+    block("printf x <>dist/extensions/bash-guard.js", "policy surface");
+    block("cat /tmp/evil >| config.toml", "policy surface");
+    block("cat /tmp/evil >|config.toml", "policy surface");
+    block("cat /tmp/evil 2>scripts/guards.sh", "policy surface");
+    // The git-config surface gains the same coverage from the same code.
+    block("cat p &>.git/config", "git's configuration");
+    block("cat p {v}>.git/config", "git's configuration");
+    block("printf x 1<>.git/config", "git's configuration");
+    block("cat p >&.git/hooks/pre-commit", "git's configuration");
+    // …while the fd-dups that name no file are still not writes.
+    allow("git log --oneline -5 2>&1 | tail -3");
+    allow("git status >&2");
+    allow("cat /tmp/out &>/dev/null");
+    allow("cat x 1>&- 2>/dev/null");
+  });
+
+  // MUTATION: change `dequote` in extensions/bash-guard.ts to strip only the
+  // leading/trailing quotes (the prior form) — the first three lines go green.
+  it("judges the target by the name bash would OPEN, not by its spelling", () => {
+    // bash concatenates `con"fig".toml`, `config\.toml` and `'config'.toml`
+    // to the same file — VERIFIED writing.
+    block(`cat /tmp/evil > con"fig".toml`, "policy surface");
+    block("cat /tmp/evil > config\\.toml", "policy surface");
+    block("cat /tmp/evil > 'scripts'/guards.sh", "policy surface");
+    block(`cat p > .git/con"fig"`, "git's configuration");
+    block('cat /tmp/evil > "$PWD/config.toml"', "policy surface");
+    block("cat /tmp/evil > ~/sandbox/config.toml", "policy surface");
+  });
+
+  // The indirect writers the ticket names: tee/dd/cp/mv are OFF the allowlist
+  // (refused as programs), sort -o / find -fprintf are refused whole by the
+  // reader-mode rules — so none can reach a policy target by any spelling.
+  it("the indirect file writers cannot reach a policy target either", () => {
+    block("echo x | tee config.toml"); // tee: not on ALLOWED
+    block("cp /tmp/evil scripts/post-review.sh"); // cp: not on ALLOWED
+    block("mv /tmp/evil config.toml"); // mv: not on ALLOWED
+    block("dd if=/tmp/evil of=config.toml"); // dd: not on ALLOWED
+    block("install -m 755 /tmp/evil scripts/guards.sh");
+    block("sort -o config.toml payload", "writes a file"); // reader-mode
+    block("find . -maxdepth 0 -fprintf config.toml x", "writes a file");
+    block("sed -n 'w config.toml' payload", "w/r/e command");
+    block("echo f | xargs sed -i 's/a/b/' config.toml", "policy surface");
+  });
+
+  // MUTATION: in `checkSegment` (extensions/bash-guard.ts) delete the
+  // `if (raw.slice(…) === "bash")` block that lifts the payload, and make
+  // checkProgram's bash branch return { allowed: true } on -c — every door-4
+  // line goes green: the sanctioned script launders what follows it.
+  it("a `bash -c` payload cannot launder a refused command behind a sanctioned script (door 4)", () => {
+    // The chain from the review, and every separator the ticket
+    // names, in single quotes, double quotes and $'…'.
+    block("bash -c 'scripts/pr-self.sh ; QCR_CONFIG=/tmp/x.toml scripts/approve-pr.sh 5 b.md'", "guards");
+    block(`bash -c "scripts/pr-self.sh; QCR_CONFIG=/tmp/x.toml scripts/approve-pr.sh 5 b.md"`, "guards");
+    block("bash -c 'scripts/pr-self.sh && git push origin HEAD'", "mutation");
+    block("bash -c 'scripts/pr-self.sh || cat evil > config.toml'", "policy surface");
+    block("bash -c 'scripts/pr-self.sh\npython3 evil.py'", "read-only");
+    block("bash -c $'scripts/pr-self.sh\\ngit push origin HEAD'", "mutation");
+    block("bash -c 'echo `git push origin HEAD`'", "mutation");
+    block("bash -c 'echo $(git push origin HEAD)'", "mutation");
+    block("bash -lc 'git push origin HEAD'", "mutation");
+    block("bash -c -- 'git push origin HEAD'", "mutation");
+    block("env FOO=1 bash -c 'git push origin HEAD'", "mutation");
+    block("/bin/bash -c 'git push origin HEAD'", "mutation");
+    // Nested: the payload is re-parsed at every depth, up to a bound.
+    block(`bash -c 'bash -c "git push origin HEAD"'`, "mutation");
+    let nested = "git push origin HEAD";
+    for (let i = 0; i < 10; i++) nested = `bash -c ${JSON.stringify(nested)}`;
+    block(nested, "nested too deep");
+    // …and a clean single command through `-c` still works, so the recursion
+    // is an inspection, not a blanket ban.
+    allow("bash -c 'git status'");
+    allow("bash -c 'scripts/pr-self.sh 5 reviews'");
+    allow("bash -c 'git log -1 && git status'");
+    allow(`bash -c "git show HEAD:src/a.ts | head -40"`);
+  });
+
+  // MUTATION: in `bashCPayload` return `{ kind: "none" }` instead of
+  // `unliftable` — the first four lines go green (checkProgram then sees a
+  // bare `bash` form and refuses it, so watch the REASON, not only `allowed`).
+  it("refuses a `bash -c` whose payload it cannot read, rather than guessing", () => {
+    // Assembled at runtime by a substitution — VERIFIED running the file.
+    block('bash -c "$(cat /tmp/x)"', "assembled at runtime");
+    block('bash -c "git $(echo push) origin HEAD"', "assembled at runtime");
+    block("bash -c \"echo `cat /tmp/x`\"", "assembled at runtime");
+    // A value-taking option before -c shifts which word is the payload —
+    // VERIFIED running the payload.
+    block("bash -o pipefail -c 'git push origin HEAD'", "option taking a value");
+    block("bash --rcfile /tmp/rc -c 'git status'", "option taking a value");
+    // Through xargs the raw segment is not bash's, so there is no payload to
+    // lift; through `env -S` a second command line is split out of a string.
+    block("echo x | xargs bash -c 'git push origin HEAD'", "cannot read");
+    block("env -S 'bash -c \"git push origin HEAD\"'", "env -S");
+    block("env --split-string='python3 evil.py'", "env -S");
+    // `sh -c` never had a payload path: only `sh -n` is sanctioned.
+    block("sh -c 'git push origin HEAD'", "'sh'");
+  });
+
+  // MUTATION: drop "QCR_POSTING_RECEIPT_DIR" from POLICY_RELOCATING_ENV and the
+  // first two lines fail. The ruling: it names a DIRECTORY like
+  // QCR_DRYRUN_DIR, the daemon never sets it, so it is a relocator, not an arg.
+  it("QCR_POSTING_RECEIPT_DIR is a relocator, not a per-call argument", () => {
+    block("QCR_POSTING_RECEIPT_DIR=/tmp/r scripts/approve-pr.sh 5 b.md", "guards");
+    block("env QCR_POSTING_RECEIPT_DIR=/tmp/r scripts/post-review.sh 5 COMMENT b.md", "guards");
+    block("bash -c 'QCR_POSTING_RECEIPT_DIR=/tmp/r scripts/approve-pr.sh 5 b.md'", "guards");
+    // The genuine per-call arguments are still allowed — they say what THIS
+    // call is about, not what the guards are.
+    allow("QCR_EXPECTED_HEAD=abc123 scripts/post-review.sh 5 COMMENT b.md");
+    allow("QCR_POSTING_KEY=k scripts/post-review.sh 5 COMMENT b.md");
+  });
+
+  it("leaves the reads and the legitimate writes a session lives on alone", () => {
+    // Reading a policy file is the reviewer's whole job.
+    allow("cat config.toml");
+    allow("rg -n dry_run config.toml");
+    allow("sed -n '1,40p' scripts/guards.sh");
+    allow("cat state/agents/pass-intent.md");
+    allow("git show HEAD:scripts/post-review.sh");
+    allow("head -40 dist/src/gate.js");
+    allow("rg -n 'config.toml' docs/ | head");
+    allow("grep -c '>' config.toml"); // the quote glued to `>` keeps it from reading as an operator (docs: not-guaranteed list)
+    // …and its own writes land where they always did.
+    writeOk("verdict/pr-5249-round-2.json");
+    writeOk("/tmp/review-body.md");
+    writeOk("/opt/quickreview/state/ledger/pr-5249.md");
+    writeOk("src/gate.ts"); // NOT a policy surface (src/ is source, not shipped)
+    writeOk("descripts/notes.md"); // a NAME containing "scripts" is not scripts/
+    writeOk("config.toml.example");
+    allow("printf '%s\\n' x > /tmp/body.md");
+    allow("cat body.md >> /tmp/notes.md");
+    allow("echo x > verdict/pr-5249-round-2.json");
   });
 });
 

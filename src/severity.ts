@@ -10,15 +10,22 @@
 // the mapping exactly as it was. The blocker bar itself does not move — a
 // `routine` P0/P1 blocks today as it always did.
 //
-// adds the first-party directive gate (the owner, 2026-08-19): an
-// injection finding anchored on the reviewed repo's OWN agent-directive files
-// (.claude/**, prompts/**, AGENTS.md/CLAUDE.md and kin, edited through the
-// normal PR flow) never blocks — directive text inside a directive file is the
-// file doing its job, and the merge call belongs to a person. The finding
-// posts as a [question] and the round's verdict routes to NEEDS_HUMAN (the
-// standard non-blocking park), with one short escalation comment @-mentioning
-// a teammate (assembled in posting.ts, mention picked in dispatch.ts).
-// Third-party/vendored directive content keeps the P1 bright line unchanged.
+// introduced first-party directive provenance (the owner, 2026-08-19):
+// the reviewed repo's OWN agent-directive files (.claude/**, prompts/**,
+// AGENTS.md/CLAUDE.md and kin — `isFirstPartyDirectivePath`). What that
+// provenance DOES was reshaped by (the owner, 2026-08-25): routine
+// first-party instructions — directive text inside a directive file doing its
+// job — are suppressed at the lens/validator layer and never reach this map as
+// a finding. A kind=injection candidate that DOES survive has proved an
+// obvious malicious payload or a concrete untrusted-source→model path, and
+// its first-party location softens nothing: `postTag` maps it by severity
+// exactly like any other finding, so a P0/P1 blocks. The verdict is decided on
+// the merits (the NEEDS_HUMAN park first routed to was retired in
+//), and the review additionally carries exactly one short
+// security-attention comment @-mentioning a deterministically-picked teammate
+// (rendered by posting.ts `renderDirectiveEscalationComment`, mention picked
+// in dispatch.ts). Third-party/vendored directive content keeps the P1 bright
+// line unchanged.
 
 import type { Verdict as VerdictType } from "./types.js";
 
@@ -170,9 +177,11 @@ export type { Verdict } from "./types.js";
 
 export interface VerdictInput {
   hasBlockers: boolean;
-  /** The session's own "I cannot decide this" call. Since the escalation
-   * heuristic was scrapped (2026-08-18) this is the ONLY session-side input
-   * that parks a PR — no daemon-side criteria feed it. */
+  /** LEGACY input: the session's own "I cannot decide this" call, which used
+   * to park a PR. retired the park — a NEEDS_HUMAN verdict is still
+   * ACCEPTED (older prompts and containers emit it; `normalizeVerdict` folds
+   * ESCALATE into it) and the daemon lands it as `tracked`: review posted, no
+   * approval, the AI keeps driving. No daemon-side criteria feed it. */
   needsHuman: boolean;
   /** Legacy input retained for older callers/containers.
    * removed its verdict effect: routine first-party instructions produce no

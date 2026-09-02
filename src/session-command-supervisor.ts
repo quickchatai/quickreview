@@ -7,7 +7,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
-  DEFAULT_MAX_SELF_REQUEUES,
   DEFAULT_ROUND_FINALIZE_GRACE_MIN,
   DEFAULT_ROUND_FIRST_PASS_MAX_MIN,
   DEFAULT_ROUND_PASSES_MAX_MIN,
@@ -19,7 +18,7 @@ import {
   type Config,
 } from "./config.js";
 import { sessionCommandMarker } from "./session-command.js";
-import type { RoundProgressSnapshot } from "./round-progress.js";
+import { lensForAgent, type RoundProgressSnapshot } from "./round-progress.js";
 import type { RoundRow, SessionCommandRow, StateStore, SupervisorLeaseRow } from "./state.js";
 import type { RoundRecoveryDisposition, SessionHooks } from "./types.js";
 
@@ -409,22 +408,35 @@ export class SessionCommandSupervisor {
     const hardAt = started + (this.deps.cfg.daemon.session_command_running_max_min ?? DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN) * minute;
     const planned = round.lenses.split(",").map((name) => name.trim()).filter(Boolean);
 
-    if (!progress.first_lens_started_at && now >= firstPassAt) {
+    const discovery = planned.filter((name) => name !== "pass-validate");
+    // The extension's generic subagent milestone is descriptive only. The
+    // finite gate opens solely when exact correlated progress names one of the
+    // authoritative planned DISCOVERY lenses — validator-first, an added lens
+    // or a foreign tool cannot buy a later failure class.
+    const plannedFanoutAgents = progress.agents.filter((agent) =>
+      discovery.includes(lensForAgent(agent.agent)) && agent.started_at !== undefined,
+    );
+    const plannedFanout = plannedFanoutAgents.length > 0;
+    if (plannedFanout) {
+      const firstStarted = plannedFanoutAgents.map((agent) => agent.started_at!).sort()[0]!;
+      this.deps.store.recordRoundFanoutStarted(round.id, command.id, firstStarted);
+    }
+    if (!plannedFanout && now >= firstPassAt) {
       await this.failRound(
         command,
         "first_pass_start",
-        `command ${command.id} was accepted but no planned pass started within ${this.deps.cfg.daemon.round_first_pass_max_min ?? DEFAULT_ROUND_FIRST_PASS_MAX_MIN} minutes`,
+        `command ${command.id} was accepted and preparing, but no planned pass started (fanout milestone absent) within ${this.deps.cfg.daemon.round_first_pass_max_min ?? DEFAULT_ROUND_FIRST_PASS_MAX_MIN} minutes`,
       );
       return true;
     }
-    if (!progress.first_lens_started_at) return false;
+    if (!plannedFanout) return false;
 
     const terminal = (status: string): boolean => status === "completed" || status === "failed";
     const missing = planned.filter((name) => {
-      const executions = progress.agents.filter((agent) => agent.agent === name);
+      const executions = progress.agents.filter((agent) => lensForAgent(agent.agent) === name);
       return executions.length === 0 || executions.some((agent) => !terminal(agent.status));
     });
-    const addedRunning = progress.agents.filter((agent) => !planned.includes(agent.agent) && !terminal(agent.status)).map((agent) => agent.agent);
+    const addedRunning = progress.agents.filter((agent) => !planned.includes(lensForAgent(agent.agent)) && !terminal(agent.status)).map((agent) => agent.agent);
     if ((missing.length > 0 || addedRunning.length > 0) && now >= passesAt) {
       const outstanding = [...missing, ...addedRunning].join(", ");
       await this.failRound(
@@ -637,26 +649,30 @@ export class SessionCommandSupervisor {
       detail,
     });
     if (disposition === "exhausted") {
-      const failed = this.deps.store.getSessionCommand(command.id) ?? command;
-      const successor = this.deps.store.successorFor(command.pr);
-      const row = this.deps.store.getPr(command.pr);
-      this.deps.store.openReviewFailure({
-        pr: command.pr,
-        command_id: command.id,
-        round_id: this.deps.store.roundsFor(command.pr).find((round) => round.round_no === command.round_no)?.id ?? null,
-        round_no: command.round_no,
-        head_sha: successor?.head_sha ?? row?.head_sha ?? "",
-        stage,
-        detail,
-        attempts: failed.attempt,
-        retry_cap: this.deps.cfg.daemon.max_self_requeues ?? DEFAULT_MAX_SELF_REQUEUES,
-      });
-      this.deps.store.logAnomaly(
-        "round_stage_recovery_exhausted",
-        command.pr,
-        command.round_no,
-        `${stage}: ${detail}; automatic recovery exhausted and work remains owed`,
-      );
+      // The recovery callback owns the atomic round+command+failure handoff.
+      // Never open it again here: operator `u` may already have recovered the
+      // incident while this awaited callback was returning. A historical row
+      // (open or recovered) proves the callback committed the obligation.
+      const failure = this.deps.store.reviewFailureForCommand(command.id);
+      if (!failure || failure.round_no !== command.round_no || failure.stage !== stage) {
+        throw new Error(`round failure callback returned exhausted without durable exact debt for command ${command.id}`);
+      }
+      if (failure.work_owed === 1) {
+        this.deps.store.logAnomaly(
+          "round_stage_recovery_exhausted",
+          command.pr,
+          command.round_no,
+          `${stage}: ${detail}; automatic recovery exhausted and work remains owed as ${failure.incident_id}`,
+        );
+      } else {
+        this.deps.store.logEvent("round_stage_recovery_already_resolved", command.pr, {
+          command_id: command.id,
+          round_no: command.round_no,
+          stage,
+          incident_id: failure.incident_id,
+          recovery: failure.recovery,
+        });
+      }
     }
   }
 

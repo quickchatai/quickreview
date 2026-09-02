@@ -31,7 +31,7 @@ import { FeedbackEngine, feedbackDayAddendum, type FeedbackEvent } from "./feedb
 import { PASS_ADDENDA, buildAgents, identityVars } from "./include.js";
 import { ecosystemFor } from "./ecosystem.js";
 import { loadProfileAddenda, loadProfileEcosystem, loadProfileHeuristics } from "./profiles.js";
-import { fileImprovementPr, fileIssue, type Run } from "./improvements.js";
+import { fileImprovementPr, fileIssue, gitRunner } from "./improvements.js";
 import { OpenVikingClient, OpenVikingSupervisor, keyFromFile, openVikingContextAssembler, openVikingStore } from "./openviking/index.js";
 import { OV_REVIEWER_KEY_SECRET, openVikingSessionLifecycle } from "./memory/ovsession.js";
 import type { ContextAssembler, RoundMemory } from "./memory/context.js";
@@ -87,7 +87,10 @@ export function buildParts(root = sandboxRoot(), cfg = loadConfig()): Production
   return { cfg, root, minter, gate, adapter, sessions };
 }
 
-const gitRun: Run = async (args, cwd) => (await nodeExec("git", args, cwd ? { cwd } : {})).stdout;
+// exit-code checked, cwd mandatory — the first runner returned stdout
+// whatever git's exit and defaulted to the daemon's own cwd (a repo with no
+// remote), so the improvement channel could never push and never said so.
+const gitRun = gitRunner(nodeExec);
 
 /** package.json version for the `daemon.up` line; never worth failing a boot. */
 function packageVersion(root: string): string | undefined {
@@ -428,9 +431,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // exists, and both degrade to "no memory" rather than to an error.
   let memoryStore: MemoryStore | null = null;
   let memoryAssembler: ContextAssembler | null = null;
+  const notBuiltYet = { status: "unreadable", reason: "memory store not built yet (daemon still starting)" } as const;
   const lateAssembler: ContextAssembler = {
-    pinnedHead: () => (memoryAssembler ? memoryAssembler.pinnedHead() : Promise.resolve("")),
-    contextBlock: (q, o) => (memoryAssembler ? memoryAssembler.contextBlock(q, o) : Promise.resolve("")),
+    pinnedHead: () => (memoryAssembler ? memoryAssembler.pinnedHead() : Promise.resolve(notBuiltYet)),
+    contextBlock: (q, o) => (memoryAssembler ? memoryAssembler.contextBlock(q, o) : Promise.resolve(notBuiltYet)),
   };
 
   // the profile-selected ecosystem seam, loaded ONCE at assembly (a
@@ -560,7 +564,23 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       // become ready, so it starts warming while everything below builds. A
       // missing binary (any dev PC) is reported once and never retried; a
       // crash is respawned on a capped backoff ladder, forever.
-      openviking = new OpenVikingSupervisor({ cfg: cfg.openviking, log });
+      openviking = new OpenVikingSupervisor({
+        cfg: cfg.openviking,
+        log,
+        // The reviewer's memory root does not exist on a fresh server until
+        // something creates it. The TUI does this for the companion's sake;
+        // the daemon does it here for its own, each time the server comes up,
+        // so the round path's first sweep lists a real (empty) tree instead
+        // of leaning on how the server spells a missing one.
+        onReady: () => {
+          const store = memoryStore;
+          if (!store?.ensureWritable) return;
+          void store.ensureWritable().then(
+            (res) => log(`openviking ready: memory root ${res.ok ? "ready" : "NOT ready"} — ${res.message}`),
+            (err) => log("openviking ready: memory root check failed", err),
+          );
+        },
+      });
       openviking.start();
 
       // Bind the daemon's durable command slot before any PR session is
@@ -713,7 +733,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
             gate,
             store: d.store,
             run: gitRun,
-            scratchDir: join(root, "state", "scratch-improve"),
+            // The reviewed repo's base clone — the ONE tree with `origin`
+            // pointing at the reviewed repo and the session's branch in it.
+            ensureRepoDir: () => sessions.worktrees.ensureBaseClone(),
           });
         },
         fileIssue(payload) {

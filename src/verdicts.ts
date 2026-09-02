@@ -29,16 +29,18 @@ import {
   type Config,
 } from "./config.js";
 import {
-  fingerprintRoundGitConfig,
+  fingerprintRoundIntegrity,
   gitConfigChangeMessage,
-  gitConfigChanges,
-  type GitConfigFingerprint,
+  integrityChanges,
+  policySurfaceChangeMessage,
+  splitIntegrityChanges,
+  type IntegrityFingerprint,
 } from "./execboundary.js";
 import { auditExecViolationDetails, collectWindowLines, estimateUsd, measureRoundUsage, type ModelPricing, type UsageFs } from "./usage.js";
 import type { GateResult } from "./gate.js";
 import { applyEvent, restoreStandingLifecycle } from "./statemachine.js";
 import type { VerdictAnnouncer } from "./slack/announce.js";
-import { isLoudCancelCause, type CancelCause, type RoundRow, type StateStore } from "./state.js";
+import { isLoudCancelCause, type CancelCause, type RoundRow, type SelfRequeueSpend, type StateStore } from "./state.js";
 import { enforceLedgerFreshness } from "./ledgercheck.js";
 import { enforceFindingsRecord, findingsRecordPath, readFindingsRecord } from "./findingsrecord.js";
 import { normalizeVerdict, type RoundRecoveryDisposition, type SessionHooks, type VerdictFile, type VerdictPassEntry } from "./types.js";
@@ -268,6 +270,17 @@ export function validateVerdict(raw: unknown): ParsedVerdict {
   else delete v.escalations;
   const notes = [norm.note, esc.note].filter(Boolean).join("; ");
   return { ok: true, verdict: raw as unknown as VerdictFile, ...(notes ? { passes_note: notes } : {}) };
+}
+
+/**
+ * How much of a PR's self-requeue budget is gone (cap). A row whose
+ * head cannot be read still records a requeue that happened, so it counts —
+ * the budget can be tightened by a corrupt payload, never widened by one
+ *. Exhausting it this way ends in FAILED_LOUD and `u`, which is the
+ * recoverable direction; the other direction is a loop past the cap.
+ */
+function selfRequeuesSpent(spend: SelfRequeueSpend): number {
+  return spend.at_head + spend.unattributed;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -1233,14 +1246,19 @@ export class VerdictWatcher {
   }
 
   /**
-   * did git's configuration change while this round ran?
+   * did git's configuration change while this round ran? And, since
+   *, did this system's OWN policy surface (config.toml, scripts/,
+   * dist/, extensions/, the seeds)?
    *
    * The write veto in the bash guard reads command strings, and five write
    * primitives on the guard's own read-only allowlist go straight past it —
    * `T=.git/config; cat p >> $T` cannot EVER be seen by a token scan, because
    * the target is a variable. This check does not look at commands at all: the
    * fingerprint was taken when `dispatch` prepared the worktree, and any
-   * difference now is a write the daemon did not make.
+   * difference now is a write the daemon did not make. The two families raise
+   * DIFFERENT anomalies, because they mean different things: a git change
+   * taints this round; a policy change rewrites the boundary every later round
+   * in the container runs under.
    *
    * Runs inside `measureUsage`, which is deliberately the one place that fires
    * on BOTH the verdict path and the anomaly/overdue path — a round that ends
@@ -1251,25 +1269,33 @@ export class VerdictWatcher {
    * NULL baseline is never read as "changed" (the same rule the receipt scan
    * had to learn: unknown is not evidence of loss).
    */
-  private checkGitConfigIntegrity(pr: number, roundId: number): void {
+  private checkRoundIntegrity(pr: number, roundId: number): void {
     const { cfg, store } = this.deps;
     try {
-      const before = store.roundGitConfig(roundId) as GitConfigFingerprint | undefined;
+      const before = store.roundGitConfig(roundId) as IntegrityFingerprint | undefined;
       if (!before || typeof before.digest !== "string") return; // no baseline — never judged
       const root = this.deps.root ?? sandboxRoot();
-      const after = fingerprintRoundGitConfig({
+      const after = fingerprintRoundIntegrity({
         clonePath: githubCloneDir(cfg.github),
         worktreePath: resolve(root, `wt/pr-${pr}`),
         piHome: join(root, "pihome"),
+        sandboxRoot: root,
       });
-      const changes = gitConfigChanges(before, after);
-      if (changes.length === 0) return;
-      store.logEvent("git_config_modified", pr, { round_id: roundId, changes });
-      const message = gitConfigChangeMessage(pr, changes);
-      store.logAnomaly("git_config_modified", pr, null, message, message);
-      this.log(`verdicts: #${pr} GIT CONFIG CHANGED DURING THE ROUND`, changes);
+      const { git, policy } = splitIntegrityChanges(integrityChanges(before, after), root);
+      if (git.length > 0) {
+        store.logEvent("git_config_modified", pr, { round_id: roundId, changes: git });
+        const message = gitConfigChangeMessage(pr, git);
+        store.logAnomaly("git_config_modified", pr, null, message, message);
+        this.log(`verdicts: #${pr} GIT CONFIG CHANGED DURING THE ROUND`, git);
+      }
+      if (policy.length > 0) {
+        store.logEvent("policy_surface_modified", pr, { round_id: roundId, changes: policy });
+        const message = policySurfaceChangeMessage(pr, policy);
+        store.logAnomaly("policy_surface_modified", pr, null, message, message);
+        this.log(`verdicts: #${pr} POLICY SURFACE CHANGED DURING THE ROUND`, policy);
+      }
     } catch (err) {
-      this.log(`verdicts: #${pr} git-config integrity check unavailable`, err);
+      this.log(`verdicts: #${pr} round integrity check unavailable`, err);
     }
   }
 
@@ -1306,7 +1332,7 @@ export class VerdictWatcher {
       // classified, so the durable event says WHICH policy was
       // crossed. Until then the audit matched interpreters only, and none of
       // the four chains proved would have produced a single line here.
-      this.checkGitConfigIntegrity(pr, roundId);
+      this.checkRoundIntegrity(pr, roundId);
 
       const violations = auditExecViolationDetails(collectWindowLines(opts));
       if (violations.length > 0) {
@@ -1578,18 +1604,35 @@ export class VerdictWatcher {
     });
     const head = this.deps.store.getPr(pr)?.head_sha ?? "";
     const cap = this.deps.cfg.daemon.max_self_requeues ?? DEFAULT_MAX_SELF_REQUEUES;
-    if (this.deps.store.selfRequeueCount(pr, head) >= cap) {
-      const recovered = await this.selfRequeue(
-        round,
-        stage === "settled_without_verdict" ? "infrastructure_settled" : "infrastructure_active",
-      );
-      if (recovered) return "requeued";
-      if (this.runningRound(pr, roundNo)?.status === "running") return "retryable";
+    if (selfRequeuesSpent(this.deps.store.selfRequeueSpend(pr, head)) >= cap) {
+      const mode = stage === "settled_without_verdict" ? "infrastructure_settled" : "infrastructure_active";
+      if (mode === "infrastructure_active" && !this.deps.hooks.killSession) return "retryable";
+      if (mode === "infrastructure_active") {
+        try {
+          await this.deps.hooks.killSession!.call(this.deps.hooks, pr);
+        } catch (error) {
+          this.deps.store.logEvent("session_recovery_kill_failed", pr, {
+            round_id: round.id,
+            round_no: roundNo,
+            mode,
+            error: String(error),
+          });
+          return "retryable";
+        }
+      }
+      // The old parent is now fenced (or had already settled), so this read is
+      // definitive. A verdict that won before the fence stays the sweep's.
+      if (existsSync(join(this.deps.verdictDir, `pr-${pr}-round-${roundNo}.json`))) {
+        this.deps.store.logEvent("round_stage_verdict_won", pr, { round_id: round.id, round_no: roundNo, mode });
+        return "retryable";
+      }
       const command = this.deps.store.sessionCommandForRound(pr, roundNo);
+      if (!command) return "retryable";
       const successor = this.deps.store.successorFor(pr);
-      const failure = this.deps.store.openReviewFailure({
+      const reason = `round ${roundNo} failed a bounded daemon→Pi infrastructure stage before any merits verdict`;
+      const failure = this.deps.store.terminalizeInfrastructureReviewFailure({
         pr,
-        command_id: command?.id ?? null,
+        command_id: command.id,
         round_id: round.id,
         round_no: roundNo,
         head_sha: successor?.head_sha ?? this.deps.store.getPr(pr)?.head_sha ?? head,
@@ -1597,12 +1640,39 @@ export class VerdictWatcher {
         detail,
         attempts: cap,
         retry_cap: cap,
+        summary: `infrastructure recovery exhausted after ${cap} self-requeue(s) — ${reason}`,
+      });
+      if (!failure) {
+        // An operator/verdict/concurrent recovery won the exact terminal CAS.
+        return this.deps.store.reviewFailureForCommand(command.id)?.work_owed === 1
+          ? "exhausted"
+          : "requeued";
+      }
+      this.measureUsage(round.pr, round.id, round.started_at, this.now().toISOString());
+      this.deps.store.logEvent("self_requeue_cap_exhausted", pr, {
+        round_id: round.id,
+        round_no: roundNo,
+        head_sha: head,
+        attempts: cap,
+        cap,
+        mode,
+      });
+      this.deps.store.logEvent("round_infrastructure_recovery_exhausted", pr, {
+        round_id: round.id,
+        round_no: roundNo,
+        head_sha: head,
+        attempts: cap,
+        mode,
       });
       this.deps.store.logAnomaly(
         "review_failed_loud",
         pr,
         roundNo,
-        `${stage}: ${detail}; work remains owed as ${failure.incident_id}; press u to recover`,
+        `${stage}: ${detail}; work remains owed as ${failure.incident_id}; ${
+          failure.next_action === "retry_wait" && failure.next_retry_at
+            ? `automatic retry scheduled for ${failure.next_retry_at} (u retries immediately)`
+            : "press u to recover"
+        }`,
       );
       await this.announceSafe((a) =>
         a.anomaly({ pr, round_no: roundNo, kind: "failed_loud", deadline_min: this.deps.cfg.daemon.round_deadline_min, incident_id: failure.incident_id }),
@@ -1613,6 +1683,7 @@ export class VerdictWatcher {
     const recovered = await this.selfRequeue(
       round,
       stage === "settled_without_verdict" ? "infrastructure_settled" : "infrastructure_active",
+      this.preFanoutRecovery(round, stage),
     );
     return recovered ? "requeued" : "retryable";
   }
@@ -1630,15 +1701,36 @@ export class VerdictWatcher {
    * not age the PR). Held wakes stay held: the requeued round is about to
    * dispatch, and its own round-end paths flush them (S4).
    */
-  private async selfRequeue(round: RoundRow, mode: SelfRequeueMode = "dead"): Promise<boolean> {
+  /** Only exact command-correlated pre-fanout failures get a changed-behavior
+   * successor instruction. The retry epoch follows an automatic predecessor;
+   * ordinary fresh work naturally starts again at epoch zero. */
+  private preFanoutRecovery(
+    round: RoundRow,
+    stage: Parameters<VerdictWatcher["recoverInfrastructureFailure"]>[2],
+  ): { stage: "first_pass_start"; source_command_id: string; retry_epoch: number } | undefined {
+    if (stage !== "first_pass_start") return undefined;
+    const command = this.deps.store.sessionCommandForRound(round.pr, round.round_no);
+    if (!command) return undefined;
+    return {
+      stage,
+      source_command_id: command.id,
+      retry_epoch: this.deps.store.roundRecoveryInstruction(round.pr, round.round_no)?.retry_epoch ?? 0,
+    };
+  }
+
+  private async selfRequeue(
+    round: RoundRow,
+    mode: SelfRequeueMode = "dead",
+    recovery?: { stage: "first_pass_start"; source_command_id: string; retry_epoch: number },
+  ): Promise<boolean> {
     const { store, cfg } = this.deps;
     const row = store.getPr(round.pr);
     const head = row?.head_sha ?? "";
     const cap = cfg.daemon.max_self_requeues ?? DEFAULT_MAX_SELF_REQUEUES;
-    const attempt = store.selfRequeueCount(round.pr, head) + 1;
+    const attempt = selfRequeuesSpent(store.selfRequeueSpend(round.pr, head)) + 1;
     const exhausted = attempt > cap;
     const infrastructure = mode === "infrastructure_active" || mode === "infrastructure_settled";
-    if (exhausted && !infrastructure) {
+    if (exhausted) {
       store.logEvent("self_requeue_cap_exhausted", round.pr, {
         round_id: round.id,
         round_no: round.round_no,
@@ -1686,35 +1778,22 @@ export class VerdictWatcher {
       if (this.runningRound(round.pr, round.round_no)?.status !== "running") return true;
     }
     const cause = SELF_REQUEUE_CAUSE[mode];
-    if (exhausted) {
-      store.logEvent("self_requeue_cap_exhausted", round.pr, {
-        round_id: round.id,
-        round_no: round.round_no,
-        head_sha: head,
-        attempts: attempt - 1,
-        cap,
-        mode,
-      });
-      // Capacity must not remain consumed by work whose bounded recovery is
-      // over. promotes this durable cancellation+failed command into
-      // canonical FAILED_LOUD operator state; no quiet tracked transition and
-      // no automatic successor is created here.
-      store.markRoundCancelled(
-        round.id,
-        `infrastructure recovery exhausted after ${cap} self-requeue(s) — ${reason}`,
-        "infrastructure_failure",
-      );
-      this.measureUsage(round.pr, round.id, round.started_at, this.now().toISOString());
-      store.logEvent("round_infrastructure_recovery_exhausted", round.pr, {
-        round_id: round.id,
-        round_no: round.round_no,
-        head_sha: head,
-        attempts: cap,
-        mode,
-      });
-      return false;
-    }
-    store.markRoundCancelled(round.id, `self-requeue ${attempt}/${cap} — ${reason}`, cause);
+    const publication = store.cancelRoundAndQueueRecovery({
+      pr: round.pr,
+      round_id: round.id,
+      round_no: round.round_no,
+      summary: `self-requeue ${attempt}/${cap} — ${reason}`,
+      cause,
+      fallback_head_sha: head,
+      trigger_ts: this.now().toISOString(),
+      ...(recovery ? { recovery: {
+        stage: recovery.stage,
+        source_command_id: recovery.source_command_id,
+        immediate_attempt: attempt,
+        retry_epoch: recovery.retry_epoch,
+      } } : {}),
+    });
+    if (!publication) return false;
     // a cancelled round burned real tokens and stays in every spend
     // aggregate (`SUM(est_usd) FROM rounds` has no status filter), so it must be
     // measured before its successor starts. The window ends here and the
@@ -1745,12 +1824,13 @@ export class VerdictWatcher {
       mode,
       reason,
     });
-    // Requeue through the normal dispatch path. A durable newer-head
-    // obligation wins; otherwise redo the failed head. The old round is
-    // terminal before either queue publication, so two rounds never coexist.
-    const successorPromoted = store.promoteSuccessor(round.pr);
-    if (!successorPromoted && row && row.state === "reviewing") {
-      store.upsertPr({ ...row, state: "queued", trigger_ts: this.now().toISOString() });
+    if (!publication.queued) {
+      store.logEvent("round_self_requeue_terminal", round.pr, {
+        round_id: round.id,
+        round_no: round.round_no,
+        reason: "pr_closed",
+      });
+      return true;
     }
     this.log(`verdicts: SELF-REQUEUE #${round.pr} round ${round.round_no} attempt ${attempt}/${cap} — ${reason}`);
     await this.safe(

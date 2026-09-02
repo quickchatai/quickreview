@@ -145,10 +145,13 @@ a command that is not on this list is rejected and logged loudly.
   proves closed/absent GitHub state and refuses live rounds, commands, wakes or
   successors; never use this for an open PR.
 - `mark-escalation-worthy` — **RETIRED 2026-08-18.** Escalation-worthiness no
-  longer exists; the daemon rejects the command. Your base system prompt still
-  lists it — this appendix wins. A PR stops for a person only when a round
-  returns NEEDS_HUMAN. To hold one yourself use `pause-pr`; to raise something
-  with the owner use `flag-owner-legacy`.
+  longer exists; the daemon rejects the command (the same-day reseed removed
+  it from your base system prompt too). The review is never handed to a
+  person: every round decides APPROVE or REQUEST_CHANGES on the merits, and
+  residual doubts ride the review as `[check this]` items. To hold a PR
+  yourself use `pause-pr`; to raise something with the owner use
+  `flag-owner-legacy` (documented below; the daemon accepts its current name,
+  `flag-owner`, as well).
 - `pause-pr {pr, reason}` — stop dispatching rounds for that PR.
 - `resume-pr {pr}` — undo a pause.
 - `flag-owner-legacy {message}` — surface something in the digest/dashboard

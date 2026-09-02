@@ -10,9 +10,13 @@ disproved by someone running a command. Assume this one can be too, and try.
 
 ## Why there is more than one layer
 
-`extensions/bash-guard.ts` vets **command strings**. It has been hardened over
-six adversarial review rounds, and every round but the last looked complete to
-its author and passed a green suite while a live bypass stood:
+`extensions/bash-guard.ts` vets **command strings**, and `checkWritePath` /
+`checkProtectedWrites` vet **write targets**. The command guard was hardened over
+seven adversarial review rounds, and every round but the last looked complete to
+its author and passed a green suite while a live bypass stood; an eighth
+ then showed the boundary had never protected its OWN configuration —
+and, while that was being closed, that the redirection scan knew two of bash's
+seven output-redirection spellings:
 
 | Round | Closed | Still open after it |
 |---|---|---|
@@ -21,7 +25,8 @@ its author and passed a green suite while a live bypass stood:
 | 3 | both, structurally; added the compiled-artifact probe | `HOME` / `XDG_CONFIG_HOME` — the *implicit* config search path behind the *explicit* pointers |
 | 4 | those | five write primitives on the guard's own read-only allowlist, and three that execute a command outright |
 | 5–6 | those, at the write boundary and by round-boundary integrity | `awk` executing an arbitrary command held in a **variable** — invisible to all five layers |
-| 7 | `awk` removed from the allowlist outright | *(see the "not guaranteed" list)* |
+| 7 | `awk` removed from the allowlist outright | the boundary's OWN configuration — `config.toml`, the sanctioned scripts, the compiled guard — writable through both channels; `bash -c '…;…'` laundering a refused command behind a sanctioned one |
+| 8 | those, at both write boundaries from one definition, by re-parsing `bash -c`, and by round-boundary integrity; then `&>`/`>&`/`{v}>`/`<>`/`>|`, quoted and escaped targets, `env -S`, `bash -o … -c`, `bash -c "$(…)"` — each found by running it | *(see the "not guaranteed" list)* |
 
 The pattern is not "the lists were short". Every one of those bypasses needed a
 command string to inspect, and the decisive ingredient in each was **a file the
@@ -106,20 +111,147 @@ keeps `rg`, `grep`, `jq`, `cut`, `sort`, `uniq`, `head`, `tail`, `wc`, `nl`,
    the pattern-based layer and it stays pattern-based: its job is to narrow the
    surface and to stop a caller *lifting* layer 1, both of which are
    command-shaped acts.
-3. **Write veto** — `checkWritePath` / `isGitConfigSurface`, same file, bound to
-   the `write`/`edit` tools and to shell redirection targets. Refuses writes to
-   git's configuration surface: anything inside a `.git` directory,
-   `.gitconfig`, `<any>/git/config`, `.gitattributes`. This rule enumerates
-   **git's own config locations** — closed and documented — not attacks.
-4. **Config integrity across the round** — `gitConfigWatchPaths` /
-   `fingerprintRoundGitConfig` / `gitConfigChanges` in `src/execboundary.ts`.
-   `dispatch` hashes every file git reads configuration or hooks from when it
-   prepares the worktree; `verdicts.measureUsage` re-hashes them when the round
-   is measured; a difference raises the `git_config_modified` **wake**. It
+3. **Write veto** — `checkWritePath` / `checkProtectedWrites` /
+   `isProtectedWriteTarget`, same file, bound to the `write`/`edit` tools AND to
+   shell redirection / `sed -i` targets, from ONE predicate so the two
+   boundaries cannot drift. Every output-redirection spelling bash has
+   (`>`, `>>`, `&>`, `&>>`, `>&f`, `{v}>`, `<>`, `>|`, fd-prefixed) is folded
+   onto `>`/`>>` first (`normalizeRedirections`), and a target is judged by the
+   name bash would OPEN — quotes and backslashes inside the word removed. It
+   refuses two closed, documented sets:
+   - **git's configuration surface** (`isGitConfigSurface`): anything
+     inside a `.git` directory, `.gitconfig`, `<any>/git/config`,
+     `.gitattributes` — git's own config locations, not attacks.
+   - **this system's own policy surface** (`isPolicySurface`):
+     `config.toml`, `scripts/**`, `dist/**`, `extensions/**`, and the frozen
+     seeds `prompts/**` / `agents/**` / `seeds/**` (the built `state/agents/**`
+     pass bodies included). These are the files that decide what every layer
+     here DOES; the boundary protected git's configuration and, until,
+     not its own. See "The policy surface" below.
+4. **Integrity across the round** — `gitConfigWatchPaths` /
+   `policySurfaceWatchPaths` / `fingerprintRoundIntegrity` / `integrityChanges`
+   in `src/execboundary.ts`. `dispatch` hashes every file git reads
+   configuration or hooks from AND the policy surface under the sandbox root
+   when it prepares the worktree; `verdicts.measureUsage` re-hashes them when
+   the round is measured; a difference raises the `git_config_modified` or the
+   `policy_surface_modified` **wake**. Directories are hashed recursively by
+   CONTENT (a rewritten `scripts/guards.sh` keeps the listing identical). It
    enumerates no write primitive, so variable indirection is irrelevant to it.
 5. **Outcome detection** — `auditUngatedReviews`, same file, run by the
    reconcile comment sweep. Asks the only question whose answer does not depend
    on knowing the mechanism.
+
+## The policy surface — the boundary protects its own configuration
+
+For seven rounds the boundary protected the files that turn a GIT command into
+shell execution, and never the files that decide what the boundary itself does.
+Three write targets were `allowed: true` on both source and the compiled
+`dist/`, each found by EXECUTION, not by reading:
+
+```
+cat /tmp/evil > config.toml                      → the guards' OWN config
+cat /tmp/evil > dist/extensions/bash-guard.js    → the COMPILED guard
+printf 'x'   > scripts/post-review.sh            → the gate's shell mirror
+```
+
+The first is a hard-rule-1 gate bypass on its own. The posting scripts read
+`dry_run` and every `[guards]` knob out of `config.toml` per invocation, and
+`guard_enabled` treats a knob as ON unless it is literally `false`, so ONE write
+turns guards 1-5 off and flips a dry-run install to live on the very next
+sanctioned post. The second is worse in reach: `dist/extensions/bash-guard.js` is
+the guard the container actually runs, so overwriting it disables the boundary
+for every later round in that container. `scripts/guards.sh` and
+`scripts/approve-pr.sh` were equally writable.
+
+Two more doors of the same class were verified by the review:
+
+```
+bash -c 'scripts/pr-self.sh ; QCR_CONFIG=/tmp/x.toml scripts/approve-pr.sh 5 b.md'
+QCR_POSTING_RECEIPT_DIR=/tmp/r scripts/approve-pr.sh 5 b.md
+```
+
+The first launders a refused command behind a sanctioned one: `checkProgram`
+vetted `bash` by its first bare token and the splitter treated `;` inside single
+quotes as literal, so everything after the separator was never seen. The second
+is `QCR_POSTING_RECEIPT_DIR`, left out of `POLICY_RELOCATING_ENV` as "an
+argument"; the ruling is that it names a DIRECTORY like `QCR_DRYRUN_DIR`,
+the daemon never sets it (it relies on the scripts' default
+`state/posting-receipts`, which `verdicts.ts` reads), and it relocates the
+record that settles a round — so it is a relocator and it is refused.
+
+**Then the fix was probed the way the finding was made**, by running each form
+bash offers against a real file, and the first cut of it fell eleven ways. The
+redirection scan knew `>` and `>>`; bash has five more spellings that write a
+named file, and all five walked past the git-config veto on master as
+well:
+
+```
+cat /tmp/evil &>config.toml        cat /tmp/evil {v}>config.toml     cat /tmp/evil >| config.toml
+cat /tmp/evil >&config.toml        printf x 1<>config.toml           (all five VERIFIED writing)
+cat /tmp/evil > con"fig".toml      cat /tmp/evil > config\.toml      (bash opens config.toml; the scan compared spellings)
+```
+
+And the first `bash -c` re-parser had three launderers of its own:
+`env -S 'bash -c "…"'` (env splits a second command line out of one word),
+`bash -o pipefail -c '…'` (a value-taking option before `-c`, so the lift found
+no payload and the `-c` form was waved through), `xargs bash -c '…'` (no raw
+segment to lift from) — and `bash -c "$(cat x)"`, whose payload does not exist
+until runtime, was re-parsed as the empty string and allowed.
+
+**The fixes, none of them a blocklist of attacks:**
+
+- **One definition, three consumers.** `POLICY_SURFACE_FILES` /
+  `POLICY_SURFACE_DIRS` in the guard name this system's policy-carrying
+  top-level entries — `config.toml`; `scripts/`, `dist/`, `extensions/`,
+  `prompts/`, `agents/`, `seeds/`. The write/edit tool veto and the shell
+  redirection / `sed -i` scan both read it as a path SHAPE through
+  `isProtectedWriteTarget`; layer 4 reads it as concrete paths under the sandbox
+  root through `policySurfaceWatchPaths`. A session cannot write through one
+  channel what it is refused through another, and the integrity check cannot
+  watch a different set than the veto refuses. It is git's own list one level
+  out: the files that configure US, closed and listed here.
+- **Every redirection spelling, one canonical form.** `normalizeRedirections`
+  folds `&>`, `&>>`, `>&file`, `{v}>`, `<>` and `>|` onto `>`/`>>` and drops
+  the fd-dups that name no file (`2>&1`, `>&2`, `1>&-`), before the scan and the
+  splitter read the command. The target is then judged DEQUOTED — `con"fig".toml`
+  and `config\.toml` are `config.toml`. The audit borrows the same normaliser,
+  the way it already borrowed the splitter: the tokeniser, not the policy.
+- **The indirect writers need no special case.** `tee`, `cp`, `mv`, `dd` and
+  `install` are OFF the program allowlist, so `checkProgram` refuses them
+  outright whatever their target; `sort -o`, `find -fprintf`, `sed 'w …'` and
+  `awk` are refused whole by the reader-mode rules / removal. `sed -i` and the
+  redirections are the writers that name a target as a plain word, and those
+  the scan reads.
+- **`bash -c` payloads are re-parsed, and a payload the guard cannot read is
+  REFUSED, never guessed.** `checkSegment` lifts the payload out of the RAW
+  segment (`bashCPayload`: quote-aware, dequoted, `$'…'` decoded, so `;`,
+  newline, `&&`, `||`, backticks and `$(…)` inside the quotes survive) and runs
+  it through `checkBashCommand` as its own command, at every nesting depth up
+  to a bound of eight. Three shapes are unliftable and refuse with a reason
+  that says why: a payload assembled by a substitution (the segment was cut at
+  `$(`/backtick — an unclosed quote is the tell); a value-taking option before
+  `-c`; and a `-c` reaching `checkProgram` at all (through `xargs`), where no
+  raw segment exists. `env -S`/`--split-string` is refused outright, and `sh -c`
+  always was (only `sh -n` is sanctioned). The outer segment is still vetted
+  first, so an env prefix like `QCR_CONFIG=… bash -c …` is caught before the
+  payload matters.
+- **`config.toml` specifically** cannot be rewritten (policy surface, both
+  channels, every spelling), relocated (`QCR_CONFIG`) or shadowed by a
+  receipt-dir relocation (`QCR_POSTING_RECEIPT_DIR`) — and a rewrite
+  that reaches it anyway is a `policy_surface_modified` wake at round end.
+- **Layer 4 watches the policy surface.** The same fingerprint dispatch takes
+  and verdicts re-checks now hashes `config.toml` and the six directories,
+  recursively by content, so `T=config.toml; cat p > $T` — the one spelling no
+  string scan can see — is a wake, exactly as its `.git/config` twin is.
+  `state/agents/**` is deliberately NOT in the watch set: the daemon itself
+  rebuilds it mid-round on feedback ingest and the day change, and a check that
+  fires on the daemon's own work gets switched off.
+
+The post-hoc audit (`src/usage.ts`) gained the matching telemetry kinds —
+`policy_surface_write` (a redirection, `sed -i` or write-tool target on the
+policy surface, dequoted, every spelling) and `policy_relocation` (a `QCR_*`
+relocator, at the top level or inside a `bash -c` payload) — so a write that
+somehow gets past the guard is at least *seen*, never silent.
 
 Layers 1 and 3 make the git-config-executes-shell family *impossible* at all
 three of git's config scopes for the write paths they can see; layer 4 catches
@@ -151,12 +283,32 @@ or a migration-precheck event) raises an `ungated_approval` anomaly.
 *Falsify it by* posting a bot review at the current head that acquires one of
 those traces without going through the gate or the sanctioned scripts.
 
-**G4 — a session write to git's configuration does not survive a round
-unnoticed.** Every file layer 4 watches is hashed when the round's worktree is
-prepared and re-hashed when the round is measured; a difference is a wake.
-*Falsify it by* changing one of those files mid-round and getting a clean
-round, or by naming a config location git reads that `gitConfigWatchPaths`
-omits.
+**G4 — a session write to git's configuration, or to this system's own policy
+surface, does not survive a round unnoticed.** Every file layer 4 watches — git's
+config and hook locations, and `config.toml`, `scripts/`, `dist/`,
+`extensions/`, `prompts/`, `agents/`, `seeds/` under the sandbox root, the
+directories hashed recursively by content — is hashed when the round's worktree
+is prepared and re-hashed when the round is measured; a difference is a wake
+(`git_config_modified` / `policy_surface_modified`). *Falsify it by* changing
+one of those files mid-round and getting a clean round, or by naming a config
+location git reads that `gitConfigWatchPaths` omits.
+
+**G5 — a review session cannot write this system's own policy surface through
+either write channel, in any spelling the guard can see**. No
+`write`/`edit` tool call, no shell redirection in any of bash's spellings
+(`>`, `>>`, `&>`, `&>>`, `>&f`, `{v}>`, `<>`, `>|`, fd-prefixed, the target
+quoted or backslash-escaped) and no `sed -i` can land on `config.toml`,
+`scripts/**`, `dist/**`, `extensions/**`, or the frozen seeds `prompts/**` /
+`agents/**` / `seeds/**` (the built `state/agents/**` included). Both channels
+read the one predicate `isProtectedWriteTarget`, whose set is the same
+definition layer 4 watches. And a `bash -c '…'` cannot launder a refused
+command — `;`, newline, `&&`, `||`, `$(…)` and backticks inside its payload are
+re-parsed at every depth, and a payload the guard cannot read (a substitution,
+a value-taking option before `-c`, `xargs bash -c`, `env -S`) is refused
+outright. *Falsify it by* writing any of those paths from a real session — via
+the write tool, a redirection, or a `bash -c` payload — and getting an
+`allowed` result on the compiled `dist/` guard, with no
+`policy_surface_modified` wake at round end.
 
 ### What is NOT guaranteed — say so rather than implying otherwise
 
@@ -209,11 +361,72 @@ omits.
   reader-mode rules, which are the same shape as the guard's by necessity. It
   cannot see what leaves no recognisable spelling, and it does not see
   `T=.git/config; cat p >> $T` either.
+- **The policy surface (G5) is a WRITE veto, not a sandbox — and the residual
+  is worse here than for git.** `T=config.toml; cat p > $T` is invisible to
+  the veto by construction, exactly like its `.git/config` twin, and layer 4
+  reports it at round END. For git that bounds the damage to one round's
+  output. For `config.toml` the window is different in kind: a sanctioned
+  `approve-pr.sh` run INSIDE that window reads the rewritten file, with
+  `dry_run` and every guard knob under the session's control, before anything
+  has been measured. Layer 5 sees the resulting review; nothing prevents it.
+  The session runs as the daemon's uid and `deploy/ansible/playbook.yml` mounts
+  the sandbox rw, so the true floor is still the mount. Making that floor real
+  (a read-only mount for everything but `state/`, `verdict/`, `inject/` and
+  `wt/`, or a uid split) is a deploy change and not this map's to make; until
+  it is made, this bullet is the honest statement of G5.
+- **G5 is the set of files named, not "anything that matters".** It is
+  `config.toml`, `scripts/`, `dist/`, `extensions/`, `prompts/`/`agents/`/`seeds/`
+  (and `state/agents/` at the write boundary) — the analogue of
+  `isGitConfigSurface`, closed and listed in `POLICY_SURFACE_FILES` /
+  `POLICY_SURFACE_DIRS`. A policy-carrying file OUTSIDE that set — a new
+  top-level config, a policy input under another path — is not covered until
+  it is added there (the veto and layer 4 follow automatically) AND to
+  `POLICY_SURFACE_TARGET` / `POLICY_SURFACE_PATH_RE` in the audit, which stays
+  an independent implementation on purpose. `src/**` is deliberately NOT on
+  it: the container runs `dist/`, and the reviewed repo's own worktree carries
+  `src/`.
+- **G5 is a path SHAPE, not a rooted path.** The guard does not know the
+  session's cwd, so it refuses `scripts/…`, `dist/…`, `agents/…` and a
+  `config.toml` under ANY prefix — including inside the reviewed repo's
+  worktree and under `/tmp`. A reviewer never writes those either (scoping
+  rule 2), so the over-reach costs a loud refusal on a write nobody makes; but
+  it is over-reach, and a legitimate future write under one of those names
+  would have to be re-homed rather than exempted.
+- **Layer 4 does not watch `state/agents/**`**, because the daemon rebuilds it
+  mid-round; the write veto is the only protection the built pass bodies have.
+  And a `dist/` rewritten by a development `tsc --watch` while a LOCAL daemon
+  runs a round is a genuine `policy_surface_modified` wake — the check cannot
+  tell a compiler from a session. On the VM the deploy DRAIN gate keeps `sync`
+  out of a round's window.
+- **`bash -c` recursion is quote- and separator-aware, not a shell.** It lifts
+  the payload as a dequoted word and re-parses it; a construction that a real
+  bash would assemble at runtime but that is not literally present in the
+  payload — parameter expansion of a variable set earlier in the same `-c`
+  string, say `bash -c 'X=config.toml; cat p > $X'` — is not modelled, and is
+  layer 4's again. What the recursion closes is the laundering of a LITERAL
+  refused command behind a sanctioned one (door 4); what it refuses is any
+  payload it cannot read. The audit, which never had a payload path, does not
+  see `bash -c "$(…)"` at all.
+- **The redirection scan is quote-BLIND on the operator side.** It splits on
+  whitespace, so a `>` that stands as its own word inside a quoted pattern is
+  an operator to it: `rg -n 'x > config.toml' docs/` is refused (VERIFIED),
+  while `rg -n '>config.toml' docs/` — the quote glued to the `>` — is not
+  seen. That asymmetry is an accident of tokenisation, not a design; the
+  refusal is a false one on a read, loud and recoverable, the same trade
+  made for `.git/config`, and it is preferred to a quote-aware scan
+  that would have to be a real tokeniser to be right.
+- **`QCR_POSTING_RECEIPT_DIR` is refused as a relocator** alongside `QCR_CONFIG`,
+  `QCR_STATE_DB` and `QCR_DRYRUN_DIR`. The per-call `QCR_*` arguments the daemon
+  itself sets (`QCR_EXPECTED_HEAD`, `QCR_POSTING_KEY`, `QCR_ROUND_NO`,
+  `QCR_POST_RESPONSE`) stay allowed — blocking them would break the daemon's
+  own dispatch.
 
 ## Review discipline for changes to any of this
 
-Seven rounds found fifteen bypasses. Unit tests found none of them; every one was
-found by someone running a command. So:
+Seven rounds found fifteen bypasses; the eighth found that the boundary had
+never protected its own configuration, and then eleven more forms in the first
+draft of the fix for that. Unit tests found none of them; every one was found
+by someone running a command. So:
 
 1. **Verify by execution, never by reading.** Every bypass was found by running
    something. A claim that a chain is blocked, unaccompanied by a run, is a
@@ -246,3 +459,15 @@ found by someone running a command. So:
    execution probe. Two independent close readings missed a first-class feature
    of a language on the allowlist. Every allowlisted program's *whole* manual
    page is the attack surface, and the only way to know is to run it.
+9. **Ask what the boundary does not protect, starting with itself.** Round 8's
+   finding was not a clever spelling; it was that seven rounds of hardening a
+   guard had never listed the guard's own config, scripts and compiled body
+   as things a session must not write. When a defence is finished, enumerate
+   the files that decide what it does and check each is behind it.
+10. **Probe the fix with the same tool that found the bug.** The first draft
+    of round 8's fix passed its own tests and the compiled probe, and fell to
+    `&>`, `{v}>`, `1<>`, `>&f`, `>|`, a quoted target, `env -S`, `bash -o …
+    -c` and `bash -c "$(…)"` inside an hour — every one of them from bash's
+    manual, every one confirmed by running it against a scratch file before
+    it went into the corpus. A fix for a by-execution finding is not done
+    until it has been attacked by execution.

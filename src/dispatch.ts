@@ -15,7 +15,7 @@
 import { join, resolve } from "node:path";
 import type { Config } from "./config.js";
 import { githubCloneDir, sandboxRoot } from "./config.js";
-import { fingerprintRoundGitConfig } from "./execboundary.js";
+import { fingerprintRoundIntegrity } from "./execboundary.js";
 import type { GateResult } from "./gate.js";
 import type { PrFileEntry } from "./github.js";
 import { DJANGO_ECOSYSTEM, type Ecosystem } from "./ecosystem.js";
@@ -28,6 +28,7 @@ import { hasNewEvidence } from "./guards.js";
 import {
   assembleRoundMemory,
   describeGaps,
+  pinnedHeadState,
   MEMORY_LESS,
   roundContextQuery,
   ROUND_CONTEXT_DEFAULTS,
@@ -42,7 +43,7 @@ import { applyEvent, restoreStandingLifecycle, setPrGates } from "./statemachine
 import type { PrStateRow, ReviewedHeadRow, StateStore } from "./state.js";
 import { snapshotMark, standingReview } from "./standing-review.js";
 import { higherTier, PASS_TIER_ORDER, roundPromptMarker } from "./types.js";
-import type { PassPlanEntry, PassTier, RoundOrder, RoundType, SessionHooks } from "./types.js";
+import type { PassPlanEntry, PassTier, RoundOrder, RoundRecoveryContext, RoundType, SessionHooks } from "./types.js";
 
 /** The slice of GitHubAdapter dispatch needs — all mutations are gated inside
  * the adapter, so this module never touches GitHub directly. */
@@ -212,17 +213,36 @@ function alreadyConsumed(err: unknown): boolean {
  * finding class for exactly that round (see src/include.ts,
  * MIGRATION_NUMBERING_ADDENDUM) — and raises the overseer anomaly. "off"
  * takes none of those paths: configured-off is not degradation.
+ *
+ * A WITHHELD comment (the ledger holds a collision-comment row it cannot
+ * read, so a duplicate cannot be ruled out) is the other way a
+ * checked round gets quieter, and it gets the same operator surface: an
+ * overseer anomaly, raised ONCE per PR (`StateStore.anomalyRaised`) because
+ * the torn row is torn on every round until someone repairs it, and one wake
+ * per round would bury the anomalies that need reading. The event itself is
+ * logged on every withheld round — only the alert is deduplicated.
  */
 async function ecosystemPreCheck(
   deps: DispatchDeps,
   eco: Ecosystem,
-  args: { pr: number; files: PrFileEntry[]; head_sha: string; base_ref: string; base_sha: string },
-): Promise<{ collisions: MigrationCollision[]; degraded: boolean }> {
+  args: { round_id: number; pr: number; files: PrFileEntry[]; head_sha: string; base_ref: string; base_sha: string },
+): Promise<{ collisions: MigrationCollision[]; degraded: boolean; commentWithheld: boolean }> {
   const outcome = await eco.preCheck(
     {
       logEvent: (kind, pr, payload) => deps.store.logEvent(kind, pr, payload),
       migrationCollisionCommented: (pr, fingerprint) => deps.store.migrationCollisionCommented(pr, fingerprint),
-      createReview: (pr, payload, options) => deps.adapter.createReview(pr, payload, options),
+      createReview: async (pr, payload, options) => {
+        // A throw after transport begins is ambiguous. Persist that BEFORE the
+        // gated call, then narrow it only from the gate's returned fact. The
+        // pre-fanout auto-retry class excludes ambiguous/executed rounds.
+        deps.store.recordRoundPreflightPosting(args.round_id, "ambiguous");
+        const result = await deps.adapter.createReview(pr, payload, options);
+        deps.store.recordRoundPreflightPosting(
+          args.round_id,
+          result.executed ? "executed" : result.dryRunFile ? "dryrun" : "refused",
+        );
+        return result;
+      },
       ...(deps.listBaseMigrations ? { listBaseMigrations: deps.listBaseMigrations } : {}),
       ...(deps.log ? { log: deps.log } : {}),
     },
@@ -231,6 +251,7 @@ async function ecosystemPreCheck(
   return {
     collisions: outcome.status === "checked" ? outcome.collisions : [],
     degraded: outcome.status === "degraded",
+    commentWithheld: outcome.status === "checked" && outcome.comment_withheld === true,
   };
 }
 
@@ -331,11 +352,17 @@ async function seedRoundMemory(
       gaps: [{ part: "head", reason: `error: ${String(err)}` }],
     };
   }
+  const headState = pinnedHeadState(mem);
+  // The baseline for the one transition that is silent by construction: a
+  // readable store whose pinned area went from populated to empty. Read
+  // BEFORE this round's row is written, and only when it could matter.
+  const previousHead = headState === "empty" ? deps.store.lastReadPinnedHead() : null;
   deps.store.logEvent("round_memory_seeded", order.pr, {
     round_id: order.round_id,
     round_no: order.round_no,
     query: mem.query,
     max_tokens: mem.max_tokens,
+    head_state: headState,
     head_chars: mem.head.length,
     block_chars: mem.block.length,
     clamped: mem.clamped,
@@ -343,9 +370,34 @@ async function seedRoundMemory(
     gaps: mem.gaps,
     ms: mem.ms,
   });
+  if (previousHead && previousHead.head_chars > 0) {
+    // EMPTY IS NOT DEGRADED made a genuinely empty pinned area a
+    // healthy answer — which is right for a fresh install and wrong for a
+    // container recreated without its data volume, where the same answer
+    // used to be loud. One anomaly on the transition itself restores that
+    // signal deliberately; the next round's baseline is this empty row, so
+    // it cannot repeat. An owner who unpinned their last standing instruction
+    // sees it once too, and knows why.
+    deps.store.logAnomaly(
+      "pinned_head_emptied",
+      order.pr,
+      order.round_no,
+      `the pinned area read as EMPTY with the store readable; the last seeded round (#${previousHead.pr ?? "?"} at ${previousHead.ts}) carried ${previousHead.head_chars} chars of standing instructions`,
+      [
+        `ANOMALY (memory) — PR #${order.pr} round ${order.round_no}`,
+        `The memory store answered, and the pinned area is EMPTY. At the last seeded round (#${previousHead.pr ?? "?"}, ${previousHead.ts}) it held ${previousHead.head_chars} chars of standing instructions.`,
+        "If nobody unpinned them on purpose, the store lost its data — a container recreated without its state volume looks exactly like this. " +
+          "Check the openviking data directory on the state volume and the TUI's memory tab. The round was dispatched normally; this fires once, on the transition.",
+      ].join("\n"),
+    );
+  }
   if (!mem.degraded) return mem;
 
   log(`dispatch: #${order.pr} round ${order.round_no} seeded memory-less (${describeGaps(mem)})`);
+  const missing = [
+    ...(mem.gaps.some((g) => g.part === "head") ? ["no standing-instructions head"] : []),
+    ...(mem.gaps.some((g) => g.part === "context") ? ["no recalled context"] : []),
+  ].join(" and ");
   const nowMs = (deps.now ? deps.now() : new Date()).getTime();
   const cooldownMs = (seed.alertCooldownMin ?? 60) * 60_000;
   const last = memoryAlertAt.get(deps.store);
@@ -358,8 +410,7 @@ async function seedRoundMemory(
     `context store did not answer at round build (${describeGaps(mem)}); the round was dispatched memory-less`,
     [
       `ANOMALY (memory) — PR #${order.pr} round ${order.round_no}`,
-      `The context store did not answer when this round was built (${describeGaps(mem)}), so the round prompt carries ` +
-        "no standing-instructions head and no recalled context.",
+      `The context store did not answer when this round was built (${describeGaps(mem)}), so the round prompt carries ${missing}.`,
       "The round itself was dispatched normally and on time — memory never blocks or delays a review. But a memory " +
         "engine that stays down means every round is running blind: check the openviking supervisor's status " +
         "(state/status.json) and the daemon log.",
@@ -618,6 +669,8 @@ export function buildRoundOrder(args: {
   prBody?: string;
   /**: the round's ecosystem. Absent ⇒ Django (pre-seam behavior). */
   ecosystem?: Ecosystem;
+  /** exact predecessor identity for a pre-fanout recovery successor. */
+  recovery?: RoundRecoveryContext;
   /** Profile lens-heuristics extension; absent ⇒ generic core. */
   heuristics?: HeuristicsExtension;
 }): RoundOrder {
@@ -647,6 +700,7 @@ export function buildRoundOrder(args: {
       const targets = promptTargetsFor(args.cfg.escalation);
       return targets ? { escalation_targets: targets } : {};
     })(),
+    ...(args.recovery?.target_head_sha === headSha ? { recovery: args.recovery } : {}),
     head_sha: headSha,
     base_ref: args.tree?.base_ref ?? "",
     base_sha: args.tree?.base_sha ?? "",
@@ -704,7 +758,10 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
   const commandEligible = queuedInOrder(store).filter((row) => {
     const failure = store.openReviewFailure(row.number);
     if (failure) {
-      log(`dispatch: #${row.number} held FAILED_LOUD (${failure.incident_id}); operator u required`);
+      const action = failure.next_action === "retry_wait" && failure.next_retry_at
+        ? `automatic retry at ${failure.next_retry_at}`
+        : "operator u required";
+      log(`dispatch: #${row.number} held FAILED_LOUD (${failure.incident_id}); ${action}`);
       return false;
     }
     const active = store.blockingSessionCommand(`pr-${row.number}`);
@@ -923,20 +980,22 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         });
       }
 
-      // the git-config fingerprint, taken HERE — after the worktree is
-      // materialised (so the tree is the one the round will read) and before
-      // the session hears about the round (so nothing it does is inside the
-      // baseline). `verdicts.measureUsage` re-checks it when the round ends.
-      // Best-effort in both directions: a fingerprint that cannot be taken
-      // leaves the round unchecked, which is the legacy behaviour — it
-      // never fails a round.
+      // the integrity fingerprint — git's config/hook files and, since
+      //, this system's own policy surface under the sandbox root —
+      // taken HERE: after the worktree is materialised (so the tree is the one
+      // the round will read) and before the session hears about the round (so
+      // nothing it does is inside the baseline). `verdicts.measureUsage`
+      // re-checks it when the round ends. Best-effort in both directions: a
+      // fingerprint that cannot be taken leaves the round unchecked, which is
+      // the legacy behaviour — it never fails a round.
       try {
         store.recordRoundGitConfig(
           roundId,
-          fingerprintRoundGitConfig({
+          fingerprintRoundIntegrity({
             clonePath: githubCloneDir(cfg.github),
             worktreePath: resolve(sandboxRoot(), worktreeFor(row.number)),
             piHome: join(sandboxRoot(), "pihome"),
+            sandboxRoot: sandboxRoot(),
           }),
         );
       } catch (err) {
@@ -948,6 +1007,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // own COMMENT, so whatever the review concludes, the renumber never
       // rides on the verdict; a `none` ecosystem runs nothing at all.
       const precheck = await ecosystemPreCheck(deps, eco, {
+        round_id: roundId,
         pr: row.number,
         files,
         head_sha: tree?.head_sha || row.head_sha,
@@ -978,6 +1038,27 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           ].join("\n"),
         );
       }
+      // A withheld collision COMMENT is an anomaly too: the round
+      // still hears the collisions through the gate note, but every later
+      // collision comment on this PR stays withheld until the torn ledger row
+      // is repaired — a human has to know that, once.
+      if (precheck.commentWithheld && !store.anomalyRaised("migration_collision_comment_withheld", row.number)) {
+        store.logAnomaly(
+          "migration_collision_comment_withheld",
+          row.number,
+          roundNo,
+          "migration collision COMMENT withheld: the event log holds a migration_collision_comment row for this PR that cannot be read, " +
+            "so a duplicate cannot be ruled out; the collisions still ride the round prompt",
+          [
+            `ANOMALY (migration-precheck) — PR #${row.number} round ${roundNo}`,
+            "The migration-number pre-check found collisions but WITHHELD the GitHub comment: the event log holds a " +
+              "migration_collision_comment row for this PR whose payload cannot be read, so posting could duplicate an earlier comment.",
+            "The session still hears the collisions through the round prompt's gate note, so nothing is lost this round — " +
+              "but EVERY collision comment on this PR stays withheld until that row is repaired or deleted " +
+              `(events table, kind = 'migration_collision_comment', pr = ${row.number}; see the migration_collision_comment_withheld events).`,
+          ].join("\n"),
+        );
+      }
 
       // First-party directive edits: detect them and pick the ONE
       // teammate the escalation comment @-mentions, deterministically, before
@@ -989,9 +1070,36 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         base_sha: tree?.base_sha ?? "",
       });
 
+      const preparedHead = tree?.head_sha || row.head_sha;
+      const rawRecoveryInstruction = store.roundRecoveryInstruction(row.number, roundNo);
+      const recoveryInstruction = store.roundRecoveryInstructionForDispatch(row.number, roundNo, preparedHead);
+      if (rawRecoveryInstruction && !recoveryInstruction) {
+        store.logEvent("round_recovery_instruction_not_applied", row.number, {
+          target_round_no: roundNo,
+          stored_head_sha: rawRecoveryInstruction.target_head_sha,
+          prepared_head_sha: preparedHead,
+          source_round_no: rawRecoveryInstruction.source_round_no,
+          source_command_id: rawRecoveryInstruction.source_command_id,
+          reason: "exact_successor_identity_mismatch",
+        });
+      }
+      const recovery: RoundRecoveryContext | undefined = recoveryInstruction
+        ? {
+            stage: recoveryInstruction.stage,
+            source_round_no: recoveryInstruction.source_round_no,
+            source_command_id: recoveryInstruction.source_command_id,
+            target_head_sha: recoveryInstruction.target_head_sha,
+            immediate_attempt: recoveryInstruction.immediate_attempt,
+            retry_epoch: recoveryInstruction.retry_epoch,
+            ...(recoveryInstruction.source_incident_id
+              ? { source_incident_id: recoveryInstruction.source_incident_id }
+              : {}),
+          }
+        : undefined;
       const order = buildRoundOrder({
         tree,
         ecosystem: eco,
+        ...(recovery ? { recovery } : {}),
         migrationCollisions,
         migrationPrecheckDegraded: precheck.degraded,
         ...(firstPartyDirectives !== undefined ? { firstPartyDirectives } : {}),
@@ -1048,6 +1156,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         // to explain which trigger paid for the round.
         trigger_ts: row.trigger_ts,
         trigger_provenance: row.trigger_provenance,
+        recovery: order.recovery ?? null,
       });
       // Slack (S4): the PR's thread root on the first round we see, a
       // 🔄 line in-thread on later ones. The announcer swallows its own

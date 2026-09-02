@@ -20,7 +20,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync
 import { basename, dirname, join } from "node:path";
 import type { StateStore } from "./state.js";
 import type { FileOutcome, ImprovementPayload, IssuePayload } from "./improvements.js";
-import { SLUG_RE } from "./improvements.js";
+import { BRANCH_MAX, BRANCH_RE, isBranchName, SLUG_RE } from "./improvements.js";
 import type { LeverIssuer } from "./levers.js";
 import type { OriginRecord } from "./slack/origin.js";
 import { SLACK_TS_RE } from "./slack/reply.js";
@@ -175,17 +175,18 @@ export function validateCommand(raw: unknown): ValidationResult {
   // files) never sees the retired spelling.
   const canonical = LEGACY_COMMAND_NAMES[name] ?? name;
   if (!(COMMAND_WHITELIST as readonly string[]).includes(canonical)) {
-    // Retired commands get their own reason. `prompts/overseer-system.md` is
-    // frozen seeded content (CLAUDE.md rule 6) and still advertises
-    // mark-escalation-worthy, so the overseer will keep emitting it until
-    // The owner ratifies a reseed — it should learn why, not just "unknown".
+    // Retired commands get their own reason: the ratified 2026-08-18 reseed
+    // took the command out of `prompts/overseer-system.md`, but a session
+    // spawned on an older prompt can still emit it and should learn WHY, not
+    // just "unknown". The hint is read by a model, so it must not describe
+    // the retired NEEDS_HUMAN park either (MC-48).
     if (name === "mark-escalation-worthy") {
       return {
         ok: false,
         reason:
-          "command 'mark-escalation-worthy' was RETIRED on 2026-08-18: escalation-worthiness no longer exists. " +
-          "A PR only stops for a person when a round returns NEEDS_HUMAN. Use pause-pr to hold one, or flag-owner " +
-          "(formerly flag-owner-legacy — the old name is still accepted) to raise it.",
+          "command 'mark-escalation-worthy' was RETIRED on 2026-08-18: escalation-worthiness no longer exists, " +
+          "and the review is never handed to a person — every round decides APPROVE or REQUEST_CHANGES on the merits. " +
+          "Use pause-pr to hold one, or flag-owner (formerly flag-owner-legacy — the old name is still accepted) to raise it.",
       };
     }
     return { ok: false, reason: `command '${name}' is not whitelisted (allowed: ${COMMAND_WHITELIST.join(", ")})` };
@@ -266,11 +267,18 @@ export function validateCommand(raw: unknown): ValidationResult {
       if (!SLUG_RE.test(slug)) {
         return { ok: false, reason: `'slug' must match ${SLUG_RE.source} (it becomes bot/improve-<slug>)` };
       }
+      // The session writes `branch` and the daemon hands it to git: only a
+      // plain local branch name passes — never an option (`--quiet`), a force
+      // refspec (`+wip/x`), a refspec (`a:b`) or a revision expression (`a..b`).
+      const branch = obj["branch"] as string;
+      if (!isBranchName(branch)) {
+        return { ok: false, reason: `'branch' must be a plain local branch name matching ${BRANCH_RE.source} (at most ${BRANCH_MAX} chars)` };
+      }
       return {
         ok: true,
         command: {
           command: "file-improvement-pr",
-          branch: obj["branch"] as string,
+          branch,
           title: obj["title"] as string,
           body: obj["body"] as string,
           slug,

@@ -124,6 +124,8 @@ describe("detailLines", () => {
         detail: "no correlated start",
         attempts: 2,
         retry_cap: 2,
+        retry_epoch: 0,
+        next_retry_at: null,
         failed_at: "2026-08-13T11:55:00Z",
         next_action: "operator_unwedge" as const,
       },
@@ -131,6 +133,29 @@ describe("detailLines", () => {
     const lines = detailLines(why, failed, 80, new Date("2026-08-13T12:00:00Z")).map(stripAnsi);
     expect(lines.join("\n")).toContain("FAILED_LOUD · command_start · cmd-1 · round 1 · attempt 2/2 · 5m old");
     expect(lines.join("\n")).toContain("press u to recover");
+  });
+
+  it("shows the finite automatic exit from a pre-fanout retry wait", () => {
+    const retrying = {
+      ...snapshot.prs[0]!,
+      review_failure: {
+        incident_id: "review-failure:cmd-stall",
+        command_id: "cmd-stall",
+        round_no: 9,
+        head_sha: "a2e380ff11",
+        stage: "first_pass_start",
+        detail: "accepted and preparing; no planned pass started",
+        attempts: 2,
+        retry_cap: 2,
+        retry_epoch: 1,
+        next_retry_at: "2026-08-13T12:15:00Z",
+        failed_at: "2026-08-13T12:00:00Z",
+        next_action: "retry_wait" as const,
+      },
+    };
+    const lines = detailLines(why, retrying, 100, new Date("2026-08-13T12:05:00Z")).map(stripAnsi);
+    expect(lines.join("\n")).toContain("auto retry 12:15Z · epoch 1 · u now");
+    expect(lines.join("\n")).not.toContain("press u to recover");
   });
 
   it("shows a loading line until the payload matches the selection", () => {
@@ -156,13 +181,33 @@ describe("detailLines", () => {
     };
     const lines = detailLines(
       live,
-      snapshot.prs[0],
+      {
+        ...snapshot.prs[0]!,
+        current_round: {
+          round_no: 14,
+          round_type: "re-review",
+          status: "running",
+          started_at: "2026-08-27T09:34:54Z",
+          deadline_at: "2026-08-27T10:49:54Z",
+          lenses: "pass-baseline,pass-security,pass-validate",
+          validate_tier: "sol-high",
+          command_id: "cmd-14",
+          command_sha256: "a".repeat(64),
+          head_sha: "head-5012",
+        },
+      },
       76,
       new Date("2026-08-27T10:04:54Z"),
       {
-        version: 1,
+        version: 2,
         pr: 5012,
         session: "pr-5012",
+        command_id: "cmd-14",
+        command_sha256: "a".repeat(64),
+        command_accepted_at: "2026-08-27T09:34:55Z",
+        preparing_at: "2026-08-27T09:34:55Z",
+        round_no: 14,
+        head_sha: "head-5012",
         run_started_at: "2026-08-27T09:34:55Z",
         updated_at: "2026-08-27T10:04:53Z",
         parent_status: "active",
@@ -170,20 +215,50 @@ describe("detailLines", () => {
         last_activity: "pass-security · grep: bearer",
         active_tool: "subagent: pass-security",
         agents: [
-          { agent: "pass-baseline", status: "completed", duration_ms: 120_000, tool_count: 7 },
-          { agent: "pass-security", status: "running", duration_ms: 30_000, tool_count: 2, current_tool: "grep: bearer" },
-          { agent: "pass-architecture", status: "completed", duration_ms: 60_000, tool_count: 5 },
+          { execution_id: "baseline", agent: "pass-baseline", status: "completed", duration_ms: 120_000, tool_count: 7, started_at: "2026-08-27T09:35:00Z", finished_at: "2026-08-27T09:37:00Z" },
+          { execution_id: "security", agent: "pass-security", status: "running", duration_ms: 30_000, tool_count: 2, current_tool: "grep: bearer", started_at: "2026-08-27T10:04:24Z" },
+          { execution_id: "architecture", agent: "pass-architecture", status: "completed", duration_ms: 60_000, tool_count: 5, started_at: "2026-08-27T09:38:00Z", finished_at: "2026-08-27T09:39:00Z" },
         ],
       },
     ).map(stripAnsi);
     expect(lines).toContain("▍CURRENT REVIEW round 14 · 30m elapsed · 45m left");
-    expect(lines).toContain("  parent ACTIVE · signal 1s ago · subagent: pass-security");
+    expect(lines).toContain("  parent ACTIVE · fanout-started · signal 1s ago · subagent: pass-security");
     expect(lines).toContain("  ✓ pass-baseline · done in 2m · 7 tools");
     expect(lines).toContain("  ⟳ pass-security · running 30s · grep: bearer");
     expect(lines).toContain("  ○ pass-validate · pending · sol-high");
     expect(lines).toContain("  ✓ pass-architecture · done in 1m · 5 tools · added");
     expect(lines).toContain("  ○ final verdict · pending");
     expect(lines).toContain("  last activity 4s ago · pass-security · grep: bearer");
+  });
+
+  it("rejects live progress from a different command even when PR/round timestamps match", () => {
+    const live: WhyPayload = {
+      ...why,
+      rounds: [{ ...why.rounds[1]!, round_no: 14, status: "running", deadline_at: "2026-08-27T10:49:54Z" }],
+    };
+    const pr = {
+      ...snapshot.prs[0]!,
+      current_round: {
+        round_no: 14,
+        round_type: live.rounds[0]!.round_type,
+        status: "running",
+        started_at: live.rounds[0]!.started_at,
+        deadline_at: "2026-08-27T10:49:54Z",
+        lenses: live.rounds[0]!.lenses,
+        validate_tier: live.rounds[0]!.validate_tier ?? null,
+        command_id: "cmd-current",
+        command_sha256: "a".repeat(64),
+        head_sha: "head-current",
+      },
+    };
+    const lines = detailLines(live, pr, 76, new Date("2026-08-27T10:04:54Z"), {
+      version: 2, pr: 5012, session: "pr-5012", run_started_at: live.rounds[0]!.started_at,
+      updated_at: "2026-08-27T10:04:53Z", parent_status: "active",
+      command_id: "cmd-neighbor", command_sha256: "b".repeat(64), command_accepted_at: live.rounds[0]!.started_at,
+      round_no: 14, head_sha: "head-current", preparing_at: live.rounds[0]!.started_at,
+      last_activity_at: "2026-08-27T10:04:53Z", last_activity: "neighboring wake", agents: [],
+    }).map(stripAnsi);
+    expect(lines).toContain("  ? parent · live progress unavailable");
   });
 
   it("never invents pending agent state when the progress signal is absent", () => {

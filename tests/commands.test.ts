@@ -98,17 +98,29 @@ describe("validateCommand — whitelist", () => {
     expect(validateCommand({ command: "resume-pr", pr: 1, reason: "x" }).ok).toBe(false); // unknown field
     expect(validateCommand({ command: "flag-owner", reason: "wrong field name" }).ok).toBe(false);
     expect(validateCommand({ command: "file-improvement-pr", branch: "b", title: "t", body: "y", slug: "Bad Slug" }).ok).toBe(false);
+    // `branch` is written by the overseer session and handed to git: only a
+    // plain local branch name passes — an option, a force refspec, a refspec
+    // or a revision expression is refused at the boundary, before git.
+    for (const branch of ["--quiet", "+wip/x", "wip/x:refs/heads/main", "a..b", "wip docs", "a~1", "@{-1}", ".x"]) {
+      const bad = validateCommand({ command: "file-improvement-pr", branch, title: "t", body: "y", slug: "ok" });
+      if (bad.ok) throw new Error(`branch ${JSON.stringify(branch)} must be refused`);
+      expect(bad.reason, branch).toMatch(/'branch' must be a plain local branch name/);
+    }
     expect(validateCommand({ command: "retry-thread-decision", comment_id: "5001" }).ok).toBe(false);
     expect(validateCommand({ command: "retry-thread-decision", comment_id: 5001, force: true }).ok).toBe(false);
     expect(validateCommand("nope").ok).toBe(false);
-    // The overseer's frozen system prompt still advertises the retired
-    // command, so the rejection must say WHY, not just "unknown".
+    // A session on an older prompt can still emit the retired command, so
+    // the rejection must say WHY, not just "unknown".
     const retired = validateCommand({ command: "mark-escalation-worthy", pr: 1, reason: "x" });
     // Narrow before reading `reason` — it lives only on the refusal arm, and
     // reading it off the union asserted against `undefined`.
     if (retired.ok) throw new Error("mark-escalation-worthy must be refused");
     expect(retired.reason).toMatch(/RETIRED on 2026-08-18/);
-    expect(retired.reason).toMatch(/NEEDS_HUMAN/);
+    // The hint is read by a model. It used to say "a PR only stops for a
+    // person when a round returns NEEDS_HUMAN" — the park retired
+    // (MC-48). MUTATION: restore that sentence — both fail.
+    expect(retired.reason).not.toMatch(/NEEDS_HUMAN|\bpark/);
+    expect(retired.reason).toMatch(/decides APPROVE or REQUEST_CHANGES on the merits/);
     expect(validateCommand([{ command: "rerun-round", pr: 1 }]).ok).toBe(false);
     expect(validateCommand(null).ok).toBe(false);
   });
