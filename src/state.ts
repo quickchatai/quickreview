@@ -958,6 +958,36 @@ export interface AnomalyRecord {
   detail: string;
 }
 
+/**
+ * What the event log says about one migration-collision COMMENT (
+ * dedupe, three-state read). `unknown` is not "no": it is a log with a
+ * comment row this code cannot read, and the caller treats it as "do not post".
+ */
+export type CollisionCommentRecord = "commented" | "not_commented" | "unknown";
+
+/** Self-requeues a PR has spent, split by whether the row could be
+ * attributed to the head asked about. `unattributed` rows are requeues that
+ * certainly happened, at a head that cannot be read — they count against the
+ * cap. */
+export interface SelfRequeueSpend {
+  at_head: number;
+  unattributed: number;
+}
+
+/** One string field out of an event payload, or `undefined` when the payload
+ * is null, is not JSON, or does not carry that field as a string. The two
+ * per-PR ledger reads above build their three-state answers on this: a row
+ * that yields `undefined` is UNREADABLE, never a row that "did not match". */
+function readStringField(payload: string | null, field: string): string | undefined {
+  if (!payload) return undefined;
+  try {
+    const value = (JSON.parse(payload) as Record<string, unknown>)[field];
+    return typeof value === "string" ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Durable command lifecycle at the daemon→Pi boundary. */
 export type SessionCommandStatus = "pending" | "running" | "acked" | "failed" | "cancelled";
 export type SessionCommandKind = "round" | "wake" | "legacy";
@@ -3536,44 +3566,54 @@ export class StateStore {
   }
 
   /**
-   * Has the migration-collision COMMENT with this fingerprint already been
-   * posted for this PR? Scans every such event for the PR — no
-   * recency window, because a PR that accumulates rounds must not start
-   * re-posting the same comment once the newest N events are other collisions.
+   * What the event log says about the migration-collision COMMENT with this
+   * fingerprint on this PR (dedupe). Scans every such event for the
+   * PR — no recency window, because a PR that accumulates rounds must not
+   * start re-posting the same comment once the newest N events are other
+   * collisions.
+   *
+   * `unknown` is a PR whose log holds a comment row this code cannot read (a
+   * null or corrupt payload). Such a row means a comment WAS posted, at a
+   * fingerprint nobody can recover — so "never commented" is not a claim the
+   * log supports, and the caller must not post on it (a duplicate
+   * comment on the reviewed repo is an external mutation, which outranks the
+   * low odds of the daemon corrupting its own JSON).
    */
-  migrationCollisionCommented(pr: number, fingerprint: string): boolean {
+  migrationCollisionCommented(pr: number, fingerprint: string): CollisionCommentRecord {
     const rows = this.db
       .prepare("SELECT payload FROM events WHERE kind = 'migration_collision_comment' AND pr = ?")
       .all(pr) as Array<{ payload: string | null }>;
-    return rows.some((r) => {
-      if (!r.payload) return false;
-      try {
-        return (JSON.parse(r.payload) as { fingerprint?: unknown }).fingerprint === fingerprint;
-      } catch {
-        return false;
-      }
-    });
+    let unreadable = false;
+    for (const r of rows) {
+      const stamped = readStringField(r.payload, "fingerprint");
+      if (stamped === undefined) unreadable = true;
+      else if (stamped === fingerprint) return "commented";
+    }
+    return unreadable ? "unknown" : "not_commented";
   }
 
   /**
-   * Self-requeues already spent on a PR at a given head (cap
-   * accounting). Counts `round_self_requeued` events whose payload head_sha
-   * matches — a new head resets the budget, exactly like the withheld/reviewed
-   * marks are per-head positions. No recency window: the budget is per head,
-   * not per day.
+   * Self-requeues already spent on a PR (cap accounting), split into
+   * the ones `round_self_requeued` stamped with THIS head and the ones whose
+   * payload cannot be read at all. A new head resets the budget, exactly like
+   * the withheld/reviewed marks are per-head positions, and there is no
+   * recency window: the budget is per head, not per day.
+   *
+   * `unattributed` rows are requeues that certainly happened at SOME head. The
+   * caller counts them against the cap (they can only ever tighten it), so a
+   * corrupt payload can never buy a requeue past the budget.
    */
-  selfRequeueCount(pr: number, headSha: string): number {
+  selfRequeueSpend(pr: number, headSha: string): SelfRequeueSpend {
     const rows = this.db
       .prepare("SELECT payload FROM events WHERE kind = 'round_self_requeued' AND pr = ?")
       .all(pr) as Array<{ payload: string | null }>;
-    return rows.filter((r) => {
-      if (!r.payload) return false;
-      try {
-        return (JSON.parse(r.payload) as { head_sha?: unknown }).head_sha === headSha;
-      } catch {
-        return false;
-      }
-    }).length;
+    const spend: SelfRequeueSpend = { at_head: 0, unattributed: 0 };
+    for (const r of rows) {
+      const stamped = readStringField(r.payload, "head_sha");
+      if (stamped === undefined) spend.unattributed += 1;
+      else if (stamped === headSha) spend.at_head += 1;
+    }
+    return spend;
   }
 
   /** Head sha of the last applied verdict for a PR (from the event log). */

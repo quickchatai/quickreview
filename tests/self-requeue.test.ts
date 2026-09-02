@@ -341,8 +341,8 @@ describe("the per-head cap", () => {
     expect(await w.checkDeadlines()).toEqual([]);
     expect(roundStatus(atNewHead)).toBe("cancelled");
     expect(events("round_self_requeued")).toHaveLength(2);
-    expect(store.selfRequeueCount(311, "head-two")).toBe(1);
-    expect(store.selfRequeueCount(311, "head-one")).toBe(1);
+    expect(store.selfRequeueSpend(311, "head-two")).toEqual({ at_head: 1, unattributed: 0 });
+    expect(store.selfRequeueSpend(311, "head-one")).toEqual({ at_head: 1, unattributed: 0 });
   });
 
   it("max_self_requeues is config-knobbed and defaults to 2", () => {
@@ -918,7 +918,7 @@ describe("head_moved outcome — a guard-5 refusal lands cheaply, session surviv
     const requeued = events("round_self_requeued");
     expect(requeued).toHaveLength(1);
     expect(requeued[0]!.payload).toMatchObject({ mode: "head_moved", head_sha: "fresh-head" }); // SAME counter, fresh head
-    expect(store.selfRequeueCount(340, "fresh-head")).toBe(1);
+    expect(store.selfRequeueSpend(340, "fresh-head")).toEqual({ at_head: 1, unattributed: 0 });
     expect(overseer.some((m) => m.startsWith("SELF-REQUEUE (recovery) — PR #340"))).toBe(true);
     // No verdict applied: no reviewed-head mark, in-progress label off,
     // reviewed label NOT added.
@@ -1110,5 +1110,50 @@ describe("cancellation causes on the live paths", () => {
     // incident. Nothing is raised, and none of them is loud.
     expect(anomalies()).toEqual([]);
     expect(store.loudCancellations()).toEqual([]);
+  });
+});
+
+// a `round_self_requeued` row whose payload cannot be read is still a
+// requeue that happened. The old count dropped it, so a corrupt row bought a
+// requeue past the cap; now it is spent against the cap, which can only ever
+// tighten the budget (ending in FAILED_LOUD and `u` — the recoverable side).
+describe("a self-requeue row whose head cannot be read still counts", () => {
+  const tornRow = (pr: number, payload: string | null): void => {
+    store.db.prepare("INSERT INTO events (ts, kind, pr, payload) VALUES (?, 'round_self_requeued', ?, ?)").run(clock.toISOString(), pr, payload);
+  };
+
+  it("the store splits attributed from unattributed rows rather than dropping the unreadable ones", () => {
+    store.logEvent("round_self_requeued", 350, { head_sha: "h1", mode: "dead" });
+    tornRow(350, "{torn");
+    tornRow(350, null);
+    tornRow(350, JSON.stringify({ mode: "dead" })); // no head_sha at all
+    expect(store.selfRequeueSpend(350, "h1")).toEqual({ at_head: 1, unattributed: 3 });
+    expect(store.selfRequeueSpend(350, "h2")).toEqual({ at_head: 0, unattributed: 3 });
+    expect(store.selfRequeueSpend(351, "h1")).toEqual({ at_head: 0, unattributed: 0 });
+  });
+
+  it("the watcher spends the unreadable row against the cap — it can tighten the budget, never widen it", async () => {
+    const cap = 2;
+    const cfg: Config = { ...baseCfg, daemon: { ...baseCfg.daemon, max_self_requeues: cap } };
+    const { hooks } = hooksWith(false);
+    const w = watcher(hooks, cfg);
+    // One requeue this PR certainly spent, at a head nobody can read back.
+    tornRow(352, "{torn");
+
+    // Budget 2, spent 1 (unattributed): one real requeue is still allowed…
+    let id = reviewingRound(352, "head-a");
+    pastDeadline();
+    expect(await w.checkDeadlines()).toEqual([]);
+    expect(roundStatus(id)).toBe("cancelled");
+
+    // …and the next is refused: 1 unattributed + 1 at this head = the cap.
+    // Under the old count the corrupt row was invisible and a third requeue
+    // went through — a loop past the budget.
+    id = reviewingRound(352, "head-a");
+    pastDeadline();
+    expect(await w.checkDeadlines()).toEqual([352]);
+    expect(roundStatus(id)).toBe("overdue");
+    expect(events("self_requeue_cap_exhausted")).toHaveLength(1);
+    expect(events("self_requeue_cap_exhausted")[0]!.payload).toMatchObject({ head_sha: "head-a", attempts: cap, cap });
   });
 });

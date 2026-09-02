@@ -263,9 +263,52 @@ describe("migration collision pre-check", () => {
     // a PR with a busier log quietly started reposting the same comment.
     store.logEvent("migration_collision_comment", 51, { fingerprint: "fp-old" });
     for (let i = 0; i < 40; i++) store.logEvent("migration_collision_comment", 51, { fingerprint: `fp-${i}` });
-    expect(store.migrationCollisionCommented(51, "fp-old")).toBe(true);
-    expect(store.migrationCollisionCommented(51, "fp-never")).toBe(false);
-    expect(store.migrationCollisionCommented(52, "fp-old")).toBe(false); // scoped per PR
+    expect(store.migrationCollisionCommented(51, "fp-old")).toBe("commented");
+    expect(store.migrationCollisionCommented(51, "fp-never")).toBe("not_commented");
+    expect(store.migrationCollisionCommented(52, "fp-old")).toBe("not_commented"); // scoped per PR
+  });
+
+  // the third answer. `unknown` is a comment row this code cannot
+  // read: a comment WAS posted, at a fingerprint nobody can recover, so "never
+  // commented" is not a claim the log supports.
+  it("an unreadable comment row answers UNKNOWN — neither 'commented' nor 'never commented'", () => {
+    const torn = store.db.prepare("INSERT INTO events (ts, kind, pr, payload) VALUES (?, 'migration_collision_comment', ?, ?)");
+    store.logEvent("migration_collision_comment", 53, { fingerprint: "fp-readable" });
+    torn.run("2026-08-18T10:00:00Z", 53, "{torn");
+    expect(store.migrationCollisionCommented(53, "fp-readable")).toBe("commented"); // a readable match still wins
+    expect(store.migrationCollisionCommented(53, "fp-other")).toBe("unknown");
+    expect(store.migrationCollisionCommented(54, "fp-other")).toBe("not_commented"); // scoped per PR
+    torn.run("2026-08-18T10:00:00Z", 55, null); // a NULL payload is the same unreadable row
+    expect(store.migrationCollisionCommented(55, "fp")).toBe("unknown");
+    torn.run("2026-08-18T10:00:00Z", 57, JSON.stringify({ fingerprint: 12 })); // …and so is a non-string fingerprint
+    expect(store.migrationCollisionCommented(57, "fp")).toBe("unknown");
+  });
+
+  it("a corrupt comment row can never cause the GitHub write a readable one would have suppressed", async () => {
+    queue(56);
+    adapter.files = [file("backend/chat/migrations/0042_x.py")];
+    store.db
+      .prepare("INSERT INTO events (ts, kind, pr, payload) VALUES (?, 'migration_collision_comment', 56, ?)")
+      .run("2026-08-18T10:00:00Z", "{torn");
+
+    await dispatchOnce({
+      cfg,
+      store,
+      adapter,
+      hooks: hooks(orders),
+      prepareWorktree: tree,
+      listBaseMigrations: async () => BASE_MIGRATIONS,
+    });
+
+    // No create_review reached the gate — the comment is withheld, not posted.
+    expect(adapter.intents.filter((i) => i.kind === "create_review")).toHaveLength(0);
+    expect(events("migration_collision_comment_withheld", 56)).toHaveLength(1);
+    // The check RAN: detection is logged, the collisions ride the order into
+    // the gate note, and the round dispatches un-degraded.
+    expect(events("migration_collision_detected", 56)).toHaveLength(1);
+    expect(orders).toHaveLength(1);
+    expect(orders[0]?.migration_collisions).toHaveLength(1);
+    expect(orders[0]?.migration_precheck_degraded).toBeFalsy();
   });
 
   it("says nothing when the PR's migration number is free", async () => {

@@ -40,6 +40,7 @@
 //     mutation path.
 import type { GateResult } from "./gate.js";
 import { migrationGate as djangoMigrationGate, type PrFile } from "./heuristics.js";
+import type { CollisionCommentRecord } from "./state.js";
 import {
   collisionFingerprint,
   detectMigrationCollisions,
@@ -66,8 +67,11 @@ export interface EcosystemRound {
 export interface EcosystemPreCheckIo {
   logEvent(kind: string, pr: number | null, payload?: unknown): void;
   /** Has this exact (head, collision set) already been commented? (
-   * staleness-round dedupe — suppress the repost, never the check.) */
-  migrationCollisionCommented(pr: number, fingerprint: string): boolean;
+   * staleness-round dedupe — suppress the repost, never the check.) `unknown`
+   * — a comment row the ledger cannot read — also suppresses the post: a
+   * duplicate on the reviewed repo is the mutation this read exists to
+   * prevent, and an unreadable row cannot rule it out. */
+  migrationCollisionCommented(pr: number, fingerprint: string): CollisionCommentRecord;
   /** The gated COMMENT delivery — dispatch's `adapter.createReview`. */
   createReview(
     pr: number,
@@ -266,8 +270,22 @@ async function djangoPreCheck(io: EcosystemPreCheckIo, round: EcosystemRound): P
   // A staleness round re-runs at the same head and must not repost the same
   // comment. Detection still runs and is still logged; only the duplicate
   // COMMENT is suppressed.
-  if (io.migrationCollisionCommented(round.pr, fingerprint)) {
+  const commented = io.migrationCollisionCommented(round.pr, fingerprint);
+  if (commented === "commented") {
     log(`dispatch: #${round.pr} migration collision already commented at ${round.head_sha}`);
+    return { status: "checked", collisions };
+  }
+  if (commented === "unknown") {
+    // The ledger holds a comment row it cannot read. Posting would risk the
+    // exact duplicate the dedupe exists to prevent, so the COMMENT is withheld
+    // — loudly, and with the check still counted as RUN: the collisions ride
+    // the round order into the gate note, so the session still hears them.
+    log(`dispatch: #${round.pr} migration collision comment withheld — an earlier comment row is unreadable`);
+    io.logEvent("migration_collision_comment_withheld", round.pr, {
+      head_sha: round.head_sha,
+      fingerprint,
+      reason: "unreadable_comment_row",
+    });
     return { status: "checked", collisions };
   }
   try {

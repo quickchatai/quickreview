@@ -38,7 +38,7 @@ import { auditExecViolationDetails, collectWindowLines, estimateUsd, measureRoun
 import type { GateResult } from "./gate.js";
 import { applyEvent, restoreStandingLifecycle } from "./statemachine.js";
 import type { VerdictAnnouncer } from "./slack/announce.js";
-import { isLoudCancelCause, type CancelCause, type RoundRow, type StateStore } from "./state.js";
+import { isLoudCancelCause, type CancelCause, type RoundRow, type SelfRequeueSpend, type StateStore } from "./state.js";
 import { enforceLedgerFreshness } from "./ledgercheck.js";
 import { enforceFindingsRecord, findingsRecordPath, readFindingsRecord } from "./findingsrecord.js";
 import { normalizeVerdict, type RoundRecoveryDisposition, type SessionHooks, type VerdictFile, type VerdictPassEntry } from "./types.js";
@@ -268,6 +268,17 @@ export function validateVerdict(raw: unknown): ParsedVerdict {
   else delete v.escalations;
   const notes = [norm.note, esc.note].filter(Boolean).join("; ");
   return { ok: true, verdict: raw as unknown as VerdictFile, ...(notes ? { passes_note: notes } : {}) };
+}
+
+/**
+ * How much of a PR's self-requeue budget is gone (cap). A row whose
+ * head cannot be read still records a requeue that happened, so it counts —
+ * the budget can be tightened by a corrupt payload, never widened by one
+ *. Exhausting it this way ends in FAILED_LOUD and `u`, which is the
+ * recoverable direction; the other direction is a loop past the cap.
+ */
+export function selfRequeuesSpent(spend: SelfRequeueSpend): number {
+  return spend.at_head + spend.unattributed;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -1578,7 +1589,7 @@ export class VerdictWatcher {
     });
     const head = this.deps.store.getPr(pr)?.head_sha ?? "";
     const cap = this.deps.cfg.daemon.max_self_requeues ?? DEFAULT_MAX_SELF_REQUEUES;
-    if (this.deps.store.selfRequeueCount(pr, head) >= cap) {
+    if (selfRequeuesSpent(this.deps.store.selfRequeueSpend(pr, head)) >= cap) {
       const recovered = await this.selfRequeue(
         round,
         stage === "settled_without_verdict" ? "infrastructure_settled" : "infrastructure_active",
@@ -1635,7 +1646,7 @@ export class VerdictWatcher {
     const row = store.getPr(round.pr);
     const head = row?.head_sha ?? "";
     const cap = cfg.daemon.max_self_requeues ?? DEFAULT_MAX_SELF_REQUEUES;
-    const attempt = store.selfRequeueCount(round.pr, head) + 1;
+    const attempt = selfRequeuesSpent(store.selfRequeueSpend(round.pr, head)) + 1;
     const exhausted = attempt > cap;
     const infrastructure = mode === "infrastructure_active" || mode === "infrastructure_settled";
     if (exhausted && !infrastructure) {
