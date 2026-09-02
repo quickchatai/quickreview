@@ -32,9 +32,13 @@
 // fence that would otherwise fail — so a reader can always tell "protected"
 // from "overlooked". Where an allowlist can rot, it is checked by SET
 // EQUALITY, not by subset: an entry that stopped being load-bearing fails too.
-import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { ALLOWED_PROGRAMS, checkBashCommand } from "../extensions/bash-guard.js";
+import { EXECUTION_POLICY_ADDENDUM, PASS_ADDENDA, buildAgents, renderAllowedCommands } from "../src/include.js";
+import { loadProfileAddenda } from "../src/profiles.js";
 import { INITIAL_STATE, transition, type SmEvent } from "../src/statemachine.js";
 import { CANCEL_CAUSES, type PrLifecycleState } from "../src/state.js";
 
@@ -302,37 +306,19 @@ describe("[T12] the pi version pin is one fact, spelled the same everywhere", ()
   });
 
   /**
-   * The rulebook half, and the one place a KNOWN, TICKETED divergence is
-   * recorded rather than fixed.
+   * The rulebook half. Until this recorded a KNOWN stale value
+   * (`0.84.1`, [P11]) rather than asserting the truth, because the
+   * rulebook is the owner's file — and was written to fail the moment the
+   * value was corrected, so the record would retire itself. It fired on
+   *'s correction, made on the owner's order to complete this effort,
+   * and this is the direct form it demanded.
    *
-   * This test does NOT assert that rule 7 is correct — it is not. It asserts
-   * that the divergence is EXACTLY the one already written down, which makes
-   * it loud in both directions:
-   *
-   *   * a NEW drift (rule 7 acquires some third version) fails here;
-   *   * and the moment the recorded stale value is corrected, THIS TEST FAILS
-   *     TOO, forcing the entry to be deleted and the assertion flipped to the
-   *     direct form below it. The allowlist retires itself.
-   *
-   * Why it is recorded rather than repaired: `CLAUDE.md` is the operating
-   * rulebook, and this agent does not edit it on its own authority. The fix is
-   * one digit; it belongs to whoever next touches rule 7.
+   * MUTATION: change the version in rule 7's first sentence — this fails.
    */
-  it("CLAUDE.md rule 7 quotes a pi version — currently a RECORDED stale one ([P11])", () => {
-    const KNOWN_STALE_RULE_7_PIN = "0.84.1";
+  it("CLAUDE.md rule 7 quotes the real pi version", () => {
     const rule7 = /^7\. pi is pinned \(`([^`]+)`/m.exec(readFileSync(join(ROOT, "CLAUDE.md"), "utf8"))?.[1];
     expect(rule7, "rule 7 no longer quotes a pi version in the shape this fence reads").toBeTruthy();
-
-    const real = pins()["config.toml [pi] version"];
-    if (rule7 === real) {
-      throw new Error(
-        "rule 7 has been corrected — delete KNOWN_STALE_RULE_7_PIN and assert `expect(rule7).toBe(real)` directly",
-      );
-    }
-    expect(
-      rule7,
-      "rule 7's pi version drifted to a THIRD value — reconcile it with config.toml, package.json, group_vars and the Dockerfile",
-    ).toBe(KNOWN_STALE_RULE_7_PIN);
+    expect(rule7, "rule 7's pi version drifted from config.toml — reconcile it").toBe(pins()["config.toml [pi] version"]);
   });
 });
 
@@ -463,5 +449,123 @@ describe("no env prefix can move the posting guards' own configuration", () => {
     ]) {
       expect(compiled.checkBashCommand(cmd).allowed, `compiled: ${cmd}`).toBe(source.checkBashCommand(cmd).allowed);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The prompt half and the enforcing half of the no-exec policy are ONE fact,
+// and the retired park is in no prompt a model reads 
+// ---------------------------------------------------------------------------
+
+describe("what a built pass is told it may run is exactly what the guard lets through", () => {
+  /**
+   * took `awk` off the guard's allowlist; the execution-policy
+   * addendum — composed onto all 37 built pass variants — kept advertising it,
+   * so `checkBashCommand("awk '{print $1}' f")` blocked a command the prompt
+   * had just offered. Nothing noticed, because the prompt was pinned by a
+   * prefix (`"Allowed commands: git, rg, grep, cat, ls, find"`) and the guard
+   * by its own probes, never against each other. The sentence is now RENDERED
+   * from `ALLOWED_PROGRAMS`; this fence holds the two to set equality anyway,
+   * so a literal pasted back over the render fails too.
+   *
+   * The sentence is read off the body, never off the render helper: what
+   * ships is the text.
+   */
+  function advertisedIn(body: string): string[] {
+    const m = /Allowed commands: ([^\n]+?)\. CI results are READ/.exec(body);
+    if (!m) throw new Error("no 'Allowed commands: …' clause in the body — the execution policy is missing");
+    return m[1]!.replace(", and read-only gh", ", gh").split(", ");
+  }
+
+  /** One benign READ spelling per program — the guard's answer, not the list's. */
+  const READ_PROBE: Readonly<Record<string, string>> = {
+    git: "git log -1 --oneline",
+    gh: "gh pr view 5",
+    find: "find . -name '*.py'",
+    sed: "sed -n 1,5p README.md",
+    xargs: "xargs cat",
+    test: "test -f README.md",
+    true: "true",
+    false: "false",
+    date: "date -u",
+  };
+
+  /**
+   * MUTATION: replace `renderAllowedCommands()` in EXECUTION_POLICY_ADDENDUM
+   * with the legacy literal (which names `awk`) — this fails twice, on
+   * the set and on the probe. Add "awk" back to ALLOWED_PROGRAMS — the probe
+   * `awk '{print $1}' f` is then allowed and this fails.
+   */
+  it("the advertised set equals ALLOWED_PROGRAMS, each advertised program reads, and the blocked ones stay blocked", () => {
+    const advertised = advertisedIn(EXECUTION_POLICY_ADDENDUM);
+    expect(new Set(advertised).size, "a program is advertised twice").toBe(advertised.length);
+    expect([...advertised].sort()).toEqual([...ALLOWED_PROGRAMS].sort());
+    expect(EXECUTION_POLICY_ADDENDUM).toContain(`Allowed commands: ${renderAllowedCommands()}.`);
+    for (const p of advertised) {
+      const cmd = READ_PROBE[p] ?? `${p} README.md`;
+      const r = checkBashCommand(cmd);
+      expect(r.allowed, `advertised but refused: ${cmd} — ${r.reason ?? ""}`).toBe(true);
+    }
+    // The ticket's own reproduction, plus awk's kin: advertised nowhere, and
+    // refused by the function — not merely absent from a list.
+    for (const cmd of ["awk '{print $1}' file.txt", "gawk '{print}' f", "perl -e 1", "python3 -c 1"]) {
+      expect(checkBashCommand(cmd).allowed, `${cmd} must be refused`).toBe(false);
+      expect(advertised).not.toContain(cmd.split(" ")[0]);
+    }
+  });
+
+  /**
+   * Every BUILT variant — all of them, from the real `agents/` seeds, in the
+   * default composition and under every shipped profile pack — and never a
+   * sample: the stale-prose sweep grepped `src/` and `docs/` and
+   * missed this text entirely, because a composed body exists in no file.
+   *
+   * MUTATION: put the old sentence ("route such findings to a human park
+   * (NEEDS_HUMAN with an escalation comment)") back into
+   * FIRST_PARTY_DIRECTIVE_ADDENDUM — fails on every variant. Put `awk` back
+   * into the allowlist sentence — fails on every variant.
+   */
+  it("no built pass variant names the park, NEEDS_HUMAN or awk, and each carries the rendered allowlist", () => {
+    const profiles = readdirSync(join(ROOT, "profiles"), { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name);
+    expect(profiles.length, "no profile packs found — the profile half of this fence would be vacuous").toBeGreaterThan(0);
+    const compositions: Array<[string, typeof PASS_ADDENDA]> = [
+      ["default", PASS_ADDENDA],
+      ...profiles.map((name): [string, typeof PASS_ADDENDA] => [name, [...PASS_ADDENDA, ...loadProfileAddenda(ROOT, name)]]),
+    ];
+    for (const [label, addenda] of compositions) {
+      const out = mkdtempSync(join(tmpdir(), `qcr-ft0403-${label}-`));
+      try {
+        const built = buildAgents(join(ROOT, "agents"), out, { root: ROOT, addenda });
+        expect(built.length, `${label}: too few variants built to be the real set`).toBeGreaterThanOrEqual(30);
+        for (const b of built) {
+          const body = readFileSync(b.output, "utf8");
+          const where = `${label}/${b.name}`;
+          expect(body, where).toContain(`Allowed commands: ${renderAllowedCommands()}.`);
+          expect([...advertisedIn(body)].sort(), where).toEqual([...ALLOWED_PROGRAMS].sort());
+          expect(body, `${where} names NEEDS_HUMAN`).not.toMatch(/NEEDS_HUMAN/);
+          expect(body, `${where} names the park`).not.toMatch(/\bpark(s|ed|ing)?\b/i);
+          expect(body, `${where} names awk`).not.toMatch(/\bawk\b/);
+        }
+      } finally {
+        rmSync(out, { recursive: true, force: true });
+      }
+    }
+  });
+
+  /**
+   * Rule 2 of this map's review discipline: PROBE THE COMPILED ARTIFACT. The
+   * daemon builds `state/agents` from `dist/src/include.js`, so the sentence
+   * the VM's passes read is the compiled module's, not the source's.
+   */
+  it("the COMPILED execution policy is the source's, and names no awk", async () => {
+    const dist = join(ROOT, "dist", "src", "include.js");
+    if (!existsSync(dist)) {
+      throw new Error("dist/src/include.js is missing — run `npm run build`; the shipped prompt is unverified");
+    }
+    const compiled = (await import(dist)) as { EXECUTION_POLICY_ADDENDUM: string };
+    expect(compiled.EXECUTION_POLICY_ADDENDUM).toBe(EXECUTION_POLICY_ADDENDUM);
+    expect(compiled.EXECUTION_POLICY_ADDENDUM).not.toMatch(/\bawk\b/);
   });
 });
