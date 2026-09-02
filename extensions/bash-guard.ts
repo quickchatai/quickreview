@@ -511,6 +511,14 @@ const COMMAND_INJECTING_ENV_RE = /^GIT_CONFIG_(KEY|VALUE)_\d+$/;
  * the approval-withheld state; `QCR_DRYRUN_DIR` relocates where a suppressed
  * intent is recorded, which is the only evidence a dry-run run leaves.
  *
+ * SCOPE, stated so nobody reads this as more than it is: this closes the
+ * ENV-PREFIX spelling of MC-05, not the class. Adversarial review found two
+ * further routes to the same end — `bash -c '<sanctioned script> ; <anything>'`
+ * past the segment policy, and a writable default config path (the config,
+ * `guards.sh` and the posting scripts themselves can all simply be
+ * overwritten). Both are their own follow-up tickets. A session that wants the
+ * guards moved still has ways; it no longer has this one.
+ *
  * NOT here, deliberately: `QCR_EXPECTED_HEAD`, `QCR_POSTING_KEY`,
  * `QCR_ROUND_NO`, `QCR_POST_RESPONSE`, `QCR_POSTING_RECEIPT_DIR`. Those are
  * per-invocation ARGUMENTS the daemon hands the script — a session setting one

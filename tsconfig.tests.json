@@ -5,8 +5,13 @@
   // passed did not match the parameter type and nobody was checking.
   //
   // This config type-checks the suite. It emits nothing (`noEmit`), so it can
-  // never write into `dist/` and can never trip the hot reload; it is run by
-  // `npm run typecheck:tests`, which `npm run build` chains.
+  // never write into `dist/` and can never trip the hot reload.
+  //
+  // `npm run build` does NOT chain it, deliberately: `scripts/dev-tui.sh`
+  // blocks on that build before the TUI paints (ruling 5), and a
+  // second full tsc pass there is seven seconds of blank terminal. It runs as
+  // part of the SUITE instead — `tests/fences-gate.test.ts`, which is this
+  // repo's CI — and by hand as `npm run typecheck:tests`.
   //
   // `noUnusedLocals`/`noUnusedParameters` are ON here and deliberately not in
   // the build config: an unused local in a test is nearly always a stale

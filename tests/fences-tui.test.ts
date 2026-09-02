@@ -17,7 +17,7 @@ import { TUI_DEFAULTS } from "../src/config.js";
 import type { StatusSnapshot } from "../src/state.js";
 import type { MemoryEntry, MemoryStore } from "../src/memory/store.js";
 import { App, type Tab } from "../src/tui/app.js";
-import { HELP_LINES } from "../src/tui/board.js";
+import { HELP_LINES, renderBoard } from "../src/tui/board.js";
 import { installChangesHooks } from "../src/tui/changestab.js";
 import { registeredKeys } from "../src/tui/cmdbar.js";
 import { installDeployHooks } from "../src/tui/deploytab.js";
@@ -176,7 +176,7 @@ describe("[T1] every registered key is answerable", () => {
    * than no fence. The rig has to be the app the operator runs.
    */
   const rig = () => {
-    const { out, input, written, clear } = fakeStreams();
+    const { out, input } = fakeStreams();
     const ssh: string[] = [];
     const app = new App(
       TUI_DEFAULTS,
@@ -193,18 +193,27 @@ describe("[T1] every registered key is answerable", () => {
     // on the board reads as dead.
     app.view.repo = "exampleorg/example-app";
 
+    // ASKS OF THE OUTSIDE WORLD. `r` (refresh) reloads through a tab's
+    // fetcher; against a fake that answers identically it changes no pixel and
+    // no state, and was reported dead. Making a fetch IS the effect — the same
+    // class as an ssh call or an opened URL.
+    const fetched: string[] = [];
     const entries: MemoryEntry[] = [
       { id: "e1", ts: "2026-08-20 09:00:00", day: "2026-08-20", block: 0, text: "#bug a thing broke", tags: ["bug"], links: [], pinned: false, hash: "h1" },
       { id: "e2", ts: "2026-08-20 10:00:00", day: "2026-08-20", block: 1, text: "#pinned a standing rule", tags: ["pinned"], links: [], pinned: true, hash: "h2" },
+      { id: "e3", ts: "2026-08-19 10:00:00", day: "2026-08-19", block: 0, text: "#feedback an older note", tags: ["feedback"], links: [], pinned: false, hash: "h3" },
     ];
     const memory: MemoryStore = {
       read: async () => entries,
       search: async () => entries,
       apply: async () => ({ ok: true, message: "fence rig" }),
     };
-    installMemoryLearningHooks(app, {
+    const memState = installMemoryLearningHooks(app, {
       memory,
-      digestFetcher: { list: async () => ["2026-08-20.md"], read: async () => "# digest\nline\n" },
+      digestFetcher: {
+        list: async () => (fetched.push("digest:list"), ["2026-08-20.md", "2026-08-19.md", "2026-08-18.md"]),
+        read: async (f: string) => (fetched.push(`digest:read:${f}`), `# digest ${f}\nline\n`),
+      },
       fetchProposals: async () => ({ proposals: [], improvements: [] }),
     });
     // These three fetchers are wide interfaces with narrow use here — this
@@ -212,15 +221,39 @@ describe("[T1] every registered key is answerable", () => {
     // on, never the contents. `as never` is honest about that: a real fake
     // would be forty lines asserting nothing this test reads. Behaviour of
     // each tab is pinned by its own suite.
-    installMetricsHooks(app, {
-      overall: async () => ({ ok: false, error: "fence rig" }),
-      timeline: async () => ({ ok: false, error: "fence rig" }),
+    const metricsState = installMetricsHooks(app, {
+      overall: async () => (fetched.push("metrics:overall"), { ok: false, error: "fence rig" }),
+      timeline: async () => (fetched.push("metrics:timeline"), { ok: false, error: "fence rig" }),
     } as never);
-    installDeployHooks(app, { load: async () => ({ dirty: [], plan: [] }) } as never);
-    installChangesHooks(app, {
-      register: { entries: [], scanned_at: null },
-      refresh: async () => ({ entries: [], scanned_at: null }),
-      scan: async () => ({ entries: [], scanned_at: null }),
+    const deployState = installDeployHooks(app, {
+      load: async () => (fetched.push("deploy:load"), {
+        dirty: ["src/a.ts", "src/b.ts"],
+        plan: [
+          { step: "preflight", state: "pending" },
+          { step: "sync", state: "pending" },
+          { step: "verify", state: "pending" },
+        ],
+      }),
+    } as never);
+    const change = (sha: string, subject: string) => ({
+      sha,
+      short: sha.slice(0, 7),
+      at: "2026-08-20T09:00:00Z",
+      author: "alice",
+      subject,
+      ratified: "",
+      first_seen: "2026-08-20T09:00:00Z",
+    });
+    const CHANGES = {
+      version: 1 as const,
+      updated_at: "2026-08-20T12:00:00Z",
+      entries: [change("aaa1111", "first"), change("bbb2222", "second"), change("ccc3333", "third")],
+      scanned: 3,
+    };
+    const changesState = installChangesHooks(app, {
+      register: CHANGES,
+      refresh: async () => (fetched.push("changes:refresh"), CHANGES),
+      scan: async () => (fetched.push("changes:scan"), CHANGES),
       revert: async () => ({ ok: false, message: "fence rig" }),
     } as never);
     installMessageHooks(app, { send: async () => {} });
@@ -231,20 +264,21 @@ describe("[T1] every registered key is answerable", () => {
     const opened: string[] = [];
     app.hooks.openUrl = (url) => opened.push(url);
 
-    // Record what each tab's key hook ANSWERED. `AppHooks`'s per-tab handlers
-    // return "consumed"; a `false` is the exact shape of a swallowed key, and
-    // it is invisible from outside the app.
-    const consumed: string[] = [];
-    for (const name of ["digestKey", "deployKey", "metricsKey", "changesKey"] as const) {
-      const inner = app.hooks[name];
-      if (!inner) continue;
-      app.hooks[name] = ((a, k) => {
-        const r = inner(a, k);
-        if (r) consumed.push(name);
-        return r;
-      }) as typeof inner;
-    }
-    return { app, ssh, written, clear, consumed, opened };
+    /**
+     * The tab's OWN view model, beside `app.view`.
+     *
+     * Selection indexes, scroll offsets, the metrics window and the loading
+     * flags live here, not on `app.view` — so with an empty fixture list
+     * `j`, `k`, `[`, `]`, `r` and `7` moved something real while changing no
+     * pixel, and were reported dead. That is the false-positive direction,
+     * and a fence that cries wolf gets skimmed. Including this state is NOT
+     * the `consumed` clause coming back: a handler that returns `true` and
+     * does nothing still moves none of it.
+     */
+    const tabState = (): string =>
+      JSON.stringify({ mem: memState, metrics: metricsState, deploy: deployState, changes: changesState });
+
+    return { app, ssh, opened, fetched, tabState };
   };
 
   /**
@@ -267,12 +301,15 @@ describe("[T1] every registered key is answerable", () => {
    * lands and these registrations go away.
    */
   const NO_OP_BY_DESIGN: ReadonlyArray<{ tab: Tab; key: string; why: string }> = [
-    ...TABS.map((tab, i) => ({
-      tab,
+    // A tab's OWN digit while that tab is showing: switching to where you
+    // already are is a genuine self-loop, and the key is live on every other
+    // tab, which is where it is asserted. `changes` is absent deliberately —
+    // entering it triggers a register refresh, so its digit really does
+    // something even from itself.
+    ...(["board", "digest", "deploy", "metrics"] as const).map((tab, i) => ({
+      tab: tab as Tab,
       key: String(i + 1),
-      why:
-        "a tab's OWN digit while that tab is showing: switching to where you already are is a genuine self-loop. "
-        + "The key is live on every OTHER tab, which is where it is asserted.",
+      why: "a tab's own digit while that tab is showing — a genuine self-loop; the key is asserted live on every other tab.",
     })),
     {
       tab: "deploy",
@@ -282,64 +319,145 @@ describe("[T1] every registered key is answerable", () => {
         + "absent is not a dead registration; the same key aborts a real run.",
     },
     {
-      tab: "changes",
-      key: "R",
-      why: "arm a revert with an EMPTY change register — nothing to revert. The verb is pinned by tests/tui-changes.test.ts.",
+      tab: "digest",
+      key: "]",
+      why:
+        "newer digest day, standing on the newest one. `[` moves older and is asserted live beside it; there is "
+        + "nothing newer than newest. A boundary is not a dead key.",
     },
-    ...(["y", "Y"] as const).map((key) => ({
-      tab: "changes" as Tab,
+  ];
+
+  const DEAD_PENDING_TICKET: ReadonlyArray<{ tab: Tab; key: string; why: string }> = [
+    ...(["A", "R", "e", "n", "p", "t", "x"] as const).map((key) => ({
+      tab: "digest" as Tab,
       key,
       why:
-        "confirm / confirm-all with nothing armed — [C7], classified KEEP. `R` arms first; these answer "
-        + "an armed revert, and refusing to act on an unarmed one is the safety property, not a dead key.",
+        "[C3]: on tab [2]'s DIGEST view these are painted buttons that do nothing — they belong to the "
+        + "MEMORY view, and tab [2] holds two unrelated views behind one keystroke. Relocation is's tab-[2] "
+        + "surgery (the inventory's Batch 7, explicitly 'do not cut before it lands'). Genuinely swallowed today: "
+        + "each steals the keystroke from the companion column. This is now the inventory's EXACT list, "
+        + "`t e p x n A R` — `e` joined it when the effect bar stopped accepting a bare hook return.",
+    })),
+    ...(["m", "w"] as const).map((key) => ({
+      tab: "digest" as Tab,
+      key,
+      why:
+        "[C4]: registered on tab [2] and silently swallowed — the memory-view half of the same tab-[2] "
+        + "confusion, relocated. (`g` and `o` of that group do act, so the finding is narrower than "
+        + "the inventory's `m w g o M`.)",
     })),
   ];
 
-  const DEAD_PENDING_TICKET: ReadonlyArray<{ tab: Tab; key: string; why: string }> = (
-    ["A", "R", "n", "p", "t", "x"] as const
-  ).map((key) => ({
-    tab: "digest" as Tab,
-    key,
-    why:
-      "[C3]: on tab [2]'s DIGEST view these are painted buttons that do nothing — they belong to the "
-      + "MEMORY view, and tab [2] holds two unrelated views behind one keystroke. Relocation is's tab-[2] "
-      + "surgery (the inventory's Batch 7, explicitly 'do not cut before it lands'). Genuinely swallowed today: "
-      + "each of these steals the keystroke from the companion column.",
-  }));
-
   const NOT_OBSERVABLE_HEADLESS = [...NO_OP_BY_DESIGN, ...DEAD_PENDING_TICKET];
+
+  /**
+   * The SCREEN this tab paints, rendered from app state.
+   *
+   * `App.repaint()` returns early unless `started` is set, so the rig's
+   * `written()` byte-count was INERT — it never grew for any key, and the
+   * disjunction was carrying nothing. (Proven by gutting `case "unwedge"` to a
+   * bare `break;` and still having it reported dead: the fence was right by
+   * luck, on the other clauses.) Rendering the tab directly is hermetic, needs
+   * no timers or ssh, and gives the one signal that actually matters — what
+   * the operator would see.
+   */
+  const screenOf = (app: App, tab: Tab): string => {
+    const hook = { digest: "digestScreen", deploy: "deployScreen", metrics: "metricsScreen", changes: "changesScreen" }[
+      tab as Exclude<Tab, "board">
+    ];
+    if (tab === "board") return renderBoard(app.view, 140, 40).render();
+    const fn = app.hooks[hook as keyof typeof app.hooks] as
+      | ((a: App, cols: number, rows: number) => string | { render(): string })
+      | undefined;
+    if (!fn) return "";
+    const out = fn(app, 140, 40);
+    return typeof out === "string" ? out : out.render();
+  };
+
+  /** Render until two consecutive frames agree, or give up loudly. */
+  const settle = async (app: App, tab: Tab): Promise<void> => {
+    let last = screenOf(app, tab);
+    for (let i = 0; i < 60; i++) {
+      await new Promise((r) => setTimeout(r, 5));
+      const next = screenOf(app, tab);
+      if (next === last) return;
+      last = next;
+    }
+    throw new Error(`the '${tab}' screen never settled — every key would look alive against a moving frame`);
+  };
 
   for (const tab of TABS) {
     it(`${tab}: no registered key is swallowed`, async () => {
       const dead: string[] = [];
       for (const key of registeredKeys(tab)) {
-        const { app, ssh, written, clear, consumed, opened } = rig();
+        const { app, ssh, opened, fetched, tabState } = rig();
         app.tab = tab;
         // Give every key something to act on: a selected row, a filter to
         // clear, a loaded tab. A "clear the filter" key with no filter set is
         // a legitimate no-op, and reporting it would be a false positive that
         // teaches the reader to skim.
         app.view.boardFilter = { author: "alice" };
+        // A FIXED clock. `renderBoard` falls back to `new Date()`, and the tab
+        // screens carry ages and timestamps, so without this every render
+        // differs from the last and EVERY key looks alive — the signal would
+        // be a false-negative machine, strictly worse than the inert one it
+        // replaced. The self-check below is what caught it.
+        app.view.now = new Date("2026-08-20T12:00:00Z");
 
-        await new Promise((r) => setTimeout(r, 5));
-        app.repaint();
-        clear();
-        const before = { tab: app.tab, view: JSON.stringify(app.view), ssh: ssh.length, consumed: consumed.length, opened: opened.length };
+        // WAIT FOR THE TAB TO SETTLE. Every tab hook kicks off an async load
+        // on install, and a fixed sleep raced it: the first key of each tab
+        // was pressed while the pane still said "loading…", so the load
+        // resolving between the two renders looked like that key's effect.
+        // Digest `A` passed for exactly that reason and nothing else.
+        await settle(app, tab);
+        // Off the list boundary: `k` at index 0 correctly moves nothing, and
+        // reporting it would be a rig artefact rather than a dead key.
+        app.pressKey("j");
+        await settle(app, tab);
+        const before = {
+          tab: app.tab,
+          view: JSON.stringify(app.view),
+          tabState: tabState(),
+          screen: screenOf(app, tab),
+          ssh: ssh.length,
+          opened: opened.length,
+          fetched: fetched.length,
+        };
+        // THE SIGNAL MUST BE STABLE UNDER NO INPUT, or "changed" means
+        // "rendered twice" and every key passes. Asserted per key rather than
+        // once, because a tab can become non-deterministic only after some
+        // other key has loaded it.
+        expect(
+          screenOf(app, tab),
+          `the '${tab}' screen is not deterministic under no input — this fence would pass every key. `
+            + "Pin whatever moves (a clock, a spinner) before trusting a single result here.",
+        ).toBe(before.screen);
+
         app.pressKey(key);
         await new Promise((r) => setTimeout(r, 10));
+
+        // NOTE what is NOT here: "the tab's key hook returned true". That was
+        // in the disjunction, and it is precisely the degenerate handler the
+        // header of this describe says the fence rejects — a `return true`
+        // with no body satisfies it. An adversarial reviewer registered `w` on
+        // the deploy tab, made `deployKey` return true for it as its first
+        // line, and all thirteen tests here stayed green while `w` silently
+        // ate the keystroke. The bar is EFFECT: a different screen, a
+        // different tab, changed state, a remote call, or an opened URL.
         const changed =
-          written().length > 0
+          screenOf(app, tab) !== before.screen
           || app.tab !== before.tab
           || JSON.stringify(app.view) !== before.view
+          || tabState() !== before.tabState
           || ssh.length !== before.ssh
-          || consumed.length !== before.consumed
-          || opened.length !== before.opened;
+          || opened.length !== before.opened
+          || fetched.length !== before.fetched;
         if (!changed) dead.push(key);
       }
       const allowed = NOT_OBSERVABLE_HEADLESS.filter((e) => e.tab === tab).map((e) => e.key).sort();
       expect(
         dead.sort(),
-        `keys registered on tab '${tab}' that produced no paint, no state change, no remote call and no tab-hook answer. `
+        `keys registered on tab '${tab}' that changed no pixel, no state, and asked the outside world for nothing. `
           + "A dead registration is not inert — it steals the keystroke from the companion column. "
           + "Give it an effect, unregister it, or add it to NOT_OBSERVABLE_HEADLESS with the test that covers it.",
       ).toEqual(allowed);

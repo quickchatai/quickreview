@@ -42,20 +42,37 @@ const NOT_A_GUARD = new Set([
 
 /**
  * function name → guard number, read out of `guards.sh`'s own section
- * headers (`# ---- guard N: … ----`). Every function declared under a header
- * belongs to that guard until the next header.
+ * headers (`# ---- guard N: … ----`). A function belongs to the guard whose
+ * header it sits under, and to NO guard once a non-guard header intervenes.
  *
- * Derived rather than declared on purpose: a hand-kept map is a second place
- * for the same fact, and this whole fence exists because a second place for
- * the same fact drifted.
+ * THAT SECOND CLAUSE IS THE WHOLE FENCE, and the first version of this
+ * function did not have it. It set `current` on a guard header and never
+ * cleared it, so every function below `guards.sh`'s
+ * `# ---- the reviewed-head mark ----` header inherited guard 4. The symptom
+ * was `guard_stamp_reviewed_head` — patched at the time with a hand-written
+ * `NOT_A_GUARD` entry, which fixed the instance and left the mechanism.
+ *
+ * What that cost, demonstrated by an adversarial reviewer: add any function
+ * at the end of `guards.sh`, call it from `approve-pr.sh` INSTEAD of
+ * `guard_require_green_ci`, and the approval route stops gating on CI while
+ * every test in this file passes — including the one that asserts
+ * `approve-pr.sh` must contain guard 4. A fence mis-deriving in the
+ * PERMISSIVE direction, which the header of this file calls worse than none,
+ * being exactly that.
+ *
+ * Now: ANY `# ---- … ----` header resets the section, and only a guard header
+ * opens one. A function outside every guard section is unnumbered, which
+ * makes it a loud orphan in the test below unless it is named in
+ * `NOT_A_GUARD` — so that list is now structural rather than a patch.
  */
 function guardNumbers(): Map<string, number> {
   const out = new Map<string, number>();
   let current: number | undefined;
   for (const line of read("scripts/guards.sh").split("\n")) {
-    const header = /^#\s*-+\s*guard\s+(\d+)\s*:/.exec(line);
-    if (header) {
-      current = Number(header[1]);
+    const section = /^#\s*-{2,}/.test(line);
+    if (section) {
+      const guard = /^#\s*-+\s*guard\s+(\d+)\s*:/.exec(line);
+      current = guard ? Number(guard[1]) : undefined;
       continue;
     }
     const fn = /^(guard_[a-z_]+)\(\)/.exec(line);

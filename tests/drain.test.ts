@@ -208,10 +208,20 @@ describe("recheck while draining", () => {
     expect(inject).not.toHaveBeenCalled();
     store.setDraining(false);
     const after = await runRecheck({ cfg, store, adapter: {}, inject }, { pr: 5, trigger: "push", head_sha: "h2" });
-    // `reason` lives only on the noop arm; reading it off the union asserted
-    // `undefined !== "draining"` on every other arm and would have passed for
-    // the wrong reason. Narrow first, then name the reason.
-    expect(after.action === "noop" ? after.reason : null).not.toBe("draining");
+    // The drain lifted, so the recheck must get PAST the drain gate. It still
+    // no-ops here — this PR carries no approval to re-check — and that is the
+    // point: the reason has to be that one, not "draining".
+    //
+    // The two weaker forms both pass for the wrong reason. Reading `reason`
+    // off the union asserted `undefined !== "draining"` on every non-noop arm;
+    // narrowing it to `null` only MOVED the vacuity, since `null !==
+    // "draining"` is equally trivial. Naming the expected reason is what
+    // actually pins the gate order.
+    expect(after.action).toBe("noop");
+    if (after.action !== "noop") throw new Error("unreachable");
+    expect(after.reason, "the drain gate must be behind us — a noop now needs a reason of its own").toBe(
+      "no-standing-approval",
+    );
     store.close();
   });
 

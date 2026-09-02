@@ -101,7 +101,9 @@ describe("[T11] the shipped configs describe the system that exists", () => {
     }
     expect(
       [...found].sort(),
-      "an awaiting_human reference appeared in a shipped config that is not one of the two recorded knobs",
+      "the shipped configs' awaiting_human references no longer match the record. MORE than the two recorded "
+        + "knobs means a new reference appeared; FEWER means one was removed and its RETIRED_KNOBS_PENDING_REMOVAL "
+        + "entry should go with it (that removal is [A10]/[P50]).",
     ).toEqual([...RETIRED_KNOBS_PENDING_REMOVAL].sort());
   });
 });

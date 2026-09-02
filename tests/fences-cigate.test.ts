@@ -179,14 +179,25 @@ describe("the shell CI classifier agrees with classifyCi", () => {
 
     // Guard 4's classifier still swallows its own failure into "unknown"…
     expect(guards).toMatch(/2>\/dev\/null \|\| echo unknown/);
-    // …and `unknown` still falls through the case as a pass.
+
     const requireGreen = /guard_require_green_ci\(\)[\s\S]*?\n\}/.exec(guards)?.[0] ?? "";
     expect(requireGreen, "guard_require_green_ci not found — this record is now vacuous").toContain("case ");
-    expect(
-      /\*\)\s*;;/.test(requireGreen),
-      "guard 4's catch-all arm changed. If `unknown` now blocks, the fail-open is fixed — delete this record. "
-        + "If it changed some other way, say what happens on an unreadable check list.",
-    ).toBe(true);
+
+    // …and `unknown` is still NOT among the states that refuse. This is the
+    // assertion the record turns on, and the first version did not have it:
+    // it asserted only that a `*)` catch-all exists, which survives the fix,
+    // because `green` needs that arm too. Applying this record's own named
+    // repair left all seventeen tests passing — a self-retiring record that
+    // does not retire, still reading "still broken" after the repair.
+    const refusing = /case "\$state" in([\s\S]*?)esac/.exec(requireGreen)?.[1] ?? "";
+    expect(refusing, "the `case` over the CI state moved — say what happens on an unreadable check list").toContain("red|pending");
+    const dieArm = /^\s*(red\|pending[^)]*)\)/m.exec(refusing)?.[1] ?? "";
+    if (dieArm.includes("unknown")) {
+      throw new Error(
+        "guard 4 now REFUSES on an unreadable check list — the MC-15 fail-open is fixed. Delete this record and "
+          + "assert the closed behaviour directly; `tests/guards-shell.test.ts` is where the live case belongs.",
+      );
+    }
 
     // …while guard 3, three functions above, fails closed and says so.
     const requireOpen = /guard_require_open\(\)[\s\S]*?\n\}/.exec(guards)?.[0] ?? "";

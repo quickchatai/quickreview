@@ -22,6 +22,25 @@ import { describe, expect, it } from "vitest";
 
 const ROOT = join(import.meta.dirname, "..");
 
+/**
+ * Comments removed before the import scan.
+ *
+ * Without this the fence read a COMMENTED-OUT import as a live edge, and a
+ * planted orphan plus one commented-out import line in `wire.ts` passed
+ * clean. That is the single most likely artefact of the "remove, relocate,
+ * repair" work this whole effort consists of — someone comments an import
+ * while cutting a module and the fence that exists to notice says nothing.
+ * Every other fence file on this branch strips comments; this one did not.
+ */
+function stripComments(text: string): string {
+  return text
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .split("\n")
+    .filter((l) => !/^\s*(\/\/|\*)/.test(l))
+    .map((l) => l.replace(/\/\/.*$/, ""))
+    .join("\n");
+}
+
 function tsFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
     e.isDirectory() ? tsFiles(join(dir, e.name)) : e.name.endsWith(".ts") ? [join(dir, e.name)] : [],
@@ -65,7 +84,7 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
   it("only the recorded modules are unreachable from wire.ts, cli.ts or an extension", () => {
     const files = tsFiles(join(ROOT, "src"));
     const importsOf = (f: string): string[] =>
-      [...readFileSync(f, "utf8").matchAll(/["'](\.[^"']+)\.js["']/g)]
+      [...stripComments(readFileSync(f, "utf8")).matchAll(/["'](\.[^"']+)\.js["']/g)]
         .map((m) => join(f, "..", `${m[1]!}.ts`))
         .filter((p) => files.includes(p));
 
@@ -74,7 +93,7 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
     // rather than an orphan because `npm run smoke:session` launches it.
     const roots = ["src/wire.ts", "src/cli.ts", "src/smoke-session.ts"].map((p) => join(ROOT, p));
     for (const f of tsFiles(join(ROOT, "extensions"))) {
-      for (const m of readFileSync(f, "utf8").matchAll(/["'](\.[^"']+)\.js["']/g)) {
+      for (const m of stripComments(readFileSync(f, "utf8")).matchAll(/["'](\.[^"']+)\.js["']/g)) {
         const p = join(f, "..", `${m[1]!}.ts`);
         if (files.includes(p)) roots.push(p);
       }

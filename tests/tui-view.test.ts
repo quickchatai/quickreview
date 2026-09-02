@@ -373,9 +373,16 @@ describe("the tools read already-fetched state and can NEVER become a fetcher", 
       { container_name: "qcr-companion", session: "companion", model: "openai-codex/gpt-5.6-sol", repo_dir: "/repo" } as never,
       async () => ({ ok: true, stdout: "", stderr: "", code: 0 }),
       {},
-      // 4th parameter is `ensureDirs`, NOT the fs seam — passing the seam here
-      // left `fs` on its real-filesystem default, so this assertion used to
-      // read the host's disk.
+      // 4th parameter is `ensureDirs`, NOT the fs seam. Passing the seam here
+      // left `fs` on its real-filesystem DEFAULT, so this assertion read the
+      // host's disk instead of the injected stub.
+      //
+      // Stated precisely, because the looser version is wrong: the assertion
+      // was not vacuous. The fixture paths exist on no machine, so the real
+      // `existsSync` returned the same `false` the stub returns, and mutating
+      // the argv fails the test under either call form. What was broken is
+      // hermeticity — a machine where those paths DID exist would have got a
+      // different answer — and the type error that hid it.
       () => {},
       { exists: () => false, read: () => undefined, mode: () => undefined },
     );

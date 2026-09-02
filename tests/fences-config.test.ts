@@ -13,12 +13,26 @@
 // legitimately be consumed, including by ansible and by the entrypoint
 // templates.
 //
-// HONEST LIMIT, stated because it changes what a pass means: this is still a
-// NAME search, so a knob whose name collides with an unrelated identifier
-// ("port", "version") passes without being read. It cannot under-report — a
-// knob with a real reader always has its name somewhere — so what it gives is
-// a floor, not a proof. Making it exact needs a resolver over the parsed
-// `Config` object graph, which is a different piece of work.
+// HONEST LIMITS, stated because they change what a pass means. Both are
+// over-permissive, never under: a knob with a real reader always has its name
+// somewhere, so this is a floor and not a proof.
+//
+//   1. It is a NAME search, so a knob whose name collides with an unrelated
+//      identifier ("port", "version") passes without being read.
+//   2. Comments are stripped from `src/**` only. A knob named in a shell or
+//      ansible COMMENT therefore counts as read. No knob is in that state
+//      today — checked — so this is latent rather than live, but it is the
+//      same shape as limit 1 and would hide the same thing.
+//
+// Making it exact needs a resolver over the parsed `Config` object graph,
+// which is a different piece of work.
+//
+// AND THESE COMPOUND WITH [T9]'s. That one calls a key "documented" if its
+// character appears anywhere in the help text; this one calls a knob "read"
+// if its name appears anywhere outside the parser. Two independently
+// reasonable over-permissive limits, in fences that never mention each other,
+// are what let a degenerate `return true` satisfy [T1] for a whole review
+// cycle. When a fence here is loosened, check what else is already loose.
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -119,9 +133,10 @@ describe("[T4] every config knob has a reader, not just a parser", () => {
 
     expect(
       unread,
-      "a config knob is parsed by src/config.ts and read by nothing anywhere else. Either wire it, delete it, "
-        + "or — if it really is dead debt somebody has decided to keep for now — add it to PARSED_BUT_UNREAD. "
-        + "If a knob DROPPED off this list, delete its entry: it now has a reader.",
+      "the parsed-but-unread knob set no longer matches the record. EXTRA means a knob is parsed by "
+        + "src/config.ts and read by nothing anywhere else — wire it, delete it, or add it to PARSED_BUT_UNREAD "
+        + "with why it is being kept. MISSING means a recorded knob either gained a reader or was deleted "
+        + "([A10] is that cut); either way its entry goes.",
     ).toEqual([...PARSED_BUT_UNREAD].sort());
   });
 });
