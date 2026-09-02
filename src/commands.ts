@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, watch, wr
 import { basename, join } from "node:path";
 import type { StateStore } from "./state.js";
 import type { FileOutcome, ImprovementPayload, IssuePayload } from "./improvements.js";
-import { SLUG_RE } from "./improvements.js";
+import { BRANCH_MAX, BRANCH_RE, isBranchName, SLUG_RE } from "./improvements.js";
 import type { OriginRecord } from "./slack/origin.js";
 import { SLACK_TS_RE } from "./slack/reply.js";
 
@@ -223,11 +223,18 @@ export function validateCommand(raw: unknown): ValidationResult {
       if (!SLUG_RE.test(slug)) {
         return { ok: false, reason: `'slug' must match ${SLUG_RE.source} (it becomes bot/improve-<slug>)` };
       }
+      // The session writes `branch` and the daemon hands it to git: only a
+      // plain local branch name passes — never an option (`--quiet`), a force
+      // refspec (`+wip/x`), a refspec (`a:b`) or a revision expression (`a..b`).
+      const branch = obj["branch"] as string;
+      if (!isBranchName(branch)) {
+        return { ok: false, reason: `'branch' must be a plain local branch name matching ${BRANCH_RE.source} (at most ${BRANCH_MAX} chars)` };
+      }
       return {
         ok: true,
         command: {
           command: "file-improvement-pr",
-          branch: obj["branch"] as string,
+          branch,
           title: obj["title"] as string,
           body: obj["body"] as string,
           slug,

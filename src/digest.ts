@@ -1,12 +1,9 @@
 // Digest support: the EOD sweep writes digest/<date>.md; the daemon lifts its
 // headline into state/status.json (the status collector's pickup surface,
-//). Plus rubric-proposal helpers — rubric/<lens>-<topic>-<date>
-// branches live in the SANDBOX's own local git and are NEVER pushed anywhere;
-// the owner merges or deletes them by hand.
+//).
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { sandboxRoot } from "./config.js";
-import type { Run } from "./improvements.js";
 import { cancelCauseLabel, isLoudCancelCause, type CancelCause, type CancellationTally, type StateStore } from "./state.js";
 
 export const HEADLINE_MAX = 200;
@@ -155,51 +152,3 @@ export function eodDigestContext(store: StateStore, date: string): string {
   return cancellationSummaryLine(dailyCancellations(store, date));
 }
 
-// ---- rubric proposals (local-only branches) --------------------------------
-
-export function rubricBranchName(lens: string, topic: string, date: string): string {
-  const clean = (s: string): string =>
-    s
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "");
-  return `rubric/${clean(lens)}-${clean(topic)}-${date}`;
-}
-
-/**
- * Create the local rubric proposal branch in `repoDir` — this sandbox's own
- * checkout, where agents/ and prompts/ live. Local only — no remote is ever
- * involved; the sweep then edits the pass agent file and adds PROPOSAL.md.
- */
-export async function createRubricBranch(run: Run, repoDir: string, lens: string, topic: string, date: string): Promise<string> {
-  const branch = rubricBranchName(lens, topic, date);
-  await run(["branch", branch], repoDir);
-  return branch;
-}
-
-export interface PendingProposal {
-  branch: string;
-  hasProposal: boolean;
-}
-
-/** rubric/* branches of `repoDir` (the sandbox checkout) with their
- * PROPOSAL.md presence — the digest's "Pending proposals". */
-export async function pendingProposals(run: Run, repoDir: string): Promise<PendingProposal[]> {
-  const out = await run(["branch", "--list", "rubric/*", "--format=%(refname:short)"], repoDir);
-  const branches = out
-    .split("\n")
-    .map((l) => l.trim().replace(/^\*\s*/, ""))
-    .filter((l) => l.startsWith("rubric/"));
-  const proposals: PendingProposal[] = [];
-  for (const branch of branches) {
-    let hasProposal = false;
-    try {
-      const listed = await run(["ls-tree", "--name-only", branch, "PROPOSAL.md"], repoDir);
-      hasProposal = listed.trim().length > 0;
-    } catch {
-      hasProposal = false;
-    }
-    proposals.push({ branch, hasProposal });
-  }
-  return proposals;
-}

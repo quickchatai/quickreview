@@ -15,6 +15,7 @@ import {
   fileIssue,
   findDuplicateIssue,
   improvementRateReason,
+  isBranchName,
   issueRateReason,
   jaccard,
   normalizeTitleTokens,
@@ -227,6 +228,7 @@ describe("fileImprovementPr / fileIssue (dry-run)", () => {
     const run: Run = async (args, cwd) => {
       calls.push(args);
       cwds.push(cwd);
+      if (args[0] === "for-each-ref") return `${args[2]}\n`; // the branch exists
       if (args[0] === "diff") return diff;
       if (args[0] === "push") throw new Error("must not push in dry-run");
       return "";
@@ -234,9 +236,9 @@ describe("fileImprovementPr / fileIssue (dry-run)", () => {
     return { run, calls, cwds };
   }
 
-  const ctx = (run: Run, scratch = "scratch") => ({ cfg, adapter, gate, store, run, ensureRepoDir, scratchDir: join(dir, scratch) });
+  const ctx = (run: Run) => ({ cfg, adapter, gate, store, run, ensureRepoDir });
 
-  it("happy path: gated push_branch + create_pull + add_label, recorded, worktree cleaned", async () => {
+  it("happy path: gated push_branch + create_pull + add_label, recorded — refs only, nothing checked out", async () => {
     const { run, calls, cwds } = runner(numstat([[10, 5, "docs/readme.md"]]));
     const out = await fileImprovementPr(
       { branch: "wip/docs", title: "Docs: clarify retry", body: "rationale\n\norigin: #12", slug: "clarify-retry" },
@@ -255,11 +257,15 @@ describe("fileImprovementPr / fileIssue (dry-run)", () => {
     expect(intents()[2].body.labels).toEqual([cfg.github.improvement_label]);
 
     expect(store.filedSince("improvement_pr", "1970-01-01T00:00:00.000Z")).toBe(1);
-    expect(calls.map((c) => c[0])).toEqual(["fetch", "worktree", "diff", "worktree"]);
-    expect(calls.at(-1)).toContain("remove");
-    // every one of those ran in the reviewed clone — no exceptions,
-    // not the cleanup either.
-    expect(cwds).toEqual([REPO_DIR, REPO_DIR, REPO_DIR, REPO_DIR]);
+    // The channel reads refs and pushes: no `worktree add`, no `checkout` —
+    // the scratch worktree of the first shape served no step and a leftover
+    // one wedged every later filing.
+    expect(calls.map((c) => c[0])).toEqual(["fetch", "for-each-ref", "diff"]);
+    // every one of those ran in the reviewed clone — no exceptions.
+    expect(cwds).toEqual([REPO_DIR, REPO_DIR, REPO_DIR]);
+    // The push intent names the branch as the LOCAL ref it is pushed from.
+    expect(push.path).toBe("git push origin refs/heads/wip/docs:refs/heads/bot/improve-clarify-retry");
+    expect(push.body.source).toBe("refs/heads/wip/docs");
   });
 
   it("the git steps run in the reviewed repo's base clone, resolved once, before the first git call", async () => {
@@ -277,9 +283,44 @@ describe("fileImprovementPr / fileIssue (dry-run)", () => {
     // diffstat is against origin/<base> — the ref just fetched — never the
     // clone's own local `<base>`, which nothing ever advances.
     expect(calls[0]).toEqual(["fetch", "origin", `+refs/heads/${cfg.github.base_branch}:refs/remotes/origin/${cfg.github.base_branch}`]);
-    expect(calls[2]).toEqual(["diff", "--numstat", `origin/${cfg.github.base_branch}...wip/docs`]);
+    // Both sides fully qualified: the session's branch is addressed as a LOCAL
+    // branch (`refs/heads/`), so a remote-tracking name, a tag or a sha is not
+    // "the branch the session prepared", and no argument can start with `-`.
+    expect(calls[1]).toEqual(["for-each-ref", "--format=%(refname)", "refs/heads/wip/docs"]);
+    expect(calls[2]).toEqual(["diff", "--numstat", `refs/remotes/origin/${cfg.github.base_branch}...refs/heads/wip/docs`]);
     expect(new Set(cwds)).toEqual(new Set([REPO_DIR]));
     expect(cwds).toHaveLength(calls.length);
+  });
+
+  it("a branch the clone does not hold as a LOCAL branch is refused after the fetch — no diff, no gate, nothing filed", async () => {
+    const { run, calls } = runner(numstat([[2, 0, "docs/readme.md"]]));
+    const missing: Run = async (args, cwd) => {
+      const out = await run(args, cwd);
+      return args[0] === "for-each-ref" ? "" : out;
+    };
+    const out = await fileImprovementPr({ branch: "wip/never", title: "t", body: "b", slug: "never" }, ctx(missing));
+    expect(out.ok).toBe(false);
+    expect(out.reason).toContain("branch 'wip/never' does not exist");
+    expect(calls.map((c) => c[0])).toEqual(["fetch", "for-each-ref"]);
+    expect(readdirSync(dir)).not.toContain("dryrun");
+    expect(store.filedSince("improvement_pr", "1970-01-01T00:00:00.000Z")).toBe(0);
+  });
+
+  it("the branch name is allowlisted before git ever sees it — an option, a refspec or a revision expression is refused with no git call", async () => {
+    for (const branch of ["--quiet", "-q", "+wip/x", "wip/x:refs/heads/main", "a..b", "wip docs", ".hidden", "wip/.x", "x.lock", "wip/x.lock/y", "a~1", "a^2", "@{-1}", "x\u0007y", "wip/", "/wip", "wip//x"]) {
+      expect(isBranchName(branch), branch).toBe(false);
+      const { run, calls } = runner(numstat([[1, 0, "a.ts"]]));
+      const out = await fileImprovementPr({ branch, title: "t", body: "b", slug: "x" }, ctx(run));
+      expect(out.ok, branch).toBe(false);
+      expect(out.reason, branch).toContain("bad branch name");
+      expect(calls, branch).toHaveLength(0);
+    }
+    expect(ensureRepoDir).not.toHaveBeenCalled();
+    expect(readdirSync(dir)).not.toContain("dryrun");
+    for (const branch of ["wip/docs", "wip/fix-docs", "fix", "improve/2026-09-02.retry", "WIP/Docs_1", "a.b/c-d", "x".repeat(200)]) {
+      expect(isBranchName(branch), branch).toBe(true);
+    }
+    expect(isBranchName("x".repeat(201))).toBe(false);
   });
 
   it("a clone that cannot be produced is a loud rejection, and git never runs", async () => {
@@ -307,7 +348,7 @@ describe("fileImprovementPr / fileIssue (dry-run)", () => {
 
   it("rejects a denylisted path and a 4-file diff", async () => {
     const one = runner(numstat([[1, 0, "infra/main.tf"]]));
-    const denied = await fileImprovementPr({ branch: "wip/x", title: "t", body: "b", slug: "x" }, ctx(one.run, "s1"));
+    const denied = await fileImprovementPr({ branch: "wip/x", title: "t", body: "b", slug: "x" }, ctx(one.run));
     expect(denied.reason).toContain("path denylist");
     expect(new Set(one.cwds)).toEqual(new Set([REPO_DIR]));
     const four = runner(
@@ -318,7 +359,7 @@ describe("fileImprovementPr / fileIssue (dry-run)", () => {
         [1, 0, "d.ts"],
       ]),
     );
-    const many = await fileImprovementPr({ branch: "wip/y", title: "t", body: "b", slug: "y" }, ctx(four.run, "s2"));
+    const many = await fileImprovementPr({ branch: "wip/y", title: "t", body: "b", slug: "y" }, ctx(four.run));
     expect(many.reason).toContain("4 files changed");
     expect(new Set(four.cwds)).toEqual(new Set([REPO_DIR]));
   });
@@ -467,13 +508,14 @@ describe("fileImprovementPr — the push goes through the gate in live mode", ()
     const run: Run = async (args, cwd) => {
       calls.push(args);
       cwds.push(cwd);
+      if (args[0] === "for-each-ref") return `${args[2]}\n`;
       if (args[0] === "diff") return numstat([[3, 1, "docs/readme.md"]]);
       return "";
     };
     return { run, calls, cwds };
   }
 
-  const ctx = (run: Run) => ({ cfg, adapter, gate, store, run, ensureRepoDir: async () => REPO_DIR, scratchDir: join(dir, "scratch") });
+  const ctx = (run: Run) => ({ cfg, adapter, gate, store, run, ensureRepoDir: async () => REPO_DIR });
 
   it("the gate SEES the push_branch intent, and the git push runs from inside it — in the reviewed clone", async () => {
     const { run, calls, cwds } = liveRunner();
@@ -487,10 +529,10 @@ describe("fileImprovementPr — the push goes through the gate in live mode", ()
     // in live mode, so this list began at `create_pull`.
     expect(seen).toEqual(["push_branch", "create_pull", "add_label"]);
     const push = calls.find((c) => c[0] === "push");
-    expect(push).toEqual(["push", "origin", "wip/docs:refs/heads/bot/improve-clarify-retry"]);
+    expect(push).toEqual(["push", "origin", "refs/heads/wip/docs:refs/heads/bot/improve-clarify-retry"]);
     // the push, like every other step, runs where `origin` IS the
     // reviewed repo. Before, it ran with no cwd at all.
-    expect(cwds).toEqual([REPO_DIR, REPO_DIR, REPO_DIR, REPO_DIR, REPO_DIR]);
+    expect(cwds).toEqual([REPO_DIR, REPO_DIR, REPO_DIR, REPO_DIR]);
     expect(store.eventsOn(new Date().toISOString().slice(0, 10)).some((e) => e.kind === "branch_pushed")).toBe(true);
   });
 

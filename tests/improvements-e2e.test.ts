@@ -1,6 +1,6 @@
 // The improvement channel END TO END against REAL git — the second
-// real-subprocess test in the suite, beside worktrees.test.ts, and for the
-// same reason: the thing under test is where git runs. For the channel's whole
+// test in the suite that drives real git, beside worktrees.test.ts, and for
+// the same reason: the thing under test is where git runs. For the channel's whole
 // life every git step ran with no cwd, in the daemon's own checkout — a repo
 // with no remote — so the push could never succeed; a fake runner that
 // discarded its cwd kept the suite green over it. Reading the guard cannot
@@ -37,7 +37,6 @@ let remote: string;
 let seed: string;
 /** The reviewed repo's base clone — `WorktreeManager.basePath` in production. */
 let clone: string;
-let scratch: string;
 let store: StateStore;
 
 function git(cwd: string, ...args: string[]): string {
@@ -90,7 +89,17 @@ function context(gate: MutationGate, adapter: GitHubAdapter): ImprovementContext
     store,
     run: gitRunner(nodeExec),
     ensureRepoDir: async () => clone,
-    scratchDir: scratch,
+  };
+}
+
+/** Everything a filing must leave alone in the clone: its worktree registry,
+ * its checked-out HEAD and its working tree. The channel reads refs and
+ * pushes — it never checks anything out. */
+function cloneShape(): { worktrees: string; head: string; status: string } {
+  return {
+    worktrees: git(clone, "worktree", "list", "--porcelain"),
+    head: git(clone, "rev-parse", "HEAD").trim(),
+    status: git(clone, "status", "--porcelain"),
   };
 }
 
@@ -106,7 +115,6 @@ beforeEach(() => {
   remote = join(tmp, "remote.git");
   seed = join(tmp, "seed");
   clone = join(tmp, "example-app");
-  scratch = join(tmp, "state", "scratch-improve");
   git(tmp, "init", "-q", "--bare", "-b", BASE, remote);
   git(tmp, "init", "-q", "-b", BASE, seed);
   git(seed, "remote", "add", "origin", remote);
@@ -123,7 +131,7 @@ afterEach(() => {
 });
 
 describe("improvement channel end to end — real git, a repo with a remote", () => {
-  it("DRY-RUN: the whole path runs — fresh base, scratch worktree, diffstat, gate — and the push lands in state/dryrun/, never on the remote", async () => {
+  it("DRY-RUN: the whole path runs — fresh base, branch check, diffstat, gate — and the push lands in state/dryrun/, never on the remote", async () => {
     const dryrun = join(tmp, "state", "dryrun");
     const gate = new MutationGate(true, dryrun, async () => {
       throw new Error("executor must not run in dry-run");
@@ -133,6 +141,7 @@ describe("improvement channel end to end — real git, a repo with a remote", ()
     }) as unknown as typeof fetch);
     const before = remoteHeads();
     const sha = prepareBranch("wip/docs", "docs/readme.md", 10);
+    const shape = cloneShape();
 
     const out = await fileImprovementPr(
       { branch: "wip/docs", title: "Docs: clarify retry", body: "rationale", slug: "clarify-retry" },
@@ -144,16 +153,50 @@ describe("improvement channel end to end — real git, a repo with a remote", ()
     expect(intents.map((i) => i.kind)).toEqual(["push_branch", "create_pull", "add_label"]);
     expect(intents[0]).toMatchObject({
       method: "git",
-      path: "git push origin wip/docs:refs/heads/bot/improve-clarify-retry",
-      body: { remote: "origin", source: "wip/docs", target: "bot/improve-clarify-retry" },
+      path: "git push origin refs/heads/wip/docs:refs/heads/bot/improve-clarify-retry",
+      body: { remote: "origin", source: "refs/heads/wip/docs", target: "bot/improve-clarify-retry" },
     });
     // Suppressed means suppressed: the remote is byte-for-byte what it was.
     expect(remoteHeads()).toEqual(before);
     expect(git(clone, "rev-parse", "wip/docs").trim()).toBe(sha);
-    // The scratch worktree was real (git knew it) and is gone again.
-    expect(existsSync(scratch)).toBe(false);
-    expect(git(clone, "worktree", "list")).not.toContain("scratch-improve");
+    // Nothing was checked out: no worktree added, HEAD and the tree untouched.
+    expect(cloneShape()).toEqual(shape);
     expect(store.filedSince("improvement_pr", "1970-01-01T00:00:00.000Z")).toBe(1);
+  });
+
+  it("filings never wedge each other: a second filing succeeds after a first, and neither leaves a checkout behind", async () => {
+    // The first shape materialised the branch into a scratch worktree at a
+    // fixed path and removed it in a `finally`. A daemon killed in between
+    // left a populated directory that `worktree add --force` does not clear,
+    // so every later filing failed on "already exists" until an operator
+    // deleted it by hand. No step ever needed the checkout; now there is none
+    // to leak.
+    const dryrun = join(tmp, "state", "dryrun");
+    const gate = new MutationGate(true, dryrun, async () => {
+      throw new Error("executor must not run in dry-run");
+    });
+    const adapter = new GitHubAdapter(cfg, fakeMinter, gate, (async () => {
+      throw new Error("no direct fetch expected");
+    }) as unknown as typeof fetch);
+    prepareBranch("wip/one", "docs/one.md", 2);
+    prepareBranch("wip/two", "docs/two.md", 3);
+    const shape = cloneShape();
+
+    const first = await fileImprovementPr({ branch: "wip/one", title: "t", body: "b", slug: "one" }, context(gate, adapter));
+    expect(first).toMatchObject({ ok: true, files: 1, lines: 2 });
+    // A fresh ledger for the second call: the day cap (1/day) is not what is
+    // under test here.
+    store.close();
+    store = new StateStore(":memory:");
+    const second = await fileImprovementPr({ branch: "wip/two", title: "t", body: "b", slug: "two" }, context(gate, adapter));
+    expect(second).toMatchObject({ ok: true, files: 1, lines: 3 });
+
+    expect(dryRunIntents(dryrun).filter((i) => i.kind === "push_branch").map((i) => (i.body as { target: string }).target)).toEqual([
+      "bot/improve-one",
+      "bot/improve-two",
+    ]);
+    expect(cloneShape()).toEqual(shape);
+    expect(existsSync(join(tmp, "state", "scratch-improve"))).toBe(false);
   });
 
   it("LIVE: the push completes through the gate — exactly one new ref on the remote, bot/improve-<slug>, the base untouched", async () => {
@@ -187,7 +230,6 @@ describe("improvement channel end to end — real git, a repo with a remote", ()
     // and the base branch is exactly where it was.
     expect(after).toEqual({ ...before, "refs/heads/bot/improve-clarify-retry": sha });
     expect(after[`refs/heads/${BASE}`]).toBe(before[`refs/heads/${BASE}`]);
-    expect(existsSync(scratch)).toBe(false);
     expect(store.filedSince("improvement_pr", "1970-01-01T00:00:00.000Z")).toBe(1);
     const kinds = store.eventsOn(new Date().toISOString().slice(0, 10)).map((e) => e.kind);
     expect(kinds).toContain("branch_pushed");
@@ -228,7 +270,6 @@ describe("improvement channel end to end — real git, a repo with a remote", ()
     expect(kinds).not.toContain("branch_pushed");
     expect(kinds).toContain("improvement_pr_rejected");
     expect(store.filedSince("improvement_pr", "1970-01-01T00:00:00.000Z")).toBe(0);
-    expect(existsSync(scratch)).toBe(false);
   });
 
   it("the caps bind on the real diffstat: 51 lines refused, a denylisted path refused, nothing reaches the gate or the remote", async () => {
@@ -262,7 +303,6 @@ describe("improvement channel end to end — real git, a repo with a remote", ()
       "add_label:",
     ]);
     expect(remoteHeads()).toEqual(before);
-    expect(existsSync(scratch)).toBe(false);
   });
 
   it("the diffstat is against the FRESH base (origin/<base>), not the clone's frozen local branch", async () => {
@@ -300,10 +340,57 @@ describe("improvement channel end to end — real git, a repo with a remote", ()
     const out = await fileImprovementPr({ branch: "wip/nothing", title: "t", body: "b", slug: "nothing" }, context(gate, adapter));
 
     expect(out.ok).toBe(false);
-    expect(out.reason).toContain("improvement-PR pipeline failed");
-    expect(out.reason).toMatch(/wip\/nothing/);
+    expect(out.reason).toBe("branch 'wip/nothing' does not exist in the reviewed repo's clone — the session never prepared it");
     expect(dryRunIntents(dryrun)).toEqual([]);
     expect(store.filedSince("improvement_pr", "1970-01-01T00:00:00.000Z")).toBe(0);
-    expect(existsSync(scratch)).toBe(false);
+  });
+
+  it("only a LOCAL branch of the clone is 'the branch the session prepared': a resolvable remote-tracking name is refused, nothing pushed", async () => {
+    // `origin/<base>` resolves in the clone and would diff clean against
+    // itself — but it is a human's branch, not one the session prepared, and
+    // addressing the branch as refs/heads/<name> makes it unreachable here.
+    const dryrun = join(tmp, "state", "dryrun");
+    const gate = new MutationGate(true, dryrun, async () => {
+      throw new Error("executor must not run in dry-run");
+    });
+    const adapter = new GitHubAdapter(cfg, fakeMinter, gate, (async () => {
+      throw new Error("no direct fetch expected");
+    }) as unknown as typeof fetch);
+    const before = remoteHeads();
+    expect(git(clone, "rev-parse", "--verify", `origin/${BASE}`).trim()).toBe(before[`refs/heads/${BASE}`]);
+
+    const out = await fileImprovementPr({ branch: `origin/${BASE}`, title: "t", body: "b", slug: "base" }, context(gate, adapter));
+
+    expect(out.ok).toBe(false);
+    expect(out.reason).toContain(`branch 'origin/${BASE}' does not exist`);
+    expect(dryRunIntents(dryrun)).toEqual([]);
+    expect(remoteHeads()).toEqual(before);
+  });
+
+  it("an option-shaped branch name never reaches git: refused before the first git call, the clone and the remote untouched", async () => {
+    // `git worktree add … --quiet` used to ACCEPT this (a detached worktree
+    // at HEAD) and only the diff refused it, by accident of argument order.
+    const dryrun = join(tmp, "state", "dryrun");
+    const gate = new MutationGate(true, dryrun, async () => {
+      throw new Error("executor must not run in dry-run");
+    });
+    const adapter = new GitHubAdapter(cfg, fakeMinter, gate, (async () => {
+      throw new Error("no direct fetch expected");
+    }) as unknown as typeof fetch);
+    const before = remoteHeads();
+    const shape = cloneShape();
+    const fetched = () => existsSync(join(clone, ".git", "FETCH_HEAD"));
+    expect(fetched()).toBe(false);
+
+    for (const branch of ["--quiet", "+wip/docs", `wip/docs:refs/heads/${BASE}`]) {
+      const out = await fileImprovementPr({ branch, title: "t", body: "b", slug: "opt" }, context(gate, adapter));
+      expect(out.ok, branch).toBe(false);
+      expect(out.reason, branch).toContain("bad branch name");
+    }
+    // No fetch, no worktree, no push: git was never invoked.
+    expect(fetched()).toBe(false);
+    expect(cloneShape()).toEqual(shape);
+    expect(dryRunIntents(dryrun)).toEqual([]);
+    expect(remoteHeads()).toEqual(before);
   });
 });

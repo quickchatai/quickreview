@@ -1,16 +1,21 @@
 # tests/ — conventions
 
-- Run the full suite as `timeout 900 npm test` (~1600 tests, seconds); a
-  single file as `timeout 120 npx vitest run tests/<file>.test.ts`. Never
-  `--reporter=basic`.
+- Run the full suite as `timeout 900 npm test` (4,500+ tests, well under a
+  minute); a single file as `timeout 120 npx vitest run tests/<file>.test.ts`.
+  Never `--reporter=basic`.
 - Everything mocks I/O: fake fetch/adapters, `StateStore(":memory:")`, temp
-  dirs. Exceptions that touch the real world: `worktrees.test.ts` (scratch git
-  repo subprocesses), `improvements-e2e.test.ts` (the improvement
+  dirs. The two that drive REAL git: `worktrees.test.ts` (scratch git repo
+  subprocesses) and `improvements-e2e.test.ts` (the improvement
   channel against a scratch clone with a bare "remote" — the push, the caps
   and the dry-run suppression observed on the remote, through the production
-  git runner; no network) and `guards-shell.test.ts` (runs the real scripts
-  against a loopback HTTP stub — the shell/gate parity proof, same cases as
-  `guards.test.ts`).
+  git runner; no network). Other tests that spawn a real local subprocess do
+  so for a shell script or a CLI of this repo, never for a network or a VM —
+  `guards-shell.test.ts` (the real scripts against a loopback HTTP stub — the
+  shell/gate parity proof, same cases as `guards.test.ts`), `pr-self-shell`,
+  `fences-gate`/`fences-cigate`, `shellquote`, `collect-secrets`, `deploy`
+  (the preflight, never a deploy), `publishability`/`publish-snapshot`, and
+  several TUI suites over stub binaries. The list drifts; find the current
+  one with `grep -l child_process tests/*.test.ts`.
 - `seed-integrity.test.ts` enforces root rule 6 (sha256 manifest over the
   frozen `agents/`+`prompts/` seeds, `RATIFIED_DIVERGENCE` for ratified
   reseeds, `NON_SEEDED` for ours-to-edit files). A failure here means you

@@ -6,7 +6,7 @@
 // Branch rule: the ONLY branch this system ever pushes anywhere is
 // bot/improve-<slug>. The base branch ([github] base_branch — master on
 // the reviewed repo) is never pushed, never merged into, never touched beyond
-// `fetch` + read-only diffing. rubric/* branches stay local (see digest.ts).
+// `fetch` + read-only diffing.
 //
 // Working tree rule: every git step below runs in the BASE CLONE of
 // the reviewed repo (`WorktreeManager.basePath`) — the one working tree whose
@@ -16,6 +16,14 @@
 // `filed_items` rows, zero `branch_pushed` events, and a suite that discarded
 // the cwd it was handed. `Run` now REQUIRES a cwd so a call without one does
 // not compile, and the context carries the clone locator.
+//
+// The channel never checks anything out. A diffstat and a push both read refs;
+// the scratch worktree the first shape materialised the branch into served no
+// step and was a wedge waiting to happen (a daemon killed between `worktree
+// add` and the cleanup left a populated directory that `--force` does not
+// clear, and every later filing failed on "already exists"). The clone's own
+// working tree is never touched either — the base fetch lands in
+// `refs/remotes/`, and the branch is addressed by ref, never checked out.
 import { IMPROVEMENT_DENY_PREFIXES_DEFAULT, type Config } from "./config.js";
 import type { GitHubAdapter } from "./github.js";
 import type { MutationGate } from "./gate.js";
@@ -74,8 +82,6 @@ export interface ImprovementContext {
    * remote instead of failing on a missing directory.
    */
   ensureRepoDir: () => Promise<string>;
-  /** Scratch worktree path used for the checkout (removed afterwards). */
-  scratchDir: string;
   /** Base branch override. Default: `[github] base_branch` off `cfg`
    * ("main" unless configured — the original deployment sets "master").
    * Never pushed, never modified. */
@@ -236,6 +242,27 @@ export function findDuplicateIssue(
 
 export const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,48}$/;
 
+/**
+ * The branch a session says it prepared, as the command file carries it: a
+ * plain LOCAL branch name (`wip/docs`) and nothing else. The overseer LLM
+ * writes this field, and the daemon hands it to git — so the shape is
+ * allowlisted at the command boundary (src/commands.ts) and again here, not
+ * merely passed through: every path segment starts with a letter or digit
+ * (so no leading `-` option and no leading `+` force-refspec), the segment
+ * alphabet has no `:` (a refspec separator), no whitespace or control
+ * character and none of git's forbidden punctuation, `..` never appears, and
+ * no segment ends in `.lock`. Belt beside the structural fix below, which
+ * addresses the branch as `refs/heads/<name>` everywhere — an argument that
+ * begins with `refs/` is never an option to any git command.
+ */
+export const BRANCH_RE = /^(?!.*\.\.)(?!.*\.lock(?:\/|$))[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)*$/;
+
+export const BRANCH_MAX = 200;
+
+export function isBranchName(name: string): boolean {
+  return name.length <= BRANCH_MAX && BRANCH_RE.test(name);
+}
+
 export function botBranchFor(slug: string): string {
   return `bot/improve-${slug}`;
 }
@@ -244,10 +271,11 @@ export function botBranchFor(slug: string): string {
 
 /**
  * file-improvement-pr: in the reviewed repo's base clone — fetch the fresh base
- * branch → materialise the session-prepared branch in a scratch worktree →
- * daemon diffstat + rate caps → push bot/improve-<slug> (gated) → open PR +
- * label (gated) → record. Rejections come back with a reason the command
- * executor writes into the result file for the overseer.
+ * branch → confirm the session-prepared branch exists as a LOCAL branch there
+ * → daemon diffstat + rate caps → push bot/improve-<slug> (gated) → open PR +
+ * label (gated) → record. Nothing is checked out at any step. Rejections come
+ * back with a reason the command executor writes into the result file for the
+ * overseer.
  */
 export async function fileImprovementPr(payload: ImprovementPayload, ctx: ImprovementContext): Promise<FileOutcome> {
   const now = (ctx.now ?? (() => new Date()))();
@@ -260,22 +288,35 @@ export async function fileImprovementPr(payload: ImprovementPayload, ctx: Improv
   };
 
   if (!SLUG_RE.test(payload.slug)) return reject(`bad slug '${payload.slug}'`);
+  if (!isBranchName(payload.branch)) return reject(`bad branch name '${payload.branch}' (a plain local branch name is required)`);
 
   const rate = improvementRateReason(ctx.store, ctx.cfg.caps, now);
   if (rate) return reject(rate);
 
-  let worktreeAdded = false;
-  let repoDir = "";
+  // Fully qualified on both sides: the base as the remote-tracking ref the
+  // fetch below writes, the session's branch as a LOCAL branch of the clone.
+  // A remote-tracking or otherwise merely resolvable name (`origin/<base>`, a
+  // tag, a sha) is not a branch the session prepared and is refused by the
+  // existence check, and neither argument can ever begin with `-`.
+  const baseRef = `refs/remotes/origin/${base}`;
+  const branchRef = `refs/heads/${payload.branch}`;
+  const refspec = `${branchRef}:refs/heads/${botBranch}`;
+
   try {
-    repoDir = await ctx.ensureRepoDir();
+    const repoDir = await ctx.ensureRepoDir();
     // Fresh base branch — fetched (forced, like every base fetch in
     // worktrees.ts: a rewritten base must not wedge the channel), never
     // pushed, never checked out for writing.
-    await ctx.run(["fetch", "origin", `+refs/heads/${base}:refs/remotes/origin/${base}`], repoDir);
-    await ctx.run(["worktree", "add", "--force", "--detach", ctx.scratchDir, payload.branch], repoDir);
-    worktreeAdded = true;
+    await ctx.run(["fetch", "origin", `+refs/heads/${base}:${baseRef}`], repoDir);
+    // `for-each-ref` with an exact ref prints that ref or nothing (a branch
+    // cannot coexist with a branch nested under its name) — total, no exit
+    // code to interpret.
+    const found = await ctx.run(["for-each-ref", "--format=%(refname)", branchRef], repoDir);
+    if (found.trim() !== branchRef) {
+      return reject(`branch '${payload.branch}' does not exist in the reviewed repo's clone — the session never prepared it`);
+    }
 
-    const numstat = await ctx.run(["diff", "--numstat", `origin/${base}...${payload.branch}`], repoDir);
+    const numstat = await ctx.run(["diff", "--numstat", `${baseRef}...${branchRef}`], repoDir);
     const entries = parseNumstat(numstat);
     const verdict = checkDiffstat(entries, ctx.cfg.caps);
     if (!verdict.ok) return reject(verdict.reason!, { files: verdict.files, lines: verdict.lines });
@@ -284,8 +325,8 @@ export async function fileImprovementPr(payload: ImprovementPayload, ctx: Improv
     const pushIntent = {
       kind: "push_branch" as const,
       method: "git" as const,
-      path: `git push origin ${payload.branch}:refs/heads/${botBranch}`,
-      body: { remote: "origin", source: payload.branch, target: botBranch },
+      path: `git push origin ${refspec}`,
+      body: { remote: "origin", source: branchRef, target: botBranch },
       note: `push ${botBranch} (${verdict.files} files, ${verdict.lines} lines)`,
     };
     // the push goes through the gate in BOTH modes. It used to consult
@@ -295,7 +336,7 @@ export async function fileImprovementPr(payload: ImprovementPayload, ctx: Improv
     // owns the decision (kind check, guards, dry-run branch) and calls this
     // performer only when the mutation is genuinely to happen.
     const pushResult = await ctx.gate.execute(pushIntent, async () => {
-      await ctx.run(["push", "origin", `${payload.branch}:refs/heads/${botBranch}`], repoDir);
+      await ctx.run(["push", "origin", refspec], repoDir);
       ctx.store.logEvent("branch_pushed", null, { branch: botBranch });
       return { pushed: true };
     });
@@ -328,14 +369,6 @@ export async function fileImprovementPr(payload: ImprovementPayload, ctx: Improv
     };
   } catch (err) {
     return reject(`improvement-PR pipeline failed: ${(err as Error).message}`);
-  } finally {
-    if (worktreeAdded) {
-      try {
-        await ctx.run(["worktree", "remove", "--force", ctx.scratchDir], repoDir);
-      } catch {
-        /* scratch cleanup is best-effort */
-      }
-    }
   }
 }
 

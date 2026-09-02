@@ -98,6 +98,14 @@ describe("validateCommand — whitelist", () => {
     expect(validateCommand({ command: "resume-pr", pr: 1, reason: "x" }).ok).toBe(false); // unknown field
     expect(validateCommand({ command: "flag-owner", reason: "wrong field name" }).ok).toBe(false);
     expect(validateCommand({ command: "file-improvement-pr", branch: "b", title: "t", body: "y", slug: "Bad Slug" }).ok).toBe(false);
+    // `branch` is written by the overseer session and handed to git: only a
+    // plain local branch name passes — an option, a force refspec, a refspec
+    // or a revision expression is refused at the boundary, before git.
+    for (const branch of ["--quiet", "+wip/x", "wip/x:refs/heads/main", "a..b", "wip docs", "a~1", "@{-1}", ".x"]) {
+      const bad = validateCommand({ command: "file-improvement-pr", branch, title: "t", body: "y", slug: "ok" });
+      if (bad.ok) throw new Error(`branch ${JSON.stringify(branch)} must be refused`);
+      expect(bad.reason, branch).toMatch(/'branch' must be a plain local branch name/);
+    }
     expect(validateCommand({ command: "retry-thread-decision", comment_id: "5001" }).ok).toBe(false);
     expect(validateCommand({ command: "retry-thread-decision", comment_id: 5001, force: true }).ok).toBe(false);
     expect(validateCommand("nope").ok).toBe(false);

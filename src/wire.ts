@@ -705,7 +705,6 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
             // The reviewed repo's base clone — the ONE tree with `origin`
             // pointing at the reviewed repo and the session's branch in it.
             ensureRepoDir: () => sessions.worktrees.ensureBaseClone(),
-            scratchDir: join(root, "state", "scratch-improve"),
           });
         },
         fileIssue(payload) {

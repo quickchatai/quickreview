@@ -151,7 +151,7 @@ export type MutationExecutor = (intent: MutationIntent) => Promise<unknown>;
  *
  * The decision taken instead of softening the header: the gate genuinely
  * mediates the push. The caller — which is the only thing that knows which
- * scratch worktree the push must run in — hands the gate a performer, and the
+ * clone the push must run in — hands the gate a performer, and the
  * GATE, never the call site, decides whether it runs: the kind check, the
  * `forceLive` check, the guards and the dry-run branch all run first, exactly
  * as they do for a REST mutation.
