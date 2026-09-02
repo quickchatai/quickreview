@@ -47,7 +47,10 @@ let reviews: ReviewStub[];
 let dbPath: string;
 /** Check-runs at HEAD (guard 4). Green by default: every pre-existing
  * case here is about another guard and must not trip this one. */
-let checkRuns: Array<{ name: string; status: string; conclusion: string | null; started_at?: string }>;
+let checkRuns: Array<{ name: string; status: string; conclusion: string | null; started_at?: string | null }>;
+/** Commit statuses at HEAD (the combined status endpoint). Empty by default
+ * for the same reason. */
+let statuses: Array<{ context: string; state: string }>;
 
 const CONFIG = (secretsDir: string) =>
   [
@@ -69,6 +72,7 @@ beforeEach(async () => {
   pr = { state: "open", merged: false, head: { sha: HEAD }, user: { login: "pr-author" } };
   reviews = [];
   checkRuns = [{ name: "unit", status: "completed", conclusion: "success" }];
+  statuses = [];
   dbPath = join(dir, "state.db");
   server = createServer((req, res) => {
     if (req.method === "GET" && req.url?.includes("/check-runs")) {
@@ -78,7 +82,7 @@ beforeEach(async () => {
     }
     if (req.method === "GET" && req.url?.includes("/commits/") && req.url.includes("/status")) {
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ state: "success", statuses: [] }));
+      res.end(JSON.stringify({ state: "success", statuses }));
       return;
     }
     if (req.method === "GET" && req.url?.startsWith("/repos/") && req.url.includes("/pulls/5180/reviews")) {
@@ -238,6 +242,41 @@ describe("scripts/approve-pr.sh — guard 4 (red CI hard-gates APPROVE)", () => 
     const res = await run("approve-pr.sh", ["5180", bodyFile()]);
     expect(res.ok).toBe(false);
     expect(res.out).toContain("CI is red");
+  });
+
+  // Parity with: a commit status under a check-run's name is a second
+  // check. The shell half never grouped statuses with runs, so it was already
+  // red here while the gate half read green — the parity both files claim was
+  // false until the classifier was fixed. These pin the shell side so it can
+  // never regress to the gate's old answer.
+  it.each([
+    ["failure", "CI is red"],
+    ["error", "CI is red"],
+    ["pending", "CI is pending"],
+  ])("refuses over a %s commit status that shares a passing check-run's name", async (state, message) => {
+    checkRuns = [{ name: "ci", status: "completed", conclusion: "success", started_at: "2026-09-01T10:00:00Z" }];
+    statuses = [{ context: "ci", state }];
+    const res = await run("approve-pr.sh", ["5180", bodyFile()]);
+    expect(res.ok).toBe(false);
+    expect(res.out).toContain(message);
+    expect(dryrunRecords()).toEqual([]);
+  });
+
+  it("a queued run with a null started_at is pending, not green off the older completed run of its name", async () => {
+    checkRuns = [
+      { name: "ci", status: "completed", conclusion: "success", started_at: "2026-09-01T10:00:00Z" },
+      { name: "ci", status: "queued", conclusion: null, started_at: null },
+    ];
+    const res = await run("approve-pr.sh", ["5180", bodyFile()]);
+    expect(res.ok).toBe(false);
+    expect(res.out).toContain("CI is pending");
+  });
+
+  it("a passing status beside a passing run of its name still approves", async () => {
+    checkRuns = [{ name: "ci", status: "completed", conclusion: "success", started_at: "2026-09-01T10:00:00Z" }];
+    statuses = [{ context: "ci", state: "success" }];
+    const res = await run("approve-pr.sh", ["5180", bodyFile()]);
+    expect(res.ok).toBe(true);
   });
 
   // Parity with no_checks_is_red (the owner, 2026-08-19).

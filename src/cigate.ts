@@ -43,8 +43,11 @@ export interface CheckSummary {
   /** `success` | `failure` | `cancelled` | `timed_out` | `skipped` | … */
   conclusion: string | null;
   /** When the run started — the recency key for latest-run-per-name
-   * (the owner, 2026-08-19). Absent on commit statuses (already deduped by
-   * GitHub's combined endpoint) and in older stored summaries. */
+   * (the owner, 2026-08-19). Set on check-runs (nullable in GitHub's schema)
+   * and NEVER on commit statuses: the combined status endpoint already
+   * dedupes those per context, and the adapter does not carry a time for
+   * them. `latestRunPerName` treats an absent value as "no timestamp",
+   * never as "older than everything" — see its rule. */
   started_at?: string | null;
 }
 
@@ -68,6 +71,54 @@ const INERT_CONCLUSIONS = new Set(["skipped", "neutral"]);
 const UNFINISHED = new Set(["queued", "in_progress", "waiting", "pending", "requested"]);
 
 /**
+ * Only the MOST RECENT run of each check name counts (the owner, 2026-08-19).
+ * GitHub auto-cancels superseded workflow runs, leaving permanent
+ * `completed/cancelled` husks beside the run that actually finished — under
+ * the original any-run rule every such head classified red forever and no
+ * withheld approval could ever release.
+ *
+ * The rule, exactly:
+ *
+ *  - Recency is `started_at`, and it collapses ONLY entries that carry one.
+ *    Among timestamped entries of one name the latest start wins; an equal
+ *    start resolves to the later list position.
+ *  - An entry WITHOUT a timestamp never competes with one that has one — in
+ *    either direction. It stands beside that name's latest timestamped run
+ *    and counts on its own. A missing timestamp is not "older than
+ *    everything": it is unknown, and unknown is never read as superseded.
+ *  - Among untimestamped entries of one name, the later list position wins.
+ *
+ * Why the middle clause exists: the adapter (`github.ts listChecks`) always
+ * sets `started_at` on a check-run and never on a commit status, so the mixed
+ * case is the ONLY case it produces for a name collision — a repo whose CI
+ * posts a status under the same context as a check-run. The original code
+ * defaulted an absent value to `""`, so a failing status could never beat a
+ * same-named passing check-run, and the head read green — "Red CI hard-gates
+ * APPROVE" defeated by an ordinary configuration. The same default let a
+ * queued check-run with a null `started_at` lose to the older completed run
+ * of its name. Both now count. `scripts/guards.sh` and `scripts/pr-checks.sh`
+ * apply the identical rule; keep the three in step.
+ */
+export function latestRunPerName(checks: readonly CheckSummary[]): CheckSummary[] {
+  interface Kept {
+    check: CheckSummary;
+    idx: number;
+  }
+  const timed = new Map<string, Kept & { at: string }>();
+  const untimed = new Map<string, Kept>();
+  checks.forEach((check, idx) => {
+    const at = check.started_at || null; // "" carries no time either
+    if (at === null) {
+      untimed.set(check.name, { check, idx });
+      return;
+    }
+    const prev = timed.get(check.name);
+    if (!prev || at >= prev.at) timed.set(check.name, { check, idx, at });
+  });
+  return [...timed.values(), ...untimed.values()].sort((x, y) => x.idx - y.idx).map((e) => e.check);
+}
+
+/**
  * Classify the checks at one head. Pure — both the gate guard and the shell
  * mirror answer from this table, so "green" means the same thing on every
  * posting route.
@@ -77,29 +128,6 @@ const UNFINISHED = new Set(["queued", "in_progress", "waiting", "pending", "requ
  * argued into an approval. It reports `red`, because there is no evidence this
  * PR's code passed anything.
  */
-/** Only the MOST RECENT run of each check name counts (the owner, 2026-08-19).
- * GitHub auto-cancels superseded workflow runs, leaving permanent
- * `completed/cancelled` husks beside the run that actually finished — under
- * the original any-run rule every such head classified red forever and no
- * withheld approval could ever release. Recency is `started_at`; entries
- * without one (commit statuses — already deduped by GitHub — or older data)
- * fall back to list position, later wins. */
-export function latestRunPerName(checks: readonly CheckSummary[]): CheckSummary[] {
-  const byName = new Map<string, { check: CheckSummary; idx: number }>();
-  checks.forEach((check, idx) => {
-    const prev = byName.get(check.name);
-    if (!prev) {
-      byName.set(check.name, { check, idx });
-      return;
-    }
-    const a = prev.check.started_at ?? "";
-    const b = check.started_at ?? "";
-    // Later start wins; ties (and missing timestamps) resolve to list order.
-    if (b >= a) byName.set(check.name, { check, idx });
-  });
-  return [...byName.values()].sort((x, y) => x.idx - y.idx).map((e) => e.check);
-}
-
 export function classifyCi(allChecks: readonly CheckSummary[]): CiState {
   const checks = latestRunPerName(allChecks);
   if (checks.length === 0) return "none";

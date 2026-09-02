@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ciBlocksApproval,
   classifyCi,
+  latestRunPerName,
   retryWithheldApproval,
   withheldApprovalNote,
   withholdApproval,
@@ -18,7 +19,8 @@ import { parseConfig, GUARDS_DEFAULTS, type Config } from "../src/config.js";
 import { dispatchOnce, type DispatchAdapter } from "../src/dispatch.js";
 import { MutationGate, type GateResult, type MutationIntent } from "../src/gate.js";
 import { makePostingGuard, type GuardAdapter } from "../src/guards.js";
-import type { PrFileEntry } from "../src/github.js";
+import { GitHubAdapter, type PrFileEntry } from "../src/github.js";
+import type { FetchFn, TokenMinter } from "../src/githubAuth.js";
 import { StateStore } from "../src/state.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
 import { applyInterpretation, interpretEvent } from "../src/webhook.js";
@@ -115,6 +117,89 @@ describe("latest-run-per-name", () => {
   it("entries without started_at resolve by list position — later wins", () => {
     expect(classifyCi([done("cancelled", "sync"), done("success", "sync")])).toBe("green");
     expect(classifyCi([done("success", "sync"), done("cancelled", "sync")])).toBe("red");
+  });
+});
+
+//. The audit read `latestRunPerName`, called it honest and
+// cleared it; one constructed input broke it. Recency defaulted an absent
+// `started_at` to "", so an entry WITHOUT a timestamp always lost the name
+// collision to one WITH a timestamp — and the adapter sets `started_at` on
+// every check-run and on no commit status, so a failing status under the same
+// context as a passing check-run was masked, and red CI read green. The rule
+// now: recency collapses only timestamped entries; an untimestamped entry
+// stands beside them and counts on its own. Every row below is an input the
+// real adapter produces, driven through the real adapter's own payload shapes.
+describe("— a same-named commit status is a second check, never a superseded run", () => {
+  const TS = "2026-09-01T10:00:00Z";
+  const minter = { appJwt: () => "jwt", installationToken: async () => "tok", invalidate: () => {} } as unknown as TokenMinter;
+
+  /** The real `listChecks` over the two endpoints it reads, with GitHub's own
+   * response shapes: check-runs carry `name`/`status`/`conclusion`/`started_at`,
+   * the combined status carries `statuses[].context`/`state`. */
+  async function adapterChecks(checkRuns: unknown[], statuses: unknown[]): Promise<CheckSummary[]> {
+    const fetchFn = (async (url: string | URL) => {
+      const u = String(url);
+      const payload = u.includes("/check-runs") ? { check_runs: checkRuns } : u.includes("/status") ? { state: "x", statuses } : null;
+      if (payload === null) throw new Error(`unexpected ${u}`);
+      return { ok: true, status: 200, json: async () => payload, text: async () => JSON.stringify(payload) } as unknown as Response;
+    }) as unknown as FetchFn;
+    const gate = new MutationGate(true, dryrunDir, async () => ({}));
+    return new GitHubAdapter(cfg, minter, gate, fetchFn, "https://api.github.com").listChecks(HEAD);
+  }
+  const passingRun = { name: "ci", status: "completed", conclusion: "success", started_at: TS };
+  const statusOf = (state: string, context = "ci") => ({ context, state });
+
+  it.each([
+    ["failure", "red"],
+    ["error", "red"],
+    ["pending", "pending"],
+  ] as const)("a %s commit status under a passing check-run's name reads %s, in both orders", async (state, expected) => {
+    // The ticket's table, through the adapter: the two of them, the status
+    // alone, and distinct names as the control that nothing else changed.
+    const mixed = await adapterChecks([passingRun], [statusOf(state)]);
+    expect(mixed).toHaveLength(2);
+    expect(classifyCi(mixed)).toBe(expected);
+    // The adapter always lists check-runs first; the classifier must not
+    // depend on that, so the same summaries reversed must agree.
+    expect(classifyCi([...mixed].reverse())).toBe(expected);
+    expect(classifyCi(await adapterChecks([], [statusOf(state)]))).toBe(expected);
+    expect(classifyCi(await adapterChecks([passingRun], [statusOf(state, "other")]))).toBe(expected);
+  });
+
+  it("a passing status beside a passing run of its name is still green — the fix admits only what is really there", async () => {
+    expect(classifyCi(await adapterChecks([passingRun], [statusOf("success")]))).toBe("green");
+  });
+
+  it("a check-run with a null started_at is never read as superseded by an older timestamped run", () => {
+    // GitHub's schema makes started_at nullable on check-runs; the adapter
+    // passes null through. "Unknown when" is not "older than everything".
+    const queued: CheckSummary = { name: "ci", status: "queued", conclusion: null, started_at: null };
+    const failed: CheckSummary = { name: "ci", status: "completed", conclusion: "failure", started_at: null };
+    const passed: CheckSummary = { ...passingRun };
+    expect(classifyCi([passed, queued])).toBe("pending");
+    expect(classifyCi([queued, passed])).toBe("pending");
+    expect(classifyCi([passed, failed])).toBe("red");
+    expect(classifyCi([failed, passed])).toBe("red");
+  });
+
+  it("states the rule: timestamped entries collapse (equal start → later wins), untimestamped ones stand beside them, last per name", () => {
+    const a: CheckSummary = { name: "ci", status: "completed", conclusion: "success", started_at: TS };
+    const b: CheckSummary = { name: "ci", status: "completed", conclusion: "failure", started_at: TS };
+    const older: CheckSummary = { name: "ci", status: "completed", conclusion: "cancelled", started_at: "2026-09-01T09:00:00Z" };
+    const u1: CheckSummary = { name: "ci", status: "completed", conclusion: "failure" };
+    const u2: CheckSummary = { name: "ci", status: "completed", conclusion: "success", started_at: "" }; // "" carries no time
+    // Equal start: the later list position wins, in either order.
+    expect(latestRunPerName([a, b])).toEqual([b]);
+    expect(latestRunPerName([b, a])).toEqual([a]);
+    // A later start beats an earlier one wherever it sits in the list.
+    expect(latestRunPerName([a, older])).toEqual([a]);
+    expect(latestRunPerName([older, a])).toEqual([a]);
+    // One timestamped survivor AND one untimestamped survivor per name, list order kept.
+    expect(latestRunPerName([older, u1, a, u2])).toEqual([a, u2]);
+    expect(latestRunPerName([u1, a])).toEqual([u1, a]);
+    // Among untimestamped entries the last one wins.
+    expect(latestRunPerName([u1, u2])).toEqual([u2]);
+    expect(latestRunPerName([u2, u1])).toEqual([u1]);
   });
 });
 
