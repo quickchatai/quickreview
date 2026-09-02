@@ -14,9 +14,9 @@
 // injection finding anchored on the reviewed repo's OWN agent-directive files
 // (.claude/**, prompts/**, AGENTS.md/CLAUDE.md and kin, edited through the
 // normal PR flow) never blocks — directive text inside a directive file is the
-// file doing its job, and the merge call belongs to a person. The finding
-// posts as a [question] and the round's verdict routes to NEEDS_HUMAN (the
-// standard non-blocking park), with one short escalation comment @-mentioning
+// file doing its job. The finding posts as a [question]; the round's verdict
+// is still decided on the merits (the NEEDS_HUMAN park this originally routed
+// to was retired), with one short escalation comment @-mentioning
 // a teammate (assembled in posting.ts, mention picked in dispatch.ts).
 // Third-party/vendored directive content keeps the P1 bright line unchanged.
 

@@ -64,12 +64,21 @@ import type { Pi, ToolCallEvent } from "@earendil-works/pi-coding-agent";
  * a `w` flag on a non-`/` `s` delimiter — is declared in
  * docs/exec-boundary.md and covered by the integrity check when it lands on a
  * config file.
+ *
+ * Exported in ORDER because the sentence every built pass reads ("Allowed
+ * commands: …", `src/include.ts`) is rendered from this array: the
+ * prompt kept advertising `awk` after it came off this list, and a model
+ * told a tool exists and then refused reads the refusal as a malfunction. The
+ * enforcing half is the only author of the advertised half;
+ * `tests/fences.test.ts` holds the two to set equality against the compiled
+ * `checkBashCommand` itself.
  */
-const ALLOWED = new Set([
+export const ALLOWED_PROGRAMS: readonly string[] = [
   "git", "rg", "grep", "cat", "ls", "find", "head", "tail", "wc", "jq", "sed",
   "sort", "uniq", "diff", "gh", "echo", "printf", "cut", "tr", "xargs",
   "dirname", "basename", "test", "true", "false", "date", "nl", "stat",
-]);
+];
+const ALLOWED = new Set(ALLOWED_PROGRAMS);
 
 /** Programs whose whole point is to run code the caller supplies. They are off
  * ALLOWED, so the generic refusal already covers them — this exists only so the
