@@ -166,12 +166,30 @@ describe("issue dedup — normalized-token Jaccard", () => {
   });
 });
 
+/**
+ * The reviewed repo's base clone — the ONE working tree every git step must
+ * run in. A fixed fake path: these cases never touch a filesystem
+ * repo, they assert that every invocation NAMES this tree. For the channel's
+ * whole life the runner here discarded its `cwd` argument, and the daemon
+ * passed none — so git ran in the sandbox's own checkout, which has no
+ * remote, and the suite stayed green over a push that could never succeed.
+ */
+const REPO_DIR = "/srv/sandbox/example-app";
+
+/** A recording fake `Run`: what was asked, and WHERE. */
+interface FakeRunner {
+  run: Run;
+  calls: string[][];
+  cwds: string[];
+}
+
 describe("fileImprovementPr / fileIssue (dry-run)", () => {
   let dir: string;
   let store: StateStore;
   let gate: MutationGate;
   let adapter: GitHubAdapter;
   let openIssues: Array<{ number: number; title: string }>;
+  let ensureRepoDir: ReturnType<typeof vi.fn<() => Promise<string>>>;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "qcr-improve-"));
@@ -180,6 +198,7 @@ describe("fileImprovementPr / fileIssue (dry-run)", () => {
       throw new Error("executor must not run in dry-run");
     });
     openIssues = [];
+    ensureRepoDir = vi.fn(async () => REPO_DIR);
     const fetchFn = (async (url: string) => {
       if (String(url).includes("/search/issues")) {
         return {
@@ -202,22 +221,26 @@ describe("fileImprovementPr / fileIssue (dry-run)", () => {
       .sort()
       .map((f) => JSON.parse(readFileSync(join(dir, "dryrun", f), "utf8")));
 
-  function runner(diff: string): { run: Run; calls: string[][] } {
+  function runner(diff: string): FakeRunner {
     const calls: string[][] = [];
-    const run: Run = async (args) => {
+    const cwds: string[] = [];
+    const run: Run = async (args, cwd) => {
       calls.push(args);
+      cwds.push(cwd);
       if (args[0] === "diff") return diff;
       if (args[0] === "push") throw new Error("must not push in dry-run");
       return "";
     };
-    return { run, calls };
+    return { run, calls, cwds };
   }
 
+  const ctx = (run: Run, scratch = "scratch") => ({ cfg, adapter, gate, store, run, ensureRepoDir, scratchDir: join(dir, scratch) });
+
   it("happy path: gated push_branch + create_pull + add_label, recorded, worktree cleaned", async () => {
-    const { run, calls } = runner(numstat([[10, 5, "docs/readme.md"]]));
+    const { run, calls, cwds } = runner(numstat([[10, 5, "docs/readme.md"]]));
     const out = await fileImprovementPr(
       { branch: "wip/docs", title: "Docs: clarify retry", body: "rationale\n\norigin: #12", slug: "clarify-retry" },
-      { cfg, adapter, gate, store, run, scratchDir: join(dir, "scratch") },
+      ctx(run),
     );
     expect(out).toMatchObject({ ok: true, branch: "bot/improve-clarify-retry", files: 1, lines: 15, pushed: false, dry_run: true });
 
@@ -234,14 +257,47 @@ describe("fileImprovementPr / fileIssue (dry-run)", () => {
     expect(store.filedSince("improvement_pr", "1970-01-01T00:00:00.000Z")).toBe(1);
     expect(calls.map((c) => c[0])).toEqual(["fetch", "worktree", "diff", "worktree"]);
     expect(calls.at(-1)).toContain("remove");
+    // every one of those ran in the reviewed clone — no exceptions,
+    // not the cleanup either.
+    expect(cwds).toEqual([REPO_DIR, REPO_DIR, REPO_DIR, REPO_DIR]);
+  });
+
+  it("the git steps run in the reviewed repo's base clone, resolved once, before the first git call", async () => {
+    const { run, calls, cwds } = runner(numstat([[2, 0, "docs/readme.md"]]));
+    let resolvedBefore = -1;
+    ensureRepoDir.mockImplementation(async () => {
+      resolvedBefore = calls.length;
+      return REPO_DIR;
+    });
+    const out = await fileImprovementPr({ branch: "wip/docs", title: "t", body: "b", slug: "docs" }, ctx(run));
+    expect(out.ok).toBe(true);
+    expect(ensureRepoDir).toHaveBeenCalledTimes(1);
+    expect(resolvedBefore).toBe(0);
+    // The fetch is the base FETCH (forced, remote-tracking name) and the
+    // diffstat is against origin/<base> — the ref just fetched — never the
+    // clone's own local `<base>`, which nothing ever advances.
+    expect(calls[0]).toEqual(["fetch", "origin", `+refs/heads/${cfg.github.base_branch}:refs/remotes/origin/${cfg.github.base_branch}`]);
+    expect(calls[2]).toEqual(["diff", "--numstat", `origin/${cfg.github.base_branch}...wip/docs`]);
+    expect(new Set(cwds)).toEqual(new Set([REPO_DIR]));
+    expect(cwds).toHaveLength(calls.length);
+  });
+
+  it("a clone that cannot be produced is a loud rejection, and git never runs", async () => {
+    const { run, calls } = runner(numstat([[2, 0, "docs/readme.md"]]));
+    ensureRepoDir.mockRejectedValueOnce(new Error("git clone https://example.invalid/x.git exited 128"));
+    const out = await fileImprovementPr({ branch: "wip/docs", title: "t", body: "b", slug: "docs" }, ctx(run));
+    expect(out.ok).toBe(false);
+    expect(out.reason).toContain("improvement-PR pipeline failed");
+    expect(out.reason).toContain("exited 128");
+    expect(calls).toHaveLength(0);
+    expect(readdirSync(dir)).not.toContain("dryrun");
+    expect(store.filedSince("improvement_pr", "1970-01-01T00:00:00.000Z")).toBe(0);
   });
 
   it("rejects over-cap lines with a reason, files nothing", async () => {
-    const { run } = runner(numstat([[40, 11, "src/a.ts"]]));
-    const out = await fileImprovementPr(
-      { branch: "wip/big", title: "t", body: "b", slug: "big" },
-      { cfg, adapter, gate, store, run, scratchDir: join(dir, "scratch") },
-    );
+    const { run, cwds } = runner(numstat([[40, 11, "src/a.ts"]]));
+    const out = await fileImprovementPr({ branch: "wip/big", title: "t", body: "b", slug: "big" }, ctx(run));
+    expect(new Set(cwds)).toEqual(new Set([REPO_DIR]));
     expect(out.ok).toBe(false);
     expect(out.reason).toContain("51 changed lines");
     expect(readdirSync(dir)).not.toContain("dryrun");
@@ -250,50 +306,36 @@ describe("fileImprovementPr / fileIssue (dry-run)", () => {
   });
 
   it("rejects a denylisted path and a 4-file diff", async () => {
-    const denied = await fileImprovementPr(
-      { branch: "wip/x", title: "t", body: "b", slug: "x" },
-      { cfg, adapter, gate, store, run: runner(numstat([[1, 0, "infra/main.tf"]])).run, scratchDir: join(dir, "s1") },
-    );
+    const one = runner(numstat([[1, 0, "infra/main.tf"]]));
+    const denied = await fileImprovementPr({ branch: "wip/x", title: "t", body: "b", slug: "x" }, ctx(one.run, "s1"));
     expect(denied.reason).toContain("path denylist");
-    const many = await fileImprovementPr(
-      { branch: "wip/y", title: "t", body: "b", slug: "y" },
-      {
-        cfg,
-        adapter,
-        gate,
-        store,
-        run: runner(
-          numstat([
-            [1, 0, "a.ts"],
-            [1, 0, "b.ts"],
-            [1, 0, "c.ts"],
-            [1, 0, "d.ts"],
-          ]),
-        ).run,
-        scratchDir: join(dir, "s2"),
-      },
+    expect(new Set(one.cwds)).toEqual(new Set([REPO_DIR]));
+    const four = runner(
+      numstat([
+        [1, 0, "a.ts"],
+        [1, 0, "b.ts"],
+        [1, 0, "c.ts"],
+        [1, 0, "d.ts"],
+      ]),
     );
+    const many = await fileImprovementPr({ branch: "wip/y", title: "t", body: "b", slug: "y" }, ctx(four.run, "s2"));
     expect(many.reason).toContain("4 files changed");
+    expect(new Set(four.cwds)).toEqual(new Set([REPO_DIR]));
   });
 
   it("rejects when the day cap is already spent (before touching git)", async () => {
     store.recordFiledItem("improvement_pr", "already", "#1");
     const { run, calls } = runner(numstat([[1, 0, "a.ts"]]));
-    const out = await fileImprovementPr(
-      { branch: "wip/x", title: "t", body: "b", slug: "x" },
-      { cfg, adapter, gate, store, run, scratchDir: join(dir, "scratch") },
-    );
+    const out = await fileImprovementPr({ branch: "wip/x", title: "t", body: "b", slug: "x" }, ctx(run));
     expect(out.ok).toBe(false);
     expect(out.reason).toContain("day cap");
     expect(calls).toHaveLength(0);
+    expect(ensureRepoDir).not.toHaveBeenCalled();
   });
 
   it("rejects a bad slug", async () => {
     const { run } = runner("");
-    const out = await fileImprovementPr(
-      { branch: "wip/x", title: "t", body: "b", slug: "Bad Slug" },
-      { cfg, adapter, gate, store, run, scratchDir: join(dir, "scratch") },
-    );
+    const out = await fileImprovementPr({ branch: "wip/x", title: "t", body: "b", slug: "Bad Slug" }, ctx(run));
     expect(out.ok).toBe(false);
     expect(out.reason).toContain("bad slug");
     expect(botBranchFor("ok-slug")).toBe("bot/improve-ok-slug");
@@ -419,28 +461,36 @@ describe("fileImprovementPr — the push goes through the gate in live mode", ()
     rmSync(dir, { recursive: true, force: true });
   });
 
-  function liveRunner(): { run: Run; calls: string[][] } {
+  function liveRunner(): FakeRunner {
     const calls: string[][] = [];
-    const run: Run = async (args) => {
+    const cwds: string[] = [];
+    const run: Run = async (args, cwd) => {
       calls.push(args);
+      cwds.push(cwd);
       if (args[0] === "diff") return numstat([[3, 1, "docs/readme.md"]]);
       return "";
     };
-    return { run, calls };
+    return { run, calls, cwds };
   }
 
-  it("the gate SEES the push_branch intent, and the git push runs from inside it", async () => {
-    const { run, calls } = liveRunner();
+  const ctx = (run: Run) => ({ cfg, adapter, gate, store, run, ensureRepoDir: async () => REPO_DIR, scratchDir: join(dir, "scratch") });
+
+  it("the gate SEES the push_branch intent, and the git push runs from inside it — in the reviewed clone", async () => {
+    const { run, calls, cwds } = liveRunner();
     const out = await fileImprovementPr(
       { branch: "wip/docs", title: "Docs: clarify retry", body: "rationale", slug: "clarify-retry" },
-      { cfg, adapter, gate, store, run, scratchDir: join(dir, "scratch") },
+      ctx(run),
     );
 
     expect(out).toMatchObject({ ok: true, pushed: true, dry_run: false });
     // The bypass this pins: before `push_branch` never reached the gate
     // in live mode, so this list began at `create_pull`.
     expect(seen).toEqual(["push_branch", "create_pull", "add_label"]);
-    expect(calls.map((c) => c[0])).toContain("push");
+    const push = calls.find((c) => c[0] === "push");
+    expect(push).toEqual(["push", "origin", "wip/docs:refs/heads/bot/improve-clarify-retry"]);
+    // the push, like every other step, runs where `origin` IS the
+    // reviewed repo. Before, it ran with no cwd at all.
+    expect(cwds).toEqual([REPO_DIR, REPO_DIR, REPO_DIR, REPO_DIR, REPO_DIR]);
     expect(store.eventsOn(new Date().toISOString().slice(0, 10)).some((e) => e.kind === "branch_pushed")).toBe(true);
   });
 
@@ -454,7 +504,7 @@ describe("fileImprovementPr — the push goes through the gate in live mode", ()
     });
     const out = await fileImprovementPr(
       { branch: "wip/docs", title: "Docs: clarify retry", body: "rationale", slug: "clarify-retry" },
-      { cfg, adapter, gate, store, run, scratchDir: join(dir, "scratch") },
+      ctx(run),
     );
 
     expect(out.ok).toBe(false);

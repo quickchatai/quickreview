@@ -5,8 +5,11 @@
   `--reporter=basic`.
 - Everything mocks I/O: fake fetch/adapters, `StateStore(":memory:")`, temp
   dirs. Exceptions that touch the real world: `worktrees.test.ts` (scratch git
-  repo subprocesses) and `guards-shell.test.ts` (runs the real scripts against
-  a loopback HTTP stub — the shell/gate parity proof, same cases as
+  repo subprocesses), `improvements-e2e.test.ts` (the improvement
+  channel against a scratch clone with a bare "remote" — the push, the caps
+  and the dry-run suppression observed on the remote, through the production
+  git runner; no network) and `guards-shell.test.ts` (runs the real scripts
+  against a loopback HTTP stub — the shell/gate parity proof, same cases as
   `guards.test.ts`).
 - `seed-integrity.test.ts` enforces root rule 6 (sha256 manifest over the
   frozen `agents/`+`prompts/` seeds, `RATIFIED_DIVERGENCE` for ratified

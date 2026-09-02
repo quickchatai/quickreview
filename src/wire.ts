@@ -30,7 +30,7 @@ import { FeedbackEngine, feedbackDayAddendum, type FeedbackEvent } from "./feedb
 import { PASS_ADDENDA, buildAgents, identityVars } from "./include.js";
 import { ecosystemFor } from "./ecosystem.js";
 import { loadProfileAddenda, loadProfileEcosystem, loadProfileHeuristics } from "./profiles.js";
-import { fileImprovementPr, fileIssue, type Run } from "./improvements.js";
+import { fileImprovementPr, fileIssue, gitRunner } from "./improvements.js";
 import { OpenVikingClient, OpenVikingSupervisor, keyFromFile, openVikingContextAssembler, openVikingStore } from "./openviking/index.js";
 import { OV_REVIEWER_KEY_SECRET, openVikingSessionLifecycle } from "./memory/ovsession.js";
 import type { ContextAssembler, RoundMemory } from "./memory/context.js";
@@ -86,7 +86,10 @@ export function buildParts(root = sandboxRoot(), cfg = loadConfig()): Production
   return { cfg, root, minter, gate, adapter, sessions };
 }
 
-const gitRun: Run = async (args, cwd) => (await nodeExec("git", args, cwd ? { cwd } : {})).stdout;
+// exit-code checked, cwd mandatory — the first runner returned stdout
+// whatever git's exit and defaulted to the daemon's own cwd (a repo with no
+// remote), so the improvement channel could never push and never said so.
+const gitRun = gitRunner(nodeExec);
 
 /** package.json version for the `daemon.up` line; never worth failing a boot. */
 function packageVersion(root: string): string | undefined {
@@ -699,6 +702,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
             gate,
             store: d.store,
             run: gitRun,
+            // The reviewed repo's base clone — the ONE tree with `origin`
+            // pointing at the reviewed repo and the session's branch in it.
+            ensureRepoDir: () => sessions.worktrees.ensureBaseClone(),
             scratchDir: join(root, "state", "scratch-improve"),
           });
         },

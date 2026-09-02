@@ -7,13 +7,32 @@
 // bot/improve-<slug>. The base branch ([github] base_branch — master on
 // the reviewed repo) is never pushed, never merged into, never touched beyond
 // `fetch` + read-only diffing. rubric/* branches stay local (see digest.ts).
+//
+// Working tree rule: every git step below runs in the BASE CLONE of
+// the reviewed repo (`WorktreeManager.basePath`) — the one working tree whose
+// `origin` is the reviewed repo and whose ref namespace holds the branch the
+// session prepared. For the channel's whole life the steps ran with no cwd at
+// all, i.e. in the daemon's own checkout, which has no remote: zero
+// `filed_items` rows, zero `branch_pushed` events, and a suite that discarded
+// the cwd it was handed. `Run` now REQUIRES a cwd so a call without one does
+// not compile, and the context carries the clone locator.
 import { IMPROVEMENT_DENY_PREFIXES_DEFAULT, type Config } from "./config.js";
 import type { GitHubAdapter } from "./github.js";
 import type { MutationGate } from "./gate.js";
 import type { StateStore } from "./state.js";
+import { runOrThrow, type ExecFn } from "./tmux.js";
 
-/** Injectable git runner — the daemon passes a real `git` exec; tests fake it. */
-export type Run = (args: string[], cwd?: string) => Promise<string>;
+/** Injectable git runner: `git <args>` in `cwd`, stdout on success, a THROW on
+ * a non-zero exit. The cwd is mandatory — there is no sensible default. */
+export type Run = (args: string[], cwd: string) => Promise<string>;
+
+/** The production `Run` over an `ExecFn` (`nodeExec` in wire.ts). A failing
+ * git step throws instead of returning its stdout — the daemon's first runner
+ * ignored the exit code, so a refused fetch or push would have read as
+ * success. The end-to-end test drives this same runner against real git. */
+export function gitRunner(exec: ExecFn): Run {
+  return async (args, cwd) => (await runOrThrow(exec, "git", args, { cwd })).stdout;
+}
 
 export interface ImprovementPayload {
   branch: string;
@@ -47,6 +66,14 @@ export interface ImprovementContext {
   gate: MutationGate;
   store: StateStore;
   run: Run;
+  /**
+   * Resolves to the reviewed repo's base clone — the working tree every git
+   * step runs in — cloning it first if no round has yet (production:
+   * `WorktreeManager.ensureBaseClone`). A function rather than a path so an
+   * EOD sweep on a daemon that never reviewed a PR still finds a repo with a
+   * remote instead of failing on a missing directory.
+   */
+  ensureRepoDir: () => Promise<string>;
   /** Scratch worktree path used for the checkout (removed afterwards). */
   scratchDir: string;
   /** Base branch override. Default: `[github] base_branch` off `cfg`
@@ -216,10 +243,11 @@ export function botBranchFor(slug: string): string {
 // ---- the improvement-PR pipeline ------------------------------------------
 
 /**
- * file-improvement-pr: scratch worktree off the fresh base branch → check out the
- * overseer-prepared branch → daemon diffstat + rate caps → push bot/improve-<slug>
- * (gated) → open PR + label (gated) → record. Rejections come back with a
- * reason the command executor writes into the result file for the overseer.
+ * file-improvement-pr: in the reviewed repo's base clone — fetch the fresh base
+ * branch → materialise the session-prepared branch in a scratch worktree →
+ * daemon diffstat + rate caps → push bot/improve-<slug> (gated) → open PR +
+ * label (gated) → record. Rejections come back with a reason the command
+ * executor writes into the result file for the overseer.
  */
 export async function fileImprovementPr(payload: ImprovementPayload, ctx: ImprovementContext): Promise<FileOutcome> {
   const now = (ctx.now ?? (() => new Date()))();
@@ -237,13 +265,17 @@ export async function fileImprovementPr(payload: ImprovementPayload, ctx: Improv
   if (rate) return reject(rate);
 
   let worktreeAdded = false;
+  let repoDir = "";
   try {
-    // Fresh base branch — fetched, never pushed, never checked out for writing.
-    await ctx.run(["fetch", "origin", `${base}:refs/remotes/origin/${base}`]);
-    await ctx.run(["worktree", "add", "--force", "--detach", ctx.scratchDir, payload.branch]);
+    repoDir = await ctx.ensureRepoDir();
+    // Fresh base branch — fetched (forced, like every base fetch in
+    // worktrees.ts: a rewritten base must not wedge the channel), never
+    // pushed, never checked out for writing.
+    await ctx.run(["fetch", "origin", `+refs/heads/${base}:refs/remotes/origin/${base}`], repoDir);
+    await ctx.run(["worktree", "add", "--force", "--detach", ctx.scratchDir, payload.branch], repoDir);
     worktreeAdded = true;
 
-    const numstat = await ctx.run(["diff", "--numstat", `${base}...${payload.branch}`]);
+    const numstat = await ctx.run(["diff", "--numstat", `origin/${base}...${payload.branch}`], repoDir);
     const entries = parseNumstat(numstat);
     const verdict = checkDiffstat(entries, ctx.cfg.caps);
     if (!verdict.ok) return reject(verdict.reason!, { files: verdict.files, lines: verdict.lines });
@@ -263,7 +295,7 @@ export async function fileImprovementPr(payload: ImprovementPayload, ctx: Improv
     // owns the decision (kind check, guards, dry-run branch) and calls this
     // performer only when the mutation is genuinely to happen.
     const pushResult = await ctx.gate.execute(pushIntent, async () => {
-      await ctx.run(["push", "origin", `${payload.branch}:refs/heads/${botBranch}`]);
+      await ctx.run(["push", "origin", `${payload.branch}:refs/heads/${botBranch}`], repoDir);
       ctx.store.logEvent("branch_pushed", null, { branch: botBranch });
       return { pushed: true };
     });
@@ -299,7 +331,7 @@ export async function fileImprovementPr(payload: ImprovementPayload, ctx: Improv
   } finally {
     if (worktreeAdded) {
       try {
-        await ctx.run(["worktree", "remove", "--force", ctx.scratchDir]);
+        await ctx.run(["worktree", "remove", "--force", ctx.scratchDir], repoDir);
       } catch {
         /* scratch cleanup is best-effort */
       }

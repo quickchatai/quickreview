@@ -167,12 +167,13 @@ export function rubricBranchName(lens: string, topic: string, date: string): str
 }
 
 /**
- * Create the local rubric proposal branch. Local only — no remote is ever
+ * Create the local rubric proposal branch in `repoDir` — this sandbox's own
+ * checkout, where agents/ and prompts/ live. Local only — no remote is ever
  * involved; the sweep then edits the pass agent file and adds PROPOSAL.md.
  */
-export async function createRubricBranch(run: Run, lens: string, topic: string, date: string): Promise<string> {
+export async function createRubricBranch(run: Run, repoDir: string, lens: string, topic: string, date: string): Promise<string> {
   const branch = rubricBranchName(lens, topic, date);
-  await run(["branch", branch]);
+  await run(["branch", branch], repoDir);
   return branch;
 }
 
@@ -181,9 +182,10 @@ export interface PendingProposal {
   hasProposal: boolean;
 }
 
-/** rubric/* branches with their PROPOSAL.md presence — the digest's "Pending proposals". */
-export async function pendingProposals(run: Run): Promise<PendingProposal[]> {
-  const out = await run(["branch", "--list", "rubric/*", "--format=%(refname:short)"]);
+/** rubric/* branches of `repoDir` (the sandbox checkout) with their
+ * PROPOSAL.md presence — the digest's "Pending proposals". */
+export async function pendingProposals(run: Run, repoDir: string): Promise<PendingProposal[]> {
+  const out = await run(["branch", "--list", "rubric/*", "--format=%(refname:short)"], repoDir);
   const branches = out
     .split("\n")
     .map((l) => l.trim().replace(/^\*\s*/, ""))
@@ -192,7 +194,7 @@ export async function pendingProposals(run: Run): Promise<PendingProposal[]> {
   for (const branch of branches) {
     let hasProposal = false;
     try {
-      const listed = await run(["ls-tree", "--name-only", branch, "PROPOSAL.md"]);
+      const listed = await run(["ls-tree", "--name-only", branch, "PROPOSAL.md"], repoDir);
       hasProposal = listed.trim().length > 0;
     } catch {
       hasProposal = false;
