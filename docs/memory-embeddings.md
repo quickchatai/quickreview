@@ -146,7 +146,7 @@ It prints the counts per namespace and, on success, the `settle` command that
 receipts the journal on the VM so the heartbeat stops naming the namespace:
 
 ```sh
-ssh my-vm sudo docker exec quickreview-sandbox \
+ssh <host> sudo docker exec quickreview-sandbox \
   node /opt/quickreview/sandbox/scripts/openviking-reembed.mjs settle \
   --home /opt/quickreview/state/openviking --user companion
 ```
@@ -157,7 +157,7 @@ silently wrong: the heartbeat says so.
 
 ## An existing install that used the hosted embedder — what to run
 
-This is the owner's own live install, and any adopter who deployed before
+This covers the original live install and any adopter who deployed before
 . Nothing needs to be run on the store by hand; the migration is the
 boot. What the operator does, in order:
 
@@ -198,7 +198,7 @@ host`, is the shape that was used to prove this path on 2026-09-02).
 
 ```sh
 # 1. a COPY of the OpenViking home (ov.conf, workspace/, reembed.json if any)
-rsync -a my-vm:/opt/quickreview/state/openviking/ /tmp/ov-rehearsal/
+rsync -a <host>:/opt/quickreview/state/openviking/ /tmp/ov-rehearsal/
 # 2. an ov.conf for the copy: the NEW embedder, a scratch port, the copy's workspace
 #    (edit /tmp/ov-rehearsal/ov.conf: embedding.dense → local/bge-small-zh-v1.5-f16/512,
 #     server.port → 19333, storage.workspace → /tmp/ov-rehearsal/workspace)

@@ -39,6 +39,12 @@ function runWizard(
     child.stdout.on("data", (d) => (out += d));
     child.stderr.on("data", (d) => (out += d));
     child.on("error", reject);
+    // A wizard that refuses before reading stdin (bad shape, missing dir)
+    // exits first; the late write then EPIPEs. That is the child's answer,
+    // not a test failure — the exit code and output below carry it.
+    child.stdin.on("error", (err: NodeJS.ErrnoException) => {
+      if (err.code !== "EPIPE") reject(err);
+    });
     child.stdin.write(stdin);
     child.stdin.end();
     child.on("close", (code) => done({ code: code ?? -1, out }));
