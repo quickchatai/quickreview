@@ -104,6 +104,13 @@ if [[ -n "$ROUND_NO" || -n "${QCR_POSTING_KEY:-}" ]]; then
       fi
       ;;
     prepared) die "posting outcome is still unknown for $POSTING_KEY — refusing a duplicate POST; let the daemon reconcile the marker" ;;
+    skipped)
+      # this exact round was already refused by guard 2 and the
+      # refusal is recorded. Terminal for the key — nothing was posted and
+      # nothing will be; a reply landing since belongs to ping-pong, and the
+      # daemon has (or will have) closed the round on the record.
+      die "posting for $POSTING_KEY was already refused: #$PR head ${RECEIPT_HEAD:0:7} was already reviewed with no author reply since (guard 2). Nothing was posted for this round and nothing will be — record that in the verdict and stop."
+      ;;
     none)
       RECEIPT_LOCK="$POSTING_RECEIPT.lock"
       mkdir -p "$RECEIPT_DIR"
@@ -124,6 +131,35 @@ fi
 # ---- the posting-time guards --------------------------------------
 # All three, from the shared mirror of src/guards.ts — this is the session's
 # posting route, so it must refuse exactly what the gate refuses.
+
+# guard 2's refusal is recorded as a guarded no-op bound to this
+# round's posting identity, so the daemon can close the round as "nothing to
+# post" instead of reading the missing receipt as a lost POST. Written only for
+# a receipt-keyed round, only when the refused head IS the head the key names,
+# and only by posting-receipt.py, which refuses to write it over any attempted
+# post (prepared/confirmed/dryrun). It carries the mark the guard read. The
+# receipt lock is still held here, so no concurrent attempt can race it. A
+# failure to record is loud and changes nothing: the guard still refuses.
+guard_on_no_new_evidence() { # guard_on_no_new_evidence <refused-head> <standing-mark-json>
+  local head="${1:-}" mark="${2:-}"
+  [[ -n "$POSTING_RECEIPT" ]] || return 0          # legacy round: no identity to bind to
+  if [[ -z "$mark" ]]; then
+    echo "post-review: WARNING — guard 2 refused $POSTING_KEY but handed back no standing mark; recording nothing" >&2
+    return 0
+  fi
+  if [[ "${head,,}" != "${RECEIPT_HEAD,,}" ]]; then
+    echo "post-review: WARNING — guard 2 refused at ${head:0:7} but $POSTING_KEY is keyed to ${RECEIPT_HEAD:0:7}; recording nothing" >&2
+    return 0
+  fi
+  local mode="dryrun"
+  [[ "$LIVE" == "1" ]] && mode="live"
+  if python3 "$ROOT/scripts/posting-receipt.py" skip "$POSTING_RECEIPT" "$POSTING_KEY" "$PR" "$ROUND_NO" "$head" "$EVENT" "$mode" "$mark"; then
+    echo "post-review: recorded guarded no-op (no-new-evidence) for $POSTING_KEY — nothing was posted" >&2
+  else
+    echo "post-review: WARNING — could not record the guarded no-op for $POSTING_KEY; the daemon will treat this round's outcome as unknown" >&2
+  fi
+}
+
 # shellcheck source=scripts/guards.sh
 . "$ROOT/scripts/guards.sh"
 

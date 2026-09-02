@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseConfig, type Config } from "../src/config.js";
 import type { GateResult } from "../src/gate.js";
-import { StateStore } from "../src/state.js";
+import { StateStore, type ReviewedHeadRow } from "../src/state.js";
 import { fingerprintRoundGitConfig } from "../src/execboundary.js";
 import { githubCloneDir } from "../src/config.js";
 import { postingMarker, roundPostingKey } from "../src/posting-receipt.js";
@@ -1096,5 +1096,259 @@ describe("post-round ledger check settle delay", () => {
     reviewingRound(501);
     await watcher().handleFile(write(501, 1, verdictFile({ pr: 501, verdict: "APPROVE", head_sha: "abc123" })));
     expect(store.db.prepare("SELECT COUNT(*) c FROM events WHERE kind = 'ledger_stale_nudged' AND pr = 501").get()).toMatchObject({ c: 0 });
+  });
+});
+
+/**
+ * a guard-2 refusal is a terminal NO-OP, not a failure.
+ *
+ * #5409 round 18 (2026-09-01): a healthy ten-lens round decided REQUEST_CHANGES,
+ * post-review.sh correctly refused the duplicate (same head as round 12's
+ * review, no author reply since), and because that refusal left no receipt the
+ * watcher classified the round as `posting_receipt` infrastructure failure —
+ * FAILED_LOUD debt, operator recovery, and the standing review still standing
+ * the whole time. Now the shell records the refusal; these cases pin what the
+ * watcher does with it, and what it must never do.
+ */
+describe("guarded no-op settlement", () => {
+  const HEAD = "abc123";
+
+  /** The standing review from an earlier round, in the shape the shell leaves
+   * before the watcher enriches it (the #5409 mark). */
+  function standingMark(pr: number, posted: "REQUEST_CHANGES" | "APPROVE" | "COMMENT" = "REQUEST_CHANGES"): ReviewedHeadRow {
+    store.recordReviewedHead(pr, { head_sha: HEAD, posted_event: posted });
+    return store.reviewedHead(pr)!;
+  }
+
+  function writeGuardedNoop(pr: number, roundNo: number, key: string, mark: ReviewedHeadRow, over: Record<string, unknown> = {}): void {
+    const receiptDir = join(dir, "state", "posting-receipts");
+    mkdirSync(receiptDir, { recursive: true });
+    writeFileSync(join(receiptDir, `pr-${pr}-round-${roundNo}.json`), JSON.stringify({
+      version: 1,
+      posting_key: key,
+      marker: postingMarker(key),
+      pr,
+      round_no: roundNo,
+      head_sha: HEAD,
+      status: "skipped",
+      skip_reason: "no-new-evidence",
+      intended_event: "REQUEST_CHANGES",
+      mode: "dryrun",
+      skipped_at: "2026-08-13T11:59:59Z",
+      standing_mark: {
+        head_sha: mark.head_sha,
+        reviewed_at: mark.reviewed_at,
+        verdict: mark.verdict,
+        posted_event: mark.posted_event,
+        round_no: mark.round_no,
+        last_author_reply_at: mark.last_author_reply_at,
+      },
+      ...over,
+    }));
+  }
+
+  /** A running round over a PR that already carries the standing mark. */
+  function skippedRound(pr: number, posted: "REQUEST_CHANGES" | "APPROVE" | "COMMENT" = "REQUEST_CHANGES"): { roundId: number; key: string; mark: ReviewedHeadRow } {
+    const mark = standingMark(pr, posted);
+    const roundId = reviewingRound(pr);
+    const { key } = stampPosting(pr, 1);
+    writeGuardedNoop(pr, 1, key, mark);
+    return { roundId, key, mark };
+  }
+
+  const events = (kind: string, pr: number): Array<Record<string, unknown>> =>
+    (store.db.prepare("SELECT payload FROM events WHERE kind = ? AND pr = ?").all(kind, pr) as Array<{ payload: string }>)
+      .map((row) => JSON.parse(row.payload) as Record<string, unknown>);
+
+  it("the #5409 shape: closes the round as no_new_evidence, restores awaiting_author, applies nothing from the unposted verdict", async () => {
+    const { roundId, key, mark } = skippedRound(500);
+    store.recordApprovalWithheld(500, { head_sha: "older-head", ci_state: "red", reason: "red-ci" });
+    const name = write(500, 1, verdictFile({ pr: 500, verdict: "REQUEST_CHANGES" }));
+
+    expect(await watcher().handleFile(name)).toBe(true);
+
+    const round = store.db.prepare("SELECT * FROM rounds WHERE id = ?").get(roundId) as Record<string, unknown>;
+    expect(round).toMatchObject({ status: "cancelled", cancel_cause: "no_new_evidence", verdict: null, gh_review_id: null });
+    expect(String(round.summary)).toContain("guard 2");
+    expect(store.getPr(500)?.state).toBe("awaiting_author");
+    // The prior mark is exactly as it was: not re-stamped, not enriched with this round.
+    expect(store.reviewedHead(500)).toEqual(mark);
+    // No failure, no retry, no successor, no verdict application, no escalation.
+    expect(store.openReviewFailure(500)).toBeUndefined();
+    expect(events("verdict_applied", 500)).toEqual([]);
+    expect(events("round_self_requeued", 500)).toEqual([]);
+    expect(events("review_failed_loud", 500)).toEqual([]);
+    expect(store.anomalies().map((a) => a.kind)).not.toContain("review_failed_loud");
+    expect(adapter.calls).toContain(`removeLabel:500:${cfg.github.in_progress_label}`);
+    expect(adapter.calls).not.toContain(`addLabel:500:${cfg.github.reviewed_label}`);
+    // Withheld work elsewhere is untouched.
+    expect(store.approvalWithheld(500)?.head_sha).toBe("older-head");
+    // The verdict file was consumed (archived), and the durable event explains the late race.
+    expect(existsSync(join(dir, name))).toBe(false);
+    expect(events("posting_guarded_noop", 500)).toEqual([expect.objectContaining({
+      stage: "posting",
+      via: "verdict",
+      round_no: 1,
+      posting_key: key,
+      head_sha: HEAD,
+      guard: "no-new-evidence",
+      unposted_verdict: "REQUEST_CHANGES",
+      standing_verdict: "REQUEST_CHANGES",
+      standing_source: "posted_event",
+      restored_state: "awaiting_author",
+      mark: expect.objectContaining({ posted_event: "REQUEST_CHANGES", verdict: null }),
+    })]);
+  });
+
+  it("a skipped round's unposted APPROVE can never approve: the standing REQUEST_CHANGES still wins", async () => {
+    const { mark } = skippedRound(501);
+
+    await watcher().handleFile(write(501, 1, verdictFile({ pr: 501, verdict: "APPROVE" })));
+
+    expect(store.getPr(501)?.state).toBe("awaiting_author");
+    expect(store.reviewedHead(501)).toEqual(mark);
+    expect(store.roundsFor(501)[0]).toMatchObject({ status: "cancelled", cancel_cause: "no_new_evidence", verdict: null });
+    expect(adapter.calls).not.toContain(`addLabel:501:${cfg.github.reviewed_label}`);
+    expect(events("posting_guarded_noop", 501)[0]).toMatchObject({ unposted_verdict: "APPROVE", standing_verdict: "REQUEST_CHANGES" });
+  });
+
+  it("a standing partial APPROVE restores tracked", async () => {
+    skippedRound(502, "APPROVE");
+
+    await watcher().handleFile(write(502, 1, verdictFile({ pr: 502, verdict: "REQUEST_CHANGES" })));
+
+    expect(store.getPr(502)?.state).toBe("tracked");
+    expect(store.roundsFor(502)[0]).toMatchObject({ status: "cancelled", cancel_cause: "no_new_evidence" });
+    expect(events("posting_guarded_noop", 502)[0]).toMatchObject({ standing_verdict: "APPROVE", restored_state: "tracked" });
+  });
+
+  it("a COMMENT-only standing mark is never guessed: tracked, an anomaly, still no failure and no approve", async () => {
+    skippedRound(503, "COMMENT");
+
+    await watcher().handleFile(write(503, 1, verdictFile({ pr: 503, verdict: "APPROVE" })));
+
+    expect(store.getPr(503)?.state).toBe("tracked");
+    expect(store.roundsFor(503)[0]).toMatchObject({ status: "cancelled", cancel_cause: "no_new_evidence", verdict: null });
+    expect(store.openReviewFailure(503)).toBeUndefined();
+    expect(store.anomalies().map((a) => a.kind)).toContain("standing_review_unknown");
+    expect(adapter.calls).not.toContain(`addLabel:503:${cfg.github.reviewed_label}`);
+    expect(events("posting_guarded_noop", 503)[0]).toMatchObject({ standing_verdict: null, standing_source: null, restored_state: "tracked" });
+  });
+
+  it("is consumed ONCE: the deadline sweep settles it, and the verdict file that arrives afterwards replays inertly", async () => {
+    const { roundId } = skippedRound(504);
+    const later = new Date(Date.now() + (cfg.daemon.round_deadline_min + 10) * 60_000);
+
+    expect(await watcher({ now: () => later }).checkDeadlines()).toEqual([]);
+
+    expect(store.db.prepare("SELECT status, cancel_cause FROM rounds WHERE id = ?").get(roundId)).toEqual({ status: "cancelled", cancel_cause: "no_new_evidence" });
+    expect(store.getPr(504)?.state).toBe("awaiting_author");
+    expect(events("posting_guarded_noop", 504)[0]).toMatchObject({ via: "deadline" });
+
+    // The session finishes writing its verdict a moment later.
+    const name = write(504, 1, verdictFile({ pr: 504, verdict: "REQUEST_CHANGES" }));
+    expect(await watcher().handleFile(name)).toBe(true);
+
+    expect(existsSync(join(dir, name))).toBe(false);
+    expect(store.db.prepare("SELECT status, cancel_cause, verdict FROM rounds WHERE id = ?").get(roundId)).toEqual({ status: "cancelled", cancel_cause: "no_new_evidence", verdict: null });
+    expect(store.getPr(504)?.state).toBe("awaiting_author");
+    expect(events("posting_guarded_noop", 504)).toHaveLength(1);
+    expect(events("posting_guarded_noop_replayed", 504)).toEqual([expect.objectContaining({ via: "verdict", round_status: "cancelled" })]);
+    expect(events("verdict_applied", 504)).toEqual([]);
+    expect(store.openReviewFailure(504)).toBeUndefined();
+  });
+
+  it("a session that was refused and settled without writing a verdict is 'settled', not failed loud", async () => {
+    const { roundId } = skippedRound(505);
+
+    expect(await watcher().recoverInfrastructureFailure(505, 1, "settled_without_verdict", "parent settled")).toBe("settled");
+
+    expect(store.db.prepare("SELECT status, cancel_cause FROM rounds WHERE id = ?").get(roundId)).toEqual({ status: "cancelled", cancel_cause: "no_new_evidence" });
+    expect(store.getPr(505)?.state).toBe("awaiting_author");
+    expect(store.openReviewFailure(505)).toBeUndefined();
+    expect(events("posting_guarded_noop", 505)[0]).toMatchObject({ via: "settled_without_verdict", unposted_verdict: null });
+  });
+
+  it("an author reply landing AFTER the refusal is tolerated — the reply belongs to ping-pong, the skip still settles", async () => {
+    skippedRound(506);
+    store.noteAuthorReply(506, "2099-01-01T00:00:00.000Z");
+
+    await watcher().handleFile(write(506, 1, verdictFile({ pr: 506 })));
+
+    expect(store.roundsFor(506)[0]).toMatchObject({ status: "cancelled", cancel_cause: "no_new_evidence" });
+    expect(store.getPr(506)?.state).toBe("awaiting_author");
+    expect(store.reviewedHead(506)?.last_author_reply_at).toBe("2099-01-01T00:00:00.000Z");
+  });
+
+  it("a record whose standing mark no longer describes the live one is AMBIGUOUS and stays loud", async () => {
+    const { roundId, key, mark } = skippedRound(507);
+    // The live mark was re-stamped since the record was written.
+    writeGuardedNoop(507, 1, key, { ...mark, reviewed_at: "2020-01-01T00:00:00.000Z" });
+
+    expect(await watcher({ postingReceiptGraceS: 0 }).handleFile(write(507, 1, verdictFile({ pr: 507 })))).toBe(true);
+
+    expect(store.db.prepare("SELECT status, cancel_cause FROM rounds WHERE id = ?").get(roundId)).toEqual({ status: "cancelled", cancel_cause: "infrastructure_failure" });
+    expect(store.openReviewFailure(507)).toMatchObject({ stage: "posting_receipt", work_owed: 1 });
+    expect(events("posting_guarded_noop", 507)).toEqual([]);
+  });
+
+  it("a record for another identity is ignored, and the ordinary fail-loud path still binds after grace", async () => {
+    const { roundId, mark } = skippedRound(508);
+    // Same file name, wrong key/head: a session-authored lookalike.
+    writeGuardedNoop(508, 1, roundPostingKey(508, 1, "0ther"), { ...mark, head_sha: "0ther" }, { head_sha: "0ther" });
+
+    expect(await watcher({ postingReceiptGraceS: 0 }).handleFile(write(508, 1, verdictFile({ pr: 508 })))).toBe(true);
+
+    expect(store.db.prepare("SELECT status, cancel_cause FROM rounds WHERE id = ?").get(roundId)).toEqual({ status: "cancelled", cancel_cause: "infrastructure_failure" });
+    expect(store.openReviewFailure(508)).toMatchObject({ stage: "posting_receipt" });
+  });
+
+  it("live mode: a bot review carrying this round's marker contradicts the record — GitHub's truth wins and the review links", async () => {
+    const { roundId, key } = skippedRound(509);
+    adapter.listReviewsFull = async () => [{
+      id: 778,
+      user: cfg.github.bot_login,
+      user_type: "Bot",
+      state: "CHANGES_REQUESTED",
+      body: `review body\n\n${postingMarker(key)}`,
+      commit_id: HEAD,
+      submitted_at: "2026-08-13T11:59:59Z",
+    }];
+
+    expect(await watcher({ cfg: { ...cfg, dry_run: false } }).handleFile(write(509, 1, verdictFile({ pr: 509 })))).toBe(true);
+
+    expect(store.db.prepare("SELECT status, gh_review_id, verdict FROM rounds WHERE id = ?").get(roundId)).toEqual({ status: "done", gh_review_id: 778, verdict: "REQUEST_CHANGES" });
+    expect(events("posting_guarded_noop_contradicted", 509)).toEqual([expect.objectContaining({ gh_review_id: 778, posting_key: key })]);
+    expect(events("posting_guarded_noop", 509)).toEqual([]);
+  });
+
+  it("a fresh-head successor owed by the skipped round is promoted, never cleared", async () => {
+    const { roundId } = skippedRound(510);
+    store.recordSuccessor({ pr: 510, predecessor_round_id: roundId, head_sha: "def456", provenance: "human", reason: "trigger-on-new-head" });
+
+    await watcher().handleFile(write(510, 1, verdictFile({ pr: 510 })));
+
+    expect(store.roundsFor(510)[0]).toMatchObject({ status: "cancelled", cancel_cause: "no_new_evidence" });
+    expect(store.getPr(510)).toMatchObject({ state: "queued", head_sha: "def456", trigger_provenance: "human" });
+    expect(store.successorFor(510)?.head_sha).toBe("def456");
+  });
+
+  it("the ordinary receipt paths are unchanged: confirmed still applies, absent still fails loud after grace", async () => {
+    // Confirmed: the verdict applies and the mark is enriched, exactly as before.
+    standingMark(511);
+    reviewingRound(511);
+    const { key } = stampPosting(511, 1);
+    writePostingReceipt(511, 1, key, "REQUEST_CHANGES");
+    expect(await watcher().handleFile(write(511, 1, verdictFile({ pr: 511 })))).toBe(true);
+    expect(store.roundsFor(511)[0]).toMatchObject({ status: "done", gh_review_id: 991 });
+    expect(store.reviewedHead(511)).toMatchObject({ verdict: "REQUEST_CHANGES", round_no: 1 });
+
+    // Absent: still a posting_receipt failure — the new path never widened "missing" into "fine".
+    standingMark(512);
+    reviewingRound(512);
+    stampPosting(512, 1);
+    expect(await watcher({ postingReceiptGraceS: 0 }).handleFile(write(512, 1, verdictFile({ pr: 512 })))).toBe(true);
+    expect(store.roundsFor(512)[0]).toMatchObject({ status: "cancelled", cancel_cause: "infrastructure_failure" });
+    expect(store.openReviewFailure(512)).toMatchObject({ stage: "posting_receipt", work_owed: 1 });
   });
 });

@@ -132,19 +132,30 @@ guard_require_expected_head() { # guard_require_expected_head <live-head-sha>
 
 # ---- guard 2: no new evidence ----------------------------------------------
 
+# The refusal is final and unchanged. What is new (#5409 round 18) is
+# that the refusal leaves EVIDENCE: the standing mark the guard read is handed
+# to `guard_on_no_new_evidence` when the sourcing script defines it, so
+# post-review.sh can write an identity-bound guarded-no-op record before the
+# exit. Without that record the daemon could not tell "POST was forbidden and
+# never attempted" from "POST may have been lost", and read the missing receipt
+# as infrastructure failure. The hook runs BEFORE die and its failure never
+# changes the guard's answer.
+
+GUARD_STANDING_MARK_JSON=""   # the mark guard 2 refused on, as JSON (set on refusal)
+
 guard_require_new_evidence() { # guard_require_new_evidence <head-sha>
   guard_enabled skip_unchanged_head || return 0
-  local head="${1:-}" verdict
+  local head="${1:-}" answer verdict
   [[ -n "$head" ]] || return 0   # unknown head: guessing would suppress a real review
-  verdict="$(python3 - "$GUARD_STATE_DB" "$PR" "$head" <<'PY' 2>/dev/null || echo new
-import os, sqlite3, sys
+  answer="$(python3 - "$GUARD_STATE_DB" "$PR" "$head" <<'PY' 2>/dev/null || echo new
+import json, os, sqlite3, sys
 db, pr, head = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 if not os.path.exists(db):
     print("new"); raise SystemExit(0)
 try:
     con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     row = con.execute(
-        "SELECT head_sha, reviewed_at, last_author_reply_at, verdict FROM reviewed_heads WHERE pr = ?",
+        "SELECT head_sha, reviewed_at, last_author_reply_at, verdict, posted_event, round_no FROM reviewed_heads WHERE pr = ?",
         (pr,),
     ).fetchone()
 except Exception:
@@ -162,10 +173,23 @@ elif row[2] and row[2] >= row[1]:
     # `>=`, not `>`: an ambiguous reply reads as new evidence (as in guards.ts).
     print("new")
 else:
-    print("stale")
+    # stale, plus the mark itself on the same line: the record the daemon
+    # settles from must be the evidence the guard actually read, not a second
+    # read taken later by another process.
+    mark = {
+        "head_sha": row[0], "reviewed_at": row[1], "last_author_reply_at": row[2],
+        "verdict": row[3], "posted_event": row[4], "round_no": row[5],
+    }
+    print("stale\t" + json.dumps(mark, separators=(",", ":")))
 PY
 )"
+  verdict="${answer%%$'\t'*}"
   if [[ "$verdict" == "stale" ]]; then
+    GUARD_STANDING_MARK_JSON="${answer#*$'\t'}"
+    [[ "$GUARD_STANDING_MARK_JSON" == "$answer" ]] && GUARD_STANDING_MARK_JSON=""
+    if declare -F guard_on_no_new_evidence >/dev/null; then
+      guard_on_no_new_evidence "$head" "$GUARD_STANDING_MARK_JSON" || true
+    fi
     die "#$PR head ${head:0:7} was already reviewed and there is no author reply since — refusing to post (guard 2)"
   fi
 }

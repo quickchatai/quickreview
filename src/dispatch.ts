@@ -40,7 +40,8 @@ import { directiveVocabulary, isFirstPartyDirectivePath } from "./severity.js";
 import type { DispatchAnnouncer } from "./slack/announce.js";
 import { applyEvent, setPrGates } from "./statemachine.js";
 import type { PrStateRow, ReviewedHeadRow, StateStore } from "./state.js";
-import { higherTier, normalizeVerdict, PASS_TIER_ORDER, roundPromptMarker } from "./types.js";
+import { snapshotMark, standingReview } from "./standing-review.js";
+import { higherTier, PASS_TIER_ORDER, roundPromptMarker } from "./types.js";
 import type { PassPlanEntry, PassTier, RoundOrder, RoundType, SessionHooks } from "./types.js";
 
 /** The slice of GitHubAdapter dispatch needs — all mutations are gated inside
@@ -737,8 +738,22 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // no-op. The triggers are still consumed (leaving them would re-queue the
       // PR on the next reconcile, forever) and the PR returns to the state its
       // last verdict put it in — that verdict still stands.
+      //
+      // The mark is read through the ONE standing-review interpretation
+      //. #5409 round 18: the shell had stamped `posted_event =
+      // REQUEST_CHANGES` at this head but the watcher never enriched
+      // `verdict`, this code read `verdict` alone, saw null, and paid for a
+      // full round whose review posting guard 2 was guaranteed to refuse.
+      // Guard 2 keys on head + author reply and nothing else, so THAT is the
+      // test here — provenance (a label, a team re-request, a reconcile
+      // re-derivation) is a scheduling signal and never widens the posting
+      // boundary. If the standing verdict cannot be read off the mark
+      // (a COMMENT-only row), no round runs either — guard 2 would still
+      // refuse it — but nothing is guessed: the PR lands in `tracked` with a
+      // precise anomaly instead of an invented verdict.
       const mark = store.reviewedHead(row.number);
-      const standing = normalizeVerdict(mark?.verdict);
+      const standingInfo = standingReview(mark);
+      const standing = standingInfo.kind === "decided" ? standingInfo.verdict : null;
       // a withholding standing at THIS head is new evidence of its
       // own. The last round decided "no blockers, approval withheld for CI",
       // and something re-queued the PR — CI going green (cigate.ts) or a
@@ -747,19 +762,45 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // create.
       const withheld = store.approvalWithheld(row.number);
       const withheldHere = withheld?.head_sha === row.head_sha;
-      if (cfg.guards.skip_unchanged_head && standing && !withheldHere && !hasNewEvidence(mark, row.head_sha)) {
-        await consumeTriggers(deps, row.number, { markInProgress: false });
-        log(`dispatch: #${row.number} skipped — no new evidence at ${row.head_sha.slice(0, 7)}`);
-        store.logEvent("round_skipped_no_new_evidence", row.number, {
+      if (cfg.guards.skip_unchanged_head && !withheldHere && !hasNewEvidence(mark, row.head_sha)) {
+        // Captured BEFORE the transition below clears them: current PR state
+        // is not historical evidence (#5409's provenance was overwritten by
+        // the failure that followed).
+        const decision = {
+          stage: "dispatch",
           head_sha: row.head_sha,
+          trigger_ts: row.trigger_ts,
+          trigger_provenance: row.trigger_provenance,
+          standing_verdict: standing,
+          standing_source: standingInfo.kind === "decided" ? standingInfo.source : null,
+          // Kept for readers of the legacy payload shape.
           last_verdict: standing,
           reviewed_at: mark!.reviewed_at,
-        });
-        applyEvent(store, row.number, { type: "verdict", verdict: standing }, {}, {
-          botLogin: cfg.github.bot_login,
-          now,
-          reason: "no-new-evidence",
-        });
+          mark: snapshotMark(mark!),
+        };
+        await consumeTriggers(deps, row.number, { markInProgress: false });
+        store.logEvent("round_skipped_no_new_evidence", row.number, decision);
+        if (standing) {
+          log(`dispatch: #${row.number} skipped — no new evidence at ${row.head_sha.slice(0, 7)}; standing ${standing} stands`);
+          applyEvent(store, row.number, { type: "verdict", verdict: standing }, {}, {
+            botLogin: cfg.github.bot_login,
+            now,
+            reason: "no-new-evidence",
+          });
+        } else {
+          log(`dispatch: #${row.number} skipped — no new evidence at ${row.head_sha.slice(0, 7)}, and the mark carries no readable verdict (posted_event=${mark!.posted_event ?? "null"})`);
+          store.logAnomaly(
+            "standing_review_unknown",
+            row.number,
+            null,
+            `#${row.number} was re-triggered at ${row.head_sha.slice(0, 7)}, which is already reviewed with no author reply since, but the reviewed-head mark carries no verdict (posted_event=${mark!.posted_event ?? "null"}). No round was run — posting guard 2 would refuse its review — and no verdict was guessed; the PR is tracked until the author pushes or replies.`,
+          );
+          applyEvent(store, row.number, { type: "round_overdue", standing: null }, {}, {
+            botLogin: cfg.github.bot_login,
+            now,
+            reason: "no-new-evidence:standing-unknown",
+          });
+        }
         continue;
       }
 

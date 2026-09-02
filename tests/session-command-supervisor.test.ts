@@ -430,6 +430,22 @@ describe("bounded round-stage supervision", () => {
     expect(onRoundFailure).toHaveBeenCalledWith(pr, round.round_no, "settled_without_verdict", expect.stringContaining(id));
   });
 
+  it("a 'settled' disposition keeps the delivered command acked and opens no failure", async () => {
+    const { id, pr, round } = seedRoundCommand({ status: "acked", started: true });
+    const onRoundFailure = vi.fn(async () => "settled" as const);
+
+    await supervisor(hooks(), onRoundFailure).supervisor.scan();
+
+    expect(onRoundFailure).toHaveBeenCalledWith(pr, round.round_no, "settled_without_verdict", expect.stringContaining(id));
+    // An acked command proved delivery; a guard-2 no-op is not failed work.
+    expect(store.getSessionCommand(id)?.status).toBe("acked");
+    expect(store.blockingSessionCommand(`pr-${pr}`)).toBeUndefined();
+    expect(store.openReviewFailure(pr)).toBeUndefined();
+    const recovery = (store.db.prepare("SELECT payload FROM events WHERE kind = 'round_stage_recovery' AND pr = ?").all(pr) as Array<{ payload: string }>)
+      .map((row) => JSON.parse(row.payload) as Record<string, unknown>);
+    expect(recovery).toEqual([expect.objectContaining({ command_id: id, stage: "settled_without_verdict", disposition: "settled" })]);
+  });
+
   it("uses matching settled telemetry with durable start evidence when the bridge died before ack", async () => {
     const { id, pr, round } = seedRoundCommand({ status: "running", started: true });
     const onRoundFailure = vi.fn(async () => "requeued" as const);

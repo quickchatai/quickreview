@@ -612,6 +612,19 @@ export class SessionCommandSupervisor {
       });
       return;
     }
+    if (disposition === "settled") {
+      // the round terminalized cleanly (a guard-2 refusal recorded as
+      // a no-op). The command was delivered and did its work; failing it here
+      // would leave a blocking failed command on a PR that owes nothing.
+      this.deps.store.logEvent("round_stage_recovery", command.pr, {
+        command_id: command.id,
+        round_no: command.round_no,
+        stage,
+        disposition,
+        detail,
+      });
+      return;
+    }
 
     const current = this.deps.store.getSessionCommand(command.id);
     if (current?.status === "acked") this.deps.store.failSettledSessionCommand(command.id, detail);

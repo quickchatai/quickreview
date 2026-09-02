@@ -19,6 +19,7 @@ import {
 import type { GateResult } from "../src/gate.js";
 import type { PrFileEntry } from "../src/github.js";
 import { StateStore } from "../src/state.js";
+import { applyEvent } from "../src/statemachine.js";
 import { applyInterpretation } from "../src/webhook.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
 
@@ -486,9 +487,121 @@ describe("dispatch — a tick with no new evidence starts no round", () => {
     expect(orders).toHaveLength(1);
   });
 
-  it("dispatches when the mark carries no verdict — nothing yet stands", async () => {
+  // ----: the mark is read through the ONE standing-review interpretation
+
+  const skipEvent = (pr: number): Record<string, unknown> => {
+    const rows = store.db.prepare("SELECT payload FROM events WHERE kind = 'round_skipped_no_new_evidence' AND pr = ?").all(pr) as Array<{ payload: string }>;
+    expect(rows).toHaveLength(1);
+    return JSON.parse(rows[0]!.payload) as Record<string, unknown>;
+  };
+
+  it("the #5409 partial mark — posted REQUEST_CHANGES, verdict null — is a standing REQUEST_CHANGES and starts no round", async () => {
+    queued(5409, HEAD);
+    // Exactly the row the shell route leaves before the watcher enriches it.
+    store.recordReviewedHead(5409, { head_sha: HEAD, posted_event: "REQUEST_CHANGES" });
+    expect(store.reviewedHead(5409)).toMatchObject({ verdict: null, posted_event: "REQUEST_CHANGES", round_no: null });
+    const adapter = new DispatchFake();
+    const h = hooks();
+
+    const orders = await dispatchOnce({ cfg, store, adapter, hooks: h.hooks });
+
+    expect(orders).toEqual([]);
+    expect(h.orders).toEqual([]);
+    expect(store.roundsFor(5409)).toEqual([]);
+    expect(store.getPr(5409)?.state).toBe("awaiting_author");
+    const fns = adapter.calls.map((c) => `${c.fn}:${c.arg ?? ""}`);
+    expect(fns).toContain(`removeLabel:${cfg.github.trigger_label}`);
+    expect(fns).toContain("deleteTeamReviewRequest:");
+    expect(fns).not.toContain(`addLabel:${cfg.github.in_progress_label}`);
+    expect(skipEvent(5409)).toMatchObject({
+      stage: "dispatch",
+      head_sha: HEAD,
+      standing_verdict: "REQUEST_CHANGES",
+      standing_source: "posted_event",
+      mark: { head_sha: HEAD, verdict: null, posted_event: "REQUEST_CHANGES", round_no: null },
+    });
+    // The mark itself is untouched: nothing was reviewed, nothing is re-stamped.
+    expect(store.reviewedHead(5409)).toMatchObject({ verdict: null, posted_event: "REQUEST_CHANGES", round_no: null });
+  });
+
+  it("the exact #5409 reproduction — a fresh human review_requested on the partial mark — consumes the trigger and runs nothing", async () => {
+    // The PR sits awaiting_author on a review posted by round 12; the mark
+    // never got its verdict. Then GitHub delivers pull_request.review_requested.
+    store.upsertPr({
+      number: 5409, state: "awaiting_author", head_sha: HEAD, title: "PR 5409", author: "alice",
+      trigger_ts: null, stale_recheck: 0, migration_gate: 0,
+    });
+    store.recordReviewedHead(5409, { head_sha: HEAD, posted_event: "REQUEST_CHANGES" });
+    const requestedAt = new Date("2026-09-01T19:05:12.664Z");
+    applyEvent(store, 5409, { type: "trigger", source: "team_request" }, { head_sha: HEAD }, { botLogin: cfg.github.bot_login, now: () => requestedAt });
+    expect(store.getPr(5409)).toMatchObject({ state: "queued", trigger_provenance: "human", trigger_ts: requestedAt.toISOString() });
+    const adapter = new DispatchFake();
+    const h = hooks();
+
+    const orders = await dispatchOnce({ cfg, store, adapter, hooks: h.hooks });
+
+    // No round, no order (so no session command, no worktree, no pi), no spend.
+    expect(orders).toEqual([]);
+    expect(h.orders).toEqual([]);
+    expect(store.roundsFor(5409)).toEqual([]);
+    const fns = adapter.calls.map((c) => `${c.fn}:${c.arg ?? ""}`);
+    expect(fns).not.toContain(`addLabel:${cfg.github.in_progress_label}`);
+    expect(fns).toContain("deleteTeamReviewRequest:");
+    // Human provenance is a scheduling signal, not evidence: guard 2's rule
+    // decides, and the PR goes back to the state its standing review put it in.
+    expect(store.getPr(5409)).toMatchObject({ state: "awaiting_author", trigger_ts: null, trigger_provenance: null });
+    // The decision event captured the provenance BEFORE the transition cleared it.
+    expect(skipEvent(5409)).toMatchObject({
+      stage: "dispatch",
+      trigger_provenance: "human",
+      trigger_ts: requestedAt.toISOString(),
+      standing_verdict: "REQUEST_CHANGES",
+      standing_source: "posted_event",
+    });
+  });
+
+  it("the symmetric partial APPROVE mark is a standing approval and restores tracked", async () => {
+    queued(5180, HEAD);
+    store.recordReviewedHead(5180, { head_sha: HEAD, posted_event: "APPROVE" });
+    const h = hooks();
+
+    expect(await dispatchOnce({ cfg, store, adapter: new DispatchFake(), hooks: h.hooks })).toEqual([]);
+
+    expect(h.orders).toEqual([]);
+    expect(store.getPr(5180)?.state).toBe("tracked");
+    expect(skipEvent(5180)).toMatchObject({ standing_verdict: "APPROVE", standing_source: "posted_event" });
+  });
+
+  it("a null-verdict COMMENT mark is never guessed — no round (guard 2 would refuse it), no verdict, tracked with an anomaly", async () => {
     queued(5180, HEAD);
     store.recordReviewedHead(5180, { head_sha: HEAD, posted_event: "COMMENT" });
+    const adapter = new DispatchFake();
+    const h = hooks();
+
+    expect(await dispatchOnce({ cfg, store, adapter, hooks: h.hooks })).toEqual([]);
+
+    expect(h.orders).toEqual([]);
+    expect(store.roundsFor(5180)).toEqual([]);
+    expect(store.getPr(5180)?.state).toBe("tracked");
+    expect(adapter.calls.map((c) => `${c.fn}:${c.arg ?? ""}`)).not.toContain(`addLabel:${cfg.github.in_progress_label}`);
+    expect(skipEvent(5180)).toMatchObject({ standing_verdict: null, standing_source: null, mark: { posted_event: "COMMENT", verdict: null } });
+    expect(store.anomalies().map((a) => a.kind)).toContain("standing_review_unknown");
+    expect(store.reviewedHead(5180)).toMatchObject({ verdict: null, posted_event: "COMMENT" });
+  });
+
+  it("a withheld approval at the same head is still its own new evidence, partial mark or not", async () => {
+    queued(5180, HEAD);
+    store.recordReviewedHead(5180, { head_sha: HEAD, posted_event: "COMMENT" });
+    store.recordApprovalWithheld(5180, { head_sha: HEAD, ci_state: "red", reason: "red-ci" });
+    const h = hooks();
+
+    expect(await dispatchOnce({ cfg, store, adapter: new DispatchFake(), hooks: h.hooks })).toHaveLength(1);
+    expect(h.orders).toHaveLength(1);
+  });
+
+  it("an undecided legacy NEEDS_HUMAN mark beside a posted REQUEST_CHANGES still gets its round", async () => {
+    queued(5180, HEAD);
+    store.recordReviewedHead(5180, { head_sha: HEAD, verdict: "NEEDS_HUMAN", posted_event: "REQUEST_CHANGES", round_no: 1 });
     const h = hooks();
 
     expect(await dispatchOnce({ cfg, store, adapter: new DispatchFake(), hooks: h.hooks })).toHaveLength(1);

@@ -49,6 +49,7 @@ import type { PrFileEntry } from "./github.js";
 import { applyEvent } from "./statemachine.js";
 import type { StateStore } from "./state.js";
 import { normalizeVerdict, recheckPromptMarker, stampPrompt } from "./types.js";
+import { standingVerdict } from "./standing-review.js";
 import { wakeOrHold } from "./wakes.js";
 
 /** What woke the recheck. `author_reply` is listed because it is a decided
@@ -496,7 +497,7 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
   if (req.trigger === "author_reply") return done(planRecheck({ ...emptyPlanInput(req), standing: "APPROVE" }));
 
   const mark = store.reviewedHead(req.pr);
-  if (normalizeVerdict(mark?.verdict) !== "APPROVE") return done({ action: "noop", reason: "no-standing-approval", class: "empty" });
+  if (standingVerdict(mark) !== "APPROVE") return done({ action: "noop", reason: "no-standing-approval", class: "empty" });
 
   const row = store.getPr(req.pr);
   if (!row || row.state === "closed") return done({ action: "noop", reason: "pr-not-open", class: "empty" });
@@ -555,7 +556,7 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
 
   const plan = planRecheck({
     trigger: req.trigger,
-    standing: mark!.verdict,
+    standing: standingVerdict(mark),
     last_reviewed_sha: lastReviewed,
     head_sha: head,
     delta,
@@ -671,7 +672,7 @@ export async function runBaseAdvance(
   if (deps.store.drainState().draining) return out;
   for (const row of deps.store.allPrs()) {
     if (row.state === "closed") continue;
-    if (normalizeVerdict(deps.store.reviewedHead(row.number)?.verdict) !== "APPROVE") continue;
+    if (standingVerdict(deps.store.reviewedHead(row.number)) !== "APPROVE") continue;
     if (deps.adapter.getPr) {
       try {
         // Called on the adapter, never through a detached reference: the real

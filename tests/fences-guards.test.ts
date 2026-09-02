@@ -38,6 +38,11 @@ const NOT_A_GUARD = new Set([
   "guard_api_get",
   "guard_read_pr",
   "guard_stamp_reviewed_head",
+  // the evidence hook guard 2 calls on refusal. Defined by
+  // post-review.sh (not guards.sh, so it sits under no header), it writes the
+  // guarded-no-op record and gates nothing — the refusal is already decided
+  // before it runs, and its failure never changes guard 2's answer.
+  "guard_on_no_new_evidence",
 ]);
 
 /**

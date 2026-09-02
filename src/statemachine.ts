@@ -213,7 +213,12 @@ export function applyEvent(
   // An author reply on a queued PR is a person expecting attention:
   // the queued round dispatches in full whoever queued it first.
   if (event.type === "author_reply" && base === "queued") provenance = "human";
-  if (event.type === "dispatched") provenance = null;
+  // Cleared with the trigger it described. `dispatched` is the usual path;
+  // `verdict`/`round_overdue` cover the settlements that never dispatched —
+  // the no-new-evidence skip — which otherwise left a
+  // "human" residue on an awaiting_author row for's exact-head
+  // retirement to misread as a fresh ask (same rule as trigger_ts).
+  if (event.type === "dispatched" || event.type === "verdict" || event.type === "round_overdue") provenance = null;
 
   store.upsertPr({
     number: pr,

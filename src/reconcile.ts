@@ -15,6 +15,7 @@ import { retryWithheldApproval, type CheckSummary } from "./cigate.js";
 import { auditUngatedReviews, hasUngatedApproval, ungatedReviewMessage } from "./execboundary.js";
 import { recheckFingerprint } from "./recheck.js";
 import { recheckPromptMarker } from "./types.js";
+import { standingVerdict } from "./standing-review.js";
 import { DEFAULT_ROUND_STALL_GRACE_MIN, type Config } from "./config.js";
 import type { IssueCommentFull, PrRef, ReviewCommentFull, ReviewFull } from "./github.js";
 import { applyEvent, isBotAuthor } from "./statemachine.js";
@@ -224,7 +225,7 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
         const reviewed = store.reviewedHead(pr.number);
         if (
           reviewed &&
-          reviewed.verdict === "APPROVE" &&
+          standingVerdict(reviewed) === "APPROVE" &&
           reviewed.head_sha !== pr.head_sha &&
           !store.hasRecheck(pr.number, recheckFingerprint({ trigger: "push" }, pr.head_sha))
         ) {
@@ -327,7 +328,7 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
       const reviewed = store.reviewedHead(pr);
       const pushHandled =
         !freshKind &&
-        reviewed?.verdict === "APPROVE" &&
+        reviewed !== undefined && standingVerdict(reviewed) === "APPROVE" &&
         reviewed.head_sha !== meta.head_sha &&
         store.hasRecheck(pr, recheckFingerprint({ trigger: "push" }, meta.head_sha));
       if (pushHandled) {

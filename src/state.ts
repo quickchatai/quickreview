@@ -6,6 +6,7 @@ import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { OpenVikingStatus } from "./openviking/types.js";
 import type { PassPlanEntry, VerdictPassEntry } from "./types.js";
+import { standingVerdict as standingReviewVerdict } from "./standing-review.js";
 
 /** The lifecycle states a PR can occupy. There is no "awaiting human" member:
  * the park was retired on 2026-08-19 (the review is never handed to
@@ -212,6 +213,12 @@ export type CancelCause =
   | "superseded"
   /** An operator unwedge lever (`rerun-round` / `restart-session`). */
   | "operator"
+  /** Posting guard 2 refused the round's review because the head was already
+   * reviewed with no author reply since (#5409 round 18). The review
+   * work was healthy and the refusal was correct; nothing reached GitHub and
+   * the prior standing review stands. Benign by definition — dispatch should
+   * have skipped the round, and the durable event says which half did. */
+  | "no_new_evidence"
   /** Legacy prose the migration could not classify. Never inferred as
    * benign: unknown is unknown. */
   | "unknown";
@@ -225,6 +232,7 @@ export const CANCEL_CAUSES: readonly CancelCause[] = [
   "infrastructure_failure",
   "superseded",
   "operator",
+  "no_new_evidence",
   "unknown",
 ];
 
@@ -252,6 +260,7 @@ export const CANCEL_CAUSE_LABEL: Record<CancelCause, string> = {
   incomplete_round: "incomplete round",
   infrastructure_failure: "infrastructure failure",
   superseded: "superseded",
+  no_new_evidence: "nothing new to post (guard 2)",
   operator: "operator",
   unknown: "unclassified",
 };
@@ -922,18 +931,6 @@ export interface ReviewedHeadRow {
   round_no: number | null;
   /** Newest author reply observed after the mark was stamped (new evidence). */
   last_author_reply_at: string | null;
-}
-
-/** Shell posting stamps `posted_event` before the verdict watcher enriches the
- * same mark with `verdict`. A crash or historical row can therefore carry a
- * fully substantive review proof with a null verdict; guard 2 intentionally
- * treats that mark as reviewed, so exact-head recovery must recognize the same
- * proof vocabulary rather than demanding the later enrichment. */
-function substantiveStandingVerdict(mark: ReviewedHeadRow | undefined): "REQUEST_CHANGES" | "APPROVE" | null {
-  if (!mark) return null;
-  if (mark.verdict === "REQUEST_CHANGES" || mark.verdict === "APPROVE") return mark.verdict;
-  if (mark.posted_event === "REQUEST_CHANGES" || mark.posted_event === "APPROVE") return mark.posted_event;
-  return null;
 }
 
 /**
@@ -2748,7 +2745,7 @@ export class StateStore {
         const prior = this.db.prepare("SELECT * FROM review_failures WHERE incident_id=?").get(input.incident_id) as ReviewFailureRow | undefined;
         const command = this.getSessionCommand(input.command_id);
         const mark = this.reviewedHead(input.pr);
-        const standingVerdict = substantiveStandingVerdict(mark);
+        const standingVerdict = standingReviewVerdict(mark);
         if (
           prior?.pr === input.pr
           && prior.command_id === input.command_id
@@ -2782,7 +2779,7 @@ export class StateStore {
       ) return { kind: "blocked", reason: `open review failure identity changed for PR #${input.pr}` };
 
       const mark = this.reviewedHead(input.pr);
-      const standingVerdict = substantiveStandingVerdict(mark);
+      const standingVerdict = standingReviewVerdict(mark);
       if (
         !mark
         || mark.head_sha !== input.head_sha
