@@ -1057,7 +1057,13 @@ export function installMemoryLearningHooks(app: App, deps: MemTabDeps = {}): Mem
             return true;
           }
           default:
-            return true; // memory view swallows stray chars — nothing falls to the board
+            // A letter this view does not claim is the operator talking to
+            // the companion column — the same rule as every other tab
+            // (guards the board's verbs app-side, so nothing can fall
+            // to the board from here). This used to swallow "so nothing falls
+            // to the board", which since 2026-09-02 also ate `o`/`M`: no
+            // longer verbs, just letters.
+            return false;
         }
       case "attach":
         // In a #feedback timeline `a` is the spatially local archive toggle the

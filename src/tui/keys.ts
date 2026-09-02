@@ -1,6 +1,11 @@
 // Board-mode key decoding. Only the board/digest/help/msg screens parse keys;
-// attach mode is a raw passthrough with a single chord scan (attach.ts) —
-// nothing here runs while attached.
+// a FOCUSED embedded terminal (the board's pi pane, the companion column) is
+// a raw passthrough — nothing here runs for it except the Ctrl-q release.
+//
+// `o` (overseer) and `M` (main session) used to decode to full-screen attach
+// verbs. Retired 2026-09-02 on the owner's order: the TUI never attaches to a
+// VM session — both letters now fall through as plain text to the companion
+// column, which is where an operator asks about the overseer.
 export type BoardKey =
   | { kind: "up"; arrow?: boolean; wheel?: boolean }
   | { kind: "down"; arrow?: boolean; wheel?: boolean }
@@ -20,8 +25,6 @@ export type BoardKey =
   | { kind: "message" }
   | { kind: "unwedge" }
   | { kind: "github" }
-  | { kind: "overseer" }
-  | { kind: "main-session" }
   | { kind: "events" }
   | { kind: "refresh" }
   | { kind: "reconnect" }
@@ -40,7 +43,7 @@ export function decodeKey(buf: Buffer): BoardKey {
   if (s === "\x1b\r" || s === "\x1b\n") return { kind: "alt-enter" };
   if (s === "\x1b") return { kind: "escape" };
   if (s === "\x7f" || s === "\b") return { kind: "backspace" };
-  if (s === "a") return { kind: "attach" }; // ⏎'s twin: full-screen takeover
+  if (s === "a") return { kind: "attach" }; // ⏎'s twin: focus the board's embedded pi pane
   if (s === "j") return { kind: "down" };
   if (s === "k") return { kind: "up" };
   if (s === "1") return { kind: "tab-board" };
@@ -54,8 +57,6 @@ export function decodeKey(buf: Buffer): BoardKey {
   if (s === "m") return { kind: "message" };
   if (s === "u") return { kind: "unwedge" };
   if (s === "g") return { kind: "github" };
-  if (s === "o") return { kind: "overseer" };
-  if (s === "M") return { kind: "main-session" };
   if (s === "e") return { kind: "events" };
   if (s === "r") return { kind: "refresh" };
   if (s === "s") return { kind: "reconnect" };

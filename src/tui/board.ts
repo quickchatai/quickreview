@@ -37,12 +37,6 @@ export interface BoardView {
    * remedy. Painted where the PR list would be, because that is where the
    * operator is looking when the list is empty. */
   connection?: ConnectionDiagnosis;
-  /**: bring-up progress, for the configuration with NO companion
-   * column to put it in (`--no-companion`). Rendered in the same unknown block
-   * as `connection` — the region that stands in for the PR rows while there is
-   * nothing to show — and cleared once the bring-up settles. With a column,
-   * this stays undefined and the column carries it (ruling 3). */
-  startup?: string[];
   events: EventLine[]; // newest first
   selected: number;
   detail?: WhyPayload;
@@ -173,7 +167,7 @@ const CONNECTION_LABEL: Record<ConnectionDiagnosis["kind"], string> = {
  * and it read as "the data is gone". The count is `?`, the reason is named, and
  * the remedy is a command the operator can paste into their own shell.
  */
-export function unknownSourceLines(conn: ConnectionDiagnosis | undefined, width: number, startup?: string[]): string[] {
+export function unknownSourceLines(conn: ConnectionDiagnosis | undefined, width: number): string[] {
   const lines = [`${FG.anomaly}the daemon has not answered yet${RESET}`, `${FG.dim}nothing below is a measurement — it is not known${RESET}`, ""];
   if (conn && conn.kind !== "ok" && conn.kind !== "local") {
     for (const l of wrap(stripAnsi(conn.cause), width)) lines.push(`${FG.dim}${l}${RESET}`);
@@ -192,11 +186,9 @@ export function unknownSourceLines(conn: ConnectionDiagnosis | undefined, width:
   } else if (!conn) {
     lines.push(`${FG.dim}checking the connection…${RESET}`);
   }
-  if (startup && startup.length > 0) {
-    lines.push("");
-    lines.push(`${MUTED}starting up${RESET}`);
-    for (const l of startup) lines.push(l);
-  }
+  // (Bring-up progress used to be appended here for the no-column
+  // configuration. Since 2026-09-02 the companion column is on every frame,
+  // so the progress always has its own place — sidebar.ts `startup`.)
   lines.push("");
   lines.push(`${FG.dim}s re-checks the connection · r refreshes${RESET}`);
   return lines.map((l) => truncate(l, width));
@@ -497,21 +489,21 @@ export const HELP_LINES = [
   "               an alert in the top bar: click it or ⏎ to open the companion",
   "the companion sidebar down the right edge is on every tab:",
   "               type any key no tab claims (or /) — it is a terminal, every byte reaches pi; Ctrl-q releases",
-  "               wheel over the column (or PgUp/PgDn while focused) walks its scrollback · \\ collapses it to a spine",
+  "               wheel over the column (or PgUp/PgDn while focused) walks its scrollback · drag its left edge to resize",
+  "               the column is always there at full width — nothing in the TUI collapses it or goes full-screen",
   "on the board [1] only — these verbs act on the SELECTED PR, so off the board they do nothing:",
-  "j/k ↓/↑        select PR (mouse: click a row; click again to attach)",
-  "⏎ / a          attach selected PR full-screen (the takeover; Ctrl-q back)",
+  "j/k ↓/↑        select PR (mouse: click a row; click again to focus its pi pane)",
+  "⏎ / a          focus the selected PR's pi pane (embedded, below the list; Ctrl-q back)",
   "click the PI pane below the list — it is a live terminal, not a picture:",
   "               everything you type goes to that pi session; Ctrl-q hands the keyboard back",
   "               wheel over the pane scrolls its scrollback (End/live once you wheel back down)",
   "g              open the PR on GitHub (PR numbers are Ctrl+clickable links)",
   "w              toggle full-height detail",
-  "m              quick-message selected PR",
-  "o / M          attach overseer / main session",
+  "m              quick-message selected PR (m on the overseer/main rows too — the TUI never attaches to them; ask the companion)",
   "e              events overlay (j/k scroll, e/Esc close; click an event → its PR)",
   "r              force refresh",
   "[ / ]          older / newer day (memory & learning tab; v toggles digest/memory view)",
-  "Ctrl-q         detach (inside attach; twice = literal)",
+  "Ctrl-q         release a focused pi pane or the companion column back to the board",
   "q              quit",
   "",
   "any key to close",
@@ -621,14 +613,14 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
   const flabel = filterLabel(view.boardFilter);
   const listLines: string[] = known
     ? [section(`PRS (${sorted.length})`, flabel !== "" ? flabel : "the daemon's live set")]
-    : [section("PRS (?)", "unknown — the daemon has not answered"), ...unknownSourceLines(view.connection, listW - 1, view.startup)];
+    : [section("PRS (?)", "unknown — the daemon has not answered"), ...unknownSourceLines(view.connection, listW - 1)];
   sorted.forEach((pr, i) => {
     listLines.push(styledRow(pr, i === view.selected, listW - 1, now, view.repo));
     const y = 1 + listLines.length - 1 + 1; // frame row of this PR line (below top bar)
     // Only PAINTED rows get zones: with a long list, off-screen rows would
     // otherwise leave phantom click targets over the pi region and the
-    // bar-row gaps — a click there could select (or double-click attach)
-    // an invisible PR.
+    // bar-row gaps — a click there could select (or double-click into the
+    // pi pane of) an invisible PR.
     if (i >= bodyRows - 1) return;
     frame.zones.push({ x1: 2, y1: y, x2: listW, y2: y, action: { t: "select-pr", pr: pr.number } satisfies BoardAction });
     frame.zones.push({ x1: 4, y1: y, x2: 4 + String(pr.number).length + 1, y2: y, action: { t: "open-github", pr: pr.number } satisfies BoardAction });

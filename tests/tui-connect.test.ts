@@ -1,9 +1,7 @@
 // ssh-master bootstrap + the triple-Ctrl-C kill chord — the two halves of
 // "the TUI can always connect and can always be exited".
-import { EventEmitter } from "node:events";
 import { describe, expect, it } from "vitest";
 import { TUI_DEFAULTS } from "../src/config.js";
-import { App } from "../src/tui/app.js";
 import { TripleCtrlC } from "../src/tui/chord.js";
 import { ensureSshMaster, masterCheckArgv, masterConnectArgv, type SyncSsh } from "../src/tui/connect.js";
 
@@ -37,37 +35,10 @@ describe("TripleCtrlC", () => {
   });
 });
 
-describe("triple Ctrl-C inside a hung attach", () => {
-  it("kills the TUI with the terminal restored (the un-stuck hatch)", async () => {
-    const out = new EventEmitter() as any;
-    let buf = "";
-    out.columns = 80;
-    out.rows = 24;
-    out.write = (s: string) => ((buf += s), true);
-    const input = new EventEmitter() as any;
-    input.isTTY = false;
-    input.resume = () => {};
-    input.pause = () => {};
-    input.setRawMode = () => {};
-    const app = new App(TUI_DEFAULTS, async () => ({ ok: false, stdout: "", stderr: "", code: 1 }), out, input);
-    let exited: number | undefined;
-    app.exiter = (code) => (exited = code);
-    const run = app.run();
-    // A pty that hangs forever — ssh stuck at a dead bastion/passphrase prompt.
-    const hungPty = { write: () => {}, resize: () => {}, kill: () => {}, onData: () => {}, onExit: () => {} };
-    const { AttachScreen } = await import("../src/tui/attach.js");
-    const attach = new AttachScreen("pr-1", app, () => hungPty, out, input);
-    void attach.run();
-    const ctrlC = Buffer.from([0x03]);
-    input.emit("data", ctrlC); // forwarded to the (hung) session
-    input.emit("data", ctrlC);
-    input.emit("data", ctrlC); // third inside the window: hard kill
-    expect(exited).toBe(130);
-    expect(buf).toContain("\x1b[?1049l"); // alt screen restored
-    app.quit();
-    await run;
-  });
-});
+// (A "triple Ctrl-C inside a hung attach" test lived here. The full-screen
+// attach — and with it the only pty the TUI ever held — was retired
+// 2026-09-02, so there is no hung attach to escape from; the board's own
+// Ctrl-C ×3 hatch is pinned in tests/cmdbar.test.ts.)
 
 describe("ensureSshMaster", () => {
   const record = (checkStatus: number, connectStatus: number) => {

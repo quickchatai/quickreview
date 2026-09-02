@@ -20,7 +20,7 @@ describe("captureArgv", () => {
     ]);
   });
 
-  it("mirrors attachArgv's docker prefix (sudo off = plain docker, no -it)", () => {
+  it("uses the shared docker prefix (sudo off = plain docker, no -it)", () => {
     const argv = captureArgv({ ...TUI_DEFAULTS, sudo_docker: false }, "overseer");
     expect(argv[0]).toBe("docker");
     expect(argv).not.toContain("-it");
@@ -360,11 +360,10 @@ describe("App ↔ pi mirror", () => {
 
   it("a click on the pane focuses it in place — it never opens the full-screen attach", async () => {
     const { app, streams, running } = appWith();
-    let attached: string | undefined;
-    app.hooks.attach = async (session) => void (attached = session);
     app.repaint(); // publish the frame the hit test reads
     streams.type(CLICK_IN_PANE);
-    expect(attached).toBeUndefined();
+    // Structural since 2026-09-02: there is no attach hook to fire at all.
+    expect("attach" in app.hooks).toBe(false);
     expect(app.piFocused()).toBe(true);
     expect(app.view.piPr).toBe(5012);
     app.quit();
@@ -377,18 +376,14 @@ describe("App ↔ pi mirror", () => {
     // terminal the attach was, bounded to its region — so the full-screen
     // hook must not fire for a PR row at all.
     const { app, streams, running } = appWith();
-    const attached: string[] = [];
-    app.hooks.attach = async (session) => void attached.push(session);
     app.repaint();
     streams.type("\r");
-    expect(attached).toEqual([]);
     expect(app.piFocused()).toBe(true);
     expect(app.view.piPr).toBe(5012);
     // Ctrl-q releases, and 'a' (the attach verb) does the same thing as ⏎.
     streams.type("\x11");
     expect(app.piFocused()).toBe(false);
     streams.type("a");
-    expect(attached).toEqual([]);
     expect(app.piFocused()).toBe(true);
     app.quit();
     await running;

@@ -12,7 +12,7 @@ import { TUI_DEFAULTS } from "../src/config.js";
 import { App, type Tab } from "../src/tui/app.js";
 import { registeredKeys, TAB_COMMANDS } from "../src/tui/cmdbar.js";
 import { decodeKey } from "../src/tui/keys.js";
-import { stripAnsi } from "../src/tui/paint.js";
+import { Frame, stripAnsi } from "../src/tui/paint.js";
 import {
   CHANGE_LOG_FORMAT,
   ChangeLog,
@@ -429,7 +429,7 @@ describe("key routing — the tab's keys must never reach the companion strip", 
       seen.push(key.kind);
       return true;
     };
-    app.hooks.changesScreen = () => "changes";
+    app.hooks.changesScreen = (_a, cols, rows) => new Frame(cols, rows);
     const running = app.run();
     (input as unknown as EventEmitter).emit("data", Buffer.from("5"));
     expect(app.tab).toBe("changes");

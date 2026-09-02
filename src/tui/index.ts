@@ -19,25 +19,37 @@ import type { ConnectionDiagnosis } from "./sshtriage.js";
 
 export { chainOnPoll } from "./poll-hooks.js";
 
-export function parseTarget(arg: string | undefined): { kind: "none" } | { kind: "pr"; pr: number } | { kind: "session"; session: string } | { kind: "bad"; reason: string } {
+/**
+ * `qcr tui <pr>` opens the board with that PR selected. `overseer` and `main`
+ * used to deep-link into a full-screen attach of those sessions; the attach
+ * is gone (2026-09-02 — the TUI never attaches to a VM session), so both are
+ * refused with the place to go instead.
+ */
+export function parseTarget(arg: string | undefined): { kind: "none" } | { kind: "pr"; pr: number } | { kind: "bad"; reason: string } {
   if (arg === undefined || arg === "") return { kind: "none" };
   if (/^\d+$/.test(arg)) return { kind: "pr", pr: Number(arg) };
-  if (arg === "overseer" || arg === "main") return { kind: "session", session: arg };
-  return { kind: "bad", reason: `unknown target '${arg}' — expected a PR number, 'overseer', or 'main'` };
+  if (arg === "overseer" || arg === "main") {
+    return { kind: "bad", reason: `'${arg}' is no longer a target — the TUI never attaches to the ${arg} session; open the board and ask the companion` };
+  }
+  return { kind: "bad", reason: `unknown target '${arg}' — expected a PR number` };
 }
 
 export const TUI_HELP = `qcr tui — live board for the review daemon (over ssh, read-only)
 
-usage: qcr tui [<pr> | overseer | main] [--no-companion] [--no-reload]
+usage: qcr tui [<pr>] [--no-companion] [--no-reload]
 
   qcr tui           open the board
-  qcr tui 5012      deep-link straight into PR 5012's pi session
-  qcr tui overseer  deep-link into the overseer session
+  qcr tui 5012      open the board with PR 5012 selected (⏎ focuses its pi pane)
 
-  --no-companion    skip the local companion entirely (container, ambient
-                    feed, alert pipeline; the companion column shows
-                    "companion off")
+  --no-companion    do not run the local companion (container, ambient feed,
+                    alert pipeline). The layout does not change: the column
+                    is still on the right and says "companion off"
   --no-reload       do not re-exec when a new dist/ build lands
+
+layout: ONE shape, always — the tab on the left, the companion column on the
+        right. Nothing goes full-screen and nothing collapses the column;
+        anything you would have attached to a VM session for, ask the
+        companion.
 
 keys: 1/2/3/4/5 tabs (2 = memory & learning — v toggles digest/memory view,
       x×2 retire · p pin · e edit · n new · A/R accept/reject a rubric proposal;
@@ -48,11 +60,11 @@ keys: 1/2/3/4/5 tabs (2 = memory & learning — v toggles digest/memory view,
       companion column on every tab: type any unclaimed key (or /) to talk to
       it — every byte reaches pi · wheel over the column, or PgUp/PgDn while
       focused, walks its scrollback ·
-      \ collapses the column · click it to take the keyboard ·
+      drag its left edge to resize · click it to take the keyboard ·
       j/k select · ⏎ focus the PR's pi pane ·
       Ctrl-q release focus · Ctrl-c ×3 hard-kill the TUI ·
       s reconnect ssh (GCP passphrase, once) ·
-      m quick-message · o overseer · M main · w detail · e events overlay · r refresh ·
+      m quick-message · w detail · e events overlay · r refresh ·
       ? full key map · q quit
 
 troubleshooting:
@@ -102,12 +114,13 @@ export function parseTuiArgs(args: string[]): TuiArgs {
 export function buildTuiDriver(app: App, memState: MemTabState, metricsView: MetricsView, deployState: DeployState): TuiDriver {
   // One keyboard owner at a time: an action must never type into a focused
   // pi pane or companion column (same rule the mouse/tab handlers follow).
-  // A busy App (operator input box open, attach suspended) is refused: a
-  // synthesized keystroke would land in the operator's draft or nowhere.
+  // A busy App (operator input box open, terminal lent to the `s` passphrase
+  // prompt) is refused: a synthesized keystroke would land in the operator's
+  // draft or nowhere.
   const prep = (): void => {
     if (app.piFocused()) app.blurPiPane();
     app.sidebar?.blur();
-    if (app.isBusy()) throw new Error("operator input open / attach active — action refused");
+    if (app.isBusy()) throw new Error("operator input open / terminal in use — action refused");
   };
   const driver: TuiDriver = {
     switchTab: (tab) => {
@@ -362,39 +375,33 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     },
   };
 
-  // The companion column is LAYOUT, and its width is a CONFIG fact (,
-  // ruling 2). Wiring it here — before anything asks docker whether the
-  // container is running — is what makes the first frame the real one: the
-  // sidebar is `shown()` from config and only `available()` once the container
-  // answers, so the container fills a column that was already the right size.
+  // The companion column is LAYOUT (ruling 2, made unconditional
+  // 2026-09-02): its width depends on nothing but the terminal, so wiring it
+  // here — before anything asks docker whether the container is running — is
+  // what makes the first frame the real one. The sidebar is only
+  // `available()` once the container answers, and the container fills a
+  // column that was already the right size.
   const { CompanionSidebar, restorePreferredSidebarWidth } = await import("./sidebar.js");
   const { CompanionLifecycle, realDockerRunner } = await import("./companion.js");
   const companion = new CompanionLifecycle(full.companion, realDockerRunner);
   const companionOn = args.companion && full.companion.enabled;
   let companionUp = false;
   let companionError: string | undefined;
+  // The column exists in EVERY configuration (2026-09-02): `--no-companion`
+  // and `[companion] enabled = false` decide what runs and what the column
+  // says, never whether the right half of the screen is there.
   app.sidebar = new CompanionSidebar(full.companion, realDockerRunner, {
-    enabled: () => companionOn,
     available: () => companionUp,
     onUpdate: () => app.repaint(),
   });
+  if (!companionOn) app.sidebar.setOff(args.companion ? "[companion] enabled = false" : "--no-companion");
 
   // Bring-up progress goes IN that column (ruling 3): it is empty at this
   // moment and already the right shape, so it costs no new surface — and the
   // lines are never written to the normal screen, where the alt screen's clear
-  // used to erase them (that erasure was the flicker).
-  //
-  // WITH NO COLUMN (`--no-companion`, or `[companion] enabled = false`) ruling
-  // 3's surface does not exist, so the progress goes to the two places the
-  // operator is already looking, and NEVER to a panel that would appear and
-  // then vanish (that reflow is the jump ruling 2 forbids):
-  //   * the board's unknown block — the same "I could not ask" region that
-  //     replaces the PR rows, carrying the full checklist while there is no
-  //     data, which is exactly when the bring-up matters;
-  //   * the notice line, for each transition.
-  // The two steps that outlive a first snapshot in that configuration are the
-  // memory forward (whose own state is first-class on the Memory tab and loud
-  // on failure) and ssh (the health badge). Nothing is left unreported.
+  // used to erase them (that erasure was the flicker). With the companion off
+  // the same column carries the skipped steps, and stays as the place that
+  // says WHY it is off.
   const { StartupProgress } = await import("./startup.js");
   const progress = new StartupProgress(undefined, {
     onUpdate: (p) => {
@@ -403,16 +410,13 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
       // and clearing it would delete the diagnosis a second after it appeared.
       // The hand-off is the sidebar's `mirrored` latch — the checklist yields
       // to pi's first real capture and never comes back.
-      if (companionOn) app.sidebar?.setStartup(p.lines());
-      else app.view.startup = p.lines();
+      app.sidebar?.setStartup(p.lines());
       app.repaint();
     },
   });
-  if (companionOn) app.sidebar.setStartup(progress.lines());
-  else app.view.startup = progress.lines();
+  app.sidebar.setStartup(progress.lines());
 
-  const { installAttachHooks } = await import("./attach.js");
-  await installAttachHooks(app);
+  // No attach hooks: the full-screen attach is retired — see AppHooks.
   const { installMessageHooks } = await import("./msg.js");
   installMessageHooks(app);
   const { installUnwedgeHooks } = await import("./unwedge.js");
@@ -521,10 +525,10 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   const { EvidenceCopier, EvidenceStore } = await import("./evidence.js");
   const evidence = new EvidenceStore(full.companion.evidence_dir);
 
-  // ambient feed + alert pipeline + companion tab. All of it hangs off
-  // companionOn, so --no-companion really means "none of this runs".
-  // no pty spawner here any more — the companion is never opened
-  // full-screen, so the only thing left to install is the startup healing.
+  // ambient feed + alert pipeline + startup healing. All of it hangs
+  // off companionOn, so --no-companion really means "none of this runs" —
+  // the column itself is not part of "this": it is layout, and it is always
+  // there.
   const { installCompanionTabHooks } = await import("./companiontab.js");
 
   // the companion sidebar is the ONLY companion surface (the strip and
@@ -960,9 +964,8 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
 
   // ---- the first frame ------------------------------------------------------
   //
-  // Deep link: run() completes its synchronous setup (terminal modes, poller)
-  // before awaiting quit, so the attach can start right after — the board
-  // loads behind it and is one Ctrl-q away.
+  // Deep link: `qcr tui <pr>` is the board with that PR selected — nothing
+  // opens over it (the full-screen attach it used to start is gone).
   const initial = target.kind === "pr" ? target.pr : resumed?.pr;
   const running = app.run(initial);
   // Only now: a recursive dist watcher walks the tree, and the bring-up talks
@@ -976,8 +979,6 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   const bringUpDone = bringUp().catch(() => {
     /* every step already reports itself; a bring-up cannot fail the quit */
   });
-  if (target.kind === "pr") void app.hooks.attach?.(`pr-${target.pr}`, app);
-  else if (target.kind === "session") void app.hooks.attach?.(target.session, app);
   await running;
   // Let the bring-up finish before tearing down what it is still touching.
   // Bounded, and announced: this runs AFTER the terminal is restored, so a

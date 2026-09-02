@@ -8,12 +8,9 @@ import {
   paintSidebar,
   restorePreferredSidebarWidth,
   SIDEBAR_BORDER,
-  SIDEBAR_HIDE_BELOW,
-  SIDEBAR_MIN_COLS,
   SIDEBAR_MIN_INNER_COLS,
   SIDEBAR_MIN_WIDTH,
   SIDEBAR_PLACEHOLDER,
-  SIDEBAR_SPINE,
   sidebarHit,
   sidebarPaneSize,
   sidebarResizeHit,
@@ -41,7 +38,6 @@ const VIEW = (over: Partial<SidebarView> = {}): SidebarView => ({
   header: { up: true, piUp: true, day: "2026-08-21", lastWake: "3m ago", memory: "ok" },
   lines: [],
   focused: false,
-  collapsed: false,
   available: true,
   offset: 0,
   alerts: [],
@@ -51,25 +47,28 @@ const VIEW = (over: Partial<SidebarView> = {}): SidebarView => ({
 const WIDE = 80;
 
 describe("sidebarWidth", () => {
-  it("gives the conversation half of a wide terminal and 0 when the companion is off", () => {
+  it("gives the conversation half of a wide terminal — and there is no width for 'off'", () => {
     expect(defaultSidebarWidth(200)).toBe(100);
-    expect(sidebarWidth(200, { collapsed: false, available: true })).toBe(100);
-    expect(sidebarWidth(160, { collapsed: false, available: true })).toBe(WIDE);
-    expect(sidebarWidth(200, { collapsed: false, available: false })).toBe(0);
+    expect(sidebarWidth(200)).toBe(100);
+    expect(sidebarWidth(160)).toBe(WIDE);
+    // 2026-09-02: the signature takes no `available`/`collapsed` at all. The
+    // column is layout; what the companion is doing changes its contents.
+    expect(sidebarWidth(200, {})).toBe(100);
   });
 
-  it("auto-collapses only when no minimum-width panel fits and hides when tiny", () => {
-    expect(sidebarWidth(SIDEBAR_MIN_COLS, { collapsed: false, available: true })).toBe(SIDEBAR_MIN_WIDTH);
-    expect(sidebarWidth(SIDEBAR_MIN_COLS - 1, { collapsed: false, available: true })).toBe(SIDEBAR_SPINE);
-    expect(sidebarWidth(200, { collapsed: true, available: true })).toBe(SIDEBAR_SPINE);
-    expect(sidebarWidth(SIDEBAR_HIDE_BELOW - 1, { collapsed: true, available: true })).toBe(0);
+  it("never collapses or hides — a narrow terminal cramps the tab, not the column", () => {
+    const both = SIDEBAR_MIN_INNER_COLS + SIDEBAR_MIN_WIDTH;
+    expect(sidebarWidth(both)).toBe(SIDEBAR_MIN_WIDTH);
+    expect(sidebarWidth(both - 1)).toBe(SIDEBAR_MIN_WIDTH);
+    expect(sidebarWidth(39)).toBe(SIDEBAR_MIN_WIDTH); // used to hide below 40
+    expect(sidebarWidth(10)).toBe(SIDEBAR_MIN_WIDTH);
   });
 
   it("uses a resized preference and preserves a usable tab beside it", () => {
-    expect(sidebarWidth(160, { collapsed: false, available: true, preferredWidth: 60 })).toBe(60);
+    expect(sidebarWidth(160, { preferredWidth: 60 })).toBe(60);
     expect(clampSidebarWidth(160, 500)).toBe(160 - SIDEBAR_MIN_INNER_COLS);
     expect(clampSidebarWidth(160, 2)).toBe(SIDEBAR_MIN_WIDTH);
-    expect(sidebarWidth(80, { collapsed: false, available: true, preferredWidth: 60 })).toBe(SIDEBAR_SPINE);
+    expect(sidebarWidth(80, { preferredWidth: 60 })).toBe(SIDEBAR_MIN_WIDTH);
   });
 
   it("does not let the old hot-reload default pin the narrow layout", () => {
@@ -81,7 +80,7 @@ describe("sidebarWidth", () => {
   it("recognizes only the expanded column's left seam as a resize handle", () => {
     expect(sidebarResizeHit(81, 160, WIDE)).toBe(true);
     expect(sidebarResizeHit(82, 160, WIDE)).toBe(false);
-    expect(sidebarResizeHit(158, 160, SIDEBAR_SPINE)).toBe(false);
+    expect(sidebarResizeHit(160, 160, 0)).toBe(false);
   });
 });
 
@@ -97,8 +96,9 @@ describe("paintSidebar geometry", () => {
     [WIDE, 2],
     [WIDE, 1],
     [30, 20],
-    [SIDEBAR_SPINE, 20],
-    [SIDEBAR_SPINE, 2],
+    [3, 20], // one content cell — no spine special case, the same panel code
+    [3, 2],
+    [2, 5], // narrower than its own borders: blank cells, still the exact width
   ];
 
   for (const [width, rows] of shapes) {
@@ -203,26 +203,6 @@ describe("paintSidebar content", () => {
   });
 });
 
-describe("paintSidebar collapsed spine", () => {
-  it("renders the vertical companion affordance inside its own borders", () => {
-    const out = paintSidebar(VIEW({ collapsed: true }), SIDEBAR_SPINE, 20);
-    expect(out).toHaveLength(20);
-    for (const line of out) expect(displayWidth(line)).toBe(SIDEBAR_SPINE);
-    expect(out[0]).toBe("┬─┐");
-    expect(out[19]).toBe("┴─┘");
-    expect(out.slice(1, 19).map(stripAnsi).join("").replace(/\s|│/g, "")).toBe("companion");
-  });
-
-  it("flags a pending alert with an attention marker at the top", () => {
-    const out = paintSidebar(
-      VIEW({ collapsed: true, alerts: [{ tier: "alert", title: "boom", ts: "10:00" }] }),
-      SIDEBAR_SPINE,
-      20,
-    ).map(stripAnsi);
-    expect(out[1]).toBe("│●│");
-  });
-});
-
 describe("sidebarHit", () => {
   const cols = 160;
   const rows = 30;
@@ -230,7 +210,7 @@ describe("sidebarHit", () => {
   it("routes clicks inside the expanded column and ignores the tab side", () => {
     expect(sidebarHit(cols - WIDE, 10, cols, rows, WIDE)).toBeUndefined();
     expect(sidebarHit(cols + 1, 10, cols, rows, WIDE)).toBeUndefined();
-    expect(sidebarHit(cols - WIDE + 1, 1, cols, rows, WIDE)).toBe("collapse");
+    expect(sidebarHit(cols - WIDE + 1, 1, cols, rows, WIDE)).toBeUndefined(); // top border: chrome (was the collapse affordance)
     expect(sidebarHit(cols, 2, cols, rows, WIDE)).toBe("header");
     expect(sidebarHit(cols, 3, cols, rows, WIDE)).toBe("header");
     expect(sidebarHit(cols, 10, cols, rows, WIDE)).toBe("mirror");
@@ -239,9 +219,9 @@ describe("sidebarHit", () => {
     expect(sidebarHit(cols, rows + 1, cols, rows, WIDE)).toBeUndefined();
   });
 
-  it("treats every spine cell as the expand affordance, and a hidden column as inert", () => {
-    expect(sidebarHit(cols, 10, cols, rows, SIDEBAR_SPINE)).toBe("collapse");
-    expect(sidebarHit(cols, 1, cols, rows, SIDEBAR_SPINE)).toBe("collapse");
+  it("has no spine: a three-cell column is a (tiny) panel, and a zero-width one is inert", () => {
+    expect(sidebarHit(cols, 10, cols, rows, 3)).toBe("mirror");
+    expect(sidebarHit(cols, 1, cols, rows, 3)).toBeUndefined();
     expect(sidebarHit(cols, 10, cols, rows, 0)).toBeUndefined();
   });
 });
@@ -379,8 +359,6 @@ describe("CompanionSidebar", () => {
     const sent = calls.filter((c) => c.includes("send-keys"));
     expect(sent.length).toBe(1);
     expect(sent[0]).toEqual(expect.arrayContaining(["-l", "h"]));
-    sb.toggleCollapse();
-    expect(sb.view().collapsed).toBe(true);
     sb.blur();
     expect(sb.view().focused).toBe(false);
     sb.stop();
@@ -403,15 +381,15 @@ describe("CompanionSidebar", () => {
     sb.stop();
   });
 
-  it("resizes from the seam, clamps both ends, and remembers the width across collapse", () => {
+  it("resizes from the seam and clamps both ends", () => {
     const { runner } = fakeDocker();
     const sb = new CompanionSidebar(CFG, runner);
     expect(sb.resizeFromPointer(160, 101)).toBe(60);
     expect(sb.preferredWidth).toBe(60);
-    sb.toggleCollapse();
-    expect(sidebarWidth(160, { collapsed: sb.collapsed, available: true, preferredWidth: sb.preferredWidth })).toBe(SIDEBAR_SPINE);
-    sb.toggleCollapse();
-    expect(sidebarWidth(160, { collapsed: sb.collapsed, available: true, preferredWidth: sb.preferredWidth })).toBe(60);
+    expect(sidebarWidth(160, { preferredWidth: sb.preferredWidth })).toBe(60);
+    // No collapse to remember the width across: the class has no such state.
+    expect("collapsed" in sb).toBe(false);
+    expect("toggleCollapse" in sb).toBe(false);
     expect(sb.resizeFromPointer(160, 159)).toBe(SIDEBAR_MIN_WIDTH);
     expect(sb.resizeFromPointer(160, 1)).toBe(160 - SIDEBAR_MIN_INNER_COLS);
     sb.stop();

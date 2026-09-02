@@ -36,19 +36,11 @@ import { keysToTmux, SCROLL_STEP, splitCapture } from "./pipane.js";
 export const SIDEBAR_BORDER = 2;
 /** Smallest useful expanded column, borders included. */
 export const SIDEBAR_MIN_WIDTH = 24;
-/** Width reserved for the tab beside an expanded sidebar. */
+/** Width reserved for the tab beside the sidebar. */
 export const SIDEBAR_MIN_INNER_COLS = 64;
-/** Below this many TOTAL terminal columns no expanded panel can fit. */
-export const SIDEBAR_MIN_COLS = SIDEBAR_MIN_INNER_COLS + SIDEBAR_MIN_WIDTH;
 /** The legacy fixed default. Hot reload used to serialize this as a user
  * preference, so one reload could pin the narrow width forever. */
 export const LEGACY_SIDEBAR_WIDTH = 46;
-
-/** The collapsed spine: border + one glyph column. */
-export const SIDEBAR_SPINE = 3;
-/** Below this the spine goes too — at that width the board itself is unusable
- * and three stolen columns are three columns the list cannot spare. */
-export const SIDEBAR_HIDE_BELOW = 40;
 
 /** Clamp a drag request while guaranteeing usable space for the tab. */
 export function clampSidebarWidth(cols: number, requested: number): number {
@@ -68,20 +60,23 @@ export function restorePreferredSidebarWidth(width: number | undefined): number 
   return width === LEGACY_SIDEBAR_WIDTH ? undefined : width;
 }
 
-/** Total width the column occupies, 0 when hidden. */
-export function sidebarWidth(
-  cols: number,
-  st: { collapsed: boolean; available: boolean; preferredWidth?: number },
-): number {
-  if (!st.available) return 0;
-  if (cols < SIDEBAR_HIDE_BELOW) return 0;
-  if (st.collapsed || cols < SIDEBAR_MIN_COLS) return SIDEBAR_SPINE;
+/**
+ * Total width the column occupies — ALWAYS its full width (2026-09-02, the
+ * owner's fixed-layout order). There is no collapsed spine, no auto-collapse
+ * on a narrow terminal and no hidden state: the layout is the tab on the left
+ * and the companion on the right, whatever the terminal width, whatever the
+ * config, whatever docker says. On a terminal too narrow for both minimums the
+ * clamp keeps the column at its minimum and the tab takes the rest — a
+ * cramped tab is an honest rendering of a cramped terminal; a column that
+ * folds away is a layout change, which is the thing forbidden.
+ */
+export function sidebarWidth(cols: number, st: { preferredWidth?: number } = {}): number {
   return clampSidebarWidth(cols, st.preferredWidth ?? defaultSidebarWidth(cols));
 }
 
-/** The expanded panel's left border is its resize handle. */
+/** The panel's left border is its resize handle. */
 export function sidebarResizeHit(x: number, cols: number, width: number): boolean {
-  return width > SIDEBAR_SPINE && x === cols - width + 1;
+  return width > 0 && x === cols - width + 1;
 }
 
 export interface SidebarHeader {
@@ -97,8 +92,11 @@ export interface SidebarView {
   /** Mirror lines, oldest first, SGR-styled (keepSgrOnly already applied). */
   lines: string[];
   focused: boolean;
-  collapsed: boolean;
   available: boolean;
+  /** The companion is OFF by configuration (`--no-companion`, `[companion]
+   * enabled = false`), with the reason. The column is on screen regardless
+   * (2026-09-02) — this is what it says instead of "starting up". */
+  off?: string;
   /** Lines above the live tail; 0 = following. */
   offset: number;
   /** Newest alerts, newest last; rendered inline under the mirror. */
@@ -139,9 +137,9 @@ function bodyRow(content: string, inner: number): string {
   return `│${fit(content, inner)}${RESET}│`;
 }
 
-function headerRows(h: SidebarHeader): [string, string] {
-  const dot = !h.up ? `${BAD}●${RESET}` : h.piUp ? `${OK}●${RESET}` : `${WARN}●${RESET}`;
-  const name = h.up ? "companion" : `${MUTED}down${RESET}`;
+function headerRows(h: SidebarHeader, off: string | undefined): [string, string] {
+  const dot = off !== undefined ? `${MUTED}●${RESET}` : !h.up ? `${BAD}●${RESET}` : h.piUp ? `${OK}●${RESET}` : `${WARN}●${RESET}`;
+  const name = off !== undefined ? `${MUTED}companion off${RESET}` : h.up ? "companion" : `${MUTED}down${RESET}`;
   const mem =
     h.memory === "ok" ? `${OK}mem ok${RESET}` : h.memory === "degraded" ? `${WARN}mem degraded${RESET}` : `${MUTED}mem off${RESET}`;
   const day = h.day.length > 0 ? `${SEP}${MUTED}${h.day}${RESET}` : "";
@@ -172,6 +170,7 @@ function hintContent(view: SidebarView): string {
   // screen at its real width with the progress in it, and saying "companion
   // off" there would be the same class of lie as a DRY-RUN badge with no
   // heartbeat behind it.
+  if (view.off !== undefined) return ` ${MUTED}${SIDEBAR_OFF} — ${view.off}${RESET}`;
   if (!view.available) {
     const starting = (view.startup ?? []).length > 0 && view.mirrored !== true;
     return ` ${MUTED}${starting ? SIDEBAR_STARTING : SIDEBAR_OFF}${RESET}`;
@@ -183,30 +182,6 @@ function hintContent(view: SidebarView): string {
 function alertContent(a: SidebarView["alerts"][number]): string {
   const glyph = a.tier === "alert" ? `${BAD}▲${RESET}` : `${WARN}•${RESET}`;
   return ` ${glyph} ${a.title} ${MUTED}${a.ts}${RESET}`;
-}
-
-/** The collapsed spine: an attention dot when an alert is pending, then the
- * word "companion" running down the column as the affordance that says the
- * panel is there and clickable. */
-function paintSpine(view: SidebarView, width: number, rows: number): string[] {
-  const inner = width - SIDEBAR_BORDER;
-  const out: string[] = [`┬${"─".repeat(Math.max(0, inner))}┐`];
-  const spine = Math.max(0, rows - 2);
-  const cells = new Array<string>(spine).fill(" ");
-  let start = 0;
-  if (view.alerts.length > 0 && spine > 0) {
-    cells[0] = `${BAD}●${RESET}`;
-    start = 1;
-  }
-  const word = [..."companion"];
-  const room = spine - start;
-  const n = Math.max(0, Math.min(word.length, room));
-  const top = start + Math.floor((room - n) / 2);
-  const style = view.focused ? ACCENT : MUTED;
-  for (let i = 0; i < n; i++) cells[top + i] = `${style}${word[i]}${RESET}`;
-  for (const c of cells) out.push(bodyRow(c, inner));
-  if (rows >= 2) out.push(`┴${"─".repeat(Math.max(0, inner))}┘`);
-  return out.slice(0, rows);
 }
 
 /**
@@ -249,7 +224,7 @@ function sidebarRowLayout(view: SidebarView, rows: number): SidebarRowLayout {
  * leading space inside the two sidebar borders, so that cell is not available
  * to pi itself. */
 export function sidebarPaneSize(view: SidebarView, width: number, rows: number): { cols: number; rows: number } | undefined {
-  if (!view.available || view.collapsed || width <= SIDEBAR_SPINE || rows <= 0) return undefined;
+  if (!view.available || width <= SIDEBAR_BORDER || rows <= 0) return undefined;
   const layout = sidebarRowLayout(view, rows);
   return {
     cols: Math.max(1, width - SIDEBAR_BORDER - 1),
@@ -261,7 +236,10 @@ export function paintSidebar(view: SidebarView, width: number, rows: number): st
   if (rows <= 0) return [];
   if (width <= 0) return new Array<string>(rows).fill("");
   const inner = width - SIDEBAR_BORDER;
-  if (view.collapsed || inner < 1) return paintSpine(view, width, rows);
+  // Narrower than its own two borders cannot happen through sidebarWidth
+  // (the clamp floors at SIDEBAR_MIN_WIDTH); a direct caller gets blank cells
+  // of the right width rather than a panel folded into a spine.
+  if (inner < 1) return new Array<string>(rows).fill(fit("", width));
   if (rows === 1) return [`┬${"─".repeat(inner)}┐`];
 
   // Row budget is shared with sidebarPaneSize: tmux receives exactly the
@@ -269,7 +247,7 @@ export function paintSidebar(view: SidebarView, width: number, rows: number): st
   const { inputRows, head, divider, alertN, mirrorRows } = sidebarRowLayout(view, rows);
 
   const out: string[] = [`┬${"─".repeat(inner)}┐`];
-  const hdr = headerRows(view.header);
+  const hdr = headerRows(view.header, view.off);
   for (let i = 0; i < head; i++) out.push(bodyRow(hdr[i] ?? "", inner));
   // No mirror yet and a bring-up in flight: the space belongs to the progress.
   // The moment pi's capture arrives the mirror takes it back, with no layout
@@ -317,9 +295,10 @@ export function paintSidebar(view: SidebarView, width: number, rows: number): st
 /**
  * 1-based terminal click → what the sidebar does with it. The column occupies
  * terminal columns `cols-width+1 … cols`; terminal y=r+1 paints frame row r
- * (the same convention as barHitKey). The top border is the collapse
- * affordance — it is the one sidebar row with nothing else to say, and a click
- * on the spine expands again.
+ * (the same convention as barHitKey). Both borders are inert chrome — the
+ * top one used to be the collapse affordance until the collapse was retired
+ * (2026-09-02); the left seam's DRAG is handled before this, by
+ * `sidebarResizeHit`.
  */
 export function sidebarHit(
   x: number,
@@ -327,13 +306,11 @@ export function sidebarHit(
   cols: number,
   rows: number,
   width: number,
-): "input" | "mirror" | "header" | "collapse" | undefined {
+): "input" | "mirror" | "header" | undefined {
   if (width <= 0) return undefined;
   if (x <= cols - width || x > cols) return undefined;
   if (y < 1 || y > rows) return undefined;
-  if (width <= SIDEBAR_SPINE) return "collapse";
-  if (y === 1) return "collapse";
-  if (y === rows) return undefined; // bottom border
+  if (y === 1 || y === rows) return undefined; // top / bottom border
   if (y === rows - 1) return "input";
   if (y === 2 || y === 3) return "header";
   return "mirror";
@@ -360,14 +337,15 @@ const SCROLL_PAD = 200;
 export class CompanionSidebar {
   lines: string[] = [];
   focused = false;
-  collapsed = false;
-  /** Explicit expanded width including both borders. Undefined means the
-   * responsive half-screen default; only a real seam drag sets this. */
+  /** Explicit width including both borders. Undefined means the responsive
+   * half-screen default; only a real seam drag sets this. */
   preferredWidth: number | undefined;
   offset = 0;
   alerts: SidebarView["alerts"] = [];
   /**: bring-up progress lines, shown until the mirror has content. */
   startup: string[] = [];
+  /** Set once by the orchestrator when the companion is off by configuration. */
+  private off: string | undefined;
 
   private captureOk = false;
   /** The mirror has held content at least once — see SidebarView.mirrored. */
@@ -375,14 +353,13 @@ export class CompanionSidebar {
   private patch: Partial<SidebarHeader> = {};
   private timer: NodeJS.Timeout | undefined;
   private fastUntil = 0;
-  /** Set by App.repaint from the actual terminal geometry. Kept while the
-   * sidebar is collapsed so expanding restores the last useful tmux size. */
+  /** Set by App.repaint from the actual terminal geometry. */
   private paneSize: { cols: number; rows: number } | undefined;
 
   constructor(
     private readonly cfg: Pick<CompanionConfig, "container_name" | "session">,
     private readonly docker: DockerRunner,
-    private readonly opts: { available?: () => boolean; enabled?: () => boolean; onUpdate?: () => void; now?: () => number } = {},
+    private readonly opts: { available?: () => boolean; onUpdate?: () => void; now?: () => number } = {},
   ) {}
 
   /** The companion is up and can take keystrokes. */
@@ -390,24 +367,24 @@ export class CompanionSidebar {
     return this.opts.available?.() ?? true;
   }
 
-  /**
-   * The column is part of the layout — a CONFIG fact, known before any docker
-   * call (ruling 2).
-   *
-   * This is the split that answers the layout-jump objection properly:
-   * the geometry comes from `[companion] enabled` + `--no-companion`, so the
-   * first frame is already the right shape and the container merely fills a
-   * column that was the correct width all along. Asking docker for it — the
-   * only layout-affecting work left — would reproduce the exact bug whenever
-   * docker is slow or stopped.
-   */
-  shown(): boolean {
-    return this.opts.enabled?.() ?? this.available();
-  }
+  // There is no `shown()` / `enabled` any more (2026-09-02). The column is
+  // part of the layout unconditionally — `--no-companion` and `[companion]
+  // enabled = false` decide what RUNS (no container, no feed, no alerts) and
+  // what the column SAYS ("companion off"), never whether it is there. That
+  // closes the layout-jump objection for good: geometry depends on
+  // nothing that can arrive late, because it depends on nothing at all but
+  // the terminal width and the operator's own seam drag.
 
   /** Replace the bring-up progress lines (pure state; the App repaints). */
   setStartup(lines: string[]): void {
     this.startup = lines;
+  }
+
+  /** The companion is off by configuration; `reason` is what the column
+   * says (`--no-companion`, `[companion] enabled = false`). The column keeps
+   * its width and its bring-up lines — only its story changes. */
+  setOff(reason: string): void {
+    this.off = reason;
   }
 
   /** Push the header facts only the orchestrator knows (day, memory, wake). */
@@ -432,8 +409,8 @@ export class CompanionSidebar {
       },
       lines: this.lines,
       focused: this.focused,
-      collapsed: this.collapsed,
       available,
+      ...(this.off !== undefined ? { off: this.off } : {}),
       offset: this.offset,
       alerts: this.alerts,
       startup: this.startup,
@@ -529,14 +506,9 @@ export class CompanionSidebar {
     this.focused = false;
   }
 
-  toggleCollapse(): void {
-    this.collapsed = !this.collapsed;
-  }
-
   /** Resize from the seam's 1-based terminal x coordinate. */
   resizeFromPointer(cols: number, x: number): number {
     this.preferredWidth = clampSidebarWidth(cols, cols - x + 1);
-    this.collapsed = false;
     this.opts.onUpdate?.();
     return this.preferredWidth;
   }

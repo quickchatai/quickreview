@@ -5,7 +5,7 @@ import type { StatusSnapshot } from "../src/state.js";
 import { piPaneSize, piRows, renderBoard, topBar, detailLines, type BoardView } from "../src/tui/board.js";
 import { decodeKey, decodeInputKey } from "../src/tui/keys.js";
 import { displayWidth, fit, rule, sanitizeText, stripAnsi, truncate, wrap } from "../src/tui/paint.js";
-import { captureArgv, statusArgv, whyArgv, eventsArgv, progressArgv, attachArgv, type SshRunner } from "../src/tui/remote.js";
+import { captureArgv, statusArgv, whyArgv, eventsArgv, progressArgv, type SshRunner } from "../src/tui/remote.js";
 import { PiMirror, type PiPaneView } from "../src/tui/pipane.js";
 import { TUI_DEFAULTS } from "../src/config.js";
 
@@ -494,7 +494,11 @@ describe("key decoding", () => {
     expect(decodeKey(Buffer.from("\r"))).toEqual({ kind: "enter" });
     expect(decodeKey(Buffer.from("q"))).toEqual({ kind: "quit" });
     expect(decodeKey(Buffer.from("\x03"))).toEqual({ kind: "quit" });
-    expect(decodeKey(Buffer.from("M"))).toEqual({ kind: "main-session" });
+    // `o`/`M` used to be the overseer/main full-screen attach verbs. Retired
+    // 2026-09-02: both are plain text now, which the board hands to the
+    // companion column like any other unclaimed printable.
+    expect(decodeKey(Buffer.from("M"))).toEqual({ kind: "char", ch: "M" });
+    expect(decodeKey(Buffer.from("o"))).toEqual({ kind: "char", ch: "o" });
     expect(decodeKey(Buffer.from("?"))).toEqual({ kind: "help" });
     expect(decodeKey(Buffer.from("a"))).toEqual({ kind: "attach" }); // ⏎'s twin
   });
@@ -520,23 +524,6 @@ describe("remote argv builders", () => {
 
   it("drops sudo when configured off", () => {
     expect(whyArgv({ ...TUI_DEFAULTS, sudo_docker: false }, 1)[0]).toBe("docker");
-  });
-
-  it("builds the interactive attach argv with -tt and -it", () => {
-    expect(attachArgv(TUI_DEFAULTS, "pr-5012")).toEqual([
-      "-tt", "VM", "sudo", "docker", "exec", "-it", "quickreview-sandbox", "tmux",
-      "set-window-option", "-t", "pr-5012", "window-size", "latest", ";",
-      "attach", "-t", "pr-5012",
-    ]);
-  });
-
-  it("hands sizing back to the client before attaching, or attach inherits the mirror's rectangle", () => {
-    // The mirror's resize-window pins the session to the board pane and flips
-    // window-size to `manual` (verified on the VM). Attaching full-screen
-    // without undoing that opens a small window marooned in a big terminal.
-    const argv = attachArgv(TUI_DEFAULTS, "pr-5012");
-    expect(argv.indexOf("set-window-option")).toBeLessThan(argv.indexOf("attach"));
-    expect(argv).toContain("latest");
   });
 });
 

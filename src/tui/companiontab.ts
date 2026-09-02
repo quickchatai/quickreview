@@ -1,5 +1,6 @@
 // Companion startup healing (slice C2; retired the
-// companion TAB; retired the full-screen attach behind it).
+// companion TAB; retired the full-screen attach behind it; 2026-09-02
+// retired every other full-screen path in the TUI too).
 //
 // What is left is the part that was never about full-screen: the companion's
 // startup can FAIL and later HEAL, so asking for it while it is down must

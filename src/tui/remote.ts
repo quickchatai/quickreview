@@ -1,8 +1,9 @@
 // Remote access layer for qcr tui — every VM touch goes through here, and
 // every command it can produce is read-only against the box except the
-// user-initiated writes (attach keystrokes ride a pty in attach.ts; inject
-// files in msg.ts; and `sendKeysArgv` types into the board's focused pi
-// pane). Rubric proposals do NOT ride this runner any more: they are LOCAL
+// user-initiated writes (inject files in msg.ts, and `sendKeysArgv` typing
+// into the board's focused pi pane). There is NO interactive attach any more
+// (2026-09-02): the TUI never takes a pty to a VM tmux session — the board's
+// PR pane and the companion column are the only terminals, both embedded. Rubric proposals do NOT ride this runner any more: they are LOCAL
 // state/rubric/ dirs (companion-authored) handled by fs in proposals.ts.
 // Memory edits do NOT ride it either: the TUI talks HTTP to
 // OpenViking over the memory forward's loopback listener — see
@@ -116,8 +117,15 @@ export interface CaptureRange {
  * nothing. Handing tmux the painted rectangle makes pi lay itself out for the
  * space its capture is rendered in.
  *
- * `resize-window -x/-y` flips the window's `window-size` option to `manual`,
- * which is why `attachArgv` puts it back to `latest` — see there.
+ * `resize-window -x/-y` flips the window's `window-size` option to `manual`.
+ * A human attaching with plain `tmux attach` afterwards inherits that pinned
+ * rectangle; the undo is `tmux set-window-option -t <session> window-size
+ * latest` (root CLAUDE.md, "Run / deploy / observe").
+ *
+ * The bare `;` is tmux's command separator and reaches tmux intact because
+ * this argv rides `realSshRunner`, which shell-quotes every element. Never
+ * hand it to a transport that space-joins unquoted: the remote shell would
+ * split on the `;` and run the second half as its own command.
  */
 export function captureArgv(cfg: TuiConfig, session: string, range?: CaptureRange, size?: { cols: number; rows: number }): string[] {
   const window: string[] = [];
@@ -135,60 +143,12 @@ export function captureArgv(cfg: TuiConfig, session: string, range?: CaptureRang
  * (pipane.ts): either `["-l", "<literal text>"]` or a run of tmux key names
  * (`Enter`, `Up`, `C-c`, …).
  *
- * This is the one write the TUI makes against a VM tmux session outside the
- * attach pty. It touches no GitHub state, so it does not go near the mutation
- * gate — it is the same keystroke the operator could type after `tmux attach`.
+ * This is the one write the TUI makes against a VM tmux session. It touches
+ * no GitHub state, so it does not go near the mutation gate — it is the same
+ * keystroke the operator could type after a manual `tmux attach`.
  */
 export function sendKeysArgv(cfg: TuiConfig, session: string, parts: string[]): string[] {
   return [...dockerPrefix(cfg), cfg.container, "tmux", "send-keys", "-t", session, ...parts];
-}
-
-/**
- * The interactive attach argv — the whole remote command after `ssh`.
- *
- * `window-size latest` FIRST, in the same invocation: the mirror's
- * `resize-window` (see `captureArgv`) leaves the window pinned to the board
- * pane's rectangle in `manual` mode, and a full-screen attach would then open
- * a small window marooned in a large terminal. `latest` is tmux's own default
- * — verified on the VM — and hands sizing back to the attaching client, so
- * taking a session over full-screen looks exactly as it did before the mirror
- * ever resized it.
- */
-export function attachArgv(cfg: TuiConfig, session: string): string[] {
-  return ["-tt", cfg.ssh_host, ...attachDockerArgv(cfg, session)];
-}
-
-/** The docker/tmux half of the attach — shared by both transports so the
- * window-size discipline above cannot drift between them. */
-function attachDockerArgv(cfg: TuiConfig, session: string): string[] {
-  return [
-    ...dockerPrefix(cfg),
-    "-it",
-    cfg.container,
-    "tmux",
-    "set-window-option",
-    "-t",
-    session,
-    "window-size",
-    "latest",
-    ";",
-    "attach",
-    "-t",
-    session,
-  ];
-}
-
-/**
- * the FULL attach command, binary first — what the pty spawner
- * executes. One construction path for both topologies: ssh mode wraps
- * `attachArgv` (unchanged, argv after the ssh binary); local mode runs the
- * same docker/tmux tail directly, where the bare `;` reaches tmux as its own
- * argv element (tmux's multi-command separator) — same window-size handback,
- * no ssh process anywhere.
- */
-export function attachCommand(cfg: TuiConfig, session: string): string[] {
-  if (transportOf(cfg) === "local") return attachDockerArgv(cfg, session);
-  return ["ssh", ...attachArgv(cfg, session)];
 }
 
 /**

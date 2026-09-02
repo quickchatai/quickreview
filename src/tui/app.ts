@@ -1,7 +1,12 @@
 // qcr tui — the app loop: terminal setup/teardown, poller wiring, key
 // routing, repaint. Screens and logic are pure modules; this file owns the
-// side effects. Slice: board + detail + events (attach and
-// quick-message land in and plug in via AppHooks).
+// side effects. Slice: board + detail + events; quick-message and
+// the tabs plug in via AppHooks.
+//
+// ONE LAYOUT (the owner, 2026-09-02): the tab on the left, the companion
+// column on the right, on every frame. Nothing here may take the whole
+// terminal, fold the column away or paint without it — see `sidebarWidth`
+// and `repaint`, and tests/tui-fixed-layout.test.ts.
 import type { WhyPayload } from "../cli.js";
 import type { TuiConfig } from "../config.js";
 import type { AlertBadge } from "./alerts.js";
@@ -19,12 +24,15 @@ import { PANE_ESCAPE, PiMirror, keysToTmux } from "./pipane.js";
 import { Poller } from "./poll.js";
 import { parseRoundProgress } from "../round-progress.js";
 import { prUrl } from "./theme.js";
-import { CompanionSidebar, paintSidebar, SIDEBAR_SPINE, sidebarHit, sidebarResizeHit, sidebarWidth } from "./sidebar.js";
+import { CompanionSidebar, paintSidebar, sidebarHit, sidebarResizeHit, sidebarWidth } from "./sidebar.js";
 import { eventsArgv, progressArgv, sendKeysArgv, whyArgv, type SshRunner } from "./remote.js";
 
 export interface AppHooks {
-  /**: attach the given tmux session full-screen; resolves on detach. */
-  attach?: (session: string, app: App) => Promise<void>;
+  // There is deliberately NO `attach` hook. The full-screen attach
+  // (overseer, main session, PR session) was retired 2026-09-02 on the
+  // owner's order: the TUI has ONE layout — tab on the left, companion column
+  // on the right — and nothing may take the whole terminal. The board's pi
+  // pane and the companion column are the only terminals, both embedded.
   /**: open the quick-message box for the given session. */
   message?: (session: string, app: App) => void;
   /**: deliver a submitted quick-message (inject write + confirmation). */
@@ -33,10 +41,11 @@ export interface AppHooks {
    * `commands/` dir. The board's one write action beyond wakes — see
    * src/tui/unwedge.ts for why it exists and what bounds it. */
   unwedge?: (pr: number, app: App) => void;
-  /**: render the digest tab; undefined = placeholder.
-   * Returning a Frame lets the companion sidebar be composed beside it
-   *; a bare string is painted as-is, sidebar-less. */
-  digestScreen?: (app: App, cols: number, rows: number) => string | Frame;
+  /**: render the digest tab; undefined = placeholder. Every tab
+   * returns a Frame at the INNER width so the companion column composes
+   * beside it — a bare, sidebar-less string is no longer a type
+   * the hooks can return (2026-09-02). */
+  digestScreen?: (app: App, cols: number, rows: number) => Frame;
   /**: digest tab key handling; returns true when it consumed the key. */
   digestKey?: (app: App, key: ReturnType<typeof decodeKey>) => boolean;
   /**: mouse click on the Memory & learning tab (1-based coords) —
@@ -49,25 +58,21 @@ export interface AppHooks {
   /**: called after every poll and every events refresh — the ambient
    * feed writer hangs off this (daemon-owned cadence). */
   onPoll?: (app: App) => void;
-  /**: attach the local companion container's tmux session
-   * full-screen. retired it: the companion is a permanent column and
-   * is never opened full-screen. Replaced by `companionEnsure`. */
-  companionAttach?: (app: App) => Promise<void>;
   /**: the companion was asked for while its startup is down — re-run
    * that startup (build/up/rollover/spawn) and focus the column on success. */
   companionEnsure?: (app: App) => Promise<void>;
   /** Deploy tab: what would a deploy ship (read-only — never deploys). */
-  deployScreen?: (app: App, cols: number, rows: number) => string | Frame;
+  deployScreen?: (app: App, cols: number, rows: number) => Frame;
   /** Deploy tab key handling; returns true when it consumed the key. */
   deployKey?: (app: App, key: ReturnType<typeof decodeKey>) => boolean;
   /**: metrics dashboard / per-PR timeline screen. */
-  metricsScreen?: (app: App, cols: number, rows: number) => string | Frame;
+  metricsScreen?: (app: App, cols: number, rows: number) => Frame;
   /** Metrics tab key handling; returns true when it consumed the key. */
   metricsKey?: (app: App, key: ReturnType<typeof decodeKey>) => boolean;
   /** Metrics tab click routing (window switcher zones); true = consumed. */
   metricsClick?: (app: App, x: number, y: number) => boolean;
   /**: the change register — feedback-derived commits, newest first. */
-  changesScreen?: (app: App, cols: number, rows: number) => string | Frame;
+  changesScreen?: (app: App, cols: number, rows: number) => Frame;
   /** Change-register key handling; returns true when it consumed the key. */
   changesKey?: (app: App, key: ReturnType<typeof decodeKey>) => boolean;
   /** Change-register click routing (row selection); true = consumed. */
@@ -106,15 +111,23 @@ const END_KEYS = new Set(["\x1b[F", "\x1bOF", "\x1b[4~", "\x1b[8~"]);
  * — see the comment at the guard.
  *
  * The membership test is "is this key advertised by the board's command bar",
- * NOT "does it read the selection". Most of them do read it (`attach`/`enter`,
- * `message`, `detail`, `github`), but `overseer` and `main-session` attach to
- * fixed global sessions and touch no selection at all. They belong here
- * because they are the board's bar, they are unregistered elsewhere, and the
- * board is where an operator looks for them — not because of the selection.
- * Getting that reason wrong is how the next verb ends up in or out by
- * accident.
+ * NOT "does it read the selection". Today every member happens to read it
+ * (`attach`/`enter`, `message`, `detail`, `github`), but the reason they are
+ * here is that they are the board's bar, they are unregistered elsewhere, and
+ * the board is where an operator looks for them. Getting that reason wrong is
+ * how the next verb ends up in or out by accident. (`overseer` and
+ * `main-session` were members until the full-screen attach they opened was
+ * retired, 2026-09-02.)
  */
-const BOARD_ONLY_VERBS: ReadonlySet<string> = new Set(["attach", "enter", "message", "detail", "github", "overseer", "main-session"]);
+const BOARD_ONLY_VERBS: ReadonlySet<string> = new Set(["attach", "enter", "message", "detail", "github"]);
+
+/** The frame an UNWIRED tab paints: its notice on the first body row, at the
+ * inner width, so the companion column still composes beside it. */
+function placeholderFrame(cols: number, rows: number, notice: string): Frame {
+  const frame = new Frame(cols, rows);
+  frame.set(Math.min(1, Math.max(0, rows - 1)), fit(notice, cols));
+  return frame;
+}
 
 export class App {
   readonly view: BoardView = {
@@ -284,8 +297,8 @@ export class App {
     // to be pushed to the end because `app.sidebar` was wired after the
     // companion container started, so an early frame showed a different layout
     // that then jumped. But the objection was about GEOMETRY, not data: the
-    // column's width comes from config (`CompanionSidebar.shown()`), the
-    // sidebar is wired before this call, and the container merely fills a
+    // column's width is a function of the terminal alone (`sidebarWidth`),
+    // the sidebar is wired before this call, and the container merely fills a
     // column that is already the right size. Everything slow streams in behind
     // this frame and reports into that column (src/tui/startup.ts).
     this.started = true;
@@ -395,7 +408,7 @@ export class App {
    * terminal window cannot stay the only way out. */
   die(): void {
     try {
-      this.suspended = false; // teardown must run even mid-attach
+      this.suspended = false; // teardown must run even while the terminal is lent out
       this.teardown();
     } catch {
       /* a half-restored terminal still beats a trapped one */
@@ -403,8 +416,11 @@ export class App {
     this.exiter(130);
   }
 
-  /** Attach mode owns the terminal: stop painting, swallow board keys, and
-   * drop our mouse reporting (the attach screen manages passthrough). */
+  /** Lend the terminal out: stop painting, swallow board keys, drop our mouse
+   * reporting. The ONE remaining borrower is `s` (index.ts `onRealTerminal`):
+   * the GCP key-passphrase prompt has to run on the real terminal, outside the
+   * alt screen. It is not a TUI surface and paints no layout of its own; the
+   * board comes back exactly as it was the moment ssh returns. */
   suspend(): void {
     this.suspended = true;
     this.input.off("data", this.onData);
@@ -412,7 +428,7 @@ export class App {
   }
 
   resume(): void {
-    if (this.stopped) return; // an attach resolving after quit must not repaint
+    if (this.stopped) return; // a borrower returning after quit must not repaint
     this.suspended = false;
     this.input.on("data", this.onData);
     this.out.write(CLEAR + MOUSE_ON);
@@ -743,17 +759,11 @@ export class App {
         return;
       }
       // The companion column is fixed chrome on every tab: clicking anywhere
-      // in it takes the keyboard (its mirror IS the companion now — there is
-      // no full-screen view left to open), and the collapsed spine toggles
-      // back open.
+      // in it takes the keyboard (its mirror IS the companion — there is no
+      // full-screen view to open, and no collapsed state to toggle).
       if (this.sidebar) {
         const width = this.sidebarWidth(cols);
         const hit = width === 0 ? undefined : sidebarHit(ev.x, ev.y, cols, rows, width);
-        if (hit === "collapse") {
-          this.sidebar.toggleCollapse();
-          this.repaint();
-          return;
-        }
         if (hit !== undefined) {
           if (this.sidebar.available()) {
             if (this.view.piFocus) this.blurPiPane();
@@ -839,7 +849,8 @@ export class App {
     const action = zoneAt(ev.x, ev.y);
     // Any click outside the pane hands the keyboard back to the board — that
     // includes clicks on nothing in particular in the list/detail region.
-    if (action?.t !== "pi-focus" && this.view.piFocus) {
+    const paneWasFocused = this.view.piFocus;
+    if (action?.t !== "pi-focus" && paneWasFocused) {
       this.blurPiPane();
       this.repaint();
     }
@@ -847,8 +858,14 @@ export class App {
     switch (action.t) {
       case "select-pr": {
         if (this.selectedPr === action.pr) {
-          // Second click on the selected row = attach (grill decision).
-          this.startAttach(`pr-${action.pr}`);
+          // Second click on the selected row = go to its pi, the same thing
+          // ⏎ does. This used to open the full-screen attach (the
+          // grill decision) — the last mouse path to it, retired 2026-09-02.
+          // If the pane WAS focused, the click above already handed the
+          // keyboard back, and that is the whole meaning of it.
+          if (paneWasFocused) return;
+          this.focusPiPane();
+          this.repaint();
           return;
         }
         this.selectPr(action.pr);
@@ -868,7 +885,7 @@ export class App {
         this.tab = action.tab;
         break;
       case "companion":
-        // The top-bar alert badge: open the companion attach directly.
+        // The top-bar alert badge: hand the keyboard to the companion column.
         this.openCompanion();
         return;
       case "key":
@@ -944,13 +961,10 @@ export class App {
       this.repaint();
       return;
     }
-    // `\` collapses the column to its spine and back — the one key that is
-    // about the panel rather than about the companion.
-    if (raw === "\\" && this.sidebar) {
-      this.sidebar.toggleCollapse();
-      this.repaint();
-      return;
-    }
+    // (`\` used to collapse the column to a three-cell spine. Retired
+    // 2026-09-02: the column is always at its full width — the operator's
+    // layout never changes shape — so `\` is plain text for pi like any
+    // other unclaimed printable.)
     if (this.tab === "digest" && this.hooks.digestKey?.(this, key)) return;
     if (this.tab === "deploy" && this.hooks.deployKey?.(this, key)) return;
     // The metrics tab reads nav digits as TEXT inside its `# <pr> ⏎` box, and
@@ -1029,7 +1043,7 @@ export class App {
       }
       case "escape":
         this.view.eventsFocus = false;
-        this.view.alertFocus = false; // acknowledged: ⏎ goes back to attach
+        this.view.alertFocus = false; // acknowledged: ⏎ goes back to the pi pane
         break;
       case "events":
         this.view.eventsFocus = !this.view.eventsFocus;
@@ -1056,29 +1070,21 @@ export class App {
           this.openCompanion();
           return;
         }
-        // ⏎ on a PR row focuses the board's EMBEDDED pane — it no
-        // longer opens the full-screen attach. Nothing may take the whole TUI
-        // (the owner, 2026-08-21: "I dont EVER WANT IT to go into full screen
-        // mode … same goes for the PI on the board view"). The pane is the
-        // same live terminal the attach was, just bounded.
+        // ⏎ on a PR row focuses the board's EMBEDDED pane. Nothing
+        // may take the whole TUI (the owner, 2026-08-21: "I dont EVER WANT IT
+        // to go into full screen mode … same goes for the PI on the board
+        // view"; reaffirmed 2026-09-02 when the last full-screen paths — the
+        // overseer/main attach and the no-PR fallback here — were removed).
+        // With no PR selected there is nothing to focus, and nothing else to
+        // open.
         if (this.selectedPr !== undefined) {
           this.focusPiPane();
           this.repaint();
-          return;
         }
-        const session = this.selectedSession();
-        if (!session) break;
-        this.startAttach(session);
         return;
       }
       case "github":
         this.openGithub();
-        return;
-      case "overseer":
-        this.startAttach("overseer");
-        return;
-      case "main-session":
-        this.startAttach("main");
         return;
       case "message": {
         const session = this.selectedSession();
@@ -1119,9 +1125,9 @@ export class App {
    * ⏎). Following an alert clears its focus — it has been acted on.
    *
    * retired the full-screen path this used to take: the companion is
-   * always on screen now, so "open" means take the keyboard, and expand the
-   * column first if it was collapsed. Nothing in the TUI covers the whole
-   * terminal any more (the owner, 2026-08-21: never full-screen, ever).
+   * always on screen, at full width, so "open" means take the keyboard.
+   * Nothing in the TUI covers the whole terminal (the owner, 2026-08-21:
+   * never full-screen, ever; 2026-09-02: and never collapsed either).
    */
   openCompanion(): void {
     this.view.alertFocus = false;
@@ -1138,10 +1144,9 @@ export class App {
     this.notice("companion unavailable (started with --no-companion?)");
   }
 
-  /** Expand the column if it was collapsed, and give it the keyboard. */
+  /** Give the column the keyboard. */
   focusCompanion(): void {
     if (!this.sidebar) return;
-    if (this.sidebar.collapsed) this.sidebar.toggleCollapse();
     this.sidebar.focus();
     this.repaint();
   }
@@ -1196,14 +1201,6 @@ export class App {
     this.repaint();
   }
 
-  private startAttach(session: string): void {
-    if (!this.hooks.attach) {
-      this.notice(`attach ${session}: lands in`);
-      return;
-    }
-    void this.hooks.attach(session, this);
-  }
-
   // ---- paint -------------------------------------------------------------
 
   private lastFrame: Frame | undefined;
@@ -1236,35 +1233,30 @@ export class App {
   /**
    * Does this wheel notch belong to the companion column's scrollback?
    *
-   * True when the pointer is inside the expanded column, or when the column
-   * holds the keyboard and the pointer is elsewhere. A collapsed spine has no
-   * mirror on screen, so nothing there can be scrolled — the notch falls
-   * through to the tab, as it always did.
+   * True when the pointer is inside the column, or when the column holds the
+   * keyboard and the pointer is elsewhere.
    */
   private wheelBelongsToSidebar(x: number, cols: number): boolean {
     const sb = this.sidebar;
-    if (!sb || !sb.shown() || sb.collapsed) return false;
+    if (!sb) return false;
     const width = this.sidebarWidth(cols);
-    if (width <= SIDEBAR_SPINE) return false;
+    if (width === 0) return false;
     if (x > cols - width && x <= cols) return true;
     return sb.focused;
   }
 
   /**
-   * Width the companion column takes on THIS paint (0 = not shown).
+   * Width the companion column takes on THIS paint.
    *
-   * Keyed on `shown()` — a CONFIG fact — not on `available()`, which is only
-   * true after docker has answered. That is what lets the first frame be the
-   * real layout (ruling 2): the container fills a column that was
-   * already the right width, so nothing jumps when it arrives.
+   * A pure function of the terminal width and the operator's seam drag —
+   * never of config, docker or the container's state (ruling 2, made
+   * absolute 2026-09-02): the column is part of the layout whenever a sidebar
+   * exists at all, so the first frame is the final shape and nothing that
+   * happens later can move it. `0` only for a harness that built no sidebar.
    */
   sidebarWidth(cols: number): number {
     if (!this.sidebar) return 0;
-    return sidebarWidth(cols, {
-      collapsed: this.sidebar.collapsed,
-      available: this.sidebar.shown(),
-      preferredWidth: this.sidebar.preferredWidth,
-    });
+    return sidebarWidth(cols, { preferredWidth: this.sidebar.preferredWidth });
   }
 
   /** Compose the companion column onto a tab's frame. The tab was rendered at
@@ -1403,22 +1395,11 @@ export class App {
     // the mirror; its next refresh atomically resizes then captures the pane.
     this.sidebar?.setViewport(sw, rows);
     const inner = sw === 0 ? cols : cols - sw + 1;
-    const paint = (screen: string | Frame | undefined, fallback: string): void => {
-      if (screen === undefined) {
-        this.lastFrame = undefined;
-        this.out.write(`${CLEAR}${fallback}`);
-        this.notifyRepaint();
-        return;
-      }
-      // A tab still returning a bare string predates the sidebar and simply
-      // paints full-width without one, rather than being wrongly composed.
-      if (typeof screen === "string") {
-        this.lastFrame = undefined;
-        this.out.write(screen);
-        this.notifyRepaint();
-        return;
-      }
-      const frame = this.withSidebar(screen, cols, rows);
+    const paint = (screen: Frame | undefined, fallback: string): void => {
+      // An unwired tab (a harness, or a hook that failed to install) paints
+      // its one-line notice INSIDE the layout, never as a bare full-width
+      // string: the column is part of every frame, wired tab or not.
+      const frame = this.withSidebar(screen ?? placeholderFrame(inner, rows, fallback), cols, rows);
       // Zellij-style spatial focus: exactly one pane owns the accent square.
       // The sidebar and board pi are terminals; otherwise the main TUI pane
       // owns focus. Colour existing frame glyphs only, never the content.

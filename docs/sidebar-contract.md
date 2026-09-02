@@ -17,16 +17,19 @@ simply concatenate.
 cols = inner.cols + sidebarWidth(cols, state)
 ```
 
-- expanded default: half the terminal, clamped to leave `64` columns for the tab
-- expanded resized: drag the column's left border; minimum `24`, maximum leaves
+- default: half the terminal, clamped to leave `64` columns for the tab
+- resized: drag the column's left border; minimum `24`, maximum leaves
   `64` columns for the tab
-- collapsed: a `3`-wide spine (border + one glyph column)
-- hidden (companion off, or terminal too narrow): `0`
 
-Auto-collapse happens only below `SIDEBAR_MIN_COLS = 88`, where the minimum
-24-column panel cannot coexist with the tab's guaranteed 64 columns. An
-explicitly resized width survives collapse/expand and TUI hot reload; the old
-fixed 46-column default is migrated away rather than restored as a preference.
+That is the whole state space (2026-09-02, the owner's fixed-layout order).
+There is **no collapsed spine, no hidden state and no config-driven zero
+width**: the column is on every frame in every configuration — `--no-companion`
+and `[companion] enabled = false` change what runs and what the column says,
+never whether it is there — and a terminal too narrow for both minimums gets a
+cramped tab beside a minimum-width column, not a column that folds away. An
+explicitly resized width survives TUI hot reload; the old fixed 46-column
+default is migrated away rather than restored as a preference. Pinned by
+`tests/tui-fixed-layout.test.ts`.
 
 **Row contract**: the sidebar column supplies **exactly `rows` strings**, each
 of display width exactly `sidebarWidth`. Row `0` and row `rows-1` must carry
@@ -45,11 +48,10 @@ one tmux invocation so terminal reflow cannot race the screenshot.
 ### `src/tui/sidebar.ts` — the widget (agent A)
 
 ```ts
-export const SIDEBAR_MIN_COLS = 88;
 export const SIDEBAR_BORDER = 2;          // left divider + right border
 
-/** Total width the column occupies, 0 when hidden. */
-export function sidebarWidth(cols: number, st: { collapsed: boolean; available: boolean; preferredWidth?: number }): number;
+/** Total width the column occupies — always its full width. */
+export function sidebarWidth(cols: number, st?: { preferredWidth?: number }): number;
 
 export interface SidebarHeader {
   up: boolean;            // container running
@@ -64,7 +66,6 @@ export interface SidebarView {
   /** Mirror lines, oldest first, SGR-styled (keepSgrOnly already applied). */
   lines: string[];
   focused: boolean;
-  collapsed: boolean;
   available: boolean;
   /** Lines above the live tail; 0 = following. */
   offset: number;
@@ -77,7 +78,7 @@ export function paintSidebar(view: SidebarView, width: number, rows: number): st
 
 /** 1-based terminal click → what the sidebar does with it. */
 export function sidebarHit(x: number, y: number, cols: number, rows: number, width: number):
-  | "input" | "mirror" | "header" | "collapse" | undefined;
+  | "input" | "mirror" | "header" | undefined;
 
 export class CompanionSidebar {
   constructor(
@@ -95,9 +96,7 @@ export class CompanionSidebar {
   sendKeys(buf: Buffer): Promise<void>;
   focus(seed?: string): void;
   blur(): void;
-  toggleCollapse(): void;
   resizeFromPointer(cols: number, x: number): number;
-  collapsed: boolean;
   preferredWidth: number | undefined; // undefined = responsive half-screen default
   scroll(notches: number): void;
   stop(): void;
@@ -135,8 +134,11 @@ Key model (provisional — decides it properly):
 | printable on a tab with no binding | focus the sidebar, seeded with that char |
 | `Esc` | forwarded to pi while focused |
 | `Ctrl-q` | release focus (same as the board's pi pane) |
-| `\` | toggle collapse |
 | `PgUp`/`PgDn` | scroll the sidebar while focused |
 
-Fullscreen is retired: `AttachScreen` is no longer reachable for the companion
-or for PR sessions.
+(`\` used to toggle a collapsed spine; retired 2026-09-02 with the spine.)
+
+Fullscreen is retired entirely: `AttachScreen` no longer exists (2026-09-02).
+The companion, the PR sessions, the overseer and the main session are never
+attached to from the TUI — the board's PR pane and this column are the only
+terminals, both embedded.

@@ -22,7 +22,7 @@ vi.mock("node:child_process", () => ({
 const { TUI_DEFAULTS, loadConfig, parseConfig } = await import("../src/config.js");
 type TuiConfig = import("../src/config.js").TuiConfig;
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const { attachArgv, attachCommand, killInFlightSsh, realLocalCommandRunner, realSshRunner, runnerFor, transportOf } = await import("../src/tui/remote.js");
+const { killInFlightSsh, realLocalCommandRunner, realSshRunner, runnerFor, transportOf } = await import("../src/tui/remote.js");
 const { powerCommand, powerSpawnArgv } = await import("../src/tui/deploytab.js");
 const { ensureSshMaster } = await import("../src/tui/connect.js");
 type SyncSsh = import("../src/tui/connect.js").SyncSsh;
@@ -123,32 +123,6 @@ describe("realLocalCommandRunner", () => {
     void realLocalCommandRunner("x", ["docker", "exec", "c", "cat", "/x"]);
     expect(killInFlightSsh()).toBe(1);
     expect(child.kill).toHaveBeenCalledWith("SIGKILL");
-  });
-});
-
-describe("attachCommand", () => {
-  it("ssh mode wraps the unchanged attachArgv behind the ssh binary", () => {
-    expect(attachCommand(TUI_DEFAULTS, "pr-5012")).toEqual(["ssh", ...attachArgv(TUI_DEFAULTS, "pr-5012")]);
-  });
-
-  it("local mode is the same docker/tmux tail with no ssh and no host anywhere", () => {
-    expect(attachCommand(LOCAL, "pr-5012")).toEqual([
-      "sudo", "docker", "exec", "-it", "quickreview-sandbox", "tmux",
-      "set-window-option", "-t", "pr-5012", "window-size", "latest", ";",
-      "attach", "-t", "pr-5012",
-    ]);
-    expect(attachCommand(LOCAL, "pr-5012")).not.toContain("ssh");
-    expect(attachCommand(LOCAL, "pr-5012")).not.toContain(LOCAL.ssh_host);
-  });
-
-  it("keeps the window-size handback discipline in local mode (mirror leaves manual mode behind)", () => {
-    const argv = attachCommand(LOCAL, "pr-5012");
-    expect(argv.indexOf("set-window-option")).toBeLessThan(argv.indexOf("attach"));
-    expect(argv).toContain("latest");
-  });
-
-  it("honours sudo_docker locally", () => {
-    expect(attachCommand({ ...LOCAL, sudo_docker: false }, "pr-1")[0]).toBe("docker");
   });
 });
 

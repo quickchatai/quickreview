@@ -379,16 +379,6 @@ describe("companion tab", () => {
     await h.close();
   });
 
-  it("expands a collapsed column rather than focusing something invisible", async () => {
-    const h = harness();
-    h.app.sidebar!.toggleCollapse();
-    expect(h.app.sidebar?.collapsed).toBe(true);
-    h.app.openCompanion();
-    await Promise.resolve();
-    expect(h.app.sidebar?.collapsed).toBe(false);
-    expect(h.app.sidebar?.focused).toBe(true);
-    await h.close();
-  });
 
   it("the companion tab keys are retired: 3 is deploy now, c is no tab at all", async () => {
     const h = harness();

@@ -483,16 +483,6 @@ describe("the wheel scrolls the companion column, not the tab behind it", () => 
     });
   }
 
-  it("a collapsed spine has no mirror to scroll, so the notch falls through", async () => {
-    const h = harness();
-    h.app.sidebar!.toggleCollapse();
-    h.wheel(false, 139); // over the spine
-    await settle();
-    expect(h.app.sidebar!.offset).toBe(0);
-    expect(h.app.view.selected).toBe(1);
-    h.app.quit();
-    await h.running;
-  });
 });
 
 describe("drag-to-copy", () => {

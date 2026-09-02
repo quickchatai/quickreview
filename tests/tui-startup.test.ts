@@ -343,12 +343,11 @@ describe("the first frame (ruling 6 — structural, not timed)", () => {
     await h.stop();
   }, 40_000);
 
-  it("with NO companion column, the bring-up still reports — in the board's unknown block", async () => {
-    // Ruling 3 puts progress in the companion column; `--no-companion` (and
-    // `[companion] enabled = false`) means there is no column, and the
-    // bring-up would otherwise run entirely unreported (review). It
-    // goes where the operator is already looking: the block that stands in for
-    // the PR rows while there is no data.
+  it("with the companion OFF the column is STILL there, carries the bring-up, and says why it is off", async () => {
+    // 2026-09-02: `--no-companion` (and `[companion] enabled = false`) no
+    // longer removes the column. The layout is fixed — tab left, companion
+    // right — so ruling 3's surface always exists and the bring-up always
+    // reports there; the board's unknown block no longer doubles as one.
     const h = await startTui(tmp, ["--no-reload", "--no-companion"], false);
     await board(h);
     // Wait for a step to actually TRANSITION: the initial checklist is painted
@@ -362,11 +361,17 @@ describe("the first frame (ruling 6 — structural, not timed)", () => {
       if (/[✗✓–] VM ssh/.test(frame)) break;
       await new Promise((r) => setTimeout(r, 20));
     }
-    expect(frame).toContain("PRS (?)");
-    expect(frame).toContain("starting up");
-    expect(frame, "the bring-up's live state never reached the board").toMatch(/[✗✓–] VM ssh/);
-    // …and no column was painted, so nothing about the layout moved.
-    expect(frame).not.toContain("starting up — progress above");
+    const plain = frame.replace(/\x1b\[[0-9;?<]*[a-zA-Z]/g, "");
+    expect(plain).toContain("PRS (?)");
+    expect(plain, "the bring-up's live state never reached the column").toMatch(/[✗✓–] VM ssh/);
+    // The column is on the frame (its junction glyph joins the top rule) and
+    // names the reason it is empty rather than claiming to be starting.
+    expect(plain).toContain("┬");
+    expect(plain).toContain("companion off — --no-companion");
+    expect(plain).not.toContain("starting up — progress above");
+    // …and the board did not grow into the space: the unknown block is the
+    // connection triage only, not a second copy of the checklist.
+    expect(plain).not.toContain("starting up\n");
     await h.stop();
   }, 40_000);
 
@@ -890,7 +895,6 @@ describe("startup progress", () => {
                 header: { up: false, piUp: false, day: "2026-08-31", lastWake: "—", memory: "off" },
                 lines: [],
                 focused: false,
-                collapsed: false,
                 available: false,
                 offset: 0,
                 alerts: [],
@@ -931,7 +935,6 @@ describe("the companion column during startup", () => {
     header: { up: false, piUp: false, day: "2026-08-31", lastWake: "—", memory: "off" as const },
     lines: [] as string[],
     focused: false,
-    collapsed: false,
     available: false,
     offset: 0,
     alerts: [],
@@ -955,7 +958,7 @@ describe("the companion column during startup", () => {
     const { COMPANION_DEFAULTS } = await import("../src/config.js");
     let capture = "";
     const docker = async () => ({ ok: true, stdout: capture, stderr: "", code: 0 });
-    const sb = new CompanionSidebar(COMPANION_DEFAULTS, docker, { enabled: () => true, available: () => true });
+    const sb = new CompanionSidebar(COMPANION_DEFAULTS, docker, { available: () => true });
     sb.setStartup(["✓ memory forward · adopted", "✓ companion container"]);
     expect(paintSidebar(sb.view(), 60, 14).join("\n")).toContain("memory forward");
 
@@ -973,22 +976,25 @@ describe("the companion column during startup", () => {
     expect(blank).not.toContain("starting up — progress above");
   });
 
-  it("takes its width from config, not from docker (the answer)", async () => {
+  it("takes its width from nothing but the terminal — not config, not docker (the answer, made absolute)", async () => {
     const { CompanionSidebar, sidebarWidth } = await import("../src/tui/sidebar.js");
     const { COMPANION_DEFAULTS } = await import("../src/config.js");
     const docker = vi.fn(async () => ({ ok: false, stdout: "", stderr: "", code: 1 }));
-    // Enabled by config, container not up yet: the column is SHOWN at its real
-    // width while `available()` is still false, so nothing jumps when the
-    // container arrives.
-    const sb = new CompanionSidebar(COMPANION_DEFAULTS, docker, { enabled: () => true, available: () => false });
-    expect(sb.shown()).toBe(true);
+    // Container not up yet: the column is at its real width while
+    // `available()` is still false, so nothing jumps when the container
+    // arrives — and asking docker plays no part in knowing the width.
+    const sb = new CompanionSidebar(COMPANION_DEFAULTS, docker, { available: () => false });
     expect(sb.available()).toBe(false);
     await sb.refresh();
     expect(docker, "the column must not ask docker anything to know its width").not.toHaveBeenCalled();
-    expect(sidebarWidth(160, { collapsed: false, available: sb.shown() })).toBeGreaterThan(20);
-    // --no-companion: no column at all, exactly as before.
-    const off = new CompanionSidebar(COMPANION_DEFAULTS, docker, { enabled: () => false, available: () => false });
-    expect(sidebarWidth(160, { collapsed: false, available: off.shown() })).toBe(0);
+    expect(sidebarWidth(160)).toBeGreaterThan(20);
+    // 2026-09-02: there is no config-driven "no column" any more. The class
+    // has no `shown()` and takes no `enabled` — `--no-companion` changes what
+    // the column SAYS (`setOff`), never whether it is there.
+    expect("shown" in sb).toBe(false);
+    sb.setOff("--no-companion");
+    expect(sb.view().off).toBe("--no-companion");
+    expect(sidebarWidth(160)).toBe(sidebarWidth(160, {}));
   });
 });
 
