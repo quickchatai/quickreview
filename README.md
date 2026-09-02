@@ -31,9 +31,9 @@ fresh install never posts anything).
 > And the whole loop, from the harness to the reviewer's memory to its
 > accumulated learnings, runs on your infrastructure under your keys.
 
-The full argument — including the eight design beliefs this system was built
-on and the non-goals it refuses to unrefuse — is in
-[**MANIFESTO.md**](MANIFESTO.md). It is worth the five minutes.
+The philosophy — what the human decides, what the machine decides, and the
+beliefs this implementation follows — is in [**MANIFESTO.md**](MANIFESTO.md).
+It is short.
 
 ## What it does
 
@@ -310,8 +310,11 @@ with the safety rule written first):
 **Non-goals** — refusals recorded so they cannot be silently unrefused: no
 rebuilding GitHub's PR workflow; the reviewer never executes anything; no
 hard round budget; the reviewer never reads the implementing conversation;
-the fixer and the reviewer are never the same system. The reasoning for each
-is in [MANIFESTO.md](MANIFESTO.md#non-goals).
+the fixer and the reviewer are never the same system. Each follows from a
+belief in [MANIFESTO.md](MANIFESTO.md) — the reviewer reads and never runs,
+judges what shipped and not how it was made — or, for the workflow and the
+round budget, from the rule that GitHub owns the PR and volume is cut at the
+bottom, never by giving up.
 
 ## What it costs to run
 
@@ -338,7 +341,7 @@ The TUI reaches the daemon over ssh or against local Docker, per
 
 ## Documentation map
 
-- [MANIFESTO.md](MANIFESTO.md) — why this exists: the argument, the eight design beliefs, the non-goals, the acknowledgements
+- [MANIFESTO.md](MANIFESTO.md) — the philosophy: what the human decides, what the machine decides, and the beliefs the implementation follows
 - [docs/onboarding.md](docs/onboarding.md) — the guided setup, step by step: what it asks, what it writes, where it can stop
 - [docs/github-app-setup.md](docs/github-app-setup.md) — what the GitHub App is, and how to register it by hand
 - [docs/llm-setup.md](docs/llm-setup.md) — the two LLM credential routes
@@ -407,11 +410,25 @@ on restart.
 
 ## Acknowledgements
 
-QuickReview names its influences gladly — Matt Pocock's skills (process as
-versioned files; this system was *built with* them), pi (small sharp agents;
-the review sessions are pi sessions), OpenViking (the memory engine), and
-pr-agent (studied honestly; adopted by conviction, declined by conviction).
-The full acknowledgements are in [MANIFESTO.md](MANIFESTO.md#acknowledgements).
+QuickReview stands on ideas it is glad to name:
+
+- **[Matt Pocock's skills](https://github.com/mattpocock/skills)** — the
+  discipline of *processes as versioned files an agent can follow*. This
+  system was not just inspired by that idea; it was **built with it** — the
+  wayfinding, spec-writing, ticketing and grilling skills in that collection
+  drove the development loop that produced this codebase, and the same
+  discipline shaped how the reviewer's own rules are carried as files.
+- **[pi](https://github.com/earendil-works/pi)** — the small-sharp-agent
+  philosophy: an agent session is a terminal you can attach to, extensions
+  compose instead of frameworks accreting, and the machinery stays small
+  enough to reason about. QuickReview's review sessions are pi sessions.
+- **[OpenViking](https://github.com/volcengine/OpenViking)** — the memory
+  engine behind the reviewer's learning, run on your own infrastructure with
+  server-side per-user confinement.
+- **[pr-agent](https://github.com/qodo-ai/pr-agent)** — studied closely in
+  [docs/pr-agent-comparison.md](docs/pr-agent-comparison.md); several of its
+  ideas were adopted by conviction and several deliberately not imported,
+  and knowing which is which made this system better.
 
 ## License
 

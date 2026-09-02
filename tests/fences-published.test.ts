@@ -122,51 +122,45 @@ describe("MANIFESTO.md is pinned by something", () => {
   const manifesto = () => readFileSync(join(ROOT, "MANIFESTO.md"), "utf8");
 
   /**
-   * The lens count (MC-20) — and the one claim that has already drifted: the
-   * document says nine, which was the ORIGINAL frozen seed set.
+   * The manifesto is PHILOSOPHY, and the owner ruled the shape (,
+   * 2026-09-02): no number of any kind, no single PR, no concrete example,
+   * no mechanism, file or knob — "the project is the implementation of
+   * those." The lens-count claim that used to drift (MC-20) is gone with the
+   * rest, and this fence is what replaced pinning it: a count, a token
+   * figure, a `src/` path or a `#5362` cannot come back without failing
+   * here. Every earlier draft rotted exactly this way — a true number at
+   * publication, false a month later — so the rule is structural, not a
+   * style note.
    *
-   * Correcting the public wording is, and that ticket is
-   * `ready-for-human`: the manifesto is a public promise and its rewrite is
-   * the owner's, not an agent's. So the divergence is RECORDED in the
-   * self-retiring shape used elsewhere in these fences — it fails if the
-   * count drifts to a third value, and it fails the moment the owner fixes
-   * the sentence, forcing the record's deletion and the assertion's flip to
-   * the direct form.
-   *
-   * The derived count is checked two ways that must agree, so the fence
-   * cannot be satisfied by one of them rotting.
-   *
-   * MUTATION: change "nine" to "eleven" in MANIFESTO.md — this fails.
+   * MUTATION: write "3 of 105 rounds" or "`src/gate.ts`" anywhere in
+   * MANIFESTO.md — this fails naming the line.
    */
-  it("the stated lens count is the recorded stale one, and the real count is derived two ways", () => {
-    const WORDS: Record<string, number> = {
-      eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
-    };
-    const KNOWN_STALE_LENS_WORD = "nine"; //, ready-for-human
+  it("states no number and names no implementation", () => {
+    const offenders = manifesto()
+      .split("\n")
+      .map((line, i) => ({ line, n: i + 1 }))
+      .filter(({ line }) => /\d/.test(line) || line.includes("`"));
+    expect(
+      offenders.map(({ n, line }) => `${n}: ${line.trim()}`),
+      "MANIFESTO.md carries a number or a code span — it is philosophy only; put the fact in the README or a doc",
+    ).toEqual([]);
+  });
 
-    const stated = /\b(\w+)\s+specialized lenses\b/.exec(manifesto())?.[1];
-    expect(stated, "MANIFESTO.md no longer states a lens count in the shape this fence reads").toBeTruthy();
-
+  /**
+   * The lens plan and the agent files still have to agree even though the
+   * manifesto no longer counts them — this is the half of the old MC-20 fence
+   * that pinned the CODE, kept because it still can fail.
+   *
+   * MUTATION: add `agents/pass-extra.md` without a plan entry — this fails.
+   */
+  it("ALL_PASSES and agents/pass-*.md agree", () => {
     const passFiles = readdirSync(join(ROOT, "agents")).filter((f) => /^pass-.*\.md$/.test(f));
     const allPasses = arrayMembers("src/dispatch.ts", "ALL_PASSES");
     expect(
       allPasses.length,
       "ALL_PASSES and agents/pass-*.md disagree — a lens with no agent file, or an agent file with no plan entry",
     ).toBe(passFiles.length);
-
-    // pass-validate is the adversarial validator, never a lens.
-    const lensCount = allPasses.filter((p) => p !== "pass-validate").length;
-    expect(lensCount).toBeGreaterThan(0);
-
-    if (WORDS[stated!] === lensCount) {
-      throw new Error(
-        `MANIFESTO.md now states the true lens count (${lensCount}) — delete KNOWN_STALE_LENS_WORD and assert it directly`,
-      );
-    }
-    expect(
-      stated,
-      `MANIFESTO.md's lens count drifted to a third value; the truth is ${lensCount} (owns the rewrite)`,
-    ).toBe(KNOWN_STALE_LENS_WORD);
+    expect(allPasses.filter((p) => p !== "pass-validate").length).toBeGreaterThan(0);
   });
 
   /**
