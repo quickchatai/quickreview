@@ -6,7 +6,7 @@
 // codebase drifts from a principle, the drift is the bug". It is currently
 // referenced by `README.md` and asserted by no test at all. Two of its claims
 // can be checked by a machine; these are them.
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -80,8 +80,27 @@ describe("[T11] the shipped configs describe the system that exists", () => {
    */
   const RETIRED_KNOBS_PENDING_REMOVAL: readonly string[] = [];
 
-  for (const file of ["config.toml", "config.example.toml"]) {
-    it(`${file} carries no present-tense park`, () => {
+  /**
+   * Two shipped configs, and only ONE of them travels. `config.example.toml`
+   * is in every tree — it is the file an adopter copies — so its fences run
+   * unconditionally. `config.toml` is the operator's LIVE config: gitignored
+   * for an adopter and excluded by publish-manifest.json, so it is absent
+   * from the published snapshot. Its fences are therefore guarded on the file
+   * existing rather than deleted or made to read a file that is not there:
+   * in THIS (private) tree it exists, so the guard is a no-op and drift
+   * still fails. A skipped test is visible in the run; a silent pass is not.
+   */
+  const CONFIGS = [
+    { file: "config.toml", private: true },
+    { file: "config.example.toml", private: false },
+  ] as const;
+  const absent = (file: string) => !existsSync(join(ROOT, file));
+
+  for (const { file, private: isPrivate } of CONFIGS) {
+    const label = isPrivate
+      ? `${file} carries no present-tense park (private tree only — the live config is not published)`
+      : `${file} carries no present-tense park`;
+    it.skipIf(isPrivate && absent(file))(label, () => {
       const lines = readFileSync(join(ROOT, file), "utf8").split("\n");
       const offenders: string[] = [];
       for (const [i, line] of lines.entries()) {
@@ -100,22 +119,30 @@ describe("[T11] the shipped configs describe the system that exists", () => {
     });
   }
 
-  it("no awaiting_human remnant survives in the shipped configs", () => {
+  const awaitingHumanRemnants = (file: string): string[] => {
     const found = new Set<string>();
-    for (const file of ["config.toml", "config.example.toml"]) {
-      for (const line of readFileSync(join(ROOT, file), "utf8").split("\n")) {
-        if (!/awaiting_human/.test(line)) continue;
-        const hit = RETIRED_KNOBS_PENDING_REMOVAL.find((k) => line.includes(k));
-        found.add(hit ?? `UNRECORDED: ${file} → ${line.trim()}`);
-      }
+    for (const line of readFileSync(join(ROOT, file), "utf8").split("\n")) {
+      if (!/awaiting_human/.test(line)) continue;
+      const hit = RETIRED_KNOBS_PENDING_REMOVAL.find((k) => line.includes(k));
+      found.add(hit ?? `UNRECORDED: ${file} → ${line.trim()}`);
     }
-    expect(
-      [...found].sort(),
-      "the shipped configs' awaiting_human references no longer match the record, which is now EMPTY. Any hit at " +
-        "all means a reference to the retired park reappeared in a config we ship — delete it, or record it in " +
-        "RETIRED_KNOBS_PENDING_REMOVAL with the ticket that removes it.",
-    ).toEqual([...RETIRED_KNOBS_PENDING_REMOVAL].sort());
-  });
+    return [...found].sort();
+  };
+  const REMNANT_MESSAGE =
+    "the shipped configs' awaiting_human references no longer match the record, which is now EMPTY. Any hit at " +
+    "all means a reference to the retired park reappeared in a config we ship — delete it, or record it in " +
+    "RETIRED_KNOBS_PENDING_REMOVAL with the ticket that removes it.";
+
+  for (const { file, private: isPrivate } of CONFIGS) {
+    const label = isPrivate
+      ? `no awaiting_human remnant survives in ${file} (private tree only)`
+      : `no awaiting_human remnant survives in ${file}`;
+    it.skipIf(isPrivate && absent(file))(label, () => {
+      expect(awaitingHumanRemnants(file), REMNANT_MESSAGE).toEqual(
+        [...RETIRED_KNOBS_PENDING_REMOVAL].sort(),
+      );
+    });
+  }
 });
 
 // ---------------------------------------------------------------------------

@@ -301,27 +301,47 @@ describe("[T12] the pi version pin is one fact, spelled the same everywhere", ()
    * the version quoted in the operating rulebook's rule 7.
    *
    * MUTATION: change `version` in the `pi` block of package.json — this fails.
+   *
+   * The five are split below into the four that ship in every tree and the
+   * one that does not; two more spellings (rule 7 and the deploying skill)
+   * follow, both private-only.
    */
-  const pins = () => {
-    const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8");
-    const cfgPi = /\[pi\]([\s\S]*?)(?=\n\[|\n*$)/.exec(read("config.toml"))?.[1] ?? "";
-    const examplePi = /\[pi\]([\s\S]*?)(?=\n\[|\n*$)/.exec(read("config.example.toml"))?.[1] ?? "";
-    return {
-      "config.toml [pi] version": /version\s*=\s*"([^"]+)"/.exec(cfgPi)?.[1],
-      "config.example.toml [pi] version": /version\s*=\s*"([^"]+)"/.exec(examplePi)?.[1],
-      "package.json pi.version": (JSON.parse(read("package.json")) as { pi?: { version?: string } })
-        .pi?.version,
-      "group_vars pi_version": /^pi_version:\s*"([^"]+)"/m.exec(
-        read("deploy/ansible/group_vars/all.yml"),
-      )?.[1],
-      "docker/daemon/Dockerfile ARG PI_VERSION": /^ARG PI_VERSION=(\S+)/m.exec(
-        read("docker/daemon/Dockerfile"),
-      )?.[1],
-    };
-  };
+  /**
+   * PRIVATE-ONLY SPELLINGS. Three of the seven places this fact is written
+   * down are absent from the published snapshot: `config.toml` (the
+   * operator's LIVE config — gitignored for an adopter, excluded by
+   * publish-manifest.json), the operating rulebook `CLAUDE.md`, and the
+   * deploying skill (bound to the private VM). Each of their fences is
+   * GUARDED on the file existing rather than deleted, so in this tree they
+   * run exactly as before and drift still fails; in a published tree they
+   * skip visibly instead of reading a file that is not there. The PUBLIC
+   * spellings below are asserted unconditionally in every tree, and
+   * `config.example.toml` — which carries the same pin — is the reference the
+   * guarded ones are reconciled against.
+   */
+  const has = (rel: string) => existsSync(join(ROOT, rel));
+  const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8");
+  const tomlPiVersion = (rel: string) =>
+    /version\s*=\s*"([^"]+)"/.exec(/\[pi\]([\s\S]*?)(?=\n\[|\n*$)/.exec(read(rel))?.[1] ?? "")?.[1];
 
-  it("all five code-side spellings agree, and none is missing", () => {
-    const found = pins();
+  /** The four spellings that ship in every tree. */
+  const publicPins = () => ({
+    "config.example.toml [pi] version": tomlPiVersion("config.example.toml"),
+    "package.json pi.version": (JSON.parse(read("package.json")) as { pi?: { version?: string } })
+      .pi?.version,
+    "group_vars pi_version": /^pi_version:\s*"([^"]+)"/m.exec(
+      read("deploy/ansible/group_vars/all.yml"),
+    )?.[1],
+    "docker/daemon/Dockerfile ARG PI_VERSION": /^ARG PI_VERSION=(\S+)/m.exec(
+      read("docker/daemon/Dockerfile"),
+    )?.[1],
+  });
+
+  /** The one fact, read from a file that is in every tree. */
+  const realPin = () => publicPins()["config.example.toml [pi] version"];
+
+  it("all four published spellings agree, and none is missing", () => {
+    const found = publicPins();
     for (const [where, value] of Object.entries(found)) {
       expect(
         value,
@@ -335,6 +355,26 @@ describe("[T12] the pi version pin is one fact, spelled the same everywhere", ()
   });
 
   /**
+   * The live config is the fifth spelling, and the one `scripts/deploy.sh`
+   * and the container actually read. Private-only, so guarded.
+   *
+   * MUTATION: change `version` in config.toml's `[pi]` block — this fails.
+   */
+  it.skipIf(!has("config.toml"))(
+    "config.toml's pin agrees with the published spellings (private tree only)",
+    () => {
+      const cfg = tomlPiVersion("config.toml");
+      expect(
+        cfg,
+        "config.toml no longer spells the pin in the shape this fence reads",
+      ).toBeTruthy();
+      expect(cfg, "config.toml's pi version drifted from config.example.toml — reconcile it").toBe(
+        realPin(),
+      );
+    },
+  );
+
+  /**
    * The rulebook half. Until this recorded a KNOWN stale value
    * (`0.84.1`, [P11]) rather than asserting the truth, because the
    * rulebook is the owner's file — and was written to fail the moment the
@@ -344,18 +384,19 @@ describe("[T12] the pi version pin is one fact, spelled the same everywhere", ()
    *
    * MUTATION: change the version in rule 7's first sentence — this fails.
    */
-  it("CLAUDE.md rule 7 quotes the real pi version", () => {
-    const rule7 = /^7\. pi is pinned \(`([^`]+)`/m.exec(
-      readFileSync(join(ROOT, "CLAUDE.md"), "utf8"),
-    )?.[1];
-    expect(
-      rule7,
-      "rule 7 no longer quotes a pi version in the shape this fence reads",
-    ).toBeTruthy();
-    expect(rule7, "rule 7's pi version drifted from config.toml — reconcile it").toBe(
-      pins()["config.toml [pi] version"],
-    );
-  });
+  it.skipIf(!has("CLAUDE.md"))(
+    "CLAUDE.md rule 7 quotes the real pi version (private tree only)",
+    () => {
+      const rule7 = /^7\. pi is pinned \(`([^`]+)`/m.exec(read("CLAUDE.md"))?.[1];
+      expect(
+        rule7,
+        "rule 7 no longer quotes a pi version in the shape this fence reads",
+      ).toBeTruthy();
+      expect(rule7, "rule 7's pi version drifted from the shipped pin — reconcile it").toBe(
+        realPin(),
+      );
+    },
+  );
 
   /**
    * The deploy checklist quotes the pin too ("currently `…`"), and it sat at
@@ -365,17 +406,24 @@ describe("[T12] the pi version pin is one fact, spelled the same everywhere", ()
    * MUTATION: change the version after "currently" in the deploying skill —
    * this fails.
    */
-  it("the deploying skill's 'currently' pin quotes the real pi version", () => {
-    const skill = readFileSync(join(ROOT, ".claude", "skills", "deploying", "SKILL.md"), "utf8");
-    const quoted = /\*\*pi pin coherent\*\*[^\n]*\n[^\n]*\(currently `([^`]+)`\)/.exec(skill)?.[1];
-    expect(
-      quoted,
-      "the deploying skill no longer quotes the pin in the shape this fence reads",
-    ).toBeTruthy();
-    expect(quoted, "the deploying skill's pi version drifted from config.toml — reconcile it").toBe(
-      pins()["config.toml [pi] version"],
-    );
-  });
+  const DEPLOY_SKILL = join(".claude", "skills", "deploying", "SKILL.md");
+  it.skipIf(!has(DEPLOY_SKILL))(
+    "the deploying skill's 'currently' pin quotes the real pi version (private tree only)",
+    () => {
+      const skill = read(DEPLOY_SKILL);
+      const quoted = /\*\*pi pin coherent\*\*[^\n]*\n[^\n]*\(currently `([^`]+)`\)/.exec(
+        skill,
+      )?.[1];
+      expect(
+        quoted,
+        "the deploying skill no longer quotes the pin in the shape this fence reads",
+      ).toBeTruthy();
+      expect(
+        quoted,
+        "the deploying skill's pi version drifted from the shipped pin — reconcile it",
+      ).toBe(realPin());
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------
