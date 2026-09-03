@@ -342,6 +342,8 @@ The TUI reaches the daemon over ssh or against local Docker, per
 ## Documentation map
 
 - [MANIFESTO.md](MANIFESTO.md) — the philosophy: what the human decides, what the machine decides, and the beliefs the implementation follows
+- [docs/architecture/README.md](docs/architecture/README.md) — how the system is built: the process map, the review lifecycle, the sessions, the data model, the safety seams
+- [AGENTS.md](AGENTS.md) — orientation for an AI agent editing this codebase: where things live and what must not be changed
 - [docs/onboarding.md](docs/onboarding.md) — the guided setup, step by step: what it asks, what it writes, where it can stop
 - [docs/github-app-setup.md](docs/github-app-setup.md) — what the GitHub App is, and how to register it by hand
 - [docs/llm-setup.md](docs/llm-setup.md) — the two LLM credential routes
