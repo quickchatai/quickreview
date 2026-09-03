@@ -20,6 +20,11 @@
     "dev": "bash scripts/dev-tui.sh",
     "onboard": "bash scripts/qcr onboard",
     "test": "vitest run",
+    "//lint": "Deliberately NOT chained into `test` or `build`: scripts/dev-tui.sh blocks on the build before the TUI paints (ruling 5), and an ESLint pass there is seconds of blank terminal. CI runs it as its own step.",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write \"**/*.{ts,mjs,js,json,yml,yaml}\"",
+    "format:check": "prettier --check \"**/*.{ts,mjs,js,json,yml,yaml}\"",
     "//typecheck:tests": "tests/ is excluded from the BUILD (it emits nothing), so nothing type-checked it and ~40 latent errors accumulated — three of them tests that were asserting nothing, plus three more that read the real filesystem while claiming to drive an injected seam. Deliberately NOT chained into `build`: `scripts/dev-tui.sh` blocks on that build before the TUI paints (ruling 5), and a second full tsc pass there is 7s of blank terminal. `tests/fences-gate.test.ts` runs this as part of the suite instead, which is this repo's CI.",
     "typecheck:tests": "tsc -p tsconfig.tests.json",
     "daemon": "npm run build && node dist/src/wire.js",
@@ -35,9 +40,13 @@
     "smol-toml": "1.8.0"
   },
   "devDependencies": {
+    "@eslint/js": "10.0.1",
     "@types/better-sqlite3": "9.6.0",
     "@types/node": "22.20.1",
+    "eslint": "10.9.1",
+    "prettier": "3.9.6",
     "typescript": "5.9.3",
+    "typescript-eslint": "8.69.0",
     "vitest": "4.1.10"
   },
   "pi": {

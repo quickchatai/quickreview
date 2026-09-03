@@ -1,0 +1,67 @@
+# Build output and dependencies.
+dist/
+node_modules/
+
+# Runtime state written by the daemon, the TUI and the tests. Gitignored
+# already; listed so a stray local file can never be reformatted. The
+# reviewed repo's own base clone is not listed because its directory name is
+# derived per-install from the repo being reviewed ([review] clone_dir); it
+# is gitignored, and an operator who parks it inside this tree should add it
+# here too.
+state/
+inject/
+verdict/
+commands/
+digest/
+archive/
+memory/
+wt/
+evidence/
+reports/
+pihome/
+state-snapshots/
+coverage/
+.claude/worktrees/
+
+# VENDORED VERBATIM — rule 7's extension pin. Provenance for
+# extensions/vendor/openviking-pi is a byte comparison against its recorded
+# upstream commit (upstream.json), and extensions/inline-bash.ts is copied
+# unmodified from the pinned pi release's shipped examples. Reformatting
+# either would be a local modification we are not allowed to make, and would
+# silently defeat the drift check in tests/openviking-fork.test.ts.
+extensions/vendor/
+extensions/inline-bash.ts
+
+# Machine-written fixtures. ratified-divergence.json gains entries from the
+# TUI's rubric-accept path (one of its two sanctioned writers) and
+# seed-manifest.json is a generated sha256 manifest — a formatter rewriting
+# either would produce a diff no human authored.
+tests/fixtures/ratified-divergence.json
+tests/fixtures/seed-manifest.json
+
+# Frozen seed content (rule 6): byte-identical to its recorded manifest.
+prompts/
+agents/
+seeds/
+
+# Generated / not ours.
+*.min.js
+package-lock.json
+
+# Ansible. These are not JavaScript-ecosystem YAML: they are read and edited
+# next to a running deploy, and their trailing comments are column-aligned by
+# hand so the value and its note line up down the file. Prettier collapses
+# that alignment to a single space, which is a large diff that makes the
+# operator-facing files harder to read and buys nothing.
+deploy/ansible/
+
+# A hand-maintained decision TABLE, one line per excluded path, deliberately
+# kept at one object per line so the file reads as rows. Prettier expands each
+# entry to five lines and the table stops being one. Consumed by
+# tests/publishability.test.ts and the snapshot assembly, neither of which
+# cares about layout.
+publish-manifest.json
+
+# VENDORED from the pinned upstream skills repo (see VENDORED.md) — provenance
+# is a comparison against that copy, so local reformatting would be drift.
+.claude/skills/

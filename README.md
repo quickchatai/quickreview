@@ -339,6 +339,11 @@ docker compose logs -f daemon                   # daemon logs (laptop route)
 The TUI reaches the daemon over ssh or against local Docker, per
 `config.toml [tui] target` — setup writes the one that matches your topology.
 
+Working on the code: `npm run lint` (ESLint with type-aware rules) and
+`npm run format` (Prettier; `npm run format:check` to verify only). Neither is
+chained into `npm test` or `npm run build`, so the dev loop stays fast — CI
+runs both as their own steps.
+
 ## Documentation map
 
 - [MANIFESTO.md](MANIFESTO.md) — the philosophy: what the human decides, what the machine decides, and the beliefs the implementation follows

@@ -28,5 +28,14 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
-      - run: timeout 900 npm test # full suite incl. the publishability lint
+      - run: npm run lint
+      - run: npm run format:check
+      # BUILD BEFORE TEST, not after. Three suites — tests/exec-boundary.test.ts,
+      # tests/fences.test.ts and tests/park-retired.test.ts — load the COMPILED
+      # module out of dist/ on purpose, because what they assert is that the
+      # emitted artifact still agrees with the source (the container runs the
+      # build, not the source). On a fresh checkout there is no dist/ yet, so
+      # running the suite first fails 8 tests in those 3 files with
+      # "Cannot find module .../dist/...". Verified 2026-09-02.
       - run: npm run build
+      - run: timeout 900 npm test # full suite incl. the publishability lint
