@@ -160,31 +160,18 @@ describe("[T10] guard coverage is derived from the call sites", () => {
   });
 
   /**
-   * The doc comparison — and the one divergence this fence RECORDS instead of
-   * repairing.
+   * The doc comparison. `scripts/CLAUDE.md` states the coverage per script in
+   * prose, and prose about a safety invariant drifts — it had, omitting guard
+   * 5 from both scripts that call it, and this fence RECORDED that divergence
+   * rather than repairing it ([P2]) because the fence's author would
+   * not edit a CLAUDE.md. corrected the sentence, so the recording
+   * shape is gone and the comparison is direct: whatever the doc claims must
+   * equal what the call sites do.
    *
-   * `scripts/CLAUDE.md` says "post-review.sh guards 1+2+3, approve-pr.sh 3+4,
-   * reply-thread.sh 3". Guard 5 is missing from both scripts that call it.
-   * That sentence is wrong today, and it is exactly [P2].
-   *
-   * It is NOT corrected here because this agent does not edit a CLAUDE.md on
-   * an agent's instruction — that is a standing constraint on how this session
-   * works, not a judgement about the fix, which is one line. So the divergence
-   * is pinned in the self-retiring shape used elsewhere in these fences: the
-   * test asserts the doc says EXACTLY the known-wrong thing, so a new drift
-   * fails, AND correcting it fails too, forcing this block's deletion and the
-   * assertion's flip to the direct comparison.
-   *
-   * MUTATION: change "approve-pr.sh 3+4" to "approve-pr.sh 3" in
+   * MUTATION: change "approve-pr.sh 3+4+5" to "approve-pr.sh 3+4" in
    * scripts/CLAUDE.md — this fails.
    */
-  it("the documented coverage is the recorded stale one ([P2])", () => {
-    const KNOWN_STALE_DOC: Record<string, number[]> = {
-      "post-review.sh": [1, 2, 3], // guard 5 missing
-      "approve-pr.sh": [3, 4], //     guard 5 missing
-      "reply-thread.sh": [3], //      correct
-    };
-
+  it("the documented coverage equals the coverage derived from the call sites", () => {
     const doc = read("scripts/CLAUDE.md");
     const claimed: Record<string, number[]> = {};
     for (const s of POSTING_SCRIPTS) {
@@ -196,21 +183,11 @@ describe("[T10] guard coverage is derived from the call sites", () => {
       claimed[s] = m![1]!.split("+").map(Number).sort();
     }
 
-    const real = derived();
-    const agrees = POSTING_SCRIPTS.every(
-      (s) => JSON.stringify(claimed[s]) === JSON.stringify(real[s]),
-    );
-    if (agrees) {
-      throw new Error(
-        "scripts/CLAUDE.md's guard-coverage sentence has been corrected — delete KNOWN_STALE_DOC and assert " +
-          "`expect(claimed).toEqual(derived())` directly.",
-      );
-    }
     expect(
       claimed,
-      "the documented guard coverage drifted to a THIRD value. It is a published claim about a safety invariant: " +
-        `derive it from the call sites, which currently say ${JSON.stringify(real)}.`,
-    ).toEqual(KNOWN_STALE_DOC);
+      "scripts/CLAUDE.md's guard-coverage sentence disagrees with the posting scripts. It is a published claim " +
+        "about a safety invariant: fix the prose to match the call sites, never the other way round.",
+    ).toEqual(derived());
   });
 
   /**

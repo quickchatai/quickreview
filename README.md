@@ -6,8 +6,10 @@ an authoritative reconcile poll, and drives sticky **pi** coding-agent
 sessions — one conversation per PR, blank-slate "lens" passes per review
 round, an adversarial validator before anything posts, and a continuous
 learning loop your organization owns end to end. Reviews post as *your*
-GitHub App, through one gated mutation path, typically within minutes of
-being requested.
+GitHub App, through one gated mutation path. How long that takes is measured
+rather than asserted: `qcr metrics` reports time-to-first-verdict per PR and
+splits it into a **queue leg** (trigger to round start) and a **review leg**
+(round start to verdict), so you can see which half is yours to tune.
 
 **Status: honest beta.** This system has run in production continuously
 since mid-August 2026 reviewing a busy commercial repository, and the review
@@ -68,10 +70,12 @@ It is short.
 - **A learning loop**: `[feedback]`-prefixed PR comments and behavioural
   signals (dismissals, merges over a standing block) bite the same day
   through a demotion-only validator addendum; an end-of-day sweep curates
-  durable learnings; rubric changes land only via one-click human
-  ratification; and accumulated evidence is mined *back into your
-  implementing agents' instructions* so recurring finding classes stop
-  being written at all.
+  durable learnings; and rubric changes land only via one-click human
+  ratification. Feeding what the reviewer learns *back into your implementing
+  agents' instructions* — so recurring finding classes stop being written at
+  all — is the loop's last leg and is **a human job today**: the evidence
+  accumulates as queryable rows, and nothing in the daemon writes to your
+  agents' instruction files.
 - **One mutation gate**: every GitHub write goes through a single gate with
   posting-time guards; in dry-run mode every would-be mutation is written to
   `state/dryrun/` instead of executed. There is structurally no code path
@@ -85,9 +89,15 @@ It is short.
   a file and line range, a migration, a named decision. It never asks anyone
   to review the pull request, and it never makes a review wait for a person.
 - **Sovereign by construction**: self-hosted daemon, your GitHub App, your
-  memory store under your keys, rules as files in your repo. The only thing
-  that leaves your infrastructure is the model call, to the provider you
-  configured.
+  memory store under your keys, rules as files in your repo. On the shipped
+  default **the only thing that leaves your infrastructure is the model call**,
+  to the provider you configured — reviewer memory embeds *locally*, in the
+  daemon's own container, needing no key and no account. A hosted embedder is
+  an explicit opt-in with its own separate credential
+  ([docs/memory-embeddings.md](docs/memory-embeddings.md)); turn it on and
+  every memory entry's text and every search query go to that provider too.
+  The remaining legs are the ones you chose yourself: GitHub carries the
+  review, and Slack and the webhook tunnel carry what you configure them to.
 
 Optional extras that degrade cleanly when unconfigured: an operator TUI
 (`qcr tui`, board + memory management, over ssh or against local Docker), a
@@ -106,9 +116,11 @@ reviewer memory engine.
    migration-collision pre-check, and delivers a receipt-tokened wake to the
    PR's own session. A round in flight is never interleaved.
 3. **Fan-out** — the PR's session launches the planned lens passes as
-   blank-slate leaves: no memory, no ability to post, no ability to spawn.
-   Each returns findings with severity, confidence, reachability, and exact
-   changed-line anchors.
+   blank-slate leaves: no memory, and no ability to spawn — the agent-spawning
+   tools are stripped from every built pass at build time, so a leaf cannot
+   fan out further. A leaf is *instructed* never to post; that half is a frozen,
+   hash-pinned prompt rule, not a structural one. Each returns findings with
+   severity, confidence, reachability, and exact changed-line anchors.
 4. **Validate** — an adversarial validator, never cheaper than the strongest
    lens in the round, re-derives every claim from the code and kills or
    downgrades from a closed vocabulary; both sides are recorded. Then the
@@ -308,13 +320,35 @@ with the safety rule written first):
    instructions, measured by fewer late blockers and fewer rounds per PR.
 
 **Non-goals** — refusals recorded so they cannot be silently unrefused: no
-rebuilding GitHub's PR workflow; the reviewer never executes anything; no
-hard round budget; the reviewer never reads the implementing conversation;
+rebuilding GitHub's PR workflow; the reviewer is never asked to run your code;
+no hard round budget; the reviewer never reads the implementing conversation;
 the fixer and the reviewer are never the same system. Each follows from a
 belief in [MANIFESTO.md](MANIFESTO.md) — the reviewer reads and never runs,
 judges what shipped and not how it was made — or, for the workflow and the
 round budget, from the rule that GitHub owns the PR and volume is cut at the
 bottom, never by giving up.
+
+### The exec boundary, stated so you can falsify it
+
+The refusal above is a design position; what *enforces* it is a set of layers,
+and they are worth describing precisely rather than as "the reviewer never
+executes anything". A review session runs with an allowlist of read-only
+programs, a veto over writes to git's configuration and to this system's own
+policy surface (the config, the sanctioned posting scripts, the compiled
+guard, the frozen prompt seeds), a re-parse of `bash -c` payloads at every
+depth, and a round-boundary integrity check that hashes those files when the
+worktree is prepared and again when the round is measured.
+
+Every one of those layers exists because a previous version was **found false
+by running something, not by reading it**. Eight adversarial rounds turned up
+real bypasses — including arbitrary execution straight through the program
+allowlist, which a close reading of the same file had missed. What is
+guaranteed, what is explicitly *not* guaranteed (variable indirection is
+invisible to the command scan by construction; one layer detects rather than
+prevents; none of it is a sandbox — the session runs as the daemon's uid), and
+the exact probes to try are all in
+[**docs/exec-boundary.md**](docs/exec-boundary.md). It is written as claims
+that can be shown false. Please try.
 
 ## What it costs to run
 
@@ -332,6 +366,7 @@ exactly why the recheck/no-op/nit-cap machinery exists.
 ```sh
 scripts/qcr onboard                             # guided setup; also a diagnostic
 scripts/qcr status | today | why <pr> | spend   # CLI over daemon state
+scripts/qcr metrics [--pr <n>] [--json]         # ttfv, queue/review legs, round stats
 scripts/qcr tui                                 # operator board
 docker compose logs -f daemon                   # daemon logs (laptop route)
 ```
@@ -347,6 +382,8 @@ runs both as their own steps.
 ## Documentation map
 
 - [MANIFESTO.md](MANIFESTO.md) — the philosophy: what the human decides, what the machine decides, and the beliefs the implementation follows
+- [docs/architecture/README.md](docs/architecture/README.md) — how the system is built: the process map, the review lifecycle, the sessions, the data model, the safety seams
+- [AGENTS.md](AGENTS.md) — orientation for an AI agent editing this codebase: where things live and what must not be changed
 - [docs/onboarding.md](docs/onboarding.md) — the guided setup, step by step: what it asks, what it writes, where it can stop
 - [docs/github-app-setup.md](docs/github-app-setup.md) — what the GitHub App is, and how to register it by hand
 - [docs/llm-setup.md](docs/llm-setup.md) — the two LLM credential routes
@@ -354,6 +391,8 @@ runs both as their own steps.
 - [deploy/ansible/README.md](deploy/ansible/README.md) — the VM/server route: provisioning, deploy, verification
 - [docs/profiles.md](docs/profiles.md) — repo profiles: addenda packs + heuristics
 - [docs/ownership.md](docs/ownership.md) — the owner-only surfaces (dry-run flag, frozen seeds, ratification)
+- [docs/exec-boundary.md](docs/exec-boundary.md) — what stops a review session running your code and writing to GitHub: the layers, the guarantees, and the residual gaps
+- [docs/memory-embeddings.md](docs/memory-embeddings.md) — the embedder: local by default, the hosted opt-in, and what changing it does to an existing store
 - [docs/provenance.md](docs/provenance.md) — what the FT-#### citations in this codebase mean
 - [CONTRIBUTING.md](CONTRIBUTING.md) — build, test, and the frozen-seed rule
 - [SECURITY.md](SECURITY.md) — reporting vulnerabilities
